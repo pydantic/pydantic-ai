@@ -15,9 +15,11 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
@@ -34,24 +36,36 @@ with try_import() as imports_successful:
         StreamableHttpTransport,
     )
     from fastmcp.exceptions import ToolError
+    from fastmcp.prompts import Message
     from fastmcp.server import FastMCP
     from fastmcp.server.tasks import TaskConfig
     from mcp import types as mcp_types
+    from mcp.shared.exceptions import McpError
     from mcp.types import (
+        Annotations,
+        AudioContent,
         BlobResourceContents,
         EmbeddedResource,
         ImageContent,
         ResourceLink,
+        TextContent as McpTextContent,
+        TextResourceContents,
     )
     from pydantic import AnyUrl
 
     from pydantic_ai.mcp import (
         MCPError,
         MCPToolset,
+        Prompt,
+        PromptArgument,
+        PromptMessage,
+        PromptResult,
         ResourceAnnotations,
         ResourceTemplate,
+        ServerCapabilities,
         load_mcp_toolsets,
     )
+    from pydantic_ai.messages import TextContent
 
 
 pytestmark = [
@@ -275,7 +289,83 @@ async def fastmcp_server() -> FastMCP[None]:
     async def profile(name: str) -> str:
         return f'{{"name": "{name}"}}'
 
+    _register_prompts(server)
     return server
+
+
+def _register_prompts(server: FastMCP[None]) -> None:
+    @server.prompt()
+    def simple_prompt() -> str:
+        """A simple prompt template."""
+        return 'This is a simple prompt'
+
+    @server.prompt()
+    def parameterized_prompt(name: str, topic: str) -> str:
+        """A prompt template with parameters."""
+        return f"Hello {name}, let's talk about {topic}!"
+
+    @server.prompt()
+    def annotated_text_prompt() -> list[Message]:
+        """A prompt template with annotated text content."""
+        return [
+            Message(
+                content=McpTextContent(
+                    type='text',
+                    text='annotated text',
+                    annotations=Annotations(audience=['user'], priority=1.0),
+                )
+            )
+        ]
+
+    @server.prompt()
+    def text_meta_prompt() -> list[Message]:
+        """A prompt template with `_meta` text metadata."""
+        return [Message(content=McpTextContent(type='text', text='meta text', _meta={'source': 'mcp'}))]
+
+    @server.prompt()
+    def image_prompt() -> list[Message]:
+        """A prompt template with image content."""
+        return [
+            Message(
+                content=ImageContent(
+                    type='image',
+                    data=base64.b64encode(b'image-bytes').decode('utf-8'),
+                    mimeType='image/jpeg',
+                    annotations=Annotations(audience=['user'], priority=0.8),
+                )
+            )
+        ]
+
+    @server.prompt()
+    def audio_prompt() -> list[Message]:
+        """A prompt template with audio content."""
+        return [
+            Message(
+                content=AudioContent(
+                    type='audio',
+                    data=base64.b64encode(b'audio-bytes').decode('utf-8'),
+                    mimeType='audio/mpeg',
+                    annotations=Annotations(audience=['assistant'], priority=0.3),
+                )
+            )
+        ]
+
+    @server.prompt()
+    def embedded_resource_prompt() -> list[Message]:
+        """A prompt template with an embedded text resource."""
+        return [
+            Message(
+                content=EmbeddedResource(
+                    type='resource',
+                    resource=TextResourceContents(
+                        uri=AnyUrl('resource://product_name.txt'),
+                        text='Pydantic AI',
+                        mimeType='text/plain',
+                    ),
+                    annotations=Annotations(audience=['user'], priority=0.5),
+                )
+            )
+        ]
 
 
 @pytest.fixture
@@ -444,11 +534,268 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
             # Force the capability off to exercise the early-return branches.
-            from pydantic_ai.mcp import ServerCapabilities
-
             toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
             assert await toolset.list_resources() == []
             assert await toolset.list_resource_templates() == []
+
+    async def test_list_prompts_returns_pai_types(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            prompts = await toolset.list_prompts()
+        assert prompts == snapshot(
+            [
+                Prompt(
+                    name='simple_prompt', description='A simple prompt template.', metadata={'fastmcp': {'tags': []}}
+                ),
+                Prompt(
+                    name='parameterized_prompt',
+                    description='A prompt template with parameters.',
+                    arguments=[
+                        PromptArgument(
+                            name='name',
+                            description='Provide as a JSON string matching the following schema: {"type":"string"}',
+                            required=True,
+                        ),
+                        PromptArgument(
+                            name='topic',
+                            description='Provide as a JSON string matching the following schema: {"type":"string"}',
+                            required=True,
+                        ),
+                    ],
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='annotated_text_prompt',
+                    description='A prompt template with annotated text content.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='text_meta_prompt',
+                    description='A prompt template with `_meta` text metadata.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='image_prompt',
+                    description='A prompt template with image content.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='audio_prompt',
+                    description='A prompt template with audio content.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='embedded_resource_prompt',
+                    description='A prompt template with an embedded text resource.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+            ]
+        )
+
+    async def test_get_prompt_simple(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('simple_prompt')
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content='This is a simple prompt'))],
+                description='A simple prompt template.',
+            )
+        )
+
+    async def test_get_prompt_parameterized(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content="Hello Alice, let's talk about AI!"))],
+                description='A prompt template with parameters.',
+            )
+        )
+
+    async def test_list_prompts_caches_when_enabled(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            first = await toolset.list_prompts()
+            assert toolset._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+            second = await toolset.list_prompts()
+        assert first == second
+
+    async def test_list_prompts_no_caching_when_disabled(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, cache_prompts=False)
+        async with toolset:
+            await toolset.list_prompts()
+            assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_prompts_cache_invalidation_on_notification(self, fastmcp_server: FastMCP[None]):
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=None)
+        toolset._cached_prompts = []  # pyright: ignore[reportPrivateUsage]
+
+        await handler(
+            mcp_types.ServerNotification(
+                root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+            )
+        )
+        assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_prompts_without_capability(self, fastmcp_server: FastMCP[None]):
+        """`list_prompts` returns `[]` and `get_prompt` raises `MCPError` when prompts capability is absent."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
+            assert await toolset.list_prompts() == []
+            with pytest.raises(MCPError, match='does not advertise the `prompts` capability') as exc_info:
+                await toolset.get_prompt('does_not_matter')
+            assert exc_info.value.code == -32601
+
+    async def test_list_prompts_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.list_prompts = AsyncMock(
+                side_effect=McpError(mcp_types.ErrorData(code=-32603, message='boom'))
+            )
+            with pytest.raises(MCPError, match='boom'):
+                await toolset.list_prompts()
+
+    async def test_get_prompt_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            with pytest.raises(MCPError, match='Unknown prompt'):
+                await toolset.get_prompt('does_not_exist')
+
+    async def test_map_prompt_content(self, fastmcp_server: FastMCP[None]):
+        """`get_prompt` maps every MCP prompt content type to its Pydantic AI equivalent.
+
+        Plain `TextContent` without annotations is already covered by `test_get_prompt_simple`,
+        so this exercises annotated text, image, audio, and embedded resource. `ResourceLink`
+        prompt content is covered separately in `test_get_prompt_maps_resource_link` because the
+        in-process FastMCP server serializes resource links to text rather than emitting a
+        `resource_link` content block.
+        """
+        from pydantic_ai.mcp import EmbeddedResource as PaiEmbeddedResource
+        from pydantic_ai.messages import BinaryContent, BinaryImage
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            # TextContent with annotations preserved in metadata
+            annotated = await toolset.get_prompt('annotated_text_prompt')
+            assert annotated.messages == snapshot(
+                [
+                    PromptMessage(
+                        role='user',
+                        content=TextContent(
+                            content='annotated text',
+                            metadata={'mcp_annotations': ResourceAnnotations(audience=['user'], priority=1.0)},
+                        ),
+                    )
+                ]
+            )
+
+            # ImageContent → BinaryImage
+            image = await toolset.get_prompt('image_prompt')
+            assert image.messages == snapshot(
+                [
+                    PromptMessage(
+                        role='user',
+                        content=BinaryImage(
+                            data=b'image-bytes',
+                            media_type='image/jpeg',
+                            vendor_metadata={'mcp_annotations': ResourceAnnotations(audience=['user'], priority=0.8)},
+                        ),
+                    )
+                ]
+            )
+
+            # AudioContent → BinaryContent
+            audio = await toolset.get_prompt('audio_prompt')
+            assert audio.messages == snapshot(
+                [
+                    PromptMessage(
+                        role='user',
+                        content=BinaryContent(
+                            data=b'audio-bytes',
+                            media_type='audio/mpeg',
+                            vendor_metadata={
+                                'mcp_annotations': ResourceAnnotations(audience=['assistant'], priority=0.3)
+                            },
+                        ),
+                    )
+                ]
+            )
+
+            # EmbeddedResource with annotations
+            embedded = await toolset.get_prompt('embedded_resource_prompt')
+            assert embedded.messages == snapshot(
+                [
+                    PromptMessage(
+                        role='user',
+                        content=PaiEmbeddedResource(
+                            uri='resource://product_name.txt',
+                            content='Pydantic AI',
+                            mime_type='text/plain',
+                            annotations=ResourceAnnotations(audience=['user'], priority=0.5),
+                        ),
+                    )
+                ]
+            )
+
+    async def test_get_prompt_maps_resource_link(self, fastmcp_server: FastMCP[None]):
+        """A `resource_link` prompt content block maps to a Pydantic AI `ResourceLink`.
+
+        FastMCP can't emit `resource_link` prompt content (it serializes the link to text), so we
+        patch the client to return a real MCP `GetPromptResult` carrying one and assert the mapping.
+        """
+        from pydantic_ai.mcp import ResourceLink as PaiResourceLink
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.get_prompt = AsyncMock(
+                return_value=mcp_types.GetPromptResult(
+                    description='A prompt template with a resource link.',
+                    messages=[
+                        mcp_types.PromptMessage(
+                            role='user',
+                            content=ResourceLink(
+                                type='resource_link',
+                                uri=AnyUrl('resource://kiwi.jpg'),
+                                name='kiwi-image',
+                                title='Kiwi Image',
+                                description='A photo of a kiwi fruit',
+                                mimeType='image/jpeg',
+                            ),
+                        )
+                    ],
+                )
+            )
+            result = await toolset.get_prompt('resource_link_prompt')
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=PaiResourceLink(
+                        uri='resource://kiwi.jpg',
+                        name='kiwi-image',
+                        title='Kiwi Image',
+                        description='A photo of a kiwi fruit',
+                        mime_type='image/jpeg',
+                    ),
+                )
+            ]
+        )
+
+    async def test_map_prompt_content_text_meta(self, fastmcp_server: FastMCP[None]):
+        """MCP `_meta` on prompt text is preserved in the mapped content metadata."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('text_meta_prompt')
+        [message] = result.messages
+        content = message.content
+        assert isinstance(content, TextContent)
+        assert content.metadata == {'mcp_meta': {'source': 'mcp'}}
 
     async def test_message_handler_ignores_non_list_changed_notifications(self, fastmcp_server: FastMCP[None]):
         from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
@@ -456,10 +803,13 @@ class TestMCPToolsetIntegration:
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
-        # An unrelated notification shouldn't touch the caches.
+        # `LoggingMessageNotification` is unrelated to any cache.
         await handler(
             mcp_types.ServerNotification(
-                root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+                root=mcp_types.LoggingMessageNotification(
+                    method='notifications/message',
+                    params=mcp_types.LoggingMessageNotificationParams(level='info', data='hi'),
+                )
             )
         )
         assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
