@@ -229,28 +229,28 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         ).hexdigest()
         call_id = f'auto_load_{call_id_digest}'
 
-        request_context.messages.append(
-            ModelResponse(
-                parts=[
-                    ToolSearchCallPart(
-                        args={'queries': capability_ids},
-                        tool_call_id=call_id,
-                    ),
-                ]
-            )
-        )
-        request_context.messages.append(
-            ModelRequest(
-                parts=[
-                    ToolSearchReturnPart(
-                        content={
-                            'discovered_tools': [
-                                {'name': td.name, 'description': td.description} for td in newly_loaded
-                            ]
-                        },
-                        tool_call_id=call_id,
-                    ),
-                ]
-            )
+        request_context.messages.extend(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolSearchCallPart(
+                            args={'queries': capability_ids},
+                            tool_call_id=call_id,
+                        ),
+                    ]
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolSearchReturnPart(
+                            content={
+                                'discovered_tools': [
+                                    {'name': td.name, 'description': td.description} for td in newly_loaded
+                                ]
+                            },
+                            tool_call_id=call_id,
+                        ),
+                    ]
+                ),
+            ]
         )
         return request_context
