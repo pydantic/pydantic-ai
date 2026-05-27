@@ -37,6 +37,9 @@ from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
+from pydantic_graph.util import get_callable_name
+
+from .exceptions import UserError
 
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
@@ -174,6 +177,16 @@ def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
 
 
 T = TypeVar('T')
+
+
+def check_tools_prepare_func_result(result: Iterable[T] | None, prepare_func: Any) -> list[T]:
+    """Validate and normalize a tool-prepare callback result."""
+    if result is None:
+        raise UserError(
+            f'Prepare function {get_callable_name(prepare_func)!r} returned `None`; '
+            'return `[]` to expose no tools, or return `tool_defs` to pass them through unchanged.'
+        )
+    return list(result)
 
 
 @dataclass

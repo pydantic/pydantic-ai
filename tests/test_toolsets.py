@@ -289,6 +289,24 @@ async def test_prepared_toolset_sync_prepare_func():
     assert list(tools.keys()) == ['add']
 
 
+async def test_prepared_toolset_user_error_none_result():
+    """`PreparedToolset` requires [] when a prepare function intentionally exposes no tools."""
+    base_toolset = FunctionToolset()
+
+    @base_toolset.tool_plain
+    def add(a: int, b: int) -> int:
+        """Add two numbers"""
+        return a + b  # pragma: no cover
+
+    async def prepare_returns_none(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        return None
+
+    prepared_toolset = PreparedToolset(base_toolset, prepare_returns_none)  # pyright: ignore[reportArgumentType]
+
+    with pytest.raises(UserError, match="Prepare function 'prepare_returns_none' returned `None`"):
+        await prepared_toolset.get_tools(build_run_context(None))
+
+
 async def test_prepared_toolset_user_error_add_new_tools():
     """Test that PreparedToolset raises UserError when prepare function tries to add new tools."""
     context = build_run_context(None)
@@ -358,30 +376,6 @@ async def test_prepared_toolset_user_error_change_tool_names():
         ),
     ):
         await ToolManager(prepared_toolset).for_run_step(context)
-
-
-async def test_prepared_toolset_raises_on_none_return():
-    """Direct PreparedToolset usage raises when the callback returns None.
-
-    Mirrors the same `None`-return guard at the capability layer (`_call_prepare_func`);
-    this covers the direct/`toolset.prepared()` path where the result reaches
-    `PreparedToolset.get_tools` without prior normalization.
-    """
-    context = build_run_context(None)
-    base_toolset = FunctionToolset[None]()
-
-    @base_toolset.tool_plain
-    def add(a: int, b: int) -> int:
-        """Add two numbers"""
-        return a + b  # pragma: no cover
-
-    async def returns_none(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
-        return None
-
-    prepared_toolset = PreparedToolset(base_toolset, returns_none)
-
-    with pytest.raises(TypeError, match=r'prepare callback .* returned `None`'):
-        await prepared_toolset.get_tools(context)
 
 
 async def test_comprehensive_toolset_composition():

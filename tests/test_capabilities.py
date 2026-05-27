@@ -5690,7 +5690,7 @@ class TestPrepareToolsCapability:
         """PrepareTools capability filters tools using the provided callable."""
         from pydantic_ai.capabilities import PrepareTools
 
-        async def hide_secret_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def hide_secret_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             return [td for td in tool_defs if td.name != 'secret_tool']
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5710,43 +5710,21 @@ class TestPrepareToolsCapability:
         result = await agent.run('hello')
         assert result.output == "tools: ['public_tool']"
 
-    async def test_prepare_tools_none_raises(self):
-        """Returning None raises — users must return `[]` to disable all tools explicitly."""
+    async def test_prepare_tools_rejects_none(self):
+        """PrepareTools rejects `None`; return [] to disable all tools explicitly."""
         from pydantic_ai.capabilities import PrepareTools
 
-        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('unreachable')  # pragma: no cover
-
-        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(disable_all)])
+        agent = Agent('test', capabilities=[PrepareTools(invalid)])  # pyright: ignore[reportArgumentType]
 
         @agent.tool_plain
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        with pytest.raises(TypeError, match=r'prepare callback .* returned `None`'):
+        with pytest.raises(UserError, match="Prepare function 'invalid' returned `None`"):
             await agent.run('hello')
-
-    async def test_prepare_tools_empty_list_disables_all(self):
-        """Returning [] is the explicit 'disable all' path."""
-
-        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            tool_names = [t.name for t in info.function_tools]
-            return make_text_response(f'tools: {sorted(tool_names)}')
-
-        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(disable_all)])
-
-        @agent.tool_plain
-        def my_tool() -> str:
-            return 'result'  # pragma: no cover
-
-        result = await agent.run('hello')
-        assert result.output == 'tools: []'
 
     async def test_prepare_tools_modifies_definitions(self):
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
@@ -5754,7 +5732,7 @@ class TestPrepareToolsCapability:
 
         from pydantic_ai.capabilities import PrepareTools
 
-        async def set_strict(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def set_strict(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             return [dc_replace(td, strict=True) for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5804,7 +5782,7 @@ class TestPrepareToolsCapability:
 
         executed: list[str] = []
 
-        async def hide_secret(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def hide_secret(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             return [td for td in tool_defs if td.name != 'secret_tool']
 
         call_count = 0
@@ -5897,26 +5875,23 @@ class TestPrepareOutputToolsCapability:
         result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
 
-    async def test_prepare_output_tools_none_raises(self):
-        """Returning None raises — users must return `[]` to disable all output tools explicitly."""
+    async def test_prepare_output_tools_rejects_none(self):
+        """PrepareOutputTools rejects `None`; return [] to disable all output tools explicitly."""
         from pydantic_ai.capabilities import PrepareOutputTools
 
         class Out(BaseModel):
             value: str
 
-        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('unreachable')  # pragma: no cover
-
         agent = Agent(
-            FunctionModel(model_fn),
+            'test',
             output_type=[str, ToolOutput(Out, name='out')],
-            capabilities=[PrepareOutputTools(disable_all)],
+            capabilities=[PrepareOutputTools(invalid)],  # pyright: ignore[reportArgumentType]
         )
 
-        with pytest.raises(TypeError, match=r'prepare callback .* returned `None`'):
+        with pytest.raises(UserError, match="Prepare function 'invalid' returned `None`"):
             await agent.run('hello')
 
     async def test_only_sees_output_tools(self):

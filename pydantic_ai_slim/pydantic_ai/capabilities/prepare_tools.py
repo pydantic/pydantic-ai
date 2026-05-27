@@ -5,8 +5,8 @@ from dataclasses import dataclass
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.tools import ToolDefinition, ToolsPrepareFunc
-from pydantic_graph.util import get_callable_name
 
+from .. import _utils
 from .abstract import AbstractCapability
 
 
@@ -26,7 +26,7 @@ class PrepareTools(AbstractCapability[AgentDepsT]):
 
     async def hide_admin_tools(
         ctx: RunContext, tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition] | None:
+    ) -> list[ToolDefinition]:
         return [td for td in tool_defs if not td.name.startswith('admin_')]
 
 
@@ -61,7 +61,7 @@ class PrepareOutputTools(AbstractCapability[AgentDepsT]):
 
     async def only_after_first_step(
         ctx: RunContext, tool_defs: list[ToolDefinition]
-    ) -> list[ToolDefinition] | None:
+    ) -> list[ToolDefinition]:
         return tool_defs if ctx.run_step > 0 else []
 
 
@@ -95,9 +95,4 @@ async def _call_prepare_func(
     result = prepare_func(ctx, tool_defs)
     if inspect.isawaitable(result):
         result = await result
-    if result is None:
-        raise TypeError(
-            f'prepare callback {get_callable_name(prepare_func)!r} returned `None`; '
-            'return `[]` to hide all tool definitions explicitly, or `tool_defs` to pass them through unchanged.'
-        )
-    return list(result)
+    return _utils.check_tools_prepare_func_result(result, prepare_func)
