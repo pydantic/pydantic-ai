@@ -106,11 +106,11 @@ mcp = ["fastmcp-slim[client]>=3.3.0"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI
-ui = ["starlette>=0.45.3"]
+ui = ["starlette>=0.46.2"]
 # AG-UI
-ag-ui = ["ag-ui-protocol>=0.1.10", "starlette>=0.45.3"]
+ag-ui = ["ag-ui-protocol>=0.1.10", "starlette>=0.46.2"]
 # Web
-web = ["starlette>=0.45.3", "httpx>=0.27.0", "uvicorn>=0.38.0"]
+web = ["starlette>=0.46.2", "httpx>=0.27.0", "uvicorn>=0.38.0"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal
