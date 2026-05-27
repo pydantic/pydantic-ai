@@ -413,7 +413,7 @@ See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reason
 
 ### Model Armor (Google Cloud only)
 
-[Model Armor](https://cloud.google.com/model-armor/docs) is a Google Cloud security service that screens prompts and responses for risks like prompt injection, jailbreaking, and sensitive data leakage.
+[Model Armor](https://docs.cloud.google.com/model-armor/overview) is a Google Cloud security service that screens prompts and responses for risks like prompt injection, jailbreaking, and sensitive data leakage.
 
 You can configure it via `google_model_armor_config` in [`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings]:
 
@@ -437,7 +437,7 @@ agent = Agent(model, model_settings=model_settings)
 ...
 ```
 
-Templates must be created in advance in the [Google Cloud Console](https://console.cloud.google.com/security/model-armor) and must reside in the same region as the model endpoint. See the [Model Armor Vertex AI integration docs](https://docs.cloud.google.com/model-armor/model-armor-vertex-integration) for supported locations.
+Templates must be created in advance in the [Google Cloud Console](https://console.cloud.google.com/security/modelarmor) and must reside in the same region as the model endpoint. See the [Model Armor Vertex AI integration docs](https://docs.cloud.google.com/model-armor/model-armor-vertex-integration) for supported locations.
 
 When a prompt or response is blocked, a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised.
 
