@@ -15,7 +15,7 @@ from collections.abc import (
     Sequence,
 )
 from concurrent.futures import Executor
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, suppress
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
@@ -872,16 +872,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             try:
                                 yield stream_result
                             finally:
-                                # Best-effort cleanup on context exit: record the partial
-                                # response and tear down the upstream connection. Suppressed
-                                # so cancel-side failures (NotImplementedError on providers
-                                # without close_stream(), transport errors mid-cancel)
-                                # neither shadow an in-flight user exception nor fail
-                                # clean breaks. The partial response is still recorded
-                                # by cancel()'s own finally.
+                                # Best-effort cleanup on context exit: record the partial response
+                                # and tear down the upstream connection without hiding unexpected
+                                # cancel bugs.
                                 if not stream_result.is_complete:
-                                    with suppress(Exception):
+                                    try:
                                         await stream_result.cancel()
+                                    except (NotImplementedError, OSError):
+                                        pass
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
                             # before_node_run fired above; on_complete() later calls
                             # agent_run.next(SetFinalResult(...)) which fires the full lifecycle

@@ -4152,8 +4152,7 @@ async def test_run_stream_records_partial_response_after_early_break(debounce_by
     """
 
     async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        for chunk in ['Hello', ' ', 'world', '!']:
-            yield chunk
+        yield 'Hello'
 
     agent = Agent(FunctionModel(stream_function=sf), output_type=str)
 
@@ -4193,8 +4192,7 @@ async def test_run_stream_records_partial_response_on_exception_in_body():
     """
 
     async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        for chunk in ['Hello', ' ', 'world', '!']:
-            yield chunk
+        yield 'Hello'
 
     agent = Agent(FunctionModel(stream_function=sf), output_type=str)
 
@@ -4243,8 +4241,7 @@ async def test_run_stream_early_break_when_provider_lacks_cancel_support(monkeyp
     monkeypatch.setattr(FunctionStreamedResponse, 'close_stream', unsupported_close_stream)
 
     async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        for chunk in ['Hello', ' ', 'world', '!']:
-            yield chunk
+        yield 'Hello'
 
     agent = Agent(FunctionModel(stream_function=sf), output_type=str)
 
