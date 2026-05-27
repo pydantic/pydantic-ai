@@ -54,7 +54,13 @@ from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    FunctionStreamedResponse,
+)
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.models.wrapper import CompletedStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
@@ -4230,7 +4236,6 @@ async def test_run_stream_early_break_when_provider_lacks_cancel_support(monkeyp
     `NotImplementedError`. The implicit cancel in `run_stream`'s `__aexit__` must swallow
     that error, and the partial response must still be recorded in `all_messages()`.
     """
-    from pydantic_ai.models.function import FunctionStreamedResponse
 
     async def unsupported_close_stream(self: FunctionStreamedResponse) -> None:
         raise NotImplementedError('this provider does not support cancellation')
@@ -4248,7 +4253,25 @@ async def test_run_stream_early_break_when_provider_lacks_cancel_support(monkeyp
 
     assert result.is_complete
     assert result.response.state == 'interrupted'
-    assert any(isinstance(m, ModelResponse) for m in result.all_messages())
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello')],
+                usage=RequestUsage(input_tokens=50, output_tokens=1),
+                model_name='function::sf',
+                timestamp=IsNow(tz=timezone.utc),
+                state='interrupted',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 async def test_args_validator_failure_events():

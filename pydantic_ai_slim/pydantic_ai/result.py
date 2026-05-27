@@ -756,17 +756,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """Cancel the stream, stopping token generation and closing the underlying connection.
 
         The interrupted response state is recorded in the message history so that
-        `all_messages()` includes it.
+        `all_messages()` includes it. Recording happens even if the upstream cancel
+        raises (e.g. `NotImplementedError` on providers without `close_stream()`
+        support); the exception still propagates to the caller.
         """
         if self._stream_response is not None:  # pragma: no branch
             try:
                 await self._stream_response.cancel()
             finally:
-                # Record the partial response even if close_stream() raised
-                # (NotImplementedError on providers without cancellation support,
-                # transport errors mid-cancel) so all_messages() is consistent.
-                # _cancelled is set on the underlying stream before close_stream
-                # runs, so the recorded state is 'interrupted' either way.
+                # _cancelled flips before close_stream runs, so state='interrupted'
+                # is reachable here even when close_stream raised.
                 if not self.is_complete:
                     self.is_complete = True
                     self._record_response(self.response)
