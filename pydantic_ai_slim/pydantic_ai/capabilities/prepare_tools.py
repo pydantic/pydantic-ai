@@ -4,6 +4,7 @@ import inspect
 from dataclasses import dataclass
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai._warnings import warn_on_prepare_callback_returned_none
 from pydantic_ai.tools import ToolDefinition, ToolsPrepareFunc
 
 from .abstract import AbstractCapability
@@ -94,4 +95,6 @@ async def _call_prepare_func(
     result = prepare_func(ctx, tool_defs)
     if inspect.isawaitable(result):
         result = await result
+    if result is None:
+        warn_on_prepare_callback_returned_none(prepare_func)
     return list(result or [])

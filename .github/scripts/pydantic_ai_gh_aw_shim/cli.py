@@ -136,11 +136,27 @@ COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
 INSTRUCTIONS = (
-    'You can call multiple tools in a single turn. When tool calls are '
-    "independent (no call needs another call's output), issue them together "
-    'in one turn so they run in parallel — this is faster and uses far fewer '
-    'model requests. Only chain tools sequentially when one genuinely needs a '
-    "previous tool's result."
+    '## Parallel tool calls\n\n'
+    'The model supports parallel tool calls. When multiple reads, searches, or '
+    "lookups are independent — meaning one doesn't need another's result — "
+    'issue them all in the same response. They execute concurrently. Only '
+    'chain sequentially when one call genuinely needs a previous result.\n\n'
+    '## File reading\n\n'
+    'Read files in large ranges (500+ lines per call). MAX_TOOL_OUTPUT is '
+    '50 000 chars so most Python source files fit in one or two reads. '
+    'Avoid reading 30–80 lines at a time.\n\n'
+    '## Search tools\n\n'
+    'Use the native Grep and Glob tools for codebase search. '
+    '`rg` and `uv` are also available as plain commands via Bash.\n\n'
+    '## Dev environment\n\n'
+    'The repo is checked out at $GITHUB_WORKSPACE. Dev dependencies are NOT '
+    'pre-installed — run `make install` once before using pytest, ruff, or '
+    'pyright. Prefer `uv run pytest <test_file>` over a bare `pytest` call; '
+    'uv handles the virtual env automatically.\n\n'
+    '## GitHub issue search\n\n'
+    '`gh issue list --search` returns HTTP 403 via the AWF firewall proxy. '
+    'Use the MCP tools instead: '
+    '`mcp__github__search_issues(query="repo:pydantic/pydantic-ai <keywords>")`.'
 )
 
 # The real task spec rides in `instructions=`; the user message is a trigger.
@@ -162,8 +178,8 @@ SUBAGENT_INSTRUCTIONS = (
 # ~100k tokens at 4 chars/token = half of a 200k window.
 COMPACTION_TRIGGER_CHARS = 400_000
 COMPACTION_KEEP_RECENT = 10
-TOOL_RESULT_HEAD_TAIL_CHARS = 800
-TOOL_RESULT_TRIM_THRESHOLD = 2_000
+TOOL_RESULT_HEAD_TAIL_CHARS = 4_000
+TOOL_RESULT_TRIM_THRESHOLD = 10_000
 COMPACTION_TRANSCRIPT_MAX_CHARS = 80_000
 
 COMPACTION_SUMMARY_INSTRUCTIONS = (
@@ -281,10 +297,19 @@ def _trim_tool_results(messages: list[ModelMessage]) -> list[ModelMessage]:
 
     if dedup_count or truncate_count:
         logger.info(
-            'compaction trim: deduped %d superseded read(s), truncated %d oversized result(s), saved %d chars',
+            'trim: deduped %d superseded read(s), truncated %d oversized result(s), saved %d chars',
             dedup_count,
             truncate_count,
             bytes_saved,
+        )
+        emit(
+            {
+                'type': 'system',
+                'subtype': 'compaction_trim',
+                'deduped_reads': dedup_count,
+                'truncated_results': truncate_count,
+                'chars_saved': bytes_saved,
+            }
         )
         return out
     return messages
@@ -323,6 +348,16 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
         len(middle),
         COMPACTION_KEEP_RECENT,
     )
+    emit(
+        {
+            'type': 'system',
+            'subtype': 'compaction_summary_start',
+            'history_chars': size,
+            'history_messages': len(trimmed),
+            'middle_messages': len(middle),
+            'keep_recent': COMPACTION_KEEP_RECENT,
+        }
+    )
     # Preserve any earlier-round synthetic at the head of the middle so a
     # fallback (`return [prior_synthetic, *tail]`) doesn't silently forget
     # the entire run's compacted history.
@@ -344,6 +379,7 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
     except Exception as exc:
         ctx.usage.incr(sub_usage)
         logger.warning('compaction summarisation failed (%r); falling back', exc)
+        emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': str(exc)})
         return [prior_synthetic, *tail] if prior_synthetic else tail
     ctx.usage.incr(sub_usage)
     # If the summariser produces output larger than the middle it's replacing,
@@ -352,12 +388,31 @@ async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]
     middle_size = _history_size_chars(middle)
     if len(summary) >= middle_size:
         logger.info('compaction summary discarded (%d >= %d chars); falling back', len(summary), middle_size)
+        emit(
+            {
+                'type': 'system',
+                'subtype': 'compaction_summary_discarded',
+                'summary_chars': len(summary),
+                'middle_chars': middle_size,
+            }
+        )
         return [prior_synthetic, *tail] if prior_synthetic else tail
     logger.info(
         'compaction summary done: %d middle messages (%d chars) -> %d-char summary',
         len(middle),
         middle_size,
         len(summary),
+    )
+    emit(
+        {
+            'type': 'system',
+            'subtype': 'compaction_summary_done',
+            'middle_messages': len(middle),
+            'middle_chars': middle_size,
+            'summary_chars': len(summary),
+            'input_tokens': sub_usage.input_tokens,
+            'output_tokens': sub_usage.output_tokens,
+        }
     )
     synthetic = ModelRequest(parts=[UserPromptPart(content=f'{_SYNTHETIC_SUMMARY_TAG}\n{summary}')])
     return [synthetic, *tail]
@@ -485,17 +540,15 @@ def configure_logging() -> None:
 
 def configure_observability() -> None:
     """Wire pydantic-ai + httpx + mcp instrumentation to Logfire/OTLP if configured."""
-    if not (
-        os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT')
-        or os.environ.get('GH_AW_OTLP_ENDPOINTS')
-        or os.environ.get('LOGFIRE_TOKEN')
-    ):
+    write_token = os.environ.get('LOGFIRE_WRITE_TOKEN') or os.environ.get('LOGFIRE_TOKEN')
+    if not (os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT') or os.environ.get('GH_AW_OTLP_ENDPOINTS') or write_token):
         return
     try:
         logfire.configure(
             service_name=os.environ.get('OTEL_SERVICE_NAME', 'gh-aw'),
             send_to_logfire='if-token-present',
             console=False,
+            token=write_token or None,
         )
         logfire.instrument_pydantic_ai(include_content=True, include_binary_content=True)
         logfire.instrument_httpx(capture_all=True)

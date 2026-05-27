@@ -1293,7 +1293,7 @@ def test_dynamic_tools_agent_wide():
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
-            return None
+            return []
         elif ctx.deps == 21:
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
