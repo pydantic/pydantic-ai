@@ -288,3 +288,20 @@ def test_toolset_include_flags():
     )
 
     assert set(toolset.tools) == {'brave_web_search', 'brave_rich_search'}
+
+
+def test_toolset_all_disabled():
+    toolset = BraveSearchToolset(
+        'brave-key',
+        include_web_search=False,
+        include_news_search=False,
+        include_image_search=False,
+        include_video_search=False,
+        include_llm_context=False,
+        include_place_search=False,
+        include_local_pois=False,
+        include_local_descriptions=False,
+        include_rich_search=False,
+    )
+
+    assert set(toolset.tools) == set()
