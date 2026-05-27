@@ -5710,12 +5710,30 @@ class TestPrepareToolsCapability:
         result = await agent.run('hello')
         assert result.output == "tools: ['public_tool']"
 
-    async def test_prepare_tools_none_disables_all(self):
-        """Returning None still disables all function tools, but now emits the deprecation warning."""
+    async def test_prepare_tools_none_raises(self):
+        """Returning None raises — users must return `[]` to disable all tools explicitly."""
         from pydantic_ai.capabilities import PrepareTools
 
         async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('unreachable')  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(disable_all)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'  # pragma: no cover
+
+        with pytest.raises(TypeError, match=r'prepare callback .* returned `None`'):
+            await agent.run('hello')
+
+    async def test_prepare_tools_empty_list_disables_all(self):
+        """Returning [] is the explicit 'disable all' path."""
+
+        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             tool_names = [t.name for t in info.function_tools]
@@ -5727,30 +5745,8 @@ class TestPrepareToolsCapability:
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        with pytest.warns(PydanticAIDeprecationWarning, match='returning `None` from a prepare callback is deprecated'):
-            result = await agent.run('hello')
+        result = await agent.run('hello')
         assert result.output == 'tools: []'
-
-    async def test_prepare_tools_empty_list_does_not_warn(self):
-        """Returning [] is the explicit 'disable all' alternative and must not emit the warning.
-
-        Relies on the suite-wide `filterwarnings = ['error']` in `pyproject.toml` to turn any
-        unexpected `PydanticAIDeprecationWarning` into a test failure.
-        """
-
-        async def disable_all(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('ok')
-
-        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(disable_all)])
-
-        @agent.tool_plain
-        def my_tool() -> str:
-            return 'result'  # pragma: no cover
-
-        await agent.run('hello')
 
     async def test_prepare_tools_modifies_definitions(self):
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
@@ -5901,8 +5897,8 @@ class TestPrepareOutputToolsCapability:
         result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
 
-    async def test_prepare_output_tools_none_disables_all(self):
-        """Returning None still disables all output tools, but now emits the deprecation warning."""
+    async def test_prepare_output_tools_none_raises(self):
+        """Returning None raises — users must return `[]` to disable all output tools explicitly."""
         from pydantic_ai.capabilities import PrepareOutputTools
 
         class Out(BaseModel):
@@ -5912,7 +5908,7 @@ class TestPrepareOutputToolsCapability:
             return None
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response(f'output_tools: {len(info.output_tools)}')
+            return make_text_response('unreachable')  # pragma: no cover
 
         agent = Agent(
             FunctionModel(model_fn),
@@ -5920,9 +5916,8 @@ class TestPrepareOutputToolsCapability:
             capabilities=[PrepareOutputTools(disable_all)],
         )
 
-        with pytest.warns(PydanticAIDeprecationWarning, match='returning `None` from a prepare callback is deprecated'):
-            result = await agent.run('hello')
-        assert result.output == 'output_tools: 0'
+        with pytest.raises(TypeError, match=r'prepare callback .* returned `None`'):
+            await agent.run('hello')
 
     async def test_only_sees_output_tools(self):
         """`PrepareOutputTools` only receives output tools — function tools route to `PrepareTools`."""

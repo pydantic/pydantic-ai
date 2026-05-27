@@ -4,8 +4,8 @@ import inspect
 from dataclasses import dataclass
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai._warnings import warn_on_prepare_callback_returned_none
 from pydantic_ai.tools import ToolDefinition, ToolsPrepareFunc
+from pydantic_graph.util import get_callable_name
 
 from .abstract import AbstractCapability
 
@@ -90,11 +90,14 @@ async def _call_prepare_func(
     ctx: RunContext[AgentDepsT],
     tool_defs: list[ToolDefinition],
 ) -> list[ToolDefinition]:
-    # Just sync/async + `None` normalization — `PreparedToolset.get_tools` validates that
-    # the result didn't add or rename tools when these capabilities' hooks dispatch through it.
+    # `PreparedToolset.get_tools` validates that the result didn't add or rename tools
+    # when these capabilities' hooks dispatch through it.
     result = prepare_func(ctx, tool_defs)
     if inspect.isawaitable(result):
         result = await result
     if result is None:
-        warn_on_prepare_callback_returned_none(prepare_func)
-    return list(result or [])
+        raise TypeError(
+            f'prepare callback {get_callable_name(prepare_func)!r} returned `None`; '
+            'return `[]` to hide all tool definitions explicitly, or `tool_defs` to pass them through unchanged.'
+        )
+    return list(result)

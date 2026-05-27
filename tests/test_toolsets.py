@@ -32,7 +32,6 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     InstructionPart,
@@ -361,8 +360,8 @@ async def test_prepared_toolset_user_error_change_tool_names():
         await ToolManager(prepared_toolset).for_run_step(context)
 
 
-async def test_prepared_toolset_warns_on_none_return():
-    """Direct PreparedToolset usage emits a `PydanticAIDeprecationWarning` when the callback returns None.
+async def test_prepared_toolset_raises_on_none_return():
+    """Direct PreparedToolset usage raises when the callback returns None.
 
     Mirrors the same `None`-return guard at the capability layer (`_call_prepare_func`);
     this covers the direct/`toolset.prepared()` path where the result reaches
@@ -381,9 +380,8 @@ async def test_prepared_toolset_warns_on_none_return():
 
     prepared_toolset = PreparedToolset(base_toolset, returns_none)
 
-    with pytest.warns(PydanticAIDeprecationWarning, match='returning `None` from a prepare callback is deprecated'):
-        result = await prepared_toolset.get_tools(context)
-    assert result == {}
+    with pytest.raises(TypeError, match=r'prepare callback .* returned `None`'):
+        await prepared_toolset.get_tools(context)
 
 
 async def test_comprehensive_toolset_composition():
