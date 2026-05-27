@@ -4143,13 +4143,16 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
 
 @pytest.mark.parametrize('debounce_by', [None, 0.1])
 async def test_run_stream_records_partial_response_after_early_break(debounce_by: float | None):
-    """Exiting `run_stream`'s context without draining the stream records the partial response.
+    """Exiting `run_stream`'s context after an early break records the partial response.
 
-    Without this, the model response would be missing from `all_messages()` entirely. The
-    cancel path (matching `StreamedRunResult.cancel()`) is preferred over force-draining so
-    side-effecting tool calls and provider-side token generation don't fire on a user-driven
-    early break — and so the response state stays out of `'complete'`, mirroring the contract
-    `node.stream()` already honors.
+    Without this, the model response would be missing from `all_messages()` entirely.
+    The cancel path is preferred over force-draining so side-effecting tool calls and
+    provider-side token generation don't fire on a user-driven early break, and the
+    response state stays `'interrupted'` rather than `'complete'`.
+
+    Note: `is_complete` flips on `__aexit__`, not at the `break` site itself —
+    Python's `async for ... break` doesn't fire the generator's `finally` synchronously.
+    See #5615.
     """
 
     async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
@@ -4158,8 +4161,8 @@ async def test_run_stream_records_partial_response_after_early_break(debounce_by
     agent = Agent(FunctionModel(stream_function=sf), output_type=str)
 
     async with agent.run_stream('test') as result:
-        await anext(result.stream_output(debounce_by=debounce_by))
-        assert not result.is_complete
+        async for _ in result.stream_output(debounce_by=debounce_by):  # pragma: no branch
+            break
 
     assert result.is_complete
     assert result.response.state == 'interrupted'
@@ -4201,7 +4204,8 @@ async def test_run_stream_records_partial_response_on_exception_in_body():
     with pytest.raises(RuntimeError, match='boom'):
         async with agent.run_stream('test') as result:
             captured.append(result)
-            await anext(result.stream_output(debounce_by=None))
+            async for _ in result.stream_output(debounce_by=None):  # pragma: no branch
+                break
             raise RuntimeError('boom')
 
     (result,) = captured
@@ -4247,7 +4251,8 @@ async def test_run_stream_early_break_when_provider_lacks_cancel_support(monkeyp
     agent = Agent(FunctionModel(stream_function=sf), output_type=str)
 
     async with agent.run_stream('test') as result:
-        await anext(result.stream_output(debounce_by=None))
+        async for _ in result.stream_output(debounce_by=None):  # pragma: no branch
+            break
 
     assert result.is_complete
     assert result.response.state == 'interrupted'
@@ -4292,7 +4297,8 @@ async def test_run_stream_early_break_swallows_transport_cancel_error(monkeypatc
     agent = Agent(FunctionModel(stream_function=sf), output_type=str)
 
     async with agent.run_stream('test') as result:
-        await anext(result.stream_output(debounce_by=None))
+        async for _ in result.stream_output(debounce_by=None):  # pragma: no branch
+            break
 
     assert result.is_complete
     assert result.response.state == 'interrupted'

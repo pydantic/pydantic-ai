@@ -770,6 +770,33 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     self.is_complete = True
                     self._record_response(self.response)
 
+    async def _cancel_on_early_break(self) -> None:
+        """Best-effort cancel called from `run_stream`'s `__aexit__`.
+
+        Swallows the documented cancel-side surface — `NotImplementedError` from
+        providers without `close_stream()` plus the per-provider transport errors
+        from `get_stream_cancel_errors()` — so teardown failures don't surface
+        from a clean `__aexit__`. The partial response is still recorded by
+        `cancel()`'s own finally.
+
+        Note: this only flips `is_complete` when the surrounding context exits;
+        `is_complete` does not change synchronously when the user `break`s out of
+        a `stream_*` method, because Python defers async-generator `aclose()`
+        until GC or event-loop cleanup. Making `break` flip the flag would need
+        either user-side `contextlib.aclosing()` wrapping or an API change where
+        `stream_*` returns an async-context-manager iterator. Tracked in #5615.
+        """
+        if self.is_complete or self._stream_response is None:
+            return
+        cancel_errors = (
+            NotImplementedError,
+            *self._stream_response._raw_stream_response.get_stream_cancel_errors(),  # pyright: ignore[reportPrivateUsage]
+        )
+        try:
+            await self.cancel()
+        except cancel_errors:
+            pass
+
     @property
     def cancelled(self) -> bool:
         """Whether the stream has been cancelled via `cancel()`."""
