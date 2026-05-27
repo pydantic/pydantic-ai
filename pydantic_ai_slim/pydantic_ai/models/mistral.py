@@ -841,13 +841,18 @@ SIMPLE_JSON_TYPE_MAPPING = {
 
 def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> RequestUsage:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
-    if response.usage:
-        return RequestUsage(
-            input_tokens=response.usage.prompt_tokens or 0,
-            output_tokens=response.usage.completion_tokens or 0,
-        )
-    else:
+    if response.usage is None:
         return RequestUsage()
+    usage_data = response.usage.model_dump(exclude_none=True)
+    known_keys = {'prompt_tokens', 'completion_tokens', 'total_tokens'}
+    details: dict[str, int] | None = {
+        k: v for k, v in usage_data.items() if k not in known_keys and isinstance(v, int)
+    } or None
+    return RequestUsage(
+        input_tokens=usage_data.get('prompt_tokens', 0),
+        output_tokens=usage_data.get('completion_tokens', 0),
+        details=details,
+    )
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str | None, list[str]]:
