@@ -85,6 +85,8 @@ except ImportError as e:
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
+TEXT_CONTENT_METADATA_KEY = 'pydantic_ai_text_content_metadata'
+
 if TYPE_CHECKING:
     from ag_ui.core import (
         AudioInputContent,
@@ -179,6 +181,8 @@ def _user_content_to_input(
     if isinstance(item, str):
         return TextInputContent(type='text', text=item)
     elif isinstance(item, TextContent):
+        if item.metadata is not None:
+            return TextInputContent(type='text', text=item.content, **{TEXT_CONTENT_METADATA_KEY: item.metadata})
         return TextInputContent(type='text', text=item.content)
     elif isinstance(item, (ImageUrl, VideoUrl, AudioUrl, DocumentUrl)):
         if use_multimodal:
@@ -317,7 +321,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         for part in content:
                             match part:
                                 case TextInputContent(text=text):
-                                    user_prompt_content.append(text)
+                                    if TEXT_CONTENT_METADATA_KEY in (part.model_extra or {}):
+                                        user_prompt_content.append(
+                                            TextContent(
+                                                content=text,
+                                                metadata=(part.model_extra or {})[TEXT_CONTENT_METADATA_KEY],
+                                            )
+                                        )
+                                    else:
+                                        user_prompt_content.append(text)
                                 case BinaryInputContent():
                                     if part.url:
                                         try:
@@ -569,7 +581,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
         if user_content:
             # Simplify to plain string if only single text item
-            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+            if (
+                len(user_content) == 1
+                and isinstance(user_content[0], TextInputContent)
+                and TEXT_CONTENT_METADATA_KEY not in (user_content[0].model_extra or {})
+            ):
                 messages.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
             else:
                 messages.append(UserMessage(id=_new_message_id(), content=user_content))
