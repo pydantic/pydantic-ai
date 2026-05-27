@@ -63,6 +63,7 @@ dependencies = [
     "duckdb>=1.4.2",
     "datasets>=4.0.0",
     "pandas>=2.3.3",
+    "numpy>=2.3.0; python_version >= '3.14'",
 ]
 
 [tool.hatch.build.targets.wheel]
