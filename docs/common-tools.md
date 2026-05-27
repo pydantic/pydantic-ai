@@ -277,7 +277,7 @@ Tool factory parameters are developer-controlled when passed at construction tim
 Parameters left unset remain available for the LLM to set per call. For example, this locks the result count and country
 while leaving the query and freshness filter available:
 
-```py {title="brave_web_search.py" test="skip"}
+```py {title="brave_web_search.py" test="skip" lint="skip"}
 from pydantic_ai.common_tools.brave import brave_web_search_tool
 
 tool = brave_web_search_tool(
