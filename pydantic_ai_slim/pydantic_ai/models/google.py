@@ -270,6 +270,14 @@ class GoogleModelSettings(ModelSettings, total=False):
     google_cached_content: str
     """The name of the cached content to use for the model.
 
+    When set, `system_instruction`, `tools`, and `tool_config` are omitted from
+    the outgoing request — the cached content resource owns those fields, and
+    both the Gemini API and Vertex AI reject requests that supply them
+    alongside `cached_content` (`400 INVALID_ARGUMENT`: "Tool config, tools and
+    system instruction should not be set in the request when using cached
+    content."). Any tools registered on the agent and any system prompt are
+    therefore silently ignored on requests that go through the cache.
+
     See <https://ai.google.dev/gemini-api/docs/caching> for more information.
     """
 
@@ -884,9 +892,15 @@ class GoogleModel(Model[Client]):
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
+        # Vertex AI and the Gemini API reject requests that combine
+        # `cached_content` with `system_instruction`, `tools`, or `tool_config`
+        # (`400 INVALID_ARGUMENT`). The cache resource itself owns those
+        # fields, so we pass `None` for them when caching is requested.
+        cached_content = model_settings.get('google_cached_content')
+
         config = GenerateContentConfigDict(
             http_options=http_options,
-            system_instruction=system_instruction,
+            system_instruction=None if cached_content else system_instruction,
             temperature=model_settings.get('temperature'),
             top_p=model_settings.get('top_p'),
             top_k=model_settings.get('top_k'),
@@ -899,9 +913,9 @@ class GoogleModel(Model[Client]):
             thinking_config=self._translate_thinking(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
-            cached_content=model_settings.get('google_cached_content'),
-            tools=cast(ToolListUnionDict, tools),
-            tool_config=tool_config,
+            cached_content=cached_content,
+            tools=None if cached_content else cast(ToolListUnionDict, tools),
+            tool_config=None if cached_content else tool_config,
             response_mime_type=response_mime_type,
             response_json_schema=response_schema,
             response_modalities=modalities,

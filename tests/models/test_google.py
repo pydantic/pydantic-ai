@@ -6589,3 +6589,102 @@ async def test_google_top_k_propagation(
     assert mock_generate.call_count == 1
     _, kwargs = mock_generate.call_args
     assert kwargs['config']['top_k'] == 40
+
+
+async def test_google_model_cached_content_omits_system_tools_and_tool_config(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """When `google_cached_content` is set, the request must omit
+    `system_instruction`, `tools`, and `tool_config` — the cache resource
+    owns those fields. See issue #5671.
+    """
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+
+    response = GenerateContentResponse(
+        candidates=[Candidate(content=Content(parts=[Part(text='Paris')], role='model'))],
+        response_id='cached-1',
+        model_version='gemini-2.5-pro',
+    )
+    mock_generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    cache_name = 'projects/p/locations/global/cachedContents/test-cache'
+    settings = GoogleModelSettings(google_cached_content=cache_name)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    await agent.run('say hi')
+
+    assert mock_generate.call_count == 1
+    _, kwargs = mock_generate.call_args
+    config = kwargs['config']
+    assert config['cached_content'] == cache_name
+    # The three cache-owned fields must be absent (or unset) on the request.
+    assert not config.get('system_instruction')
+    assert not config.get('tools')
+    assert not config.get('tool_config')
+
+
+async def test_google_model_cached_content_unset_keeps_system_tools_and_tool_config(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Regression guard: without `google_cached_content`, the request still
+    carries `system_instruction`, `tools`, and `tool_config` exactly as before.
+    """
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+
+    response = GenerateContentResponse(
+        candidates=[Candidate(content=Content(parts=[Part(text='Paris')], role='model'))],
+        response_id='no-cache-1',
+        model_version='gemini-2.5-pro',
+    )
+    mock_generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model, instructions='You are a helpful chatbot.')
+
+    @agent.tool_plain
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    await agent.run('say hi')
+
+    assert mock_generate.call_count == 1
+    _, kwargs = mock_generate.call_args
+    config = kwargs['config']
+    assert 'cached_content' in config
+    assert not config['cached_content']
+    assert config['system_instruction']
+    assert config['tools']
+    assert config['tool_config'] is not None
+
+
+async def test_google_model_cached_content_with_user_message_only(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Trivial path: no instructions, no tools, just `google_cached_content`.
+    The config should still omit `system_instruction`/`tools`/`tool_config`.
+    """
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+
+    response = GenerateContentResponse(
+        candidates=[Candidate(content=Content(parts=[Part(text='Paris')], role='model'))],
+        response_id='cached-trivial',
+        model_version='gemini-2.5-pro',
+    )
+    mock_generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    cache_name = 'projects/p/locations/global/cachedContents/trivial-cache'
+    settings = GoogleModelSettings(google_cached_content=cache_name)
+    agent = Agent(model=model, model_settings=settings)
+
+    await agent.run('say hi')
+
+    assert mock_generate.call_count == 1
+    _, kwargs = mock_generate.call_args
+    config = kwargs['config']
+    assert config['cached_content'] == cache_name
+    assert not config.get('system_instruction')
+    assert not config.get('tools')
+    assert not config.get('tool_config')
