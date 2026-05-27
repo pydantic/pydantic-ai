@@ -464,3 +464,7 @@ async def test_tool_choice_matrix(
 
     if provider == 'bedrock' and scenario == 'list_single':
         assert get_bedrock_tool_names_from_cassette(vcr) == ['get_weather', 'get_time']
+    elif provider == 'bedrock' and scenario == 'none_with_output':
+        # `tool_choice='none'` + output tool with no direct output resolves to ('required', {final_result}),
+        # which now skips the tool_defs filter (cache preservation) — the function tool stays in the wire payload.
+        assert get_bedrock_tool_names_from_cassette(vcr) == ['get_weather', 'final_result']
