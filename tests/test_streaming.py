@@ -13,6 +13,7 @@ from datetime import timezone
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
@@ -4269,6 +4270,32 @@ async def test_run_stream_early_break_when_provider_lacks_cancel_support(monkeyp
             ),
         ]
     )
+
+
+async def test_run_stream_early_break_swallows_transport_cancel_error(monkeypatch: pytest.MonkeyPatch):
+    """Clean early break must not raise when `close_stream()` raises an httpx transport error.
+
+    `StreamedResponse.get_stream_cancel_errors()` declares `(httpx.StreamError, httpx.TransportError)`
+    as the expected cancel-side surface for providers iterating httpx streams (Anthropic, OpenAI,
+    Groq, Mistral, Google GenAI, HuggingFace). The implicit cancel in `run_stream`'s `__aexit__`
+    must suppress those so a clean early break against a real provider doesn't error out.
+    """
+
+    async def raising_close_stream(self: FunctionStreamedResponse) -> None:
+        raise httpx.StreamError('connection closed mid-cancel')
+
+    monkeypatch.setattr(FunctionStreamedResponse, 'close_stream', raising_close_stream)
+
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'Hello'
+
+    agent = Agent(FunctionModel(stream_function=sf), output_type=str)
+
+    async with agent.run_stream('test') as result:
+        await anext(result.stream_output(debounce_by=None))
+
+    assert result.is_complete
+    assert result.response.state == 'interrupted'
 
 
 async def test_args_validator_failure_events():

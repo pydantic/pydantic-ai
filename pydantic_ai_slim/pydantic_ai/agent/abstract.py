@@ -20,6 +20,7 @@ from types import FrameType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
+import httpx
 from pydantic import TypeAdapter
 from typing_extensions import Self, TypedDict, TypeIs, TypeVar, deprecated
 
@@ -874,11 +875,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             finally:
                                 # Best-effort cleanup on context exit: record the partial response
                                 # and tear down the upstream connection without hiding unexpected
-                                # cancel bugs.
+                                # cancel bugs. Exception list mirrors the default
+                                # `StreamedResponse.get_stream_cancel_errors()` plus the
+                                # `NotImplementedError` raised by providers without `close_stream()`.
                                 if not stream_result.is_complete:
                                     try:
                                         await stream_result.cancel()
-                                    except (NotImplementedError, OSError):
+                                    except (NotImplementedError, httpx.StreamError, httpx.TransportError):
                                         pass
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
                             # before_node_run fired above; on_complete() later calls
