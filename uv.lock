@@ -7186,16 +7186,16 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "devtools", specifier = ">=0.12.2" },
-    { name = "duckdb", specifier = ">=1.3.2" },
+    { name = "duckdb", specifier = ">=1.4.2" },
     { name = "fastapi", specifier = ">=0.117.0" },
     { name = "gradio", specifier = ">=6.7.0" },
     { name = "logfire", extras = ["asyncpg", "fastapi", "httpx", "sqlite3"], specifier = ">=3.14.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.25.0,<2.0" },
     { name = "modal", specifier = ">=1.0.4" },
-    { name = "pandas", specifier = ">=2.2.3" },
+    { name = "pandas", specifier = ">=2.3.3" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "groq", "openai", "vertexai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-evals", editable = "pydantic_evals" },
     { name = "python-multipart", specifier = ">=0.0.17" },
