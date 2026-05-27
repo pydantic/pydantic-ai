@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import warnings
+from base64 import b64encode
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -85,9 +86,28 @@ def serialize_any(value: Any) -> str:
         return ANY_ADAPTER.dump_python(value, mode='json')
     except Exception:
         try:
+            return ANY_ADAPTER.dump_python(_json_safe_bytes(value), mode='json')
+        except Exception:
+            pass
+        try:
             return str(value)
         except Exception as e:
             return f'Unable to serialize: {e}'
+
+
+def _json_safe_bytes(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return b64encode(value).decode()
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[Any, Any], value)
+        return {k: _json_safe_bytes(v) for k, v in mapping.items()}
+    if isinstance(value, tuple):
+        tuple_value = cast(tuple[Any, ...], value)
+        return tuple(_json_safe_bytes(v) for v in tuple_value)
+    if isinstance(value, list):
+        list_value = cast(list[Any], value)
+        return [_json_safe_bytes(v) for v in list_value]
+    return value
 
 
 def model_attributes(model: Model) -> dict[str, AttributeValue]:
