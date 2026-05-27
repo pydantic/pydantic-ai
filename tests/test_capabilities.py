@@ -5717,11 +5717,7 @@ class TestPrepareToolsCapability:
         async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            tool_names = [t.name for t in info.function_tools]
-            return make_text_response(f'tools: {sorted(tool_names)}')
-
-        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(invalid)])  # pyright: ignore[reportArgumentType]
+        agent = Agent('test', capabilities=[PrepareTools(invalid)])  # pyright: ignore[reportArgumentType]
 
         @agent.tool_plain
         def my_tool() -> str:
