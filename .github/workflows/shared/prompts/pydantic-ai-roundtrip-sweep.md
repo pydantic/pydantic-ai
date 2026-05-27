@@ -10,16 +10,6 @@ needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI Round-Trip Sweep
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)), a provider-agnostic Python
-GenAI agent framework.
-
 ## Objective
 
 Find one concrete **state-loss bug across a serialize → deserialize
