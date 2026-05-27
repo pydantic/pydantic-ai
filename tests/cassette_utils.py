@@ -36,6 +36,13 @@ def get_first_post_body(cassette: Cassette) -> dict[str, Any]:
     return {}  # pragma: no cover
 
 
+def single_request_body(cassette: Cassette) -> dict[str, Any]:
+    """Return the decoded JSON body of the single recorded VCR request."""
+    requests = cassette.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    assert len(requests) == 1  # pyright: ignore[reportUnknownArgumentType]
+    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+
 # Provider-specific cassette extractors — group new ones under this header so the module
 # doesn't grow into a flat bag of `get_<provider>_*` helpers.
 
