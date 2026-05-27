@@ -65,6 +65,7 @@ dev = [
     'logfire[httpx]>=4.31.0',
     "dirty-equals>=0.9.0",
     "inline-snapshot>=0.32.5",
+    "mutmut>=3.5.0",
 ]
 lint = [
     'ruff>=0.14',
@@ -121,6 +122,9 @@ filterwarnings = [
     'error',
     # DBOS's run_sync triggers this on Python 3.12+ — not our code.
     'ignore:There is no current event loop:DeprecationWarning',
+    # anyio subprocess cleanup can trigger these on some Python versions during GC.
+    'ignore::pytest.PytestUnraisableExceptionWarning',
+    'ignore::ResourceWarning',
 ]
 anyio_mode = 'auto'
 
@@ -140,3 +144,18 @@ exclude_lines = [
     'assert_never',
     'if TYPE_CHECKING:',
 ]
+
+[tool.mutmut]
+paths_to_mutate = [
+    'pydantic_ai_harness/filesystem/_toolset.py',
+    'pydantic_ai_harness/shell/_toolset.py',
+]
+tests_dir = ['tests/filesystem/', 'tests/shell/']
+also_copy = ['pydantic_ai_harness/', 'tests/']
+# Skip trio-parametrized tests during mutation testing — trio segfaults in
+# mutmut's subprocess environment on Python 3.14 (not a code bug).
+pytest_add_cli_args = ['-k', 'not trio']
+# Required on Python 3.14 / macOS — mutmut's subprocess workers segfault
+# without debug mode.
+debug = true
+# See docs/mutation-testing.md for full results (89.7% kill rate, 60 equivalent mutants).
