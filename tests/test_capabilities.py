@@ -3915,150 +3915,104 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     assert ctx.available_tool_names == {'always_tool', 'discovered_tool'}
 
 
-async def test_combined_capability_skips_unloaded_deferred_hook_dispatch() -> None:  # noqa: C901
-    """Unloaded deferred capabilities should be skipped across hook dispatch surfaces."""
+_DEFERRED_HOOK_NAMES = {
+    'prepare_output_tools',
+    'wrap_run_event_stream',
+    'on_model_request_error',
+    'on_tool_validate_error',
+    'on_tool_execute_error',
+    'before_output_validate',
+    'after_output_validate',
+    'wrap_output_validate',
+    'on_output_validate_error',
+    'on_output_process_error',
+    'handle_deferred_tool_calls',
+}
 
-    @dataclass
-    class DeferredCap(AbstractCapability[None]):
-        id: str | None = 'deferred'
-        defer_loading: bool = True
 
-        async def prepare_output_tools(
-            self, ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:
-            raise AssertionError('unloaded capability should be skipped')
+@dataclass
+class _FailIfDispatchedDeferredCap(AbstractCapability[None]):
+    id: str | None = 'deferred'
+    defer_loading: bool = True
 
-        async def wrap_run_event_stream(
-            self, ctx: RunContext[None], *, stream: AsyncIterable[AgentStreamEvent]
-        ) -> AsyncIterable[AgentStreamEvent]:
-            raise AssertionError('unloaded capability should be skipped')
-            if False:  # pragma: no cover
-                yield cast(AgentStreamEvent, None)
+    def __getattribute__(self, name: str) -> Any:
+        if name in _DEFERRED_HOOK_NAMES:
+            raise AssertionError(f'unloaded capability hook should be skipped: {name}')
+        return super().__getattribute__(name)
 
-        async def on_model_request_error(
-            self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
-        ) -> ModelResponse:
-            raise AssertionError('unloaded capability should be skipped')
 
-        async def on_tool_validate_error(
-            self,
-            ctx: RunContext[None],
-            *,
-            call: ToolCallPart,
-            tool_def: ToolDefinition,
-            args: str | dict[str, Any],
-            error: ValidationError | ModelRetry,
-        ) -> dict[str, Any]:
-            raise AssertionError('unloaded capability should be skipped')
+@dataclass
+class _NoopCap(AbstractCapability[None]):
+    pass
 
-        async def on_tool_execute_error(
-            self,
-            ctx: RunContext[None],
-            *,
-            call: ToolCallPart,
-            tool_def: ToolDefinition,
-            args: dict[str, Any],
-            error: Exception,
-        ) -> Any:
-            raise AssertionError('unloaded capability should be skipped')
 
-        async def before_output_validate(
-            self, ctx: RunContext[None], *, output_context: OutputContext, output: str | dict[str, Any]
-        ) -> str | dict[str, Any]:
-            raise AssertionError('unloaded capability should be skipped')
+def _output_context() -> OutputContext:
+    return OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
 
-        async def after_output_validate(
-            self, ctx: RunContext[None], *, output_context: OutputContext, output: Any
-        ) -> Any:
-            raise AssertionError('unloaded capability should be skipped')
 
-        async def wrap_output_validate(
-            self,
-            ctx: RunContext[None],
-            *,
-            output_context: OutputContext,
-            output: str | dict[str, Any],
-            handler: Callable[[str | dict[str, Any]], Awaitable[Any]],
-        ) -> Any:
-            raise AssertionError('unloaded capability should be skipped')
+async def _empty_event_stream() -> AsyncIterator[AgentStreamEvent]:
+    if False:  # pragma: no cover
+        yield cast(AgentStreamEvent, None)
 
-        async def on_output_validate_error(
-            self,
-            ctx: RunContext[None],
-            *,
-            output_context: OutputContext,
-            output: str | dict[str, Any],
-            error: ValidationError | ModelRetry,
-        ) -> Any:
-            raise AssertionError('unloaded capability should be skipped')
 
-        async def on_output_process_error(
-            self, ctx: RunContext[None], *, output_context: OutputContext, output: Any, error: Exception
-        ) -> Any:
-            raise AssertionError('unloaded capability should be skipped')
+async def _validate_output(output: str | dict[str, Any]) -> Any:
+    return output
 
-        async def handle_deferred_tool_calls(
-            self, ctx: RunContext[None], *, requests: DeferredToolRequests
-        ) -> DeferredToolResults | None:
-            raise AssertionError('unloaded capability should be skipped')
 
-    @dataclass
-    class EagerCap(AbstractCapability[None]):
-        pass
-
-    deferred = DeferredCap()
-    eager = EagerCap()
-    forward = CombinedCapability([deferred, eager])
-    reverse = CombinedCapability([eager, deferred])
+async def test_combined_capability_skips_unloaded_deferred_forward_hooks() -> None:
+    """Forward-order hook dispatch skips unloaded deferred capabilities."""
+    combined = CombinedCapability([_FailIfDispatchedDeferredCap(), _NoopCap()])
     ctx = _build_run_context()
+    output_context = _output_context()
+    tool_def = ToolDefinition(name='tool')
+
+    assert await combined.prepare_output_tools(ctx, [tool_def]) == [tool_def]
+    assert await combined.before_output_validate(ctx, output_context=output_context, output='raw') == 'raw'
+    assert (
+        await combined.handle_deferred_tool_calls(
+            ctx, requests=DeferredToolRequests(calls=[ToolCallPart('tool', {}, tool_call_id='deferred-call')])
+        )
+        is None
+    )
+
+
+async def test_combined_capability_skips_unloaded_deferred_reverse_hooks() -> None:
+    """Reverse-order hook dispatch skips unloaded deferred capabilities."""
+    combined = CombinedCapability([_NoopCap(), _FailIfDispatchedDeferredCap()])
+    ctx = _build_run_context()
+    output_context = _output_context()
+    tool_def = ToolDefinition(name='tool')
+    call = ToolCallPart('tool', {}, tool_call_id='tool-call')
     request_context = ModelRequestContext(
         model=TestModel(),
         messages=[],
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
     )
-    output_context = OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
-    tool_def = ToolDefinition(name='tool')
-    call = ToolCallPart('tool', {}, tool_call_id='tool-call')
 
-    async def empty_stream() -> AsyncIterator[AgentStreamEvent]:
-        if False:  # pragma: no cover
-            yield cast(AgentStreamEvent, None)
-
-    async def validate_output(output: str | dict[str, Any]) -> Any:
-        return output
-
-    assert await forward.prepare_output_tools(ctx, [tool_def]) == [tool_def]
-    assert [event async for event in reverse.wrap_run_event_stream(ctx, stream=empty_stream())] == []
-    assert await forward.before_output_validate(ctx, output_context=output_context, output='raw') == 'raw'
-    assert await reverse.after_output_validate(ctx, output_context=output_context, output='parsed') == 'parsed'
+    assert [event async for event in combined.wrap_run_event_stream(ctx, stream=_empty_event_stream())] == []
+    assert await combined.after_output_validate(ctx, output_context=output_context, output='parsed') == 'parsed'
     assert (
-        await reverse.wrap_output_validate(ctx, output_context=output_context, output='raw', handler=validate_output)
+        await combined.wrap_output_validate(ctx, output_context=output_context, output='raw', handler=_validate_output)
         == 'raw'
-    )
-    assert (
-        await forward.handle_deferred_tool_calls(
-            ctx, requests=DeferredToolRequests(calls=[ToolCallPart('tool', {}, tool_call_id='deferred-call')])
-        )
-        is None
     )
 
     with pytest.raises(RuntimeError, match='model'):
-        await reverse.on_model_request_error(ctx, request_context=request_context, error=RuntimeError('model'))
+        await combined.on_model_request_error(ctx, request_context=request_context, error=RuntimeError('model'))
     with pytest.raises(ModelRetry, match='tool validate'):
-        await reverse.on_tool_validate_error(
+        await combined.on_tool_validate_error(
             ctx, call=call, tool_def=tool_def, args={}, error=ModelRetry('tool validate')
         )
     with pytest.raises(RuntimeError, match='tool execute'):
-        await reverse.on_tool_execute_error(
+        await combined.on_tool_execute_error(
             ctx, call=call, tool_def=tool_def, args={}, error=RuntimeError('tool execute')
         )
     with pytest.raises(ModelRetry, match='output validate'):
-        await reverse.on_output_validate_error(
+        await combined.on_output_validate_error(
             ctx, output_context=output_context, output='raw', error=ModelRetry('output validate')
         )
     with pytest.raises(RuntimeError, match='output process'):
-        await reverse.on_output_process_error(
+        await combined.on_output_process_error(
             ctx, output_context=output_context, output='parsed', error=RuntimeError('output process')
         )
 
