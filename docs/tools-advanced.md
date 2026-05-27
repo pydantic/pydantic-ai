@@ -255,9 +255,6 @@ In addition to per-tool `prepare` methods, you can also define an agent-wide `pr
 
 The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns the tool definitions to expose for that step. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools.
 
-!!! warning
-    Returning `None` from the callback disables **all** tools for that step and emits a `PydanticAIDeprecationWarning`; it is not a "pass through unchanged" shortcut. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools intentionally.
-
 !!! note
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
 To modify output tools, you can set a `prepare_output_tools` function instead.
