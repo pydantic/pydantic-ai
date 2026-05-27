@@ -102,6 +102,7 @@ with try_import() as imports_successful:
         LogprobsResultTopCandidates,
         MediaModality,
         ModalityTokenCount,
+        ModelArmorConfigDict,
         Part,
         SafetyRating,
     )
@@ -6591,14 +6592,15 @@ async def test_google_top_k_propagation(
     assert kwargs['config']['top_k'] == 40
 
 
+_MODEL_ARMOR_CONFIG: ModelArmorConfigDict = {
+    'prompt_template_name': 'projects/pydantic-ai/locations/europe-west4/templates/prompt-template',
+    'response_template_name': 'projects/pydantic-ai/locations/europe-west4/templates/response-template',
+}
+
+
 @pytest.fixture()
 def model_armor_settings() -> GoogleModelSettings:
-    return GoogleModelSettings(
-        google_model_armor_config={
-            'prompt_template_name': 'projects/pydantic-ai/locations/europe-west4/templates/prompt-template',
-            'response_template_name': 'projects/pydantic-ai/locations/europe-west4/templates/response-template',
-        }
-    )
+    return GoogleModelSettings(google_model_armor_config=_MODEL_ARMOR_CONFIG)
 
 
 @pytest.mark.vcr()
@@ -6656,10 +6658,7 @@ async def test_google_model_armor_response_template_text_gets_blocked(
 
     assert 'SPII' in str(exc_info.value)
     _, kwargs = mock_generate.call_args
-    assert kwargs.get('config')['model_armor_config'] == {
-        'prompt_template_name': 'projects/pydantic-ai/locations/europe-west4/templates/prompt-template',
-        'response_template_name': 'projects/pydantic-ai/locations/europe-west4/templates/response-template',
-    }
+    assert kwargs.get('config')['model_armor_config'] == _MODEL_ARMOR_CONFIG
 
 
 def test_google_model_armor_config_raises_user_error_for_gemini_api(

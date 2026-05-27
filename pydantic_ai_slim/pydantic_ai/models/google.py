@@ -848,12 +848,12 @@ class GoogleModel(Model[Client]):
     def _get_model_armor_config(self, model_settings: GoogleModelSettings) -> ModelArmorConfigDict | None:
         """Return model_armor_config, raising UserError if used with a non-Cloud provider."""
         model_armor_config = model_settings.get('google_model_armor_config')
-        if model_armor_config and self.system not in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if model_armor_config is not None and self.system not in _GOOGLE_CLOUD_PROVIDER_NAMES:
             raise UserError(
                 'google_model_armor_config is only supported with GoogleCloudProvider (Google Cloud / Vertex AI). '
                 'Model Armor is not available in the Gemini API.'
             )
-        return model_armor_config
+        return model_armor_config or None
 
     async def _build_content_and_config(
         self,
