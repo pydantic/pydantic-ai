@@ -5542,7 +5542,7 @@ requires-dist = [
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
-    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.12.0" },
+    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.12.2" },
 ]
 provides-extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai"]
 
