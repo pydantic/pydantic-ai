@@ -3936,7 +3936,7 @@ class _FailIfDispatchedDeferredCap(AbstractCapability[None]):
     defer_loading: bool = True
 
     def __getattribute__(self, name: str) -> Any:
-        if name in _DEFERRED_HOOK_NAMES:
+        if name in _DEFERRED_HOOK_NAMES:  # pragma: no cover
             raise AssertionError(f'unloaded capability hook should be skipped: {name}')
         return super().__getattribute__(name)
 
