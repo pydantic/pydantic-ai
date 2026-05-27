@@ -836,6 +836,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                     tool_choice = {'auto': {}}
             else:
+                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
         else:

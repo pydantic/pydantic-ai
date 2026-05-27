@@ -1,14 +1,12 @@
 from __future__ import annotations as _annotations
 
-import json
 import os
 from datetime import date, datetime, timezone
 from itertools import count
 from types import SimpleNamespace
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, cast
 
 import pytest
-from pydantic import TypeAdapter
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 from vcr.cassette import Cassette
@@ -65,6 +63,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import get_bedrock_tool_config_from_cassette, get_bedrock_tool_names_from_cassette
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -127,16 +126,6 @@ class _StubBedrockProvider(Provider[Any]):
     @staticmethod
     def model_profile(model_name: str):
         return DEFAULT_PROFILE
-
-
-@runtime_checkable
-class _VcrRequest(Protocol):
-    body: bytes | str
-
-
-_OBJECT_DICT_ADAPTER = TypeAdapter(dict[str, object])
-_OBJECT_DICT_LIST_ADAPTER = TypeAdapter(list[dict[str, object]])
-_OBJECT_LIST_ADAPTER = TypeAdapter(list[object])
 
 
 async def test_bedrock_client_property_delegates_to_provider(bedrock_provider: BedrockProvider):
@@ -2924,37 +2913,6 @@ async def test_bedrock_cache_tool_definitions(allow_model_requests: None, bedroc
     assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default'}}
 
 
-def _bedrock_request_bodies(vcr: Cassette) -> list[dict[str, object]]:
-    bodies: list[dict[str, object]] = []
-    requests = _OBJECT_LIST_ADAPTER.validate_python(vcr.requests)  # pyright: ignore[reportUnknownMemberType]
-    for request in requests:
-        if not isinstance(request, _VcrRequest):
-            continue
-        try:
-            body = _OBJECT_DICT_ADAPTER.validate_python(json.loads(request.body))
-        except json.JSONDecodeError:
-            continue
-        bodies.append(body)
-    return bodies
-
-
-def _bedrock_tool_config(body: dict[str, object]) -> dict[str, object]:
-    return _OBJECT_DICT_ADAPTER.validate_python(body.get('toolConfig'))
-
-
-def _bedrock_tool_names(tool_config: dict[str, object]) -> list[str]:
-    tools = _OBJECT_DICT_LIST_ADAPTER.validate_python(tool_config.get('tools'))
-
-    names: list[str] = []
-    for tool in tools:
-        if tool_spec := tool.get('toolSpec'):
-            tool_spec = _OBJECT_DICT_ADAPTER.validate_python(tool_spec)
-            name = tool_spec.get('name')
-            assert isinstance(name, str)
-            names.append(name)
-    return names
-
-
 @pytest.mark.parametrize(
     'model_name,cache_tool_definitions',
     [
@@ -2997,30 +2955,26 @@ async def test_bedrock_single_tool_choice_preserves_cache(
         return BedrockModelSettings(tool_choice=['catalog_lookup'])
 
     @agent.tool_plain
-    def catalog_lookup() -> str:  # pragma: no cover - exercised via agent call
+    def catalog_lookup() -> str:  # pragma: no cover
         return '21'
 
     @agent.tool_plain
-    def diagnostics() -> str:  # pragma: no cover - exposed to validate the full tool array
+    def diagnostics() -> str:  # pragma: no cover
         return 'diagnostics-ok'
 
     prompt = 'Call `catalog_lookup`, then answer with only its return value.'
     first = await agent.run(prompt, model_settings=force_catalog_lookup_before_result)
     assert '21' in first.output
-    assert first.usage.cache_write_tokens > 0 or first.usage.cache_read_tokens > 0
+    assert first.usage.cache_write_tokens + first.usage.cache_read_tokens > 0
 
     second = await agent.run(prompt, model_settings=force_catalog_lookup_before_result)
     assert '21' in second.output
     assert second.usage.cache_read_tokens > 0
 
-    first_request = _bedrock_request_bodies(vcr)[0]
-    tool_config = _bedrock_tool_config(first_request)
-    assert tool_config.get('toolChoice') == {'tool': {'name': 'catalog_lookup'}}
-    assert _bedrock_tool_names(tool_config) == ['catalog_lookup', 'diagnostics']
-
-    tools = tool_config.get('tools')
-    tools = _OBJECT_DICT_LIST_ADAPTER.validate_python(tools)
-    assert any(isinstance(tool, dict) and 'cachePoint' in tool for tool in tools) is cache_tool_definitions
+    tool_config = get_bedrock_tool_config_from_cassette(vcr)
+    assert tool_config['toolChoice'] == {'tool': {'name': 'catalog_lookup'}}
+    assert get_bedrock_tool_names_from_cassette(vcr) == ['catalog_lookup', 'diagnostics']
+    assert any('cachePoint' in tool for tool in tool_config['tools']) is cache_tool_definitions
 
 
 async def test_bedrock_cache_instructions(allow_model_requests: None, bedrock_provider: BedrockProvider):

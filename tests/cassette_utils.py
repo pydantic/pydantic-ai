@@ -16,6 +16,25 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
 
+def get_bedrock_tool_config_from_cassette(cassette: Cassette) -> dict[str, Any]:
+    """Return the `toolConfig` from the first POST request body in a Bedrock VCR cassette."""
+    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if request.method != 'POST':  # pyright: ignore[reportUnknownMemberType]
+            continue
+        body = request.body  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        if not body:
+            continue  # pragma: no cover
+        parsed: dict[str, Any] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
+        return parsed.get('toolConfig', {})
+    return {}  # pragma: no cover
+
+
+def get_bedrock_tool_names_from_cassette(cassette: Cassette) -> list[str]:
+    """Extract Bedrock tool definition names from the first recorded POST request body."""
+    tools: list[dict[str, Any]] = get_bedrock_tool_config_from_cassette(cassette).get('tools', [])
+    return [tool['toolSpec']['name'] for tool in tools if 'toolSpec' in tool]
+
+
 def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
     """Get all request bodies from a VCR cassette as strings."""
     bodies: list[str] = []

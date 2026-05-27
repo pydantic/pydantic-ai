@@ -24,6 +24,7 @@ from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 
+from ..cassette_utils import get_bedrock_tool_names_from_cassette
 from ..conftest import try_import
 
 with try_import() as openai_available:
@@ -257,33 +258,6 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str, xai_provider: An
         return None
     else:
         return body.get('tool_choice')
-
-
-def get_bedrock_tool_names_from_cassette(cassette: Any) -> list[str]:
-    """Extract Bedrock tool definition names from the first recorded request body."""
-    if not cassette.requests:
-        return []  # pragma: no cover
-
-    request = None
-    for req in cassette.requests:
-        if req.method == 'POST':
-            request = req
-            break
-    if request is None:  # pragma: no cover
-        return []
-
-    body_bytes = request.body
-    if body_bytes is None:
-        return []  # pragma: no cover
-
-    try:
-        body: dict[str, Any] = json.loads(body_bytes) if isinstance(body_bytes, (str, bytes)) else body_bytes
-    except (json.JSONDecodeError, TypeError):  # pragma: no cover
-        return []
-
-    tool_config: dict[str, Any] = body.get('toolConfig', {})
-    tools: list[dict[str, Any]] = tool_config.get('tools', [])
-    return [tool['toolSpec']['name'] for tool in tools if 'toolSpec' in tool]
 
 
 def _get_xai_tool_choice(xai_provider: Any) -> Any:
