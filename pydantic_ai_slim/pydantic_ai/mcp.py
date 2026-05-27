@@ -127,6 +127,7 @@ __all__ = (
     'ServerCapabilities',
     'ProcessToolCallback',
     'CallToolFunc',
+    'MCPHTTPClientFactory',
     'ToolResult',
     'Prompt',
     'PromptArgument',
@@ -1797,14 +1798,7 @@ class MCPServerSSE(_MCPServerHTTP):
             raise ValueError('`http_client` is mutually exclusive with `headers`.')
 
         if self.http_client is not None:
-
-            def httpx_client_factory(
-                headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> httpx.AsyncClient:
-                assert self.http_client is not None
-                return self.http_client
+            httpx_client_factory = _make_httpx_client_factory(self.http_client)
 
             async with sse_client(
                 url=self.url,
@@ -1946,6 +1940,24 @@ class CallToolFunc(Protocol):
         *,
         metadata: dict[str, Any] | None = None,
     ) -> ToolResult: ...
+
+
+class MCPHTTPClientFactory(Protocol):
+    """Factory returning the `httpx.AsyncClient` an MCP HTTP transport should use.
+
+    FastMCP's HTTP transports call this with `follow_redirects` and may pass further
+    kwargs in future versions, so the contract names the known arguments and keeps a
+    `**kwargs` catch-all for forward compatibility.
+    """
+
+    def __call__(
+        self,
+        headers: dict[str, str] | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth: httpx.Auth | None = None,
+        follow_redirects: bool = True,
+        **kwargs: object,
+    ) -> httpx.AsyncClient: ...
 
 
 ProcessToolCallback = Callable[
@@ -2764,13 +2776,15 @@ def _build_transport(
 
 def _make_httpx_client_factory(
     http_client: httpx.AsyncClient,
-) -> Callable[..., httpx.AsyncClient]:
+) -> MCPHTTPClientFactory:
     """Return an `httpx_client_factory` that always returns the user-supplied `http_client`."""
 
     def factory(
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
+        follow_redirects: bool = True,
+        **_kwargs: object,
     ) -> httpx.AsyncClient:
         return http_client
 
