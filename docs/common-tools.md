@@ -209,6 +209,84 @@ Here are some recent papers about transformer architectures from arxiv.org:
 """
 ```
 
+## Brave Search Tools
+
+!!! info
+    Brave Search API access requires a Brave Search API key. Different endpoints may require different Brave API plans.
+
+The Brave search tools provide access to Brave's Search APIs from Pydantic AI agents. They use the existing `httpx`
+dependency and cover web, news, images, videos, LLM context, place search, local POIs, local descriptions, and rich
+search callbacks.
+
+### Usage
+
+Here's an example of how you can use the Brave LLM context tool with an agent:
+
+```py {title="brave_llm_context.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.brave import brave_llm_context_tool
+
+api_key = os.getenv('BRAVE_SEARCH_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[brave_llm_context_tool(api_key, maximum_number_of_tokens=4096)],
+    instructions='Use Brave LLM context to ground answers with current web sources.',
+)
+
+result = agent.run_sync('What changed recently in Python packaging?')
+print(result.output)
+```
+
+For multiple Brave tools, use [`BraveSearchToolset`][pydantic_ai.common_tools.brave.BraveSearchToolset] to share one
+HTTP client:
+
+```py {title="brave_toolset.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.brave import BraveSearchToolset
+
+api_key = os.getenv('BRAVE_SEARCH_API_KEY')
+assert api_key is not None
+
+toolset = BraveSearchToolset(
+    api_key,
+    include_web_search=True,
+    include_news_search=True,
+    include_image_search=False,
+    include_video_search=False,
+    include_llm_context=True,
+    include_place_search=False,
+    include_local_pois=False,
+    include_local_descriptions=False,
+    include_rich_search=False,
+)
+
+agent = Agent(
+    'openai:gpt-5.2',
+    toolsets=[toolset],
+    instructions='Search Brave when current web information is needed.',
+)
+```
+
+Tool factory parameters are developer-controlled when passed at construction time and hidden from the LLM tool schema.
+Parameters left unset remain available for the LLM to set per call. For example, this locks the result count and country
+while leaving the query and freshness filter available:
+
+```py {title="brave_web_search.py" test="skip"}
+from pydantic_ai.common_tools.brave import brave_web_search_tool
+
+tool = brave_web_search_tool(
+    api_key,
+    count=5,
+    country='US',
+)
+```
+
 ## Exa Search Tool
 
 !!! info
