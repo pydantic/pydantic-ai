@@ -16,21 +16,33 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
 
-# Provider-specific cassette extractors — group new ones under this header so the module
-# doesn't grow into a flat bag of `get_<provider>_*` helpers.
+def get_first_post_body(cassette: Cassette) -> dict[str, Any]:
+    """Return the first POST request body in a VCR cassette, parsed as JSON.
 
-
-def get_bedrock_tool_config_from_cassette(cassette: Cassette) -> dict[str, Any]:
-    """Return the `toolConfig` from the first POST request body in a Bedrock VCR cassette."""
+    Some VCR serializers (e.g. the project's custom JSON body serializer used for
+    huggingface cassettes) deserialize `request.body` to a dict ahead of time;
+    others leave it as raw bytes/str. Handle both shapes.
+    """
     for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
         if request.method != 'POST':  # pyright: ignore[reportUnknownMemberType]
             continue
         body = request.body  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
         if not body:
             continue  # pragma: no cover
+        if isinstance(body, dict):
+            return body  # pyright: ignore[reportUnknownVariableType]
         parsed: dict[str, Any] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
-        return parsed.get('toolConfig', {})
+        return parsed
     return {}  # pragma: no cover
+
+
+# Provider-specific cassette extractors — group new ones under this header so the module
+# doesn't grow into a flat bag of `get_<provider>_*` helpers.
+
+
+def get_bedrock_tool_config_from_cassette(cassette: Cassette) -> dict[str, Any]:
+    """Return the `toolConfig` from the first POST request body in a Bedrock VCR cassette."""
+    return get_first_post_body(cassette).get('toolConfig', {})
 
 
 def get_bedrock_tool_names_from_cassette(cassette: Cassette) -> list[str]:

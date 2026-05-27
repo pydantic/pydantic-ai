@@ -8,7 +8,6 @@ Tests verify that the correct tool_choice value is sent to each provider's API.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -24,7 +23,7 @@ from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 
-from ..cassette_utils import get_bedrock_tool_names_from_cassette
+from ..cassette_utils import get_bedrock_tool_names_from_cassette, get_first_post_body
 from ..conftest import try_import
 
 with try_import() as openai_available:
@@ -217,25 +216,9 @@ def get_tool_choice_from_cassette(cassette: Any, provider: str, xai_provider: An
     if provider == 'xai':
         return _get_xai_tool_choice(xai_provider)
 
-    if not cassette.requests:
+    body = get_first_post_body(cassette)
+    if not body:
         return None  # pragma: no cover
-
-    request = None
-    for req in cassette.requests:
-        if req.method == 'POST':
-            request = req
-            break
-    if request is None:  # pragma: no cover
-        return None
-
-    body_bytes = request.body
-    if body_bytes is None:
-        return None  # pragma: no cover
-
-    try:
-        body: dict[str, Any] = json.loads(body_bytes) if isinstance(body_bytes, (str, bytes)) else body_bytes
-    except (json.JSONDecodeError, TypeError):  # pragma: no cover
-        return None
 
     if provider == 'google':
         tool_config: dict[str, Any] = body.get('toolConfig', {})
