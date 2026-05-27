@@ -10,14 +10,7 @@ commit is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI Provider Parity Explore
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)). Model integrations live in
+Model integrations live in
 `pydantic_ai_slim/pydantic_ai/models/` and `…/providers/`.
 
 ## Objective
@@ -57,6 +50,20 @@ Distinguish **silent drops** (input accepted, quietly ignored — a bug) from
   mapping sweep, not here.
 - Speculative "would be nice" features with no user impact.
 - Gaps already tracked by an open issue — **search issues first**.
+
+## Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues using the MCP
+GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[provider-parity-explore]" OR "parity"
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <capability you're auditing>
+```
+
+If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
+
+## Sandbox notes
 
 ## Output — When to Noop
 

@@ -194,8 +194,6 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --group dev
-
       - name: cache HuggingFace models
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
@@ -204,9 +202,11 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: unset UV_FROZEN
+      - run: uv sync --all-extras --resolution lowest-direct
+        env:
+          UV_FROZEN: "0"
 
-      - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run --no-sync coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
@@ -349,7 +349,7 @@ jobs:
           name: site
           path: site
 
-      - uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+      - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         id: deploy
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

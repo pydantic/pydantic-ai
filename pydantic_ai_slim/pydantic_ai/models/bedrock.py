@@ -228,6 +228,8 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'max_tokens': 'length',
     'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
+    'malformed_model_output': 'error',
+    'malformed_tool_use': 'error',
     'tool_use': 'tool_call',
 }
 
@@ -1556,7 +1558,7 @@ def _is_thinking_enabled(
         if (
             (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
             and (thinking := additional_fields.get('thinking'))
-            and thinking.get('type') == 'enabled'
+            and thinking.get('type') in ('enabled', 'adaptive')
         ):
             return True
     return False

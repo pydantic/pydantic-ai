@@ -16,6 +16,13 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
 
+def single_request_body(cassette: Cassette) -> dict[str, Any]:
+    """Return the decoded JSON body of the single recorded VCR request."""
+    requests = cassette.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    assert len(requests) == 1  # pyright: ignore[reportUnknownArgumentType]
+    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+
 def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
     """Get all request bodies from a VCR cassette as strings."""
     bodies: list[str] = []
