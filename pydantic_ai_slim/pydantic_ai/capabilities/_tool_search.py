@@ -46,12 +46,10 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     Tools marked with `defer_loading=True` are hidden from the model until discovered.
     Auto-injected into every agent — zero overhead when no deferred tools exist.
 
-    When the model supports server-executed native tool search, standalone deferred tools
-    are sent with `defer_loading` on the wire and the provider exposes them once they've
-    been discovered. When search runs on our side — because the strategy is local/callable,
-    the model only supports the fallback path, or capability-owned tools need load-state
-    gating — discovery happens through the local `search_tools` callback, optionally routed
-    through a provider's client-executed native surface.
+    When the model supports native tool search (Anthropic BM25/regex, OpenAI Responses),
+    discovery is handled by the provider: the deferred tools are sent with `defer_loading`
+    on the wire and the provider exposes them once they've been discovered. Otherwise,
+    discovery happens locally via a `search_tools` function that the model can call.
 
     On providers that support a native "client-executed" surface (Anthropic, OpenAI),
     the discovery message is delivered append-only — prompt cache is preserved across
@@ -115,9 +113,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     * `None` (default): let Pydantic AI pick the best strategy for the current provider
       — native on supporting models (Anthropic BM25, OpenAI server-executed tool search),
-      local keyword matching elsewhere. If deferred capability-owned tools are in the
-      corpus, native-supporting providers use client-executed local search so unloaded
-      capability tools cannot leak. The choice may change in future versions.
+      local keyword matching elsewhere. The choice may change in future versions.
     * `'keywords'`: always use the local keyword-overlap algorithm. Still prompt-cache
       compatible on providers that expose a "client-executed" native surface (Anthropic,
       OpenAI): the algorithm rides the same `defer_loading` wire as a custom callable,

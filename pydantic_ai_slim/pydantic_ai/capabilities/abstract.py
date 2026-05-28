@@ -151,12 +151,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
     most `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, native tools). For per-run and dynamic capabilities, those
-    contributions are re-collected after
-    [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] resolves the run-local
-    capability instance. [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset]
-    is applied during per-run toolset assembly. Then, on each model request during a run,
-    the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
+    settings, toolsets, native tools). The exception is
+    [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
+    which is called per-run during toolset assembly. Then, on each model request during a
+    run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
     and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
     hooks are called to allow dynamic adjustments.
 
@@ -361,11 +359,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
-
-        `defer_loading=True` does not delay this wrapper. If wrapper behavior should
-        depend on whether its capability has been loaded, check the load state from the
-        [`RunContext`][pydantic_ai.tools.RunContext] passed to the wrapper's toolset
-        methods.
         """
         return None
 

@@ -697,14 +697,14 @@ Available strategy values:
 
 | `strategy` | Algorithm | Behavior |
 |---|---|---|
-| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local keyword matching elsewhere. When the corpus contains deferred capability-owned tools, Pydantic AI promotes native-supporting providers to client-executed local search so capability gating is preserved. |
+| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local keyword matching elsewhere. |
 | `'keywords'` | Local keyword-overlap | The keyword algorithm runs on our side, but the wire shape adapts: client-executed native (Anthropic, OpenAI) where supported so the prompt cache stays warm, regular `search_tools` function tool elsewhere. |
 | `'bm25'` / `'regex'` | Anthropic native | Server-executed by Anthropic. The request fails on other providers (OpenAI, Google, etc.) rather than silently substituting a different algorithm. |
 | Callable `(ctx, queries, tools) -> names` | User-defined | Same execution-mode handling as `'keywords'`: client-executed native on supporting providers, local `search_tools` function tool elsewhere. |
 
-The execution mode (server-executed, client-executed-native, or local fallback) is auto-derived from the chosen algorithm, the current provider, and whether capability-owned tools need gating — users don't pick it directly. Native execution is preferred whenever available because it keeps the model-facing tool list stable across discovery rounds, which preserves Anthropic and OpenAI prompt caching.
+The execution mode (server-executed, client-executed-native, or local fallback) is auto-derived from the chosen algorithm and the current provider — users don't pick it directly. Native execution is preferred whenever available because it keeps the model-facing tool list stable across discovery rounds, which preserves Anthropic and OpenAI prompt caching.
 
-To force the local `keywords` algorithm on a provider that natively supports tool search, override `ModelProfile.supported_builtin_tools` to exclude `ToolSearchTool` — the capability then falls through to the local `search_tools` function tool.
+To force the local `keywords` algorithm on a provider that natively supports tool search, override [`ModelProfile.supported_builtin_tools`][pydantic_ai.profiles.ModelProfile.supported_builtin_tools] to exclude `ToolSearchTool` — the capability then falls through to the local `search_tools` function tool.
 
 !!! note "Cross-provider history replay"
     A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:
@@ -713,7 +713,7 @@ To force the local `keywords` algorithm on a provider that natively supports too
     * Native-shape `tool_search` history rendered onto a non-supporting provider is translated to the local `search_tools` function-tool exchange shape so the model sees the discoveries as a normal function-call exchange.
 
 !!! note "Tool discovery and message history"
-    Discovered tools are tracked in typed tool-search return parts in the [message history](message-history.md). Histories written by earlier versions that stored discovery metadata are still read for compatibility. If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery return parts, previously discovered tools will require re-discovery.
+    Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
 
 See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] and [Deferred Loading](toolsets.md#deferred-loading) for more details.
 

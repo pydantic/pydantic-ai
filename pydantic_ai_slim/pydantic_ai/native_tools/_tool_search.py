@@ -114,9 +114,7 @@ class ToolSearchTool(AbstractNativeTool):
 
     * A named native strategy (or `None` for the provider default): the provider runs
       the search server-side using its own indexing (Anthropic `bm25`/`regex`, OpenAI
-      server-executed `tool_search`). Pydantic AI promotes `None` to `'custom'` when
-      deferred capability-owned tools are in the corpus, so capability gating is enforced
-      by the local search callback instead of provider-side indexing.
+      server-executed `tool_search`).
     * `'custom'`: the provider invokes our local search function to answer each search
       request. On Anthropic this goes via a regular function tool whose return value the
       adapter re-formats as `tool_reference` blocks; on OpenAI it goes via
@@ -144,8 +142,7 @@ class ToolSearchTool(AbstractNativeTool):
     `strategy='custom'` on the native tool internally.
 
     * `None` (default): use the provider's default native search. On Anthropic this is
-      `bm25`; on OpenAI it is the server-executed `tool_search` tool. Pydantic AI may
-      promote this to `'custom'` internally when local capability gating is required.
+      `bm25`; on OpenAI it is the server-executed `tool_search` tool.
     * `'bm25'` / `'regex'`: force a specific Anthropic native strategy. Adapters on
       providers that can't honor the choice raise `UserError`.
     * `'custom'`: discovery is performed by a callable on our side; provider adapters
