@@ -358,11 +358,11 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_task_budget: AnthropicTaskBudget
-    """Task budget configuration for Claude Opus 4.7 beta requests.
+    """Task budget configuration for Claude Opus 4.7 / 4.8 beta requests.
 
     Maps to `output_config.task_budget`. This setting is currently only supported on
-    `claude-opus-4-7`, and Pydantic AI automatically enables Anthropic's required
-    task-budget beta when it is present.
+    `claude-opus-4-7` and `claude-opus-4-8`, and Pydantic AI automatically enables
+    Anthropic's required task-budget beta when it is present.
 
     Omit `remaining` unless you are intentionally carrying a budget across compaction
     or other rewritten context.
@@ -1953,7 +1953,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not profile.anthropic_supports_task_budgets:
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
-                'Anthropic task budgets are currently only supported on `claude-opus-4-7`.'
+                'Anthropic task budgets are currently only supported on `claude-opus-4-7` and `claude-opus-4-8`.'
             )
 
         return task_budget
