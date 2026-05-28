@@ -40,7 +40,6 @@ with try_import() as logfire_imports_successful:
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
-    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
@@ -122,7 +121,10 @@ class TestOpenAI:
     async def test_infer_model_gateway(self):
         with patch.dict(
             os.environ,
-            {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL},
+            {
+                'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key',
+                'PYDANTIC_AI_GATEWAY_BASE_URL': 'https://gateway.pydantic.dev/proxy',
+            },
         ):
             model = infer_embedding_model('gateway/openai:text-embedding-3-small')
         assert isinstance(model, OpenAIEmbeddingModel)

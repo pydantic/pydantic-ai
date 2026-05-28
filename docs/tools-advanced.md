@@ -255,6 +255,9 @@ In addition to per-tool `prepare` methods, you can also define an agent-wide `pr
 
 The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step).
 
+!!! warning
+    Returning `None` from the callback disables **all** tools for that step and emits a `PydanticAIDeprecationWarning`; it is not a "pass through unchanged" shortcut. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools intentionally.
+
 !!! note
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
 To modify output tools, you can set a `prepare_output_tools` function instead.
@@ -457,7 +460,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| Bedrock | `tool_choice` is a list of multiple tools |
+| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled or on a model that doesn't support forcing |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
@@ -484,9 +487,9 @@ def my_flaky_tool(query: str) -> str:
     return 'Success!'
 ```
 
-Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(tool_retries=N)`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence.
+Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(retries={'tools': N})`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence.
 
-Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}'`. User-provided toolsets inherit `Agent(tool_retries=...)` as their default when no per-toolset value is set.
+Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}'`. User-provided toolsets inherit `Agent(retries={'tools': ...})` as their default when no per-toolset value is set.
 
 ### Tool Timeout
 
