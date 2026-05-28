@@ -1508,6 +1508,44 @@ class TestInstructionParts:
         dynamic_part = InstructionPart(content='world', dynamic=True)
         assert repr(dynamic_part) == "InstructionPart(content='world', dynamic=True)"
 
+    def test_instruction_part_in_parts_roundtrip(self):
+        """InstructionPart inside ModelRequest.parts must survive a dump_json/validate_json round-trip.
+
+        Regression test for https://github.com/pydantic/pydantic-ai/issues/5696 —
+        InstructionPart was missing from the ModelRequestPart discriminated union, so
+        validate_json raised ValidationError for any serialized message history that
+        contained an InstructionPart in its parts list.
+        """
+        request = ModelRequest(
+            parts=[
+                UserPromptPart(content='Hello'),
+                InstructionPart(content='Be concise.', dynamic=False),
+                InstructionPart(content='Always respond in English.', dynamic=True),
+            ]
+        )
+
+        serialized = ModelMessagesTypeAdapter.dump_json([request])
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+        assert len(deserialized) == 1
+        msg = deserialized[0]
+        assert isinstance(msg, ModelRequest)
+        assert len(msg.parts) == 3
+
+        user_part = msg.parts[0]
+        assert isinstance(user_part, UserPromptPart)
+        assert user_part.content == 'Hello'
+
+        static_instr = msg.parts[1]
+        assert isinstance(static_instr, InstructionPart)
+        assert static_instr.content == 'Be concise.'
+        assert static_instr.dynamic is False
+
+        dynamic_instr = msg.parts[2]
+        assert isinstance(dynamic_instr, InstructionPart)
+        assert dynamic_instr.content == 'Always respond in English.'
+        assert dynamic_instr.dynamic is True
+
 
 def test_retry_prompt_strips_input_from_top_level_errors():
     """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
