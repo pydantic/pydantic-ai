@@ -869,6 +869,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 if supports:
                     tool_choice = {'tool': {'name': next(iter(tool_names))}}
                 else:
+                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
                     tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                     tool_choice = {'auto': {}}
             else:
