@@ -10524,6 +10524,31 @@ async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
         await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
 
 
+async def test_count_tokens_strips_server_tools(allow_model_requests: None) -> None:
+    """count_tokens must not forward server-side tools (CodeExecutionTool, WebSearchTool, WebFetchTool)
+    to the Anthropic count_tokens endpoint, which rejects them with a 400 error."""
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-opus-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    # Call count_tokens with each server-side native tool to verify they are stripped.
+    for native_tool in (CodeExecutionTool(), WebSearchTool(), WebFetchTool()):
+        cast(MockAnthropic, mock_client).chat_completion_kwargs.clear()
+        await m.count_tokens(
+            [ModelRequest.user_text_prompt('hello')],
+            None,
+            ModelRequestParameters(native_tools=[native_tool]),
+        )
+        kwargs = cast(MockAnthropic, mock_client).chat_completion_kwargs[0]
+        # The tools kwarg must either be absent (OMIT/not present) or contain no server tool entries.
+        raw_tools = kwargs.get('tools')
+        tools_sent: list[Any] = raw_tools if isinstance(raw_tools, list) else []
+        server_tool_types = {t.get('type', '') for t in tools_sent}
+        assert not any(
+            typ.startswith(('code_execution_', 'web_search_', 'web_fetch_'))
+            for typ in server_tool_types
+        ), f'Server tool leaked into count_tokens payload for {native_tool!r}: {tools_sent}'
+
+
 @pytest.mark.vcr()
 async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_api_key: str):
     """Test that anthropic_cache passes top-level cache_control and produces cache usage.

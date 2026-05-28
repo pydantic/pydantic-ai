@@ -853,6 +853,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # standalone function to make it easier to override
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
+        # The count_tokens endpoint rejects server-side tools (code execution, web search, web fetch).
+        # Strip them from the request; their token contribution is negligible compared to message content.
+        tools = [
+            t for t in tools
+            if not any(
+                cast(str, t.get('type', '')).startswith(prefix)
+                for prefix in _COUNT_TOKENS_UNSUPPORTED_TOOL_TYPE_PREFIXES
+            )
+        ]
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
@@ -2435,6 +2444,15 @@ _BUILTIN_TOOL_KIND_BY_SERVER_TOOL_USE_NAME: dict[str, str] = {
     'code_execution': CodeExecutionTool.kind,
     'web_fetch': WebFetchTool.kind,
 }
+
+# Tool `type` prefixes that the Anthropic count_tokens endpoint rejects.
+# These are server-executed tools (code execution, web search, web fetch) that the API
+# runs on its side; the count_tokens endpoint only accepts client-side/function tools.
+_COUNT_TOKENS_UNSUPPORTED_TOOL_TYPE_PREFIXES: tuple[str, ...] = (
+    'code_execution_',
+    'web_search_',
+    'web_fetch_',
+)
 
 
 def _anthropic_code_execution_tool_provider_details(
