@@ -4201,7 +4201,7 @@ async def test_run_stream_records_partial_response_on_exception_in_body():
     agent = Agent(FunctionModel(stream_function=sf), output_type=str)
 
     captured: list[StreamedRunResult[None, str]] = []
-    with pytest.raises(RuntimeError, match='boom'):
+    with pytest.raises(RuntimeError, match='boom') as exc_info:
         async with agent.run_stream('test') as result:
             captured.append(result)
             async for _ in result.stream_output(debounce_by=None):  # pragma: no branch
@@ -4209,6 +4209,8 @@ async def test_run_stream_records_partial_response_on_exception_in_body():
             raise RuntimeError('boom')
 
     (result,) = captured
+    # Body exception must reach the caller un-shadowed by any cleanup-side error.
+    assert exc_info.value.args == ('boom',)
     assert result.is_complete
     assert result.response.state == 'interrupted'
     assert result.all_messages() == snapshot(
@@ -4280,10 +4282,10 @@ async def test_run_stream_early_break_when_provider_lacks_cancel_support(monkeyp
 async def test_run_stream_early_break_swallows_transport_cancel_error(monkeypatch: pytest.MonkeyPatch):
     """Clean early break must not raise when `close_stream()` raises an httpx transport error.
 
-    `StreamedResponse.get_stream_cancel_errors()` declares `(httpx.StreamError, httpx.TransportError)`
-    as the expected cancel-side surface for providers iterating httpx streams (Anthropic, OpenAI,
-    Groq, Mistral, Google GenAI, HuggingFace). The implicit cancel in `run_stream`'s `__aexit__`
-    must suppress those so a clean early break against a real provider doesn't error out.
+    `StreamedResponse.get_stream_cancel_errors()` is the contract surface; the default
+    declares `(httpx.StreamError, httpx.TransportError)` for providers iterating httpx
+    streams. The implicit cancel in `run_stream`'s `__aexit__` must suppress whatever
+    each provider's override returns so a clean early break doesn't error out.
     """
 
     async def raising_close_stream(self: FunctionStreamedResponse) -> None:
@@ -4302,6 +4304,32 @@ async def test_run_stream_early_break_swallows_transport_cancel_error(monkeypatc
 
     assert result.is_complete
     assert result.response.state == 'interrupted'
+
+
+@pytest.mark.vcr()
+async def test_run_stream_early_break_against_real_openai(allow_model_requests: None, openai_api_key: str):
+    """Real-provider anchor for the early-break flow against OpenAI.
+
+    The monkeypatched siblings exercise the suppression contract against synthetic
+    `close_stream()` failures; this test anchors that contract against the real
+    SSE stream + httpx connection-teardown that `StreamedResponse.get_stream_cancel_errors()`
+    targets by default. A regression that over-narrows the swallow tuple would
+    show up here as an `httpx.StreamError` (or similar) bubbling out of `__aexit__`.
+    """
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    agent = Agent(OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key)))
+
+    async with agent.run_stream('Count from one to ten.') as result:
+        async for _ in result.stream_output(debounce_by=None):  # pragma: no branch
+            break
+
+    assert result.is_complete
+    assert result.response.state == 'interrupted'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'interrupted'
 
 
 async def test_args_validator_failure_events():
