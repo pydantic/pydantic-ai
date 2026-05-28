@@ -23,7 +23,7 @@ accessible across provider boundaries.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, Union, cast
+from typing import TYPE_CHECKING, Literal, Union, cast
 
 import pydantic
 import pydantic_core
@@ -343,9 +343,6 @@ class ToolSearchReturnPart(ToolReturnPart):
 
     tool_kind: Literal['tool-search'] = 'tool-search'  # pyright: ignore[reportIncompatibleVariableOverride]
     """Discriminator for the typed subclass (framework-emitted `search_tools` return)."""
-
-    metadata: dict[str, Any] | None = None
-    """Additional data accessible by the application but not sent to the LLM."""
 
     @property
     def discovered_tools(self) -> list[ToolSearchMatch]:

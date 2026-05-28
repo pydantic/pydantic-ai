@@ -184,17 +184,31 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def available_tool_names(self) -> set[str]:
         """Names of tools callable by the model on the current turn (non-deferred visible + discovered + loaded-capability).
 
-        The subset of `tools` keys whose definitions are not deferred, plus deferred tools
-        revealed by tool search. The non-deferred subset includes always-visible tools and
-        tools revealed by loaded capabilities; `discovered_tool_names` only tracks tool-search
-        discoveries reconstructed from message history.
+        Tool-search corpus membership is identified by `with_native='tool_search'`, because
+        `defer_loading` is both the user-input deferral flag and the per-step visibility flag
+        after tool-search wrapping. Available tools are therefore always-visible non-corpus
+        tools, corpus tools revealed by tool search, and corpus tools owned by loaded
+        deferred capabilities.
         """
         if self.tool_manager is None or self.tool_manager.tools is None:
             return set[str]() | self.discovered_tool_names
+        # Local import avoids a module-level cycle: `native_tools._tool_search` imports
+        # `RunContext` for tool-search strategy callables.
+        from .native_tools._tool_search import ToolSearchTool
+
         tools = self.tools
-        always_available = {name for name, tool_def in tools.items() if not tool_def.defer_loading}
+        always_available = {
+            name
+            for name, tool_def in tools.items()
+            if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading
+        }
         runtime_revealed = self.discovered_tool_names & set(tools)
-        return always_available | runtime_revealed
+        loaded_capability_tools = {
+            name
+            for name, tool_def in tools.items()
+            if tool_def.capability_id is not None and tool_def.capability_id in self.loaded_capability_ids
+        }
+        return always_available | runtime_revealed | loaded_capability_tools
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:

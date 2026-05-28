@@ -9,7 +9,6 @@ from pydantic.json_schema import GenerateJsonSchema
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
     DocstringFormat,
@@ -75,11 +74,6 @@ class Capability(AbstractCapability[AgentDepsT]):
             resolved_toolsets = tuple(toolsets)
         else:
             resolved_toolsets = ()
-        if resolved_toolsets and tools:
-            raise UserError(
-                'Cannot use both `toolsets` and `tools` on the same capability. '
-                'Use `toolsets` to register toolsets, or `tools` to register individual tools.'
-            )
         self.id = id
         self.description = description if isinstance(description, str) else None
         self._description = description
@@ -96,13 +90,17 @@ class Capability(AbstractCapability[AgentDepsT]):
         return list(self._instructions) if self._instructions else None
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        if not self.toolsets:
+        toolsets: list[AgentToolset[AgentDepsT]] = []
+        if self._function_toolset.tools:
+            toolsets.append(self._function_toolset)
+        toolsets.extend(self.toolsets)
+
+        if not toolsets:
             return self._function_toolset
-        if len(self.toolsets) == 1:
-            return self.toolsets[0]
+        if len(toolsets) == 1:
+            return toolsets[0]
         materialized: list[AbstractToolset[AgentDepsT]] = [
-            ts if isinstance(ts, AbstractToolset) else DynamicToolset[AgentDepsT](toolset_func=ts)
-            for ts in self.toolsets
+            ts if isinstance(ts, AbstractToolset) else DynamicToolset[AgentDepsT](toolset_func=ts) for ts in toolsets
         ]
         return CombinedToolset[AgentDepsT](materialized)
 
@@ -152,9 +150,6 @@ class Capability(AbstractCapability[AgentDepsT]):
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
-        if self.toolsets:
-            raise UserError('`Capability.tool_plain()` cannot be used when `toolsets=` is set.')
-
         decorator = self._function_toolset.tool_plain(
             name=name,
             description=description,
@@ -220,9 +215,6 @@ class Capability(AbstractCapability[AgentDepsT]):
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
-        if self.toolsets:
-            raise UserError('`Capability.tool()` cannot be used when `toolsets=` is set.')
-
         decorator = self._function_toolset.tool(
             name=name,
             description=description,

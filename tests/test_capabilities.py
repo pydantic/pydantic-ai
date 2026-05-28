@@ -6,7 +6,7 @@ import threading
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
@@ -2537,24 +2537,48 @@ def _noop_greet_with_context(_ctx: RunContext[None], name: str) -> str:
     return f'Hello, {name}!'  # pragma: no cover
 
 
-def test_capability_rejects_toolset_and_tools_together():
-    """`Capability(toolsets=..., tools=...)` is ambiguous and must raise."""
-    with pytest.raises(UserError, match='Cannot use both `toolsets` and `tools`'):
-        Capability[None](toolsets=[FunctionToolset[None]()], tools=[_noop_greet])
+def test_capability_combines_toolsets_and_tools_together():
+    """`Capability(toolsets=..., tools=...)` mirrors `Agent` by combining both."""
+    toolset = FunctionToolset[None]()
+    cap = Capability[None](toolsets=[toolset], tools=[_noop_greet])
+
+    from pydantic_ai.toolsets import CombinedToolset
+
+    combined = cast(CombinedToolset[None], cap.get_toolset())
+    function_toolset, provided_toolset = combined.toolsets
+    assert isinstance(function_toolset, FunctionToolset)
+    assert function_toolset.tools.keys() == {'_noop_greet'}
+    assert provided_toolset is toolset
 
 
-def test_capability_tool_plain_rejected_when_toolsets_is_set():
-    """`Capability.tool_plain()` cannot register against a capability that already owns toolsets."""
-    cap = Capability[None](toolsets=[FunctionToolset[None]()])
-    with pytest.raises(UserError, match=r'`Capability\.tool_plain\(\)` cannot be used when `toolsets=` is set\.'):
-        cap.tool_plain(_noop_greet)
+def test_capability_tool_plain_combines_with_toolsets():
+    """`Capability.tool_plain()` registers a function toolset alongside provided toolsets."""
+    toolset = FunctionToolset[None]()
+    cap = Capability[None](toolsets=[toolset])
+    cap.tool_plain(_noop_greet)
+
+    from pydantic_ai.toolsets import CombinedToolset
+
+    combined = cast(CombinedToolset[None], cap.get_toolset())
+    function_toolset, provided_toolset = combined.toolsets
+    assert isinstance(function_toolset, FunctionToolset)
+    assert function_toolset.tools.keys() == {'_noop_greet'}
+    assert provided_toolset is toolset
 
 
-def test_capability_tool_rejected_when_toolsets_is_set():
-    """`Capability.tool()` cannot register against a capability that already owns toolsets."""
-    cap = Capability[None](toolsets=[FunctionToolset[None]()])
-    with pytest.raises(UserError, match=r'`Capability\.tool\(\)` cannot be used when `toolsets=` is set\.'):
-        cap.tool(_noop_greet_with_context)
+def test_capability_tool_combines_with_toolsets():
+    """`Capability.tool()` registers a function toolset alongside provided toolsets."""
+    toolset = FunctionToolset[None]()
+    cap = Capability[None](toolsets=[toolset])
+    cap.tool(_noop_greet_with_context)
+
+    from pydantic_ai.toolsets import CombinedToolset
+
+    combined = cast(CombinedToolset[None], cap.get_toolset())
+    function_toolset, provided_toolset = combined.toolsets
+    assert isinstance(function_toolset, FunctionToolset)
+    assert function_toolset.tools.keys() == {'_noop_greet_with_context'}
+    assert provided_toolset is toolset
 
 
 async def test_toolset_capability_in_agent():
@@ -3996,7 +4020,7 @@ def test_run_context_available_tool_names_includes_discovered_before_tool_manage
 
 
 async def test_run_context_available_tool_names_unions_discovered_current_tools() -> None:
-    """Available tool names are always-visible current tools plus discovered current tools."""
+    """Available tool names are always-visible current tools plus revealed corpus tools."""
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
@@ -4011,12 +4035,35 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     def pending_tool() -> str:  # pragma: no cover
         return 'pending'
 
+    @toolset.tool_plain(defer_loading=True)
+    def loaded_capability_tool() -> str:  # pragma: no cover
+        return 'loaded'
+
     ctx = _build_run_context()
     ctx.discovered_tool_names = {'discovered_tool', 'removed_tool'}
-    tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=await toolset.get_tools(ctx))
+    ctx.loaded_capability_ids = {'loaded_capability'}
+    tools = await toolset.get_tools(ctx)
+    tools['discovered_tool'] = replace(
+        tools['discovered_tool'],
+        tool_def=replace(tools['discovered_tool'].tool_def, with_native=ToolSearchTool.kind, defer_loading=False),
+    )
+    tools['pending_tool'] = replace(
+        tools['pending_tool'],
+        tool_def=replace(tools['pending_tool'].tool_def, with_native=ToolSearchTool.kind, defer_loading=True),
+    )
+    tools['loaded_capability_tool'] = replace(
+        tools['loaded_capability_tool'],
+        tool_def=replace(
+            tools['loaded_capability_tool'].tool_def,
+            with_native=ToolSearchTool.kind,
+            defer_loading=False,
+            capability_id='loaded_capability',
+        ),
+    )
+    tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=tools)
     ctx.tool_manager = tool_manager
 
-    assert ctx.available_tool_names == {'always_tool', 'discovered_tool'}
+    assert ctx.available_tool_names == {'always_tool', 'discovered_tool', 'loaded_capability_tool'}
 
 
 _DEFERRED_HOOK_NAMES = {
