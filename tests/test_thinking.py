@@ -808,33 +808,37 @@ class TestOpenRouterThinkingTranslation:
 class TestCerebrasThinkingTranslation:
     """Test Cerebras unified thinking fallback."""
 
-    def test_thinking_false_sets_disable_reasoning(self):
+    def test_thinking_false_sets_reasoning_effort_none(self):
         settings = CerebrasModelSettings()
         params = ModelRequestParameters(thinking=False)
         result = _cerebras_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is True
+        assert extra_body.get('disable_reasoning') is None
+        assert result.get('openai_reasoning_effort') == 'none'
 
-    def test_thinking_true_sets_disable_reasoning_false(self):
+    def test_thinking_true_omits_disable_reasoning(self):
         settings = CerebrasModelSettings()
         params = ModelRequestParameters(thinking=True)
         result = _cerebras_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is False
+        assert extra_body.get('disable_reasoning') is None
+        assert result.get('openai_reasoning_effort') is None
 
-    def test_thinking_effort_sets_disable_reasoning_false(self):
+    def test_thinking_effort_omits_disable_reasoning(self):
         settings = CerebrasModelSettings()
         params = ModelRequestParameters(thinking='high')
         result = _cerebras_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is False
+        assert extra_body.get('disable_reasoning') is None
+        assert result.get('openai_reasoning_effort') is None
 
     def test_explicit_cerebras_disable_takes_precedence(self):
         settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
         params = ModelRequestParameters(thinking=True)
         result = _cerebras_settings_to_openai_settings(settings, params)
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is True
+        assert extra_body.get('disable_reasoning') is None
+        assert result.get('openai_reasoning_effort') == 'none'
 
     def test_explicit_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on Cerebras is passed through."""

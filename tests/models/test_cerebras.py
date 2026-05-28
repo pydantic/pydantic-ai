@@ -37,10 +37,10 @@ async def test_cerebras_model_simple(allow_model_requests: None, cerebras_api_ke
 async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str):
     """Test that cerebras_disable_reasoning setting is properly transformed to extra_body.
 
-    Note: disable_reasoning is only supported on reasoning models: zai-glm-4.6 and gpt-oss-120b.
+    Note: disable_reasoning is only supported on reasoning models: zai-glm-4.7 and gpt-oss-120b.
     """
     provider = CerebrasProvider(api_key=cerebras_api_key)
-    model = CerebrasModel('zai-glm-4.6', provider=provider)
+    model = CerebrasModel('zai-glm-4.7', provider=provider)
 
     settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
     response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
@@ -59,7 +59,8 @@ async def test_cerebras_settings_transformation():
     settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
     transformed = _cerebras_settings_to_openai_settings(settings, params)
     extra_body = cast(dict[str, Any], transformed.get('extra_body', {}))
-    assert extra_body.get('disable_reasoning') is True
+    assert extra_body.get('disable_reasoning') is None
+    assert transformed.get('openai_reasoning_effort') == 'none'
 
     # Test without disable_reasoning (should not have extra_body)
     settings_empty = CerebrasModelSettings()
@@ -70,4 +71,10 @@ async def test_cerebras_settings_transformation():
     settings_false = CerebrasModelSettings(cerebras_disable_reasoning=False)
     transformed_false = _cerebras_settings_to_openai_settings(settings_false, params)
     extra_body_false = cast(dict[str, Any], transformed_false.get('extra_body', {}))
-    assert extra_body_false.get('disable_reasoning') is False
+    assert extra_body_false.get('disable_reasoning') is None
+    assert transformed_false.get('openai_reasoning_effort') is None
+
+    settings_clear = CerebrasModelSettings(cerebras_clear_thinking=False)
+    transformed_clear = _cerebras_settings_to_openai_settings(settings_clear, params)
+    extra_body_clear = cast(dict[str, Any], transformed_clear.get('extra_body', {}))
+    assert extra_body_clear.get('clear_thinking') is False

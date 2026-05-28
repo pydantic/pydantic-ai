@@ -81,6 +81,8 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     assert qwen_profile is not None
     assert isinstance(qwen_profile, OpenAIModelProfile)
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.supports_thinking is True
+    assert qwen_profile.openai_chat_send_back_thinking_parts == 'tags'
 
     # Test gpt-oss model (harmony) - uses OpenAIJsonSchemaTransformer
     harmony_profile = provider.model_profile('gpt-oss-120b')
@@ -90,11 +92,13 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     assert harmony_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test zai model - uses default OpenAI profile (zai_model_profile returns None)
-    zai_profile = provider.model_profile('zai-glm-4.6')
-    zai_model_profile_mock.assert_called_with('zai-glm-4.6')
+    zai_profile = provider.model_profile('zai-glm-4.7')
+    zai_model_profile_mock.assert_called_with('zai-glm-4.7')
     assert zai_profile is not None
     assert isinstance(zai_profile, OpenAIModelProfile)
     assert zai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert zai_profile.supports_thinking is True
+    assert zai_profile.openai_chat_send_back_thinking_parts == 'tags'
 
     # Test unknown model - should still return a profile with OpenAIJsonSchemaTransformer
     unknown_profile = provider.model_profile('unknown-model')

@@ -48,8 +48,8 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'zai': zai_model_profile,
         }
 
-        # Reasoning models that support the cerebras_disable_reasoning setting
-        reasoning_prefixes = ('zai', 'gpt-oss')
+        reasoning_prefixes = ('zai', 'qwen', 'gpt-oss')
+        tagged_reasoning_prefixes = ('zai', 'qwen')
 
         profile = None
         model_name_lower = model_name.lower()
@@ -70,10 +70,12 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'openai_service_tier',
         )
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
+        send_back_thinking_parts = 'tags' if model_name_lower.startswith(tagged_reasoning_prefixes) else 'auto'
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_unsupported_model_settings=unsupported_model_settings,
             supports_thinking=is_reasoning,
+            openai_chat_send_back_thinking_parts=send_back_thinking_parts,
         ).update(profile)
 
     @overload
