@@ -2025,7 +2025,8 @@ ModelRequestPart = Annotated[
     | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
-    | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')],
+    | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]
+    | Annotated[InstructionPart, pydantic.Tag('instruction')],
     pydantic.Discriminator(_model_request_part_discriminator),
 ]
 """A message part sent by Pydantic AI to a model."""
