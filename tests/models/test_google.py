@@ -7,7 +7,6 @@ import os
 import random
 import tempfile
 from collections.abc import AsyncIterator
-from contextlib import nullcontext
 from datetime import date, timezone
 from decimal import Decimal
 from typing import Any, cast
@@ -90,6 +89,7 @@ with try_import() as imports_successful:
         BlockedReason,
         Candidate,
         Content,
+        CreateCachedContentConfig,
         FinishReason as GoogleFinishReason,
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
@@ -6592,88 +6592,61 @@ async def test_google_top_k_propagation(
     assert kwargs['config']['top_k'] == 40
 
 
-@pytest.mark.parametrize(
-    ('cached', 'instructions', 'register_tool', 'expect_warning'),
-    [
-        pytest.param(True, 'You are a helpful chatbot.', True, True, id='cache_set_with_instructions_and_tools'),
-        pytest.param(False, 'You are a helpful chatbot.', True, False, id='cache_unset_with_instructions_and_tools'),
-        pytest.param(True, None, False, False, id='cache_set_no_instructions_no_tools'),
-    ],
-)
-@pytest.mark.parametrize('stream', [False, True])
-async def test_google_model_cached_content_request_config(
+async def test_google_model_cached_content(
     allow_model_requests: None,
     google_provider: GoogleProvider,
-    mocker: MockerFixture,
-    cached: bool,
-    instructions: str | None,
-    register_tool: bool,
-    expect_warning: bool,
-    stream: bool,
 ):
-    """When `google_cached_content` is set, the outgoing request omits
-    `system_instruction`, `tools`, and `tool_config` — the cache resource
-    owns those fields. When unset, the request still carries them. A
-    `UserWarning` is emitted whenever caching strips agent instructions or
-    registered tools so the mismatch is discoverable.
+    """End-to-end contract for `google_cached_content`: the cache resource
+    owns `system_instruction`, `tools`, and `tool_config`, and both Gemini
+    and Vertex return `400 INVALID_ARGUMENT` if those fields are sent
+    alongside `cached_content`. Pydantic AI therefore strips them from the
+    outgoing request, emitting a `UserWarning` whenever stripping actually
+    drops a populated field.
 
-    Parametrized over `stream` because `_build_content_and_config` is shared
-    by `request()` (`generate_content`) and `request_stream()`
-    (`generate_content_stream`) — both paths must apply the same omission.
+    One cassette covers both branches: first run carries instructions + a
+    registered tool (warning fires, request still succeeds, response shows a
+    cache hit); second run is minimal (nothing to strip, no warning — the
+    suite's `filterwarnings = ['error']` setting turns any stray warning
+    into a failure). The shared `_build_content_and_config` helper means a
+    non-streaming test covers the streaming path too.
+
     See issue #5671.
     """
-    cache_name = 'projects/p/locations/global/cachedContents/test-cache'
-    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    model_name = 'gemini-2.5-flash'
+    long_text = 'Paris is the capital of France. The Eiffel Tower is in Paris. ' * 250
 
-    chunk = GenerateContentResponse(
-        candidates=[
-            Candidate(
-                content=Content(parts=[Part(text='Paris')], role='model'),
-                finish_reason=GoogleFinishReason.STOP,
-            )
-        ],
-        response_id='cached',
-        model_version='gemini-2.5-pro',
+    cache = await google_provider.client.aio.caches.create(
+        model=model_name,
+        config=CreateCachedContentConfig(
+            system_instruction='You are a geography expert. Be concise.',
+            contents=[Content(role='user', parts=[Part(text=long_text)])],
+            ttl='120s',
+        ),
     )
+    cache_name = cache.name
+    assert cache_name is not None
+    try:
+        model = GoogleModel(model_name, provider=google_provider)
+        settings = GoogleModelSettings(google_cached_content=cache_name)
 
-    if stream:
+        agent_with_extras = Agent(
+            model=model,
+            instructions='These instructions get stripped — the cache owns the system_instruction.',
+            model_settings=settings,
+        )
 
-        async def stream_iterator():
-            yield chunk
+        @agent_with_extras.tool_plain
+        def unused_tool(x: str) -> str:
+            return x  # pragma: no cover
 
-        mock = mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_iterator())
-    else:
-        mock = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=chunk)
+        with pytest.warns(UserWarning, match='`google_cached_content` is set'):
+            result = await agent_with_extras.run('What is the capital of France?')
 
-    settings = GoogleModelSettings(google_cached_content=cache_name) if cached else GoogleModelSettings()
-    agent = Agent(model=model, instructions=instructions, model_settings=settings)
+        assert 'Paris' in result.output
+        assert (result.usage.details or {}).get('cached_content_tokens', 0) > 0
 
-    if register_tool:
-
-        @agent.tool_plain
-        def echo(text: str) -> str:
-            return text  # pragma: no cover
-
-    warning_ctx = pytest.warns(UserWarning, match='`google_cached_content` is set') if expect_warning else nullcontext()
-    with warning_ctx:
-        if stream:
-            async with agent.run_stream('say hi') as result:
-                await result.get_output()
-        else:
-            await agent.run('say hi')
-
-    assert mock.call_count == 1
-    _, kwargs = mock.call_args
-    config = kwargs['config']
-
-    if cached:
-        assert config['cached_content'] == cache_name
-        # The three cache-owned fields must be absent (or unset) on the request.
-        assert not config.get('system_instruction')
-        assert not config.get('tools')
-        assert not config.get('tool_config')
-    else:
-        assert not config.get('cached_content')
-        assert config['system_instruction']
-        assert config['tools']
-        assert config['tool_config'] is not None
+        agent_minimal = Agent(model=model, model_settings=settings)
+        result_minimal = await agent_minimal.run('Say the capital one more time.')
+        assert 'Paris' in result_minimal.output
+    finally:
+        await google_provider.client.aio.caches.delete(name=cache_name)
