@@ -47,6 +47,17 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
     'error': 'error',
 }
 
+# https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'none']] = {
+    True: 'medium',
+    False: 'none',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'high',
+}
+
 
 class _VideoURL(TypedDict):
     """Video URL payload for OpenRouter content parts."""
@@ -559,19 +570,11 @@ def _openrouter_settings_to_openai_settings(
     # Fall back to unified thinking when openrouter_reasoning is not set
     if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
         thinking = model_request_parameters.thinking
+        openrouter_reasoning: OpenRouterReasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
         if thinking is not False:
-            unified_reasoning: OpenRouterReasoning = {}
-            # OpenRouter only supports low/medium/high; map others to closest
-            effort_map: dict[ThinkingLevel, str] = {
-                True: 'medium',
-                'minimal': 'low',
-                'low': 'low',
-                'medium': 'medium',
-                'high': 'high',
-                'xhigh': 'high',
-            }
-            unified_reasoning['effort'] = effort_map[thinking]  # type: ignore[typeddict-item]
-            model_settings['openrouter_reasoning'] = unified_reasoning
+            # Some reasoning-optional routes require explicit `enabled` even when `effort` is set.
+            openrouter_reasoning['enabled'] = True
+        model_settings['openrouter_reasoning'] = openrouter_reasoning
 
     if reasoning := model_settings.pop('openrouter_reasoning', None):
         extra_body['reasoning'] = reasoning

@@ -136,7 +136,9 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
         # 2. Upstream profile — model-specific traits from the lab's profile function.
         # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
-        #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field).
+        #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field). OpenRouter accepts
+        #    `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
+        #    setting is always forwarded regardless of the upstream model's own thinking support.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
@@ -145,6 +147,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 openai_chat_thinking_field='reasoning',
                 openai_chat_supports_file_urls=True,
                 openai_chat_supports_web_search=True,
+                supports_thinking=True,
             ),
         )
 
