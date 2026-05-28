@@ -8,6 +8,7 @@ import pytest
 from pydantic_ai import UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -460,6 +461,19 @@ def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]
                 ],
             ],
             id='wraps-multiple-non-leading-system-prompts',
+        ),
+        pytest.param(
+            False,
+            [
+                ModelRequest(parts=[UserPromptPart(content='hi')]),
+                ModelResponse(parts=[TextPart(content='hello')]),
+                ModelRequest(parts=[InstructionPart(content='Use a short answer.'), UserPromptPart(content='ok?')]),
+            ],
+            [
+                [('UserPromptPart', 'hi')],
+                [('UserPromptPart', '<system>Use a short answer.</system>'), ('UserPromptPart', 'ok?')],
+            ],
+            id='wraps-non-leading-instruction-part',
         ),
         pytest.param(
             False,

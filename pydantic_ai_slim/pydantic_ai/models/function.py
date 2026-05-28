@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     CompactionPart,
     FilePart,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -394,7 +395,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, SystemPromptPart | UserPromptPart):
+                if isinstance(part, SystemPromptPart | InstructionPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())

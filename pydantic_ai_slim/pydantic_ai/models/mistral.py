@@ -23,6 +23,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -544,7 +545,7 @@ class MistralModel(Model[Mistral]):
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []
         for part in message.parts:
-            if isinstance(part, SystemPromptPart):
+            if isinstance(part, SystemPromptPart | InstructionPart):
                 yield MistralSystemMessage(content=part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)

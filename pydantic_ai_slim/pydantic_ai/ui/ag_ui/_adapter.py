@@ -28,6 +28,7 @@ from ...messages import (
     FilePart,
     ForceDownloadMode,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -511,7 +512,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         ] = []
 
         for part in msg.parts:
-            if isinstance(part, SystemPromptPart):
+            if isinstance(part, SystemPromptPart | InstructionPart):
                 system_content.append(part.content)
             elif isinstance(part, UserPromptPart):
                 if isinstance(part.content, str):

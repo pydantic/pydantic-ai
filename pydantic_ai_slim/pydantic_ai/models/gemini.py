@@ -31,6 +31,7 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FileUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -350,7 +351,7 @@ class GeminiModel(Model[httpx.AsyncClient]):
                 message_parts: list[_GeminiPartUnion] = []
 
                 for part in m.parts:
-                    if isinstance(part, SystemPromptPart):
+                    if isinstance(part, SystemPromptPart | InstructionPart):
                         sys_prompt_parts.append(_GeminiTextPart(text=part.content))
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))

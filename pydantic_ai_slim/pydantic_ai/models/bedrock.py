@@ -34,6 +34,7 @@ from pydantic_ai import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelProfileSpec,
     ModelRequest,
@@ -919,7 +920,7 @@ class BedrockConverseModel(Model[BaseClient]):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart):
+                    if isinstance(part, SystemPromptPart | InstructionPart):
                         if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):

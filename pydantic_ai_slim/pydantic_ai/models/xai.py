@@ -24,6 +24,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -314,7 +315,7 @@ class XaiModel(Model[AsyncClient]):
         tool_results: list[ToolReturnPart | RetryPromptPart] = []
 
         for part in parts:
-            if isinstance(part, SystemPromptPart):
+            if isinstance(part, SystemPromptPart | InstructionPart):
                 xai_messages.append(system(part.content))
             elif isinstance(part, UserPromptPart):
                 if user_msg := await self._map_user_prompt(part):

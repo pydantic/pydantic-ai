@@ -24,6 +24,7 @@ from ..messages import (
     CompactionPart,
     FilePart,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -448,7 +449,7 @@ class OutlinesModel(Model):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart):
+                    if isinstance(part, SystemPromptPart | InstructionPart):
                         chat.add_system_message(part.content)
                     elif isinstance(part, UserPromptPart):
                         if isinstance(part.content, str):

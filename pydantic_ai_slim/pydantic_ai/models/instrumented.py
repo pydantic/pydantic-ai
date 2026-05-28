@@ -32,6 +32,7 @@ from pydantic_ai._instrumentation import (
 from .. import _otel_messages
 from .._run_context import RunContext
 from ..messages import (
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -221,7 +222,9 @@ class InstrumentationSettings:
         result: list[_otel_messages.ChatMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                for is_system, group in itertools.groupby(message.parts, key=lambda p: isinstance(p, SystemPromptPart)):
+                for is_system, group in itertools.groupby(
+                    message.parts, key=lambda p: isinstance(p, SystemPromptPart | InstructionPart)
+                ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):

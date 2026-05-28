@@ -24,6 +24,7 @@ from ...messages import (
     FilePart,
     ForceDownloadMode,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -517,7 +518,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         user_ui_parts: list[UIMessagePart] = []
 
         for part in msg.parts:
-            if isinstance(part, SystemPromptPart):
+            if isinstance(part, SystemPromptPart | InstructionPart):
                 system_ui_parts.append(TextUIPart(text=part.content, state='done'))
             elif isinstance(part, UserPromptPart):
                 user_ui_parts.extend(_convert_user_prompt_part(part))
