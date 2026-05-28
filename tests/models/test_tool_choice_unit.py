@@ -469,7 +469,7 @@ def test_bedrock_single_tool_fallback_filters_when_unsupported():
     the single-output-tool path must trim `tool_defs` to the forced name and emit `toolChoice={'auto': {}}`.
     The cache-preserving full-array shape only applies when `_support_tool_forcing` returns True.
 
-    Reaches lines 872-873 via thinking-enabled fallback: `tool_choice='none'` + one output tool
+    The thinking-enabled fallback is reached because `tool_choice='none'` + one output tool
     + no direct output resolves to `('required', {single_name})`, and `_support_tool_forcing`
     returns False (without raising) because explicit `tool_choice` is `'none'`, not `'required'`/list.
     """
