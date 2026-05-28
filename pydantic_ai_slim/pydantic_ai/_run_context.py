@@ -179,9 +179,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Reliable from `before_run` onwards: the `capabilities` registry is seeded once at
         run start, and `loaded_capability_ids` is refreshed from history before each model
         request, so the loaded subset grows across steps as the model loads capabilities.
-        Because it grows step by step, where you read it in the hook order (see the hook
-        types in the [hooks docs](../hooks.md#hook-types)) determines what you see — e.g. a
-        capability loaded during one step is not reflected until the next step's hooks.
+        Because it grows step by step, where you read it in the
+        [hook order](../hooks.md#hook-ordering) determines what you see — e.g. a capability
+        loaded during one step is not reflected until the next step's hooks.
         """
         return {
             id for id, cap in self.capabilities.items() if cap.defer_loading is not True
@@ -202,8 +202,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         (`before_model_request`, `wrap_model_request`, `after_model_request`) and tool hooks,
         but returns only `discovered_tool_names` (history-derived) in earlier hooks like
         `before_run` where no tool manager is set yet. The tool manager is also re-resolved
-        between hooks within a step, so where you read this in the hook order (see the hook
-        types in the [hooks docs](../hooks.md#hook-types)) determines what you see.
+        between hooks within a step, so where you read this in the
+        [hook order](../hooks.md#hook-ordering) determines what you see.
         """
         if self.tool_manager is None or self.tool_manager.tools is None:
             return set[str]() | self.discovered_tool_names

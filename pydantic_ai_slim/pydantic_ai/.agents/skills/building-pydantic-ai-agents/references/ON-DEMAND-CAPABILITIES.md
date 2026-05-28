@@ -6,7 +6,7 @@ Read this file when designing progressive disclosure of any kind, when an agent 
 
 Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions; its function tools, native tools, and model settings are reflected on the next model request, and its hooks can fire for later hook points in the run.
 
-Be opinionated: every capability should be reviewed for whether `defer_loading=True` would benefit the system before accepting eager loading. If the model does not need a piece of information, a specialist instruction set, or a tool schema on most turns, do not put it in the eager prompt by default. Suggest capabilities on demand for named bundles, tool search for long-tail tools, or a narrower always-on instruction if the behavior really is universal.
+Be opinionated: review every capability for whether `defer_loading=True` would benefit the system before accepting eager loading. If the model does not need a piece of information, a specialist instruction set, or a tool schema on most turns, do not put it in the eager prompt by default.
 
 Use this for specialist behavior where instructions and tools should travel together:
 
@@ -122,12 +122,6 @@ account_capability = AccountCapability(id='account-management', defer_loading=Tr
 
 ## Choosing Between Deferral Mechanisms
 
-Use capabilities on demand when the model needs a named package of instructions plus tools.
+Capabilities on demand (`load_capability`) and tool search (`search_tools`) are covered above. The third mechanism is **deferred tool calls**: use these when the issue is execution timing, approval, or external execution. Deferred tool calls decide whether a *visible* tool call can run now; they do not control whether the model can see a capability.
 
-Keep a capability eager when its instructions, hooks, model settings, or tools materially improve most turns, or when hiding it would make routing unreliable.
-
-Use tool search when the model needs individual tool discovery across many tools or MCP server endpoints.
-
-Use deferred tool calls when the issue is execution timing, approval, or external execution. Deferred tool calls decide whether a visible tool call can run now; they do not control whether the model can see a capability.
-
-When in doubt, ask this question: "Would a high-quality answer to most user prompts get worse if this information were absent until requested?" If no, recommend progressive disclosure.
+When in doubt: "Would a high-quality answer to most user prompts get worse if this information were absent until requested?" If no, recommend progressive disclosure.
