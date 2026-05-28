@@ -52,6 +52,7 @@ from pydantic_ai import (
     VideoUrl,
     capture_run_messages,
 )
+from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -3524,6 +3525,26 @@ def test_agent_conversation_id_resolves_from_message_history() -> None:
     assert second.conversation_id == first.conversation_id
     new_conv_ids = [m.conversation_id for m in second.new_messages()]
     assert all(cid == first.conversation_id for cid in new_conv_ids)
+
+
+def test_clean_message_history_preserves_model_request_metadata() -> None:
+    cleaned = _clean_message_history(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='first')],
+                metadata={'session': 'abc123', 'source': 'history'},
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='second')],
+                metadata={'session': 'abc123', 'trace_id': 'trace-456'},
+            ),
+        ]
+    )
+
+    assert len(cleaned) == 1
+    request = cleaned[0]
+    assert isinstance(request, ModelRequest)
+    assert request.metadata == {'session': 'abc123', 'source': 'history', 'trace_id': 'trace-456'}
 
 
 def test_agent_conversation_id_explicit_override() -> None:
