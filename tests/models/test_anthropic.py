@@ -10493,6 +10493,39 @@ async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: Non
     assert result.input_tokens == 10
 
 
+async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebFetchTool())])
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'lookup result'
+
+    result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+    assert result.output == 'hello world'
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert count_tokens_kwargs['tools'] == [
+        {
+            'name': 'lookup',
+            'description': '',
+            'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+        }
+    ]
+    assert count_tokens_kwargs['mcp_servers'] is OMIT
+    assert count_tokens_kwargs['betas'] is OMIT
+    assert {tool['name'] for tool in create_kwargs['tools']} == {'lookup', 'code_execution', 'web_fetch'}
+    assert {tool['name']: tool['type'] for tool in create_kwargs['tools'] if 'type' in tool} == {
+        'code_execution': 'code_execution_20260120',
+        'web_fetch': 'web_fetch_20250910',
+    }
+    assert create_kwargs['betas'] == ['web-fetch-2025-09-10']
+
+
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
     """Test that errors convert to ModelHTTPError."""

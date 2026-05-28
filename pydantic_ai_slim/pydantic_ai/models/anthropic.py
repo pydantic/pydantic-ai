@@ -850,6 +850,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(self.client, AsyncAnthropicBedrock):
             raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
 
+        # Anthropic docs: https://platform.claude.com/docs/en/api/messages-count-tokens
+        # TODO: Remove this workaround if Anthropic starts accepting native/server tools on `count_tokens`.
+        model_request_parameters = replace(model_request_parameters, native_tools=[])
+
         # standalone function to make it easier to override
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
