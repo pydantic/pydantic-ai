@@ -854,6 +854,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
 
+        # The Anthropic count_tokens endpoint does not accept server-side native tools
+        # (e.g. code_execution, web_search, web_fetch, tool_search, memory).  Only
+        # standard function tools — whose type field is "custom" or absent — are
+        # supported.  Strip any server tool entries so the API call succeeds; the
+        # token estimate will still reflect all prompt content and any function tools.
+        # See https://github.com/pydantic/pydantic-ai/issues/5702
+        tools = [t for t in tools if t.get('type') in {None, 'custom'}]
+
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
