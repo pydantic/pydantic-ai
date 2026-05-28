@@ -349,9 +349,10 @@ def _warn_on_cached_content_strips(
     if tools is not None:
         dropped.extend(('tools', 'tool_config'))
     if dropped:
+        names = ', '.join(f'`{n}`' for n in dropped)
         warnings.warn(
             f'`google_cached_content` is set; the cached content resource owns '
-            f'{dropped}, so these fields are stripped from the outgoing request '
+            f'{names}, so these fields are stripped from the outgoing request '
             f'and any agent instructions or registered tools are ignored. '
             f'See https://ai.google.dev/gemini-api/docs/caching.',
             UserWarning,
