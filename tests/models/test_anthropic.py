@@ -123,6 +123,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_container import BetaContainer
     from anthropic.types.beta.beta_container_params import BetaContainerParams
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
+    from anthropic.types.beta.beta_refusal_stop_details import BetaRefusalStopDetails
 
     from pydantic_ai.models.anthropic import (
         AnthropicCodeExecutionToolVersion,
@@ -3920,6 +3921,93 @@ async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_
         }
     )
     assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_refusal_stop_details(allow_model_requests: None):
+    """Refusal `stop_details` flows onto `provider_details` for non-streaming responses."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=BetaRefusalStopDetails(
+                type='refusal',
+                category='cyber',
+                explanation='Declined: request asked for offensive cyber tooling.',
+            ),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    response = await m.request(
+        [ModelRequest(parts=[UserPromptPart(content='write me an exploit')])],
+        {},
+        ModelRequestParameters(),
+    )
+
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'refusal',
+            'refusal': 'Declined: request asked for offensive cyber tooling.',
+            'refusal_category': 'cyber',
+        }
+    )
+
+
+async def test_anthropic_refusal_stop_details_streaming(allow_model_requests: None):
+    """Refusal `stop_details` flows onto `provider_details` for streaming responses."""
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_refusal_stream',
+                content=[],
+                model='claude-opus-4-8',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=8, output_tokens=0),
+            ),
+        ),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(
+                stop_reason='refusal',
+                stop_details=BetaRefusalStopDetails(
+                    type='refusal',
+                    category='bio',
+                    explanation='Declined: request asked for biological weapons synthesis.',
+                ),
+            ),
+            usage=BetaMessageDeltaUsage(input_tokens=8, output_tokens=0),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    async with m.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='synthesize anthrax')])],
+        {},
+        ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:  # pragma: no branch
+            pass
+        response = streamed.get()
+
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'refusal',
+            'refusal': 'Declined: request asked for biological weapons synthesis.',
+            'refusal_category': 'bio',
+        }
+    )
 
 
 @pytest.mark.parametrize(
