@@ -622,13 +622,13 @@ To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Too
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
-* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility. On OpenAI, tools owned by on-demand capabilities use OpenAI's client-executed `tool_search` mode from the first request so capability reveals keep the prompt-cache prefix stable.
+* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Standalone deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility. Tools owned by on-demand capabilities use client-executed local search on native-supporting providers, because provider-side search cannot enforce capability gating before `load_capability` succeeds.
 * **Custom callable** via [`ToolSearch(strategy=...)`][pydantic_ai.capabilities.ToolSearch] — a user-supplied search function. Executed on our side, but routed through the provider's client-executed native surface (Anthropic `tool_reference` blocks, OpenAI `execution='client'`) where supported so the model sees a tool-search call rather than a regular function tool.
 * **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
 
 Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) — the deferred tools never enter the prompt prefix, so prompt caching is preserved across rounds. The local fallback, by contrast, flips each discovered tool's `defer_loading=False` between rounds, which changes the tool-definition prefix and invalidates the cached request prefix on every discovery turn.
 
-On OpenAI Responses, runs that include tools owned by [on-demand capabilities](capabilities.md#on-demand-capabilities) trade hosted-search quality for cache stability: deferred function tools are searched by Pydantic AI rather than OpenAI's hosted `tool_search`, so each `load_capability` reveal can keep the prompt-cache prefix warm. Runs with only standalone deferred tools (no on-demand capabilities) keep using OpenAI's hosted search.
+Runs that include tools owned by [on-demand capabilities](capabilities.md#on-demand-capabilities) trade hosted-search quality for capability gating and cache stability on native-supporting providers: deferred function tools are searched by Pydantic AI through the provider's client-executed native surface, so each `load_capability` reveal can keep the prompt-cache prefix warm without exposing tools from unloaded capabilities. Runs with only standalone deferred tools keep using the provider's hosted search.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
@@ -697,14 +697,14 @@ Available strategy values:
 
 | `strategy` | Algorithm | Behavior |
 |---|---|---|
-| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local keyword matching elsewhere. |
+| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+, local keyword matching elsewhere. When the corpus contains deferred capability-owned tools, Pydantic AI promotes native-supporting providers to client-executed local search so capability gating is preserved. |
 | `'keywords'` | Local keyword-overlap | The keyword algorithm runs on our side, but the wire shape adapts: client-executed native (Anthropic, OpenAI) where supported so the prompt cache stays warm, regular `search_tools` function tool elsewhere. |
 | `'bm25'` / `'regex'` | Anthropic native | Server-executed by Anthropic. The request fails on other providers (OpenAI, Google, etc.) rather than silently substituting a different algorithm. |
 | Callable `(ctx, queries, tools) -> names` | User-defined | Same execution-mode handling as `'keywords'`: client-executed native on supporting providers, local `search_tools` function tool elsewhere. |
 
-The execution mode (server-executed, client-executed-native, or local fallback) is auto-derived from the chosen algorithm and the current provider — users don't pick it directly. Native execution is preferred whenever available because it keeps the model-facing tool list stable across discovery rounds, which preserves Anthropic and OpenAI prompt caching.
+The execution mode (server-executed, client-executed-native, or local fallback) is auto-derived from the chosen algorithm, the current provider, and whether capability-owned tools need gating — users don't pick it directly. Native execution is preferred whenever available because it keeps the model-facing tool list stable across discovery rounds, which preserves Anthropic and OpenAI prompt caching.
 
-To force the local `keywords` algorithm on a provider that natively supports tool search, override [`ModelProfile.supported_builtin_tools`][pydantic_ai.profiles.ModelProfile.supported_builtin_tools] to exclude `ToolSearchTool` — the capability then falls through to the local `search_tools` function tool.
+To force the local `keywords` algorithm on a provider that natively supports tool search, override `ModelProfile.supported_builtin_tools` to exclude `ToolSearchTool` — the capability then falls through to the local `search_tools` function tool.
 
 !!! note "Cross-provider history replay"
     A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:

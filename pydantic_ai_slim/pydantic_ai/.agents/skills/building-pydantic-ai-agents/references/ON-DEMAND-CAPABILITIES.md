@@ -55,7 +55,7 @@ agent = Agent(
 )
 ```
 
-Prefer `Capability` for static instructions and function tools. Subclass `AbstractCapability` only when the description, instructions, model settings, hooks, or toolset needs custom logic.
+`Capability` is a convenience helper for simple bundles of instructions, descriptions, function tools, and toolsets. It accepts callable descriptions, dynamic instruction functions, and dynamic toolset functions. Use a custom `AbstractCapability` when model settings, hooks, native tools, wrapper toolsets, reusable public behavior, or custom per-run logic need to travel with the bundle.
 
 ## Runtime Semantics
 
@@ -118,7 +118,7 @@ account_capability = AccountCapability(id='account-management', defer_loading=Tr
 - `load_capability` is reserved when any deferred capability exists.
 - Deferred capability instructions and model settings activate only after the capability is loaded.
 - Both function and native tools defer with the capability. Deferring a native tool delays its definition entering the request, which breaks the prompt-cache prefix on load — only worth it for tools that materially bloat the prompt.
-- Capability-level `defer_loading=True` gates the bundle as a unit. A tool's own `defer_loading=True` is preserved after the capability loads, leaving that tool behind `search_tools` even though its siblings became callable.
+- Capability-level `defer_loading=True` gates the bundle as a unit. Once the model loads the capability, all tools owned by that deferred capability become visible together. Use tool-level `defer_loading=True` outside a deferred capability when individual tools should stay behind `search_tools`.
 
 ## Choosing Between Deferral Mechanisms
 

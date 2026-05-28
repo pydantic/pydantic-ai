@@ -753,7 +753,7 @@ class ToolDefinition:
        to opt this tool into deferred loading. This is what `prepare_tools` hooks and other
        pre-toolset-wrapping consumers see, and is the value users persist on `ToolDefinition`.
     2. **Current visibility state** — after a toolset like
-       [`ToolSearchToolset`][pydantic_ai.toolsets._tool_search.ToolSearchToolset] processes
+       `ToolSearchToolset` processes
        the corpus, it flips this field to `False` for tools whose discovery shows up in
        message history, so downstream `Model.prepare_request` filtering and adapter wire
        formatting can read "should this be on the wire?" off a single boolean.

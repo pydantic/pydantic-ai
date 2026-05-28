@@ -269,7 +269,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     """Custom description for the `search_tools` function shown to the model."""
 
     parameter_description: str | None = None
-    """Custom description for the `keywords` parameter shown to the model."""
+    """Custom description for the `queries` parameter shown to the model."""
 
     enable_fallback: bool = True
     """When False, the local `search_tools` function tool is not emitted — used when the

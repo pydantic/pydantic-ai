@@ -31,12 +31,14 @@ from pydantic_ai.toolsets.combined import CombinedToolset
 class Capability(AbstractCapability[AgentDepsT]):
     """Convenience capability for bundling instructions, tools, and toolsets without subclassing.
 
-    Use this to group related instructions and function tools or toolsets under a
-    capability identity. Instructions passed via `instructions=` are available through
+    This groups related instructions, descriptions, function tools, and toolsets under
+    a capability identity. Instructions passed via `instructions=` are available through
     `get_instructions()`;
     [`instructions`][pydantic_ai.capabilities.Capability.instructions] is the decorator
-    for registering instruction functions. For dynamic behavior or lifecycle hooks, subclass
-    [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly.
+    for registering instruction functions. The constructor accepts static or callable
+    `description=` values. For model settings, lifecycle hooks, native tools, wrapper
+    toolsets, or custom per-run logic, subclass
+    [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
     """
 
     _: KW_ONLY
@@ -48,7 +50,11 @@ class Capability(AbstractCapability[AgentDepsT]):
     """Function tools to register with the agent."""
 
     description: str | None = None
-    """Human-readable description, surfaced in the `load_capability` tool catalog when `defer_loading=True`."""
+    """Static description mirrored on the instance.
+
+    The constructor also accepts callable descriptions, stored internally and returned
+    from `get_description()`.
+    """
 
     _function_toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False)
     _instructions: list[str | SystemPromptFunc[AgentDepsT]] = field(init=False, repr=False, default_factory=lambda: [])

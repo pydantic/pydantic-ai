@@ -104,7 +104,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     and during agent construction.
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
-    """Internal: queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+    """Internal: queue read and mutated by `PendingMessageDrainCapability`.
 
     Set to the run's live queue during an agent run; `None` in synthetic contexts that aren't
     backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
@@ -184,9 +184,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     def available_tool_names(self) -> set[str]:
         """Names of tools callable by the model on the current turn (non-deferred visible + discovered + loaded-capability).
 
-        The subset of `tools` keys whose definitions are not deferred; the tool-side mirror
-        of `available_capability_ids`: `available = auto/always ∪ runtime-revealed`, so
-        `available_tool_names - discovered_tool_names` is the always-visible subset.
+        The subset of `tools` keys whose definitions are not deferred, plus deferred tools
+        revealed by tool search. The non-deferred subset includes always-visible tools and
+        tools revealed by loaded capabilities; `discovered_tool_names` only tracks tool-search
+        discoveries reconstructed from message history.
         """
         if self.tool_manager is None or self.tool_manager.tools is None:
             return set[str]() | self.discovered_tool_names
@@ -217,9 +218,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         the drain.
 
         Args:
-            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
-                Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
-                content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
+            *content: One or more `EnqueueContent` items.
+                Adjacent user content (a `str` or multi-modal content like an
+                [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each
                 [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
                 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is coalesced with adjacent
