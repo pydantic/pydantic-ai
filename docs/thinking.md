@@ -46,12 +46,13 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
-| OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
+| OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `effort='none'`; always-on routes silently ignore; via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
-| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Supports `'none'`, `'low'`, `'medium'`, and `'high'`; `thinking=False` sends `'none'` |
+| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | `grok-4.3` supports `'none'`, `'low'`, `'medium'`, and `'high'`; `thinking=False` sends `'none'`; older always-on reasoning models silently ignore |
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
-| Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
+| Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
+| Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 
 ## OpenAI
 
@@ -276,6 +277,11 @@ settings = OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'})
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+!!! note "Wire format details"
+    Truthy [`thinking`][pydantic_ai.settings.ModelSettings.thinking] values send both `effort` and `enabled: True` on the wire. The explicit `enabled: True` is a no-op for reasoning-by-default models but load-bearing for reasoning-optional routes (parts of the `google/gemma-*` family, for example) that otherwise leave reasoning disabled despite `effort` being set.
+
+    [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] sends `reasoning={'effort': 'none'}` — the [documented OpenRouter disable signal](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) — on routes whose upstream can honor disable (e.g. `anthropic/claude-sonnet-4.5`, `z-ai/glm-4.6`). On routes whose upstream is always-on (e.g. `openai/o3`, `openai/gpt-5`, `mistralai/magistral-medium-*`, `deepseek/deepseek-r1`, `x-ai/grok-3-mini`), `thinking=False` is silently ignored at the model-profile gate, matching the same model's direct-route behavior. Set [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] directly when you want explicit per-route control.
 
 ## Mistral
 
