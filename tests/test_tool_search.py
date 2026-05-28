@@ -3690,6 +3690,37 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
     assert isinstance(last.parts[1], UserPromptPart)
 
 
+def test_clean_message_history_preserves_metadata_on_merge() -> None:
+    """Regression for #5629: merging consecutive `ModelRequest`s must preserve `metadata`."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='first')],
+            metadata={'trace_id': 'abc'},
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(content='second')],
+        ),
+    ]
+
+    cleaned = _clean_message_history(messages)
+    assert len(cleaned) == 1
+    merged = cleaned[0]
+    assert isinstance(merged, ModelRequest)
+    assert merged.metadata == {'trace_id': 'abc'}
+
+    # When the later request carries metadata and the earlier one doesn't, pick the later one.
+    messages_reversed: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='first')]),
+        ModelRequest(
+            parts=[UserPromptPart(content='second')],
+            metadata={'trace_id': 'xyz'},
+        ),
+    ]
+    cleaned_reversed = _clean_message_history(messages_reversed)
+    assert len(cleaned_reversed) == 1
+    assert cleaned_reversed[0].metadata == {'trace_id': 'xyz'}  # type: ignore[union-attr]
+
+
 def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
     """Narrowing an already-typed `ToolSearchReturnPart` returns the input instance."""
     part = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')

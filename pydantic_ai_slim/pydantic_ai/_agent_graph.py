@@ -2195,10 +2195,12 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     # Tool return parts always need to be at the start
                     key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
                 )
-                merged_message = _messages.ModelRequest(
+                merged_message = replace(
+                    last_message,
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
                     timestamp=message.timestamp or last_message.timestamp,
+                    metadata=message.metadata or last_message.metadata,
                 )
                 clean_messages[-1] = merged_message
             else:
