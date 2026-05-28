@@ -2942,36 +2942,36 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> _RunC
     capability.apply(capabilities.append)
 
     explicit_ids: set[str] = set()
-    for capability in capabilities:
-        if capability.id is None:
+    for cap in capabilities:
+        if cap.id is None:
             continue
-        if capability.id in explicit_ids:
+        if cap.id in explicit_ids:
             raise exceptions.UserError(
-                f'Capability id {capability.id!r} is used by multiple capabilities. '
+                f'Capability id {cap.id!r} is used by multiple capabilities. '
                 'Capability ids must be unique within a run.'
             )
-        explicit_ids.add(capability.id)
+        explicit_ids.add(cap.id)
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
     id_by_instance: dict[int, str] = {}
-    for capability in capabilities:
-        capability_id = capability.id
-        if capability.defer_loading is True and capability_id is None:
+    for cap in capabilities:
+        capability_id = cap.id
+        if cap.defer_loading is True and capability_id is None:
             raise exceptions.UserError(
                 'Deferred capabilities must use stable explicit `id` values. '
                 'Pass `id=...` when using `defer_loading=True`.'
             )
 
         if capability_id is None:
-            base_id = to_snake(type(capability).__name__)
+            base_id = to_snake(type(cap).__name__)
             capability_id = base_id
             suffix = 2
             while capability_id in by_id or capability_id in explicit_ids:
                 capability_id = f'{base_id}_{suffix}'
                 suffix += 1
 
-        by_id[capability_id] = capability
-        id_by_instance.setdefault(id(capability), capability_id)
+        by_id[capability_id] = cap
+        id_by_instance.setdefault(id(cap), capability_id)
 
     return _RunCapabilities(by_id=by_id, id_by_instance=id_by_instance)
 

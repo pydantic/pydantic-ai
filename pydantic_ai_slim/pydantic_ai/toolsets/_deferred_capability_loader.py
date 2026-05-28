@@ -16,6 +16,10 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 LOAD_CAPABILITY_TOOL_NAME = 'load_capability'
 LOAD_CAPABILITY_TOOL_DESCRIPTION = 'Load a capability to access its full instructions and tools.'
+LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE = (
+    'Capability {capability_id!r} is already available. '
+    'Use its existing instructions and tools; do not call `load_capability` for it again.'
+)
 
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
 _LOAD_CAPABILITY_SCHEMA = _load_capability_args_ta.json_schema()
@@ -62,12 +66,15 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
     async def _load_capability(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> LoadCapabilityReturn:
         capability_id = tool_args['id']
-        if capability_id not in ctx.capabilities:
+        capability = ctx.capabilities.get(capability_id)
+        if capability is None:
             raise ModelRetry(f'No capability found with id {capability_id!r}.')
+        if capability_id in ctx.available_capability_ids:
+            raise ModelRetry(LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
         parts = [
             InstructionPart(content=instruction, dynamic=True)
-            for instruction in await resolve_instructions(ctx.capabilities[capability_id].get_instructions(), ctx)
+            for instruction in await resolve_instructions(capability.get_instructions(), ctx)
         ]
 
         parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))

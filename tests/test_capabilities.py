@@ -102,7 +102,10 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import resolve_capability_id
-from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
+from pydantic_ai.toolsets._deferred_capability_loader import (
+    LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
+    LOAD_CAPABILITY_TOOL_NAME,
+)
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
 from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -3787,6 +3790,107 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     assert not any(isinstance(part, LoadCapabilityReturnPart) for part in history_parts)
     [retry] = [part for part in history_parts if isinstance(part, RetryPromptPart)]
     assert retry.content == snapshot("No capability found with id 'missing'.")
+
+
+async def test_load_capability_retries_for_already_available_capability() -> None:
+    always_on = Capability[None](
+        id='always-on',
+        description='Already visible.',
+        instructions='Already visible instructions.',
+    )
+    deferred = Capability[None](
+        id='deferred',
+        description='Deferred.',
+        instructions='Deferred instructions.',
+        defer_loading=True,
+    )
+    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='always-on')
+    retry_messages: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        retries = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
+        ]
+        if retries:
+            retry_messages.extend(retries)
+            return make_text_response('done')
+
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    args={'id': 'always-on'},
+                    tool_call_id='load-always-on',
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[always_on, deferred])
+    result = await agent.run('load always-on')
+
+    assert result.output == 'done'
+    assert retry_messages == [expected_retry]
+    assert not any(
+        isinstance(part, LoadCapabilityReturnPart) for message in result.all_messages() for part in message.parts
+    )
+
+
+async def test_load_capability_retries_when_capability_is_already_loaded() -> None:
+    deferred = Capability[None](
+        id='deferred',
+        description='Deferred.',
+        instructions='Deferred instructions.',
+        defer_loading=True,
+    )
+    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='deferred')
+    retry_messages: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        retries = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
+        ]
+        if retries:
+            retry_messages.extend(retries)
+            return make_text_response('done')
+
+        load_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, LoadCapabilityReturnPart)
+        ]
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    args={'id': 'deferred'},
+                    tool_call_id=f'load-deferred-{len(load_returns)}',
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[deferred])
+    result = await agent.run('load twice')
+
+    assert result.output == 'done'
+    assert retry_messages == [expected_retry]
+    load_returns = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert len(load_returns) == 1
+    assert load_returns[0].instructions == 'Deferred instructions.'
 
 
 def test_infer_fmt_explicit():
