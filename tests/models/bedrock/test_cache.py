@@ -13,8 +13,8 @@ from vcr.cassette import Cassette
 from pydantic_ai import Agent, ModelRequest, RunContext, ToolReturnPart
 from pydantic_ai.settings import ModelSettings
 
-from ..cassette_utils import get_bedrock_tool_config_from_cassette, get_bedrock_tool_names_from_cassette
-from ..conftest import try_import
+from ...cassette_utils import get_bedrock_tool_config_from_cassette, get_bedrock_tool_names_from_cassette
+from ...conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
