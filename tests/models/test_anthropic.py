@@ -68,6 +68,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
@@ -1442,13 +1443,6 @@ async def test_anthropic_native_output_decimal_strict(allow_model_requests: None
     assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
-def _single_request_body(vcr: Cassette) -> dict[str, Any]:
-    """Return the decoded JSON body of the single recorded VCR request."""
-    requests = vcr.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    assert len(requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-
-
 async def test_anthropic_task_budget_adds_output_config_and_beta(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ):
@@ -1463,7 +1457,7 @@ async def test_anthropic_task_budget_adds_output_config_and_beta(
     result = await agent.run('What is 2+2?')
     assert result.output
 
-    assert _single_request_body(vcr)['output_config'] == snapshot(
+    assert single_request_body(vcr)['output_config'] == snapshot(
         {'task_budget': {'type': 'tokens', 'total': 20_000, 'remaining': 500}}
     )
 
@@ -3894,7 +3888,7 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.model_name == 'claude-opus-4-7'
-    request_body = _single_request_body(vcr)
+    request_body = single_request_body(vcr)
     assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
         {
             'model': 'claude-opus-4-7',
@@ -4038,7 +4032,7 @@ async def test_anthropic_task_budget_coexists_with_effort(
     result = await agent.run('What is 2+2?')
     assert result.output
 
-    assert _single_request_body(vcr)['output_config'] == snapshot(
+    assert single_request_body(vcr)['output_config'] == snapshot(
         {'effort': 'high', 'task_budget': {'type': 'tokens', 'total': 20_000}}
     )
 
@@ -10528,6 +10522,45 @@ async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
 
     with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
         await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+
+async def test_count_tokens_strips_server_side_native_tools(allow_model_requests: None) -> None:
+    """count_tokens must not send server-side native tools to the Anthropic endpoint.
+
+    The Anthropic count_tokens API rejects server tools such as code_execution,
+    web_search, and web_fetch with HTTP 400:
+      "Server tools are not supported in the count_tokens endpoint."
+
+    Verify that _messages_count_tokens filters those tools out while still
+    forwarding plain function tools (type == "custom").
+    See https://github.com/pydantic/pydantic-ai/issues/5702
+    """
+    c = completion_message(
+        [BetaTextBlock(text='hello', type='text')], BetaUsage(input_tokens=5, output_tokens=3)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    await agent.run(
+        'run some code',
+        usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+    )
+
+    # First recorded call is count_tokens; second is the real messages.create.
+    assert len(mock_client.chat_completion_kwargs) == 2  # type: ignore[attr-defined]
+    count_tokens_kwargs = mock_client.chat_completion_kwargs[0]  # type: ignore[attr-defined]
+
+    # The tools list must not contain any server-side tool (those whose 'type' is
+    # something other than 'custom', e.g. 'code_execution_20250825').
+    # If all tools were stripped the value will be OMIT (not a list) — that's fine.
+    tools_sent = count_tokens_kwargs.get('tools', [])
+    if isinstance(tools_sent, list):
+        server_tool_types = {t.get('type') for t in tools_sent if t.get('type') not in {None, 'custom'}}
+        assert server_tool_types == set(), (
+            f'count_tokens received server-side tools that Anthropic rejects: {server_tool_types}'
+        )
 
 
 @pytest.mark.vcr()
