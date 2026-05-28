@@ -276,7 +276,9 @@ class GoogleModelSettings(ModelSettings, total=False):
     alongside `cached_content` (`400 INVALID_ARGUMENT`: "Tool config, tools and
     system instruction should not be set in the request when using cached
     content."). Any tools registered on the agent and any system prompt are
-    therefore silently ignored on requests that go through the cache.
+    therefore ignored on requests that go through the cache; a `UserWarning`
+    is emitted whenever stripping actually drops a field so the mismatch is
+    discoverable.
 
     See <https://ai.google.dev/gemini-api/docs/caching> for more information.
     """
@@ -331,6 +333,30 @@ def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> 
         )
         return deprecated
     return None
+
+
+def _warn_on_cached_content_strips(
+    cached_content: str | None,
+    system_instruction: ContentDict | None,
+    tools: list[ToolDict] | None,
+) -> None:
+    """Emit a `UserWarning` when `google_cached_content` would strip a field that the caller populated."""
+    if not cached_content:
+        return
+    dropped: list[str] = []
+    if system_instruction is not None:
+        dropped.append('system_instruction')
+    if tools is not None:
+        dropped.extend(('tools', 'tool_config'))
+    if dropped:
+        warnings.warn(
+            f'`google_cached_content` is set; the cached content resource owns '
+            f'{dropped}, so these fields are stripped from the outgoing request '
+            f'and any agent instructions or registered tools are ignored. '
+            f'See https://ai.google.dev/gemini-api/docs/caching.',
+            UserWarning,
+            stacklevel=3,
+        )
 
 
 def _get_deprecated_google_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleCloudServiceTier | None:
@@ -897,6 +923,7 @@ class GoogleModel(Model[Client]):
         # (`400 INVALID_ARGUMENT`). The cache resource itself owns those
         # fields, so we pass `None` for them when caching is requested.
         cached_content = model_settings.get('google_cached_content')
+        _warn_on_cached_content_strips(cached_content, system_instruction, tools)
 
         config = GenerateContentConfigDict(
             http_options=http_options,

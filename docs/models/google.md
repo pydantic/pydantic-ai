@@ -411,6 +411,25 @@ avg_logprobs = result.response.provider_details.get('avg_logprobs')
 
 See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.
 
+### Context caching (`google_cached_content`)
+
+When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+
+model_settings = GoogleModelSettings(
+    google_cached_content='projects/p/locations/global/cachedContents/your-cache-id',
+)
+
+agent = Agent(GoogleModel('gemini-2.5-pro'), model_settings=model_settings)
+result = agent.run_sync('Summarise the cached document')
+```
+
+!!! warning "Cached fields are owned by the cache resource"
+    The cache owns `system_instruction`, `tools`, and `tool_config`; both the Gemini API and Vertex AI reject requests that supply them alongside `cached_content` (`400 INVALID_ARGUMENT`). Pydantic AI strips those fields from the outgoing request when `google_cached_content` is set, so agent instructions and registered tools are ignored on cached requests — a `UserWarning` is emitted whenever stripping drops a field so the mismatch is discoverable.
+
 ## Streaming cancellation
 
 !!! warning "Cancellation limitations"

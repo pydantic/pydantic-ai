@@ -7,6 +7,7 @@ import os
 import random
 import tempfile
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from datetime import date, timezone
 from decimal import Decimal
 from typing import Any, cast
@@ -6592,11 +6593,11 @@ async def test_google_top_k_propagation(
 
 
 @pytest.mark.parametrize(
-    ('cached', 'instructions', 'register_tool'),
+    ('cached', 'instructions', 'register_tool', 'expect_warning'),
     [
-        pytest.param(True, 'You are a helpful chatbot.', True, id='cache_set_with_instructions_and_tools'),
-        pytest.param(False, 'You are a helpful chatbot.', True, id='cache_unset_with_instructions_and_tools'),
-        pytest.param(True, None, False, id='cache_set_no_instructions_no_tools'),
+        pytest.param(True, 'You are a helpful chatbot.', True, True, id='cache_set_with_instructions_and_tools'),
+        pytest.param(False, 'You are a helpful chatbot.', True, False, id='cache_unset_with_instructions_and_tools'),
+        pytest.param(True, None, False, False, id='cache_set_no_instructions_no_tools'),
     ],
 )
 @pytest.mark.parametrize('stream', [False, True])
@@ -6607,11 +6608,14 @@ async def test_google_model_cached_content_request_config(
     cached: bool,
     instructions: str | None,
     register_tool: bool,
+    expect_warning: bool,
     stream: bool,
 ):
     """When `google_cached_content` is set, the outgoing request omits
     `system_instruction`, `tools`, and `tool_config` — the cache resource
-    owns those fields. When unset, the request still carries them.
+    owns those fields. When unset, the request still carries them. A
+    `UserWarning` is emitted whenever caching strips agent instructions or
+    registered tools so the mismatch is discoverable.
 
     Parametrized over `stream` because `_build_content_and_config` is shared
     by `request()` (`generate_content`) and `request_stream()`
@@ -6650,11 +6654,13 @@ async def test_google_model_cached_content_request_config(
         def echo(text: str) -> str:
             return text  # pragma: no cover
 
-    if stream:
-        async with agent.run_stream('say hi') as result:
-            await result.get_output()
-    else:
-        await agent.run('say hi')
+    warning_ctx = pytest.warns(UserWarning, match='`google_cached_content` is set') if expect_warning else nullcontext()
+    with warning_ctx:
+        if stream:
+            async with agent.run_stream('say hi') as result:
+                await result.get_output()
+        else:
+            await agent.run('say hi')
 
     assert mock.call_count == 1
     _, kwargs = mock.call_args
