@@ -145,6 +145,8 @@ async def test_something(model: Model):
 - Ensure test assertions match test names and docstrings — tests without proper assertions or that verify opposite behavior create false positives
 - Test MCP against real `tests.mcp_server` instance, not mocks — extend test server with helper tools to expose runtime context (instructions, client info, session state)
 - Remove stale test docstrings, comments, and historical provider bug notes when behavior changes
+- Prefer `instructions=` over `system_prompt=` when the test doesn't specifically need the system-prompt code path — `instructions=` is the canonical entry point for non-system-prompt-specific behavior (cacheable prefix, persona priming, format guidance), and reserving `system_prompt=` for tests that exercise the system-prompt machinery keeps intent legible
+- Never reference line numbers in test docstrings or comments (`lines 872-873`, `L42`, `line 100`) — they go stale on the next edit to the referenced file. Describe the condition or behavior instead
 
 ## Directory Structure
 

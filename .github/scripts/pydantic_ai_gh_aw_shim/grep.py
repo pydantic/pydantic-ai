@@ -9,14 +9,13 @@ from .shared import attach_context, clip, resolve
 def grep(pattern: str, path: str = '.') -> str:
     """Recursively regex-search workspace files via ripgrep.
 
-    Returns `file:line:text` matches (capped). gh-aw's runners and the AWF
-    sandbox image both ship ripgrep; if it's ever missing in some deployment
-    the agent can fall back to `Bash` (`grep -rn …`) on its own — a Python
-    re-implementation is slow and not a real substitute.
+    Returns `file:line:text` matches (capped). The AWF sandbox image ships
+    ripgrep; if it's unexpectedly absent the agent can fall back to the Bash
+    tool with `grep -rn` on its own.
     """
     rg = shutil.which('rg')
     if not rg:
-        return 'error: ripgrep (rg) not installed — use the Bash tool with `grep -rn` instead'
+        return 'error: ripgrep (rg) not found — use the Bash tool with `grep -rn` instead'
     base = resolve(path)
     try:
         r = subprocess.run(

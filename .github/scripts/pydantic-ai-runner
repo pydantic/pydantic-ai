@@ -4,6 +4,7 @@
 # dependencies = [
 #   "pydantic-ai-slim[anthropic,mcp]>=1.95.1",
 #   "logfire",
+#   "opentelemetry-instrumentation-httpx",
 # ]
 # ///
 """Pydantic AI gh-aw shim launcher.
