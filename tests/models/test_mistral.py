@@ -91,6 +91,7 @@ class MockMistralAI:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockCompletionEvent] | Sequence[Sequence[MockCompletionEvent]] | None = None
     index: int = 0
+    last_kwargs: dict[str, Any] | None = None
 
     @cached_property
     def sdk_configuration(self) -> MockSdkConfiguration:
@@ -120,6 +121,7 @@ class MockMistralAI:
     async def chat_completions_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
+        self.last_kwargs = _kwargs
         if stream or self.stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
@@ -279,6 +281,22 @@ async def test_multiple_completions(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_non_streaming_forwards_penalties(allow_model_requests: None):
+    completion = completion_message(MistralAssistantMessage(content='hello'))
+    mock_client = MockMistralAI.create_mock(completion)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model)
+
+    await agent.run(
+        'hello',
+        model_settings={'presence_penalty': 0.5, 'frequency_penalty': 0.25},
+    )
+
+    assert mock_client.last_kwargs is not None
+    assert mock_client.last_kwargs['presence_penalty'] == 0.5
+    assert mock_client.last_kwargs['frequency_penalty'] == 0.25
 
 
 async def test_three_completions(allow_model_requests: None):
