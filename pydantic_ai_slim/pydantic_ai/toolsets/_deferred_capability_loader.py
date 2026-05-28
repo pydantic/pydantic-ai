@@ -60,7 +60,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if name == LOAD_CAPABILITY_TOOL_NAME:
+        if tool.tool_def.tool_kind == 'capability-load':
             return await self._load_capability(tool_args, ctx)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
