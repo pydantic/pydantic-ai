@@ -1147,13 +1147,14 @@ class TestProfileThinkingCapabilities:
         assert isinstance(profile, AnthropicModelProfile)
         assert profile.anthropic_supports_adaptive_thinking is True
 
-        profile = anthropic_model_profile('claude-opus-4-7')
-        assert profile is not None
-        assert isinstance(profile, AnthropicModelProfile)
-        assert profile.anthropic_supports_adaptive_thinking is True
-        assert profile.anthropic_supports_xhigh_effort is True
-        assert profile.anthropic_disallows_budget_thinking is True
-        assert profile.anthropic_supports_task_budgets is True
+        for model_name in ('claude-opus-4-7', 'claude-opus-4-8'):
+            profile = anthropic_model_profile(model_name)
+            assert profile is not None
+            assert isinstance(profile, AnthropicModelProfile)
+            assert profile.anthropic_supports_adaptive_thinking is True
+            assert profile.anthropic_supports_xhigh_effort is True
+            assert profile.anthropic_disallows_budget_thinking is True
+            assert profile.anthropic_supports_task_budgets is True
 
     def test_google_profile_thinking_support(self):
         profile = google_model_profile('gemini-2.5-flash')

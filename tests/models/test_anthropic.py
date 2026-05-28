@@ -3899,6 +3899,29 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
+async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == 'claude-opus-4-8'
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-4-8',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
 @pytest.mark.parametrize(
     'thinking_value,expected_thinking,expected_effort',
     [
@@ -3982,24 +4005,26 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
     assert kwargs.get('thinking') is OMIT
 
 
-async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None, model_name: str):
     mock_client = MockAnthropic.create_mock(
         completion_message(
             [BetaTextBlock(text='4', type='text')],
             usage=BetaUsage(input_tokens=10, output_tokens=1),
         )
     )
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
     )
 
-    with pytest.raises(UserError, match="'claude-opus-4-7' does not support"):
+    with pytest.raises(UserError, match=f"'{model_name}' does not support"):
         await agent.run('What is 2+2?')
 
 
-async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None, model_name: str):
     responses = [
         completion_message(
             [BetaTextBlock(text='4', type='text')],
@@ -4007,7 +4032,7 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
         ),
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(thinking='xhigh'))
 
     await agent.run('What is 2+2?')
@@ -4068,9 +4093,10 @@ async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
     )
 
 
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
 @pytest.mark.parametrize('settings_source', ['agent', 'model'])
 async def test_anthropic_opus_47_drops_sampling_settings(
-    allow_model_requests: None, settings_source: Literal['agent', 'model']
+    allow_model_requests: None, settings_source: Literal['agent', 'model'], model_name: str
 ):
     settings = AnthropicModelSettings(
         temperature=0.2,
@@ -4086,13 +4112,13 @@ async def test_anthropic_opus_47_drops_sampling_settings(
     mock_client = MockAnthropic.create_mock(responses)
     if settings_source == 'model':
         m = AnthropicModel(
-            'claude-opus-4-7',
+            model_name,
             provider=AnthropicProvider(anthropic_client=mock_client),
             settings=settings,
         )
         agent = Agent(m)
     else:
-        m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+        m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
         agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
@@ -4106,8 +4132,9 @@ async def test_anthropic_opus_47_drops_sampling_settings(
     assert (kwargs['temperature'], kwargs['top_p'], kwargs['extra_body']) == (OMIT, OMIT, {'metadata': {'keep': True}})
 
 
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
 async def test_anthropic_opus_47_dedups_sampling_warning_across_settings_and_extra_body(
-    allow_model_requests: None,
+    allow_model_requests: None, model_name: str
 ):
     settings = AnthropicModelSettings(
         temperature=0.2,
@@ -4120,21 +4147,20 @@ async def test_anthropic_opus_47_dedups_sampling_warning_across_settings_and_ext
         )
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning) as recorded:
         await agent.run('What is 2+2?')
 
     sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
-    assert sampling_warnings == snapshot(
-        [
-            "Sampling parameters ['temperature', 'top_k'] are not supported by 'claude-opus-4-7'. These settings will be ignored."
-        ]
-    )
+    assert sampling_warnings == [
+        f"Sampling parameters ['temperature', 'top_k'] are not supported by '{model_name}'. These settings will be ignored."
+    ]
 
 
-async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None, model_name: str):
     settings = AnthropicModelSettings(temperature=0.2, extra_body={'metadata': {'keep': True}})
     responses = [
         completion_message(
@@ -4143,7 +4169,7 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
         )
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
