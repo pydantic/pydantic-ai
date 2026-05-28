@@ -3923,33 +3923,23 @@ async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
-_REFUSAL_CASES = [
+_REFUSAL_CASE_PARAMS = [
     pytest.param(
-        BetaRefusalStopDetails(
-            type='refusal',
-            category='cyber',
-            explanation='Declined: request asked for offensive cyber tooling.',
-        ),
+        'cyber',
+        'Declined: request asked for offensive cyber tooling.',
         {'refusal': 'Declined: request asked for offensive cyber tooling.', 'refusal_category': 'cyber'},
         id='category-and-explanation',
     ),
-    pytest.param(
-        BetaRefusalStopDetails(type='refusal', category='bio', explanation=None),
-        {'refusal_category': 'bio'},
-        id='category-only',
-    ),
-    pytest.param(
-        BetaRefusalStopDetails(type='refusal', category=None, explanation='Declined: unsafe request.'),
-        {'refusal': 'Declined: unsafe request.'},
-        id='explanation-only',
-    ),
+    pytest.param('bio', None, {'refusal_category': 'bio'}, id='category-only'),
+    pytest.param(None, 'Declined: unsafe request.', {'refusal': 'Declined: unsafe request.'}, id='explanation-only'),
 ]
 
 
-@pytest.mark.parametrize('stop_details,expected_extra', _REFUSAL_CASES)
+@pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
 async def test_anthropic_refusal_stop_details(
     allow_model_requests: None,
-    stop_details: BetaRefusalStopDetails,
+    category: Literal['cyber', 'bio'] | None,
+    explanation: str | None,
     expected_extra: dict[str, Any],
 ):
     """Refusal `stop_details` flows onto `provider_details` for non-streaming responses."""
@@ -3960,7 +3950,7 @@ async def test_anthropic_refusal_stop_details(
             model='claude-opus-4-8',
             role='assistant',
             stop_reason='refusal',
-            stop_details=stop_details,
+            stop_details=BetaRefusalStopDetails(type='refusal', category=category, explanation=explanation),
             type='message',
             usage=BetaUsage(input_tokens=8, output_tokens=0),
         )
@@ -3977,13 +3967,15 @@ async def test_anthropic_refusal_stop_details(
     assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
 
 
-@pytest.mark.parametrize('stop_details,expected_extra', _REFUSAL_CASES)
+@pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
 async def test_anthropic_refusal_stop_details_streaming(
     allow_model_requests: None,
-    stop_details: BetaRefusalStopDetails,
+    category: Literal['cyber', 'bio'] | None,
+    explanation: str | None,
     expected_extra: dict[str, Any],
 ):
     """Refusal `stop_details` flows onto `provider_details` for streaming responses."""
+    stop_details = BetaRefusalStopDetails(type='refusal', category=category, explanation=explanation)
     stream: list[MockRawMessageStreamEvent] = [
         BetaRawMessageStartEvent(
             type='message_start',
