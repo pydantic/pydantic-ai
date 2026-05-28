@@ -919,10 +919,7 @@ class GoogleModel(Model[Client]):
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
-        # Vertex AI and the Gemini API reject requests that combine
-        # `cached_content` with `system_instruction`, `tools`, or `tool_config`
-        # (`400 INVALID_ARGUMENT`). The cache resource itself owns those
-        # fields, so we pass `None` for them when caching is requested.
+        # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         cached_content = model_settings.get('google_cached_content')
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
 

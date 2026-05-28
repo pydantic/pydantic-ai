@@ -415,7 +415,7 @@ See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reason
 
 When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests:
 
-```python {test="skip"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
@@ -424,11 +424,35 @@ model_settings = GoogleModelSettings(
 )
 
 agent = Agent(GoogleModel('gemini-2.5-pro'), model_settings=model_settings)
-result = agent.run_sync('Summarise the cached document')
+...
 ```
 
 !!! warning "Cached fields are owned by the cache resource"
-    The cache owns `system_instruction`, `tools`, and `tool_config`; both the Gemini API and Vertex AI reject requests that supply them alongside `cached_content` (`400 INVALID_ARGUMENT`). Pydantic AI strips those fields from the outgoing request when `google_cached_content` is set, so agent instructions and registered tools are ignored on cached requests — a `UserWarning` is emitted whenever stripping drops a field so the mismatch is discoverable.
+    The cache resource owns `system_instruction`, `tools`, and `tool_config` — Pydantic AI strips them from outgoing requests when `google_cached_content` is set, so agent instructions and registered tools are ignored on cached requests. A `UserWarning` is emitted whenever stripping drops a field, so the mismatch is discoverable.
+
+??? example "Create a cached content resource"
+    Pydantic AI doesn't wrap the cache-management API — create the resource with the underlying [google-genai](https://googleapis.github.io/python-genai/) SDK, then pass its name through `google_cached_content`:
+
+    ```python {test="skip"}
+    from google.genai.types import Content, CreateCachedContentConfig, Part
+
+    from pydantic_ai.providers.google import GoogleProvider
+
+    provider = GoogleProvider(api_key='your-api-key')
+
+    cache = provider.client.caches.create(
+        model='gemini-2.5-flash',
+        config=CreateCachedContentConfig(
+            system_instruction='You are a geography expert. Be concise.',
+            contents=[Content(role='user', parts=[Part(text='...long context to cache...')])],
+            ttl='3600s',
+        ),
+    )
+    print(cache.name)
+    #> cachedContents/abc123...
+    ```
+
+    Caches have a minimum size (≈1024 tokens for `gemini-2.5-flash`, ≈4096 for `gemini-2.5-pro`) and a TTL — see the [Gemini caching docs](https://ai.google.dev/gemini-api/docs/caching) for the current thresholds, pricing, and `list` / `update` / `delete` operations.
 
 ## Streaming cancellation
 
