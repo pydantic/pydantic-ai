@@ -553,9 +553,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             yield self._run_result.output
             await self._marked_completed()
         elif self._stream_response is not None:
-            async for output in self._stream_response.stream_output(debounce_by=debounce_by):
-                yield output
-            await self._marked_completed(self.response)
+            try:
+                async for output in self._stream_response.stream_output(debounce_by=debounce_by):
+                    yield output
+            finally:
+                await self._marked_completed(self.response)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -581,9 +583,11 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             yield self._run_result.output
             await self._marked_completed()
         elif self._stream_response is not None:
-            async for text in self._stream_response.stream_text(delta=delta, debounce_by=debounce_by):
-                yield text
-            await self._marked_completed(self.response)
+            try:
+                async for text in self._stream_response.stream_text(delta=delta, debounce_by=debounce_by):
+                    yield text
+            finally:
+                await self._marked_completed(self.response)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -614,14 +618,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed()
         elif self._stream_response is not None:
             last_msg: _messages.ModelResponse | None = None
-            async for msg in self._stream_response.stream_response(debounce_by=debounce_by):
-                yield msg
-                last_msg = msg
-            # `AgentStream.stream_response` always yields the final response, so `last_msg` is set.
-            # Pass it to `_marked_completed` so `run_id` and `conversation_id` are stamped onto the
-            # same instance the caller still holds a reference to in their iteration.
-            assert last_msg is not None
-            await self._marked_completed(last_msg)
+            try:
+                async for msg in self._stream_response.stream_response(debounce_by=debounce_by):
+                    yield msg
+                    last_msg = msg
+            finally:
+                # Pass the last yielded response (if any) to stamp run_id / conversation_id onto
+                # the same instance the caller still holds. On early break, last_msg may be None
+                # which is handled gracefully by _marked_completed.
+                await self._marked_completed(last_msg)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 

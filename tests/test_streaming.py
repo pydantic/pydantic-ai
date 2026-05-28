@@ -4101,6 +4101,34 @@ async def test_get_output_after_stream_output():
     )
 
 
+@pytest.mark.parametrize('method', ['stream_output', 'stream_text'])
+async def test_stream_is_complete_set_on_early_break(method: str):
+    """Breaking early from stream_output() / stream_text() must still set is_complete=True.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5615
+
+    Before the fix, `_marked_completed()` was placed *after* the `async for … yield`
+    loop, so a `break` would leave `is_complete=False` and the final response
+    absent from `all_messages()`.  The fix wraps the loop in `try/finally` so
+    `_marked_completed()` always fires, regardless of how iteration ends.
+    """
+
+    async def sf(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        for chunk in ['Hello', ' ', 'world', '!']:
+            yield chunk
+
+    agent = Agent(FunctionModel(stream_function=sf))
+
+    async with agent.run_stream('test') as result:
+        assert not result.is_complete
+
+        stream_iter = result.stream_output() if method == 'stream_output' else result.stream_text()
+        async for _ in stream_iter:  # pragma: no branch
+            break  # break after the very first chunk
+
+    assert result.is_complete, f'{method}(): is_complete must be True after early break'
+
+
 @pytest.mark.parametrize('delta', [True, False])
 @pytest.mark.parametrize('debounce_by', [None, 0.1])
 async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float | None):
