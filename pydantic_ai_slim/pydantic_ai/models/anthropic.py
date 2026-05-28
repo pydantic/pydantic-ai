@@ -256,10 +256,12 @@ def _map_api_errors(model_name: str) -> Iterator[None]:
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-AnthropicModelName = LatestAnthropicModelNames
+AnthropicModelName = LatestAnthropicModelNames | Literal['claude-opus-4-8']
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
+`claude-opus-4-8` is included here ahead of an SDK release that lists it; drop the extra literal once the
+`anthropic` pin in `pydantic_ai_slim/pyproject.toml` is bumped past the version that adds it.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
 
