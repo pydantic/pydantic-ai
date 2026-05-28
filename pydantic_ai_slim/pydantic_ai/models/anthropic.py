@@ -941,6 +941,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if raw_finish_reason := response.stop_reason:  # pragma: no branch
             provider_details = {'finish_reason': raw_finish_reason}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+        if response.stop_details is not None:
+            provider_details = provider_details or {}
+            if response.stop_details.explanation is not None:
+                provider_details['refusal'] = response.stop_details.explanation
+            if response.stop_details.category is not None:
+                provider_details['refusal_category'] = response.stop_details.category
         if response.container:
             provider_details = provider_details or {}
             provider_details['container_id'] = response.container.id
@@ -2298,6 +2304,12 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    if event.delta.stop_details is not None:
+                        self.provider_details = self.provider_details or {}
+                        if event.delta.stop_details.explanation is not None:
+                            self.provider_details['refusal'] = event.delta.stop_details.explanation
+                        if event.delta.stop_details.category is not None:
+                            self.provider_details['refusal_category'] = event.delta.stop_details.category
                     if event.delta.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.delta.container.id
