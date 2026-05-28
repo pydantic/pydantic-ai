@@ -368,7 +368,7 @@ plugins:
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv
             - url: https://modelcontextprotocol.github.io/python-sdk/objects.inv
-            # waiting for an objects.inv from https://www.python-httpx.org/ (originally tracked in https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594)
+            - url: https://httpx2.pydantic.dev/objects.inv
   - llmstxt:
       enabled: !ENV [CI, false]
       full_output: llms-full.txt

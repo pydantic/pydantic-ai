@@ -55,7 +55,7 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
     "griffelib>=2.0",
-    "httpx>=2.0",
+    "httpx2>=2.0",
     "pydantic>=2.12",
     "pydantic-graph=={{ version }}",
     "exceptiongroup>=1.2.2; python_version < '3.11'",
@@ -127,7 +127,7 @@ a2a = ["fasta2a>=0.6.1"]
 # AG-UI
 ag-ui = ["ag-ui-protocol>=0.1.10", "starlette>=0.45.3"]
 # Web
-web = ["starlette>=0.45.3", "httpx>=2.0", "uvicorn>=0.38.0"]
+web = ["starlette>=0.45.3", "httpx2>=2.0", "uvicorn>=0.38.0"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal

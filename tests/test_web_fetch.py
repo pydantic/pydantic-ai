@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import httpx2
+import httpx2 as httpx
 import pytest
 
 from pydantic_ai.common_tools.web_fetch import (
@@ -15,13 +15,13 @@ from pydantic_ai.common_tools.web_fetch import (
 pytestmark = [pytest.mark.anyio]
 
 
-def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8') -> httpx2.Response:
+def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8') -> httpx.Response:
     """Helper to create a mock HTML response."""
-    return httpx2.Response(
+    return httpx.Response(
         200,
         text=html,
         headers={'content-type': content_type},
-        request=httpx2.Request('GET', 'https://example.com'),
+        request=httpx.Request('GET', 'https://example.com'),
     )
 
 
@@ -104,11 +104,11 @@ class TestWebFetchLocalTool:
 
     async def test_fetch_json(self):
         """Fetches JSON and returns formatted."""
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text='{"key": "value"}',
             headers={'content-type': 'application/json'},
-            request=httpx2.Request('GET', 'https://api.example.com/data'),
+            request=httpx.Request('GET', 'https://api.example.com/data'),
         )
 
         with patch(
@@ -124,11 +124,11 @@ class TestWebFetchLocalTool:
 
     async def test_fetch_invalid_json(self):
         """Invalid JSON is returned as-is."""
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text='{invalid json',
             headers={'content-type': 'application/json'},
-            request=httpx2.Request('GET', 'https://api.example.com/data'),
+            request=httpx.Request('GET', 'https://api.example.com/data'),
         )
 
         with patch(
@@ -142,11 +142,11 @@ class TestWebFetchLocalTool:
 
     async def test_fetch_plain_text(self):
         """Fetches plain text and returns as-is."""
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text='Hello, plain text!',
             headers={'content-type': 'text/plain'},
-            request=httpx2.Request('GET', 'https://example.com/file.txt'),
+            request=httpx.Request('GET', 'https://example.com/file.txt'),
         )
 
         with patch(
@@ -161,11 +161,11 @@ class TestWebFetchLocalTool:
     async def test_fetch_no_content_type(self):
         """Missing content-type is treated as HTML."""
         html = '<html><head><title>No CT</title></head><body><p>Test</p></body></html>'
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             content=html.encode(),
             headers={},
-            request=httpx2.Request('GET', 'https://example.com'),
+            request=httpx.Request('GET', 'https://example.com'),
         )
 
         with patch(
@@ -195,11 +195,11 @@ class TestWebFetchLocalTool:
     async def test_no_truncation_when_none(self):
         """No truncation when max_content_length is None."""
         long_text = 'x' * 100_000
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text=long_text,
             headers={'content-type': 'text/plain'},
-            request=httpx2.Request('GET', 'https://example.com'),
+            request=httpx.Request('GET', 'https://example.com'),
         )
 
         with patch(
@@ -214,11 +214,11 @@ class TestWebFetchLocalTool:
     async def test_fetch_xml(self):
         """XML content types are treated as text."""
         xml = '<?xml version="1.0"?><root><item>Hello</item></root>'
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text=xml,
             headers={'content-type': 'application/xml'},
-            request=httpx2.Request('GET', 'https://example.com/feed.xml'),
+            request=httpx.Request('GET', 'https://example.com/feed.xml'),
         )
 
         with patch(
@@ -234,11 +234,11 @@ class TestWebFetchLocalTool:
     async def test_fetch_xhtml(self):
         """XHTML content is converted to markdown like HTML."""
         xhtml = '<html><head><title>XHTML Page</title></head><body><h1>Hello</h1><p>World</p></body></html>'
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text=xhtml,
             headers={'content-type': 'application/xhtml+xml'},
-            request=httpx2.Request('GET', 'https://example.com'),
+            request=httpx.Request('GET', 'https://example.com'),
         )
 
         with patch(
@@ -257,11 +257,11 @@ class TestWebFetchLocalTool:
         from pydantic_ai.messages import BinaryContent
 
         pdf_bytes = b'%PDF-1.4 fake content'
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             content=pdf_bytes,
             headers={'content-type': 'application/pdf'},
-            request=httpx2.Request('GET', 'https://example.com/doc.pdf'),
+            request=httpx.Request('GET', 'https://example.com/doc.pdf'),
         )
 
         with patch(
@@ -277,11 +277,11 @@ class TestWebFetchLocalTool:
     async def test_passes_allow_local(self):
         """allow_local_urls is passed to safe_download."""
         html = '<html><body>ok</body></html>'
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text=html,
             headers={'content-type': 'text/html'},
-            request=httpx2.Request('GET', 'http://localhost:8080'),
+            request=httpx.Request('GET', 'http://localhost:8080'),
         )
 
         with patch(
@@ -314,16 +314,14 @@ class TestWebFetchLocalTool:
 
     async def test_http_error_raises_model_retry(self):
         """HTTP errors are converted to ModelRetry."""
-        import httpx2
-
         from pydantic_ai.exceptions import ModelRetry
 
-        request = httpx2.Request('GET', 'https://example.com')
-        response = httpx2.Response(404, request=request)
+        request = httpx.Request('GET', 'https://example.com')
+        response = httpx.Response(404, request=request)
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download',
             new_callable=AsyncMock,
-            side_effect=httpx2.HTTPStatusError('Not Found', request=request, response=response),
+            side_effect=httpx.HTTPStatusError('Not Found', request=request, response=response),
         ):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
             with pytest.raises(ModelRetry, match='Failed to fetch'):
@@ -402,11 +400,11 @@ class TestWebFetchLocalTool:
     async def test_fetch_markdown_response(self):
         """Server returning text/markdown is used as-is without markdownify conversion."""
         markdown_content = '# Hello\n\nThis is **markdown** from the server.'
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text=markdown_content,
             headers={'content-type': 'text/markdown; charset=utf-8'},
-            request=httpx2.Request('GET', 'https://example.com/page'),
+            request=httpx.Request('GET', 'https://example.com/page'),
         )
 
         with patch(
@@ -422,11 +420,11 @@ class TestWebFetchLocalTool:
     async def test_fetch_x_markdown_response(self):
         """Server returning text/x-markdown is used as-is."""
         markdown_content = '## Test'
-        mock_response = httpx2.Response(
+        mock_response = httpx.Response(
             200,
             text=markdown_content,
             headers={'content-type': 'text/x-markdown'},
-            request=httpx2.Request('GET', 'https://example.com'),
+            request=httpx.Request('GET', 'https://example.com'),
         )
 
         with patch(

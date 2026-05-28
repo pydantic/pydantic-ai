@@ -7,7 +7,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Annotated, Union
 
-import httpx2
+import httpx2 as httpx
 import pytest
 
 from pydantic_graph import BaseNode, Edge, End, GraphRunContext, GraphSetupError
@@ -240,13 +240,13 @@ def test_docstring_notes_classvar():
 
 
 @pytest.fixture
-def httpx2_with_handler() -> Iterator[HttpxWithHandler]:
-    client: httpx2.Client | None = None
+def httpx_with_handler() -> Iterator[HttpxWithHandler]:
+    client: httpx.Client | None = None
 
-    def create_client(handler: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.Client:
+    def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
         nonlocal client
         assert client is None, 'client_with_handler can only be called once'
-        client = httpx2.Client(mounts={'all://': httpx2.MockTransport(handler)})
+        client = httpx.Client(mounts={'all://': httpx.MockTransport(handler)})
         return client
 
     try:
@@ -256,24 +256,24 @@ def httpx2_with_handler() -> Iterator[HttpxWithHandler]:
             client.close()
 
 
-HttpxWithHandler = Callable[[Callable[[httpx2.Request], httpx2.Response]], httpx2.Client]
+HttpxWithHandler = Callable[[Callable[[httpx.Request], httpx.Response]], httpx.Client]
 
 
-def test_image_jpg(httpx2_with_handler: HttpxWithHandler):
-    def get_jpg(request: httpx2.Request) -> httpx2.Response:
+def test_image_jpg(httpx_with_handler: HttpxWithHandler):
+    def get_jpg(request: httpx.Request) -> httpx.Response:
         assert dict(request.url.params) == snapshot({})
         assert request.url.path.startswith('/img/')
         mermaid = base64.b64decode(request.url.path[5:].encode())
-        return httpx2.Response(200, content=mermaid)
+        return httpx.Response(200, content=mermaid)
 
     graph1.name = None
-    img = graph1.mermaid_image(start_node=Foo(), httpx2_client=httpx2_with_handler(get_jpg))
+    img = graph1.mermaid_image(start_node=Foo(), httpx_client=httpx_with_handler(get_jpg))
     assert graph1.name == 'graph1'
     assert img == snapshot(b'---\ntitle: graph1\n---\nstateDiagram-v2\n  [*] --> Foo\n  Foo --> Bar\n  Bar --> [*]')
 
 
-def test_image_png(httpx2_with_handler: HttpxWithHandler):
-    def get_png(request: httpx2.Request) -> httpx2.Response:
+def test_image_png(httpx_with_handler: HttpxWithHandler):
+    def get_png(request: httpx.Request) -> httpx.Response:
         assert dict(request.url.params) == snapshot(
             {
                 'type': 'png',
@@ -286,7 +286,7 @@ def test_image_png(httpx2_with_handler: HttpxWithHandler):
         )
         assert request.url.path.startswith('/img/')
         mermaid = base64.b64decode(request.url.path[5:].encode())
-        return httpx2.Response(200, content=mermaid)
+        return httpx.Response(200, content=mermaid)
 
     img = graph1.mermaid_image(
         start_node=Foo(),
@@ -297,36 +297,36 @@ def test_image_png(httpx2_with_handler: HttpxWithHandler):
         width=100,
         height=200,
         scale=3,
-        httpx2_client=httpx2_with_handler(get_png),
+        httpx_client=httpx_with_handler(get_png),
     )
     assert img == snapshot(b'stateDiagram-v2\n  [*] --> Foo\n  Foo --> Bar\n  Bar --> [*]')
 
 
-def test_image_bad(httpx2_with_handler: HttpxWithHandler):
-    def get_404(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(404, content=b'not found')
+def test_image_bad(httpx_with_handler: HttpxWithHandler):
+    def get_404(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, content=b'not found')
 
-    with pytest.raises(httpx2.HTTPStatusError, match='404 error generating image:\nnot found') as exc_info:
-        graph1.mermaid_image(start_node=Foo(), httpx2_client=httpx2_with_handler(get_404))
+    with pytest.raises(httpx.HTTPStatusError, match='404 error generating image:\nnot found') as exc_info:
+        graph1.mermaid_image(start_node=Foo(), httpx_client=httpx_with_handler(get_404))
     assert exc_info.value.response.status_code == 404
     assert exc_info.value.response.content == b'not found'
 
 
-def test_pdf(httpx2_with_handler: HttpxWithHandler):
-    def get_pdf(request: httpx2.Request) -> httpx2.Response:
+def test_pdf(httpx_with_handler: HttpxWithHandler):
+    def get_pdf(request: httpx.Request) -> httpx.Response:
         assert dict(request.url.params) == snapshot({})
         assert request.url.path.startswith('/pdf/')
-        return httpx2.Response(200, content=b'fake pdf')
+        return httpx.Response(200, content=b'fake pdf')
 
-    pdf = graph1.mermaid_image(start_node=Foo(), image_type='pdf', httpx2_client=httpx2_with_handler(get_pdf))
+    pdf = graph1.mermaid_image(start_node=Foo(), image_type='pdf', httpx_client=httpx_with_handler(get_pdf))
     assert pdf == b'fake pdf'
 
 
-def test_pdf_config(httpx2_with_handler: HttpxWithHandler):
-    def get_pdf(request: httpx2.Request) -> httpx2.Response:
+def test_pdf_config(httpx_with_handler: HttpxWithHandler):
+    def get_pdf(request: httpx.Request) -> httpx.Response:
         assert dict(request.url.params) == snapshot({'fit': '', 'landscape': '', 'paper': 'letter'})
         assert request.url.path.startswith('/pdf/')
-        return httpx2.Response(200, content=b'fake pdf')
+        return httpx.Response(200, content=b'fake pdf')
 
     pdf = graph1.mermaid_image(
         start_node=Foo(),
@@ -334,57 +334,57 @@ def test_pdf_config(httpx2_with_handler: HttpxWithHandler):
         pdf_fit=True,
         pdf_landscape=True,
         pdf_paper='letter',
-        httpx2_client=httpx2_with_handler(get_pdf),
+        httpx_client=httpx_with_handler(get_pdf),
     )
     assert pdf == b'fake pdf'
 
 
-def test_svg(httpx2_with_handler: HttpxWithHandler):
-    def get_svg(request: httpx2.Request) -> httpx2.Response:
+def test_svg(httpx_with_handler: HttpxWithHandler):
+    def get_svg(request: httpx.Request) -> httpx.Response:
         assert dict(request.url.params) == snapshot({})
         assert request.url.path.startswith('/svg/')
-        return httpx2.Response(200, content=b'fake svg')
+        return httpx.Response(200, content=b'fake svg')
 
-    svg = graph1.mermaid_image(start_node=Foo(), image_type='svg', httpx2_client=httpx2_with_handler(get_svg))
+    svg = graph1.mermaid_image(start_node=Foo(), image_type='svg', httpx_client=httpx_with_handler(get_svg))
     assert svg == b'fake svg'
 
 
-def test_save_jpg(tmp_path: Path, httpx2_with_handler: HttpxWithHandler):
-    def get_jpg(request: httpx2.Request) -> httpx2.Response:
+def test_save_jpg(tmp_path: Path, httpx_with_handler: HttpxWithHandler):
+    def get_jpg(request: httpx.Request) -> httpx.Response:
         assert dict(request.url.params) == snapshot({})
         assert request.url.path.startswith('/img/')
         mermaid = base64.b64decode(request.url.path[5:].encode())
-        return httpx2.Response(200, content=mermaid)
+        return httpx.Response(200, content=mermaid)
 
     path = tmp_path / 'graph.jpg'
-    graph1.mermaid_save(path, start_node=Foo(), httpx2_client=httpx2_with_handler(get_jpg))
+    graph1.mermaid_save(path, start_node=Foo(), httpx_client=httpx_with_handler(get_jpg))
     assert path.read_bytes() == snapshot(
         b'---\ntitle: graph1\n---\nstateDiagram-v2\n  [*] --> Foo\n  Foo --> Bar\n  Bar --> [*]'
     )
 
 
-def test_save_png(tmp_path: Path, httpx2_with_handler: HttpxWithHandler):
-    def get_png(request: httpx2.Request) -> httpx2.Response:
+def test_save_png(tmp_path: Path, httpx_with_handler: HttpxWithHandler):
+    def get_png(request: httpx.Request) -> httpx.Response:
         assert dict(request.url.params) == snapshot({'type': 'png'})
         assert request.url.path.startswith('/img/')
         mermaid = base64.b64decode(request.url.path[5:].encode())
-        return httpx2.Response(200, content=mermaid)
+        return httpx.Response(200, content=mermaid)
 
     path2 = tmp_path / 'graph.png'
     graph1.name = None
-    graph1.mermaid_save(str(path2), title=None, start_node=Foo(), httpx2_client=httpx2_with_handler(get_png))
+    graph1.mermaid_save(str(path2), title=None, start_node=Foo(), httpx_client=httpx_with_handler(get_png))
     assert graph1.name == 'graph1'
     assert path2.read_bytes() == snapshot(b'stateDiagram-v2\n  [*] --> Foo\n  Foo --> Bar\n  Bar --> [*]')
 
 
-def test_save_pdf_known(tmp_path: Path, httpx2_with_handler: HttpxWithHandler):
-    def get_pdf(request: httpx2.Request) -> httpx2.Response:
+def test_save_pdf_known(tmp_path: Path, httpx_with_handler: HttpxWithHandler):
+    def get_pdf(request: httpx.Request) -> httpx.Response:
         assert dict(request.url.params) == snapshot({})
         assert request.url.path.startswith('/pdf/')
-        return httpx2.Response(200, content=b'fake pdf')
+        return httpx.Response(200, content=b'fake pdf')
 
     path2 = tmp_path / 'graph'
-    graph1.mermaid_save(str(path2), start_node=Foo(), image_type='pdf', httpx2_client=httpx2_with_handler(get_pdf))
+    graph1.mermaid_save(str(path2), start_node=Foo(), image_type='pdf', httpx_client=httpx_with_handler(get_pdf))
     assert path2.read_bytes() == b'fake pdf'
 
 

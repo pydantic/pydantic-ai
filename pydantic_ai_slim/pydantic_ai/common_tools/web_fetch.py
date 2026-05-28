@@ -10,7 +10,7 @@ import json
 import re
 from dataclasses import KW_ONLY, dataclass, field
 
-import httpx2
+import httpx2 as httpx
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai._ssrf import safe_download
@@ -95,7 +95,7 @@ class WebFetchLocalTool:
                 allowed_domains=self.allowed_domains,
                 blocked_domains=self.blocked_domains,
             )
-        except (ValueError, httpx2.HTTPStatusError, httpx2.RequestError) as e:
+        except (ValueError, httpx.HTTPStatusError, httpx.RequestError) as e:
             raise ModelRetry(f'Failed to fetch {url}: {e}') from e
 
         media_type = response.headers.get('content-type', '')

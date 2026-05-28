@@ -12,7 +12,7 @@ import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
-import httpx2
+import httpx2 as httpx
 
 from ._utils import run_in_executor
 from .models import get_user_agent
@@ -48,6 +48,17 @@ _CLOUD_METADATA_IPS: frozenset[str] = frozenset(
 )
 
 _MAX_REDIRECTS = 10
+
+
+def _create_client(*, timeout: int) -> httpx.AsyncClient:
+    # Inlined construction; mirrors `pydantic_ai.models.create_async_http_client`. Reverts to that
+    # helper once provider SDKs accept `httpx2` clients (tracked at the call site in safe_download).
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout=timeout, connect=5),
+        headers={'User-Agent': get_user_agent()},
+    )
+
+
 _DEFAULT_TIMEOUT = 30  # seconds
 _SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'))
 
@@ -315,7 +326,7 @@ async def safe_download(
     headers: dict[str, str] | None = None,
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
-) -> httpx2.Response:
+) -> httpx.Response:
     """Download content from a URL with SSRF protection.
 
     This function:
@@ -342,22 +353,20 @@ async def safe_download(
                 Checked on every hop including redirects.
 
     Returns:
-        The httpx2.Response object.
+        The httpx.Response object.
 
     Raises:
         ValueError: If the URL fails SSRF validation, domain validation,
                 or too many redirects occur.
-        httpx2.HTTPStatusError: If the response has an error status code.
+        httpx.HTTPStatusError: If the response has an error status code.
     """
     current_url = url
     redirects_followed = 0
     original_hostname = urlparse(url).hostname
     effective_headers = dict(headers) if headers else {}
 
-    async with httpx2.AsyncClient(
-        timeout=httpx2.Timeout(timeout=timeout, connect=5),
-        headers={'User-Agent': get_user_agent()},
-    ) as client:
+    # NOTE: replace with `create_async_http_client(timeout=timeout)` once provider SDKs accept httpx2.
+    async with _create_client(timeout=timeout) as client:
         while True:
             # Validate and resolve the current URL
             resolved = await validate_and_resolve_url(current_url, allow_local)
