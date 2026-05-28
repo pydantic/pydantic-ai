@@ -1786,9 +1786,11 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
     the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
     OpenAI `execution='client'`) which dispatches into our local `search_tools` callback;
-    (2) the caller keeps `search_tools` on the wire — that callback is what the client-
-    executed surface invokes. Named-native strategies (`'bm25'`/`'regex'`) have no client-
-    executed equivalent, so we raise rather than silently substitute a different algorithm.
+    (2) the caller keeps `search_tools` in the request parameters — that callback is what
+    the client-executed surface invokes. Adapters may still render that callback as a
+    native client-executed tool-search item rather than as a regular function tool on the
+    provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
+    equivalent, so we raise rather than silently substitute a different algorithm.
     """
     capability_owns_corpus = any(
         t.with_native == ToolSearchTool.kind and (t.metadata or {}).get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True

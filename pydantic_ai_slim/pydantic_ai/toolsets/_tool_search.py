@@ -10,15 +10,19 @@ specific model's support for the framework-managed tool-search builtin:
 
 * On the native path the adapter keeps every corpus member (regardless of local
   discovery state) and applies its provider-specific wire format — e.g. setting
-  `defer_loading=True` on the Anthropic / OpenAI Responses tool param so the provider
-  drives discovery server-side.
+  `defer_loading=True` on the Anthropic / OpenAI Responses tool param. The provider
+  may run discovery server-side, or it may surface a client-executed search call that
+  Pydantic AI answers with the local callback when capability gating or a callable/local
+  strategy requires it.
 * On the local path corpus members with `defer_loading=True` (still undiscovered) are
   dropped from the wire; discovered ones (`defer_loading=False`) stay so the model can
   call them by their real name.
 
-`search_tools`, the local discovery function, carries `unless_native='tool_search'`
-and is dropped by the adapter when the builtin is supported. When the capability commits
-to a named-native strategy with no local equivalent (`'bm25'`/`'regex'`) the toolset is
+`search_tools`, the local discovery function, is usually marked as the fallback for
+`tool_search` and dropped by the adapter when a server-executed builtin handles discovery.
+For client-executed native modes and capability-gated search, the callback remains
+available so the native tool-search surface can invoke it. When the capability commits to
+a named-native strategy with no local equivalent (`'bm25'`/`'regex'`) the toolset is
 constructed with `enable_fallback=False` and `search_tools` is not emitted at all — that
 way `_resolve_native_tool_swap` raises on providers that can't honor the builtin, and
 the wire stays clean (just the native tool) on those that can.
@@ -184,9 +188,8 @@ def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any
 def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     """Scan message history for previously-discovered tool names.
 
-    Trusts that any [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart] /
-    [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart]
-    in the history has a validated [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]:
+    Trusts that any `ToolSearchReturnPart` / `NativeToolSearchReturnPart` in the
+    history has a validated `ToolSearchReturnContent`:
     Pydantic's discriminator dispatch promotes from base parts on deserialization,
     and direct construction goes through the typed-class `__init__` (which Pydantic
     validates). No defensive isinstance walks needed.
@@ -215,7 +218,7 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
 
 
 def _collect_typed(content: ToolSearchReturnContent, discovered: set[str]) -> None:
-    """Add discovered tool names from a validated [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]."""
+    """Add discovered tool names from a validated `ToolSearchReturnContent`."""
     discovered.update(match['name'] for match in content['discovered_tools'])
 
 
@@ -249,9 +252,10 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     not initially presented to the model — they become available after the model
     discovers them via search.
 
-    When the model supports the framework-managed tool-search builtin, discovery is
-    handled by the provider and the deferred tools are sent to the API with
-    `defer_loading=True` on the wire.
+    When the model supports the framework-managed tool-search builtin, deferred tools are
+    sent to the API with `defer_loading=True` on the wire. Discovery is provider-executed
+    for hosted native strategies, or client-executed through Pydantic AI's local callback
+    when capability gating or a local/callable strategy requires it.
     """
 
     search_fn: ToolSearchFunc[AgentDepsT] | None = None
@@ -326,11 +330,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             result[name] = replace(tool, tool_def=managed_def)
 
         # Emit `search_tools` whenever the corpus is non-empty and a local fallback is
-        # enabled. It carries `unless_native='tool_search'` so the adapter drops it on
-        # the wire when the builtin is supported (the native path handles discovery
-        # server-side); keeping it in the toolset across discovery steps preserves prompt
-        # caching, since dropping it once everything is discovered would invalidate the
-        # request prefix on the very next turn.
+        # enabled. It carries `unless_native='tool_search'` when the local keyword
+        # algorithm is only a fallback, so the adapter can drop it when a server-executed
+        # builtin handles discovery. Client-executed native modes and capability-gated
+        # search keep the callback available so the provider surface can dispatch to it.
+        # Keeping it in the toolset across discovery steps preserves prompt caching, since
+        # dropping it once everything is discovered would invalidate the request prefix on
+        # the very next turn.
         #
         # When `enable_fallback=False` (named-native strategies `'bm25'`/`'regex'`) we
         # skip emission entirely: there's no local algorithm to fall back to, and emitting

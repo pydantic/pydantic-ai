@@ -4,7 +4,7 @@ Read this file when designing progressive disclosure of any kind, when an agent 
 
 ## Mental Model
 
-Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions and makes its function tools available.
+Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions; its function tools, native tools, and model settings are reflected on the next model request, and its hooks can fire for later hook points in the run.
 
 Be opinionated: every capability should be reviewed for whether `defer_loading=True` would benefit the system before accepting eager loading. If the model does not need a piece of information, a specialist instruction set, or a tool schema on most turns, do not put it in the eager prompt by default. Suggest capabilities on demand for named bundles, tool search for long-tail tools, or a narrower always-on instruction if the behavior really is universal.
 
@@ -55,14 +55,14 @@ agent = Agent(
 )
 ```
 
-`Capability` is a convenience helper for simple bundles of instructions, descriptions, function tools, and toolsets. It accepts callable descriptions, dynamic instruction functions, and dynamic toolset functions. Use a custom `AbstractCapability` when model settings, hooks, native tools, wrapper toolsets, reusable public behavior, or custom per-run logic need to travel with the bundle.
+`Capability` is a convenience helper for simple bundles of instructions, descriptions, function tools, and toolsets. It accepts callable descriptions, dynamic instruction functions, and dynamic toolset functions. Use a custom `AbstractCapability` for model settings, hooks, native tools, wrapper toolsets, reusable public behavior, or custom per-run logic. Wrapper toolsets are applied during per-run toolset assembly; if wrapper behavior should wait for a deferred capability to load, gate that behavior inside the wrapper.
 
 ## Runtime Semantics
 
 Initial request:
 
 - deferred capability instructions are not included
-- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`, so they are hidden from the model-facing visible set
+- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`; providers may receive hidden corpus entries, but the tools are not callable until the capability loads
 - non-deferred capabilities are treated as already loaded
 - the framework adds `load_capability` if any deferred capability exists
 

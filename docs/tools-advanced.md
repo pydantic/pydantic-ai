@@ -713,7 +713,7 @@ To force the local `keywords` algorithm on a provider that natively supports too
     * Native-shape `tool_search` history rendered onto a non-supporting provider is translated to the local `search_tools` function-tool exchange shape so the model sees the discoveries as a normal function-call exchange.
 
 !!! note "Tool discovery and message history"
-    Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
+    Discovered tools are tracked in typed tool-search return parts in the [message history](message-history.md). Histories written by earlier versions that stored discovery metadata are still read for compatibility. If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery return parts, previously discovered tools will require re-discovery.
 
 See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] and [Deferred Loading](toolsets.md#deferred-loading) for more details.
 

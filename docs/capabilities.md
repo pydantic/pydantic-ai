@@ -15,7 +15,7 @@ This makes them the primary extension point for Pydantic AI. Whether you're buil
 
 A multi-workflow agent typically sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks throughout the run — even though any given user request usually needs one workflow. The cost compounds in two ways: input tokens grow linearly with the number of visible workflows, and tool selection accuracy degrades as the visible tool set gets larger (the same threshold that motivates [tool search](tools-advanced.md#tool-search) — past ~30–50 tools, models start picking the wrong one).
 
-Marking a capability with `defer_loading=True` keeps the model-facing pieces it provides — instructions, function tools, and native tools — out of the initial request until the model asks for them. Model settings and lifecycle hooks are registered up front, but stay inactive until the capability is loaded. Up front the model sees only a short catalog: one line per deferred capability. When it calls the `load_capability` tool with an `id`, that bundle activates and stays active for the rest of the run.
+Marking a capability with `defer_loading=True` keeps the model-facing pieces it provides — instructions, function tools, and native tools — hidden until the model asks for them. Model settings and lifecycle hooks are registered up front, but stay inactive until the capability is loaded. In the initial request, each deferred capability is collapsed to a catalog entry: its stable `id` plus its `description`, if provided. When the model calls the `load_capability` tool with an `id`, that bundle activates and stays active for the rest of the run.
 
 What you get from one flag:
 
@@ -84,14 +84,14 @@ result = agent.run_sync('What is the refund status of order ABC-123?')
 print(result.output)
 ```
 
-On the first turn, the model sees only its base instructions, the framework-managed `load_capability` tool, and a short catalog appended to the instructions:
+On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```
 The following capabilities are deferred and can be loaded using the `load_capability` tool:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
 ```
 
-That's it — no refund instructions, no `refund_status` schema. The exchange unfolds across model requests within a single `agent.run_sync` call:
+The model does not receive the refund instructions, and `refund_status` is not callable yet. Depending on the active model, Pydantic AI may also send provider/tool-search plumbing to preserve the hidden state; that plumbing does not expose the refund tool until the capability is loaded. The exchange unfolds across model requests within a single `agent.run_sync` call:
 
 1. **Request 1.** The model sees the catalog above and the user's prompt. It calls the `load_capability` tool with `id='refunds'`.
 2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result, and registers `refund_status` for the next request.
@@ -146,7 +146,7 @@ Loading a capability updates the capability state immediately, but the loaded bu
 
 ### Cross-provider behavior
 
-On-demand capabilities work on every model. Where the provider exposes a native progressive-disclosure surface — Anthropic tool search on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI Responses `tool_search` on GPT-5.4+ — Pydantic AI uses it so deferred function tools never enter the prompt prefix, keeping the prompt-cache prefix stable when the loaded bundle only adds instructions and function tools. On other providers, a local `search_tools` function tool handles discovery: the initial context shrinks the same way, but cache stability across loads is not guaranteed.
+On-demand capabilities work on every model. Where the provider exposes a native progressive-disclosure surface — Anthropic tool search on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI Responses `tool_search` on GPT-5.4+ — Pydantic AI uses that surface so deferred function tools stay out of the prompt prefix. Standalone deferred tools can use the provider's hosted search; tools owned by on-demand capabilities use client-executed local search through the native surface so tools from unloaded capabilities cannot leak. On other providers, a local `search_tools` function tool handles discovery: the initial context shrinks the same way, but cache stability across loads is not guaranteed.
 
 #### Cache implications {#cache-implications}
 
@@ -287,7 +287,7 @@ A realistic on-demand capability rarely consists of just one piece. The example 
 - `orders` — instructions plus a function tool, defined inline with [`Capability`][pydantic_ai.capabilities.Capability].
 - `account-security` — instructions, a function tool, raised reasoning effort, *and* an approval hook, all bundled as one [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] subclass.
 
-On turn 1 the model sees only the two-line catalog. Loading `account-security` activates the runbook, the destructive tool, the higher reasoning effort, *and* the approval gate together — that's what we mean by bundle-level disclosure.
+For those workflows, turn 1 exposes only the two-line catalog. Base instructions, always-on tools, the framework-managed `load_capability` tool, and any provider/tool-search plumbing still appear as usual. Loading `account-security` activates the runbook, the destructive tool, the higher reasoning effort, *and* the approval gate together — that's what we mean by bundle-level disclosure.
 
 ```python {title="support_agent.py" test="skip" lint="skip"}
 from dataclasses import dataclass
@@ -865,7 +865,7 @@ The [UI adapters](ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capabil
 
 ## Building custom capabilities
 
-To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction (except [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] which is called per-run), and **lifecycle hooks** that fire during each run.
+To build your own capability, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are collected during agent setup for static capabilities and re-collected per run for dynamic or per-run capability instances, and **lifecycle hooks** that fire during each run. [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] is always applied during per-run toolset assembly.
 
 Custom capability classes can be plain classes or dataclasses. The shared metadata attributes — [`id`][pydantic_ai.capabilities.AbstractCapability.id], [`description`][pydantic_ai.capabilities.AbstractCapability.description], and [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] — are optional declarations on the capability object for always-available capabilities. If `id` is omitted there, Pydantic AI derives a run-local id from the class name and disambiguates duplicates within the run. Deferred capabilities require an explicit stable `id`.
 
@@ -1009,9 +1009,11 @@ result = agent.run_sync('hello')
 !!! note
     `get_wrapper_toolset` wraps the non-output *toolset* once per run (during toolset assembly). The [`prepare_tools`](#tool-preparation) and [`prepare_output_tools`](#tool-preparation) hooks also flow through `PreparedToolset` wrappers, so all three integrate at the toolset level — `get_wrapper_toolset` runs around `prepare_tools` (it sees the prepared defs), and `prepare_output_tools` wraps the output toolset independently.
 
+    `defer_loading=True` does not delay the wrapper itself. If a deferred capability returns a wrapper toolset, that wrapper is installed from the start of the run; gate any load-dependent wrapper behavior inside the wrapper by checking `ctx.available_capability_ids` or `ctx.loaded_capability_ids`.
+
 ### Providing instructions
 
-[`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] adds [instructions](agent.md#instructions) to the agent. Since it's called once at agent construction, return a callable if you need dynamic values:
+[`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] adds [instructions](agent.md#instructions) to the agent. Return a callable if you need dynamic values at request time:
 
 ```python {title="custom_capability_config.py"}
 from dataclasses import dataclass
