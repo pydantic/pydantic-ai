@@ -148,6 +148,23 @@ async def test_grok_3_mini_thinking_false_does_not_forward_reasoning_effort(allo
     assert 'reasoning_effort' not in kwargs[0]
 
 
+async def test_xai_thinking_false_with_non_always_on_profile_is_dropped(allow_model_requests: None) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    custom_profile = GrokModelProfile(
+        supports_thinking=True, thinking_always_enabled=False, grok_reasoning_effort_support='low_high'
+    )
+    m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client), profile=custom_profile)
+    settings: XaiModelSettings = {'thinking': False}
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('hi')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 1
+    assert 'reasoning_effort' not in kwargs[0]
+
+
 @pytest.mark.parametrize(
     'thinking,expected_reasoning_effort',
     [
