@@ -192,7 +192,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # These Opus models support structured output on the direct Anthropic API but are not listed
     # in the Bedrock Runtime structured-output docs:
     # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = ('claude-opus-4-1', 'claude-opus-4-7')
+    bedrock_structured_output_unsupported = ('claude-opus-4-1', 'claude-opus-4-7', 'claude-opus-4-8')
     downstream = anthropic_model_profile(model_name)
     supports_adaptive = bool((downstream or {}).get('anthropic_supports_adaptive_thinking', False))
     # Bedrock only honors effort inside the adaptive branch of `_translate_thinking`, so don't claim

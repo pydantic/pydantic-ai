@@ -1149,7 +1149,11 @@ class TestProfileThinkingCapabilities:
         assert isinstance(profile, dict)
         assert profile.get('anthropic_supports_adaptive_thinking', False) is True
 
-        profile = anthropic_model_profile('claude-opus-4-7')
+    @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+    def test_anthropic_profile_thinking_support_opus_47_plus(self, model_name: str):
+        from pydantic_ai.profiles.anthropic import anthropic_model_profile
+
+        profile = anthropic_model_profile(model_name)
         assert profile is not None
         assert isinstance(profile, dict)
         assert profile.get('anthropic_supports_adaptive_thinking', False) is True
