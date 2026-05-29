@@ -21,7 +21,6 @@ node_modules/
 /test_tmp/
 .mcp.json
 CLAUDE.local.md
-AGENTS.local.md
 AGENTS.override.md
 .grok/*
 .codex/*
