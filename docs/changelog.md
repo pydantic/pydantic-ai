@@ -6,6 +6,22 @@ In September 2025, Pydantic AI reached V1 and committed to API stability: no cha
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v2.0.0b4 (2026-05-28)
+
+The fourth V2 beta, forked from **v1.104.0**. One new V2 behavior change since [v2.0.0b3](#v200b3-2026-05-22):
+
+- Prepare callbacks (`prepare_tools=` / `PrepareTools` capability) that return `None` now raise `TypeError` instead of silently stripping all tools. V1.103.0 announces this change via `PydanticAIDeprecationWarning` (see [#5188](https://github.com/pydantic/pydantic-ai/pull/5188)); V2 turns the warning into a hard error (see [#5668](https://github.com/pydantic/pydantic-ai/pull/5668)). Return an empty list (`[]`) when you mean "no tools for this turn."
+
+This beta also picks up two V1 releases on top — [v1.103.0](https://github.com/pydantic/pydantic-ai/releases/tag/v1.103.0) and [v1.104.0](https://github.com/pydantic/pydantic-ai/releases/tag/v1.104.0) — together adding Claude Opus 4.8 support, `McpServer.list_prompts` / `get_prompt`, message-timestamp roundtripping through `VercelAIAdapter`'s `UIMessage.metadata`, OpenRouter eager input streaming, and several Bedrock and UI fixes. See those release notes for the full list.
+
+Install it the same way, pinning the exact pre-release version:
+
+```bash
+pip/uv-add "pydantic-ai==2.0.0b4"
+```
+
+For the full breaking-change list and the recommended upgrade path, see the [v2.0.0b1](#v200b1-2026-05-20) entry below; the only difference is that the latest V1 to upgrade through first is now **v1.104.0**.
+
 ### v2.0.0b3 (2026-05-22)
 
 The third V2 beta, forked from **v1.102.0**. There are no new V2 breaking changes since [v2.0.0b1](#v200b1-2026-05-20) below — everything in that entry applies unchanged — but this beta picks up the latest V1 release on top, which is a bug-fix release; see the [v1.102.0 release notes](https://github.com/pydantic/pydantic-ai/releases/tag/v1.102.0) for the full list.
