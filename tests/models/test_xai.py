@@ -19,7 +19,6 @@ from __future__ import annotations as _annotations
 import json
 from datetime import datetime, timezone
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -132,13 +131,10 @@ XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
 XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
 
 
-def _xai_proto_request_json(provider: XaiProvider, test_name: str) -> dict[str, object]:
+def _xai_proto_request_json(provider: XaiProvider) -> dict[str, object]:
     provider_cassette = getattr(provider.client, 'cassette', None)
-    if isinstance(provider_cassette, XaiProtoCassette) and provider_cassette.interactions:
-        cassette = provider_cassette
-    else:
-        cassette_path = Path(__file__).with_name('cassettes') / 'test_xai' / f'{test_name}.xai.yaml'
-        cassette = XaiProtoCassette.load(cassette_path)
+    assert isinstance(provider_cassette, XaiProtoCassette)
+    cassette = provider_cassette
     assert len(cassette.interactions) == 1
     interaction = cassette.interactions[0]
     assert isinstance(interaction, SampleInteraction)
@@ -1212,7 +1208,7 @@ async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: Xa
     response_messages = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
     assert len(response_messages) >= 1
     assert result.output
-    assert _xai_proto_request_json(xai_provider, 'test_xai_unified_thinking')['reasoning_effort'] == 'EFFORT_MEDIUM'
+    assert _xai_proto_request_json(xai_provider)['reasoning_effort'] == 'EFFORT_MEDIUM'
 
 
 async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
@@ -1221,7 +1217,7 @@ async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provid
 
     result = await agent.run('What is 2+2?')
     assert '4' in result.output
-    assert _xai_proto_request_json(xai_provider, 'test_xai_unified_thinking_false')['reasoning_effort'] == 'EFFORT_NONE'
+    assert _xai_proto_request_json(xai_provider)['reasoning_effort'] == 'EFFORT_NONE'
 
 
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
