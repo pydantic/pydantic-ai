@@ -197,6 +197,7 @@ def test_anthropic_claude_opus_4_7():
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
+            'anthropic_supports_fast_speed': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
@@ -704,6 +705,7 @@ def test_openrouter_mistral_large():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'supports_thinking': True,
         }
     )
 
@@ -717,6 +719,7 @@ def test_openrouter_xai_grok_4():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
             'grok_supports_builtin_tools': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -738,6 +741,7 @@ def test_openrouter_qwen():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'supports_thinking': True,
         }
     )
 
@@ -749,6 +753,7 @@ def test_openrouter_deepseek():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -768,6 +773,7 @@ def test_openrouter_meta_llama():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'supports_thinking': True,
         }
     )
 
@@ -784,6 +790,7 @@ def test_openrouter_moonshotai():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'supports_thinking': True,
         }
     )
 
@@ -800,6 +807,7 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'supports_thinking': True,
         }
     )
 
