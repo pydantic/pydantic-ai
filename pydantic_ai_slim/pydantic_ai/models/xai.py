@@ -60,9 +60,22 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._tool_choice import resolve_tool_choice
 
-XaiReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
+try:
+    import grpc
+    import xai_sdk.chat as chat_types
+    from xai_sdk import AsyncClient
+    from xai_sdk.chat import assistant, file, image, required_tool, system, tool, tool_result, user
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
+    from xai_sdk.tools import code_execution, collections_search, get_tool_call_type, mcp, web_search, x_search
+    from xai_sdk.types.chat import ReasoningEffort
+    from xai_sdk.types.model import ChatModel
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `xai-sdk` to use the xAI model, '
+        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
+    ) from _import_error
 
-XAI_EFFORT_MAP: dict[ThinkingLevel, XaiReasoningEffort] = {
+XAI_EFFORT_MAP: dict[ThinkingLevel, ReasoningEffort] = {
     False: 'none',
     True: 'high',
     'minimal': 'low',
@@ -73,7 +86,7 @@ XAI_EFFORT_MAP: dict[ThinkingLevel, XaiReasoningEffort] = {
 }
 """Maps unified thinking values to xAI `reasoning_effort` values."""
 
-XAI_LOW_HIGH_EFFORT_MAP: dict[ThinkingLevel, XaiReasoningEffort | None] = {
+XAI_LOW_HIGH_EFFORT_MAP: dict[ThinkingLevel, ReasoningEffort | None] = {
     False: None,
     True: 'high',
     'minimal': 'low',
@@ -83,19 +96,6 @@ XAI_LOW_HIGH_EFFORT_MAP: dict[ThinkingLevel, XaiReasoningEffort | None] = {
     'xhigh': 'high',
 }
 """Maps unified thinking values to xAI `reasoning_effort` values when only `'low'`/`'high'` are supported."""
-
-try:
-    import grpc
-    import xai_sdk.chat as chat_types
-    from xai_sdk import AsyncClient
-    from xai_sdk.chat import assistant, file, image, required_tool, system, tool, tool_result, user
-    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
-    from xai_sdk.tools import code_execution, collections_search, get_tool_call_type, mcp, web_search, x_search
-except ImportError as _import_error:
-    raise ImportError(
-        'Please install `xai-sdk` to use the xAI model, '
-        'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
-    ) from _import_error
 
 
 @contextmanager
@@ -120,47 +120,7 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
 
-XaiChatModelName: TypeAlias = Literal[
-    'grok-3',
-    'grok-3-fast',
-    'grok-3-fast-latest',
-    'grok-3-latest',
-    'grok-3-mini',
-    'grok-3-mini-fast',
-    'grok-3-mini-fast-latest',
-    'grok-4',
-    'grok-4-0709',
-    'grok-4-1-fast',
-    'grok-4-1-fast-non-reasoning',
-    'grok-4-1-fast-non-reasoning-latest',
-    'grok-4-1-fast-reasoning',
-    'grok-4-1-fast-reasoning-latest',
-    'grok-4-fast',
-    'grok-4-fast-non-reasoning',
-    'grok-4-fast-non-reasoning-latest',
-    'grok-4-fast-reasoning',
-    'grok-4-fast-reasoning-latest',
-    'grok-4-latest',
-    'grok-4.20',
-    'grok-4.20-0309',
-    'grok-4.20-0309-non-reasoning',
-    'grok-4.20-0309-reasoning',
-    'grok-4.20-multi-agent',
-    'grok-4.20-multi-agent-0309',
-    'grok-4.20-multi-agent-latest',
-    'grok-4.20-non-reasoning',
-    'grok-4.20-non-reasoning-latest',
-    'grok-4.20-reasoning',
-    'grok-4.20-reasoning-latest',
-    'grok-4.3',
-    'grok-4.3-latest',
-    'grok-latest',
-    'grok-build-0.1',
-    'grok-code-fast-1',
-]
-"""Known xAI chat model names."""
-
-XaiModelName: TypeAlias = str | XaiChatModelName
+XaiModelName: TypeAlias = str | ChatModel
 """Possible xAI model names."""
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
@@ -244,7 +204,7 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `collections_search_call.outputs` value of the `include` parameter in the Responses API.
     """
 
-    xai_reasoning_effort: XaiReasoningEffort
+    xai_reasoning_effort: ReasoningEffort
     """Reasoning effort level for Grok reasoning models.
 
     Supported values vary by model. `grok-4.3` supports `'none'`, `'low'`, `'medium'`, and `'high'`;

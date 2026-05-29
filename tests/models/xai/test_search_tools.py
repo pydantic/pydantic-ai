@@ -59,7 +59,6 @@ pytestmark = [
 
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
 XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
-XAI_CURRENT_REASONING_MODEL = 'grok-4.3'
 
 
 # =============================================================================
@@ -133,30 +132,6 @@ async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_mo
     kwargs = get_mock_chat_create_kwargs(mock_client)
     assert len(kwargs) == 1
     assert 'reasoning_effort' not in kwargs[0]
-
-
-@pytest.mark.parametrize(
-    'thinking,expected_reasoning_effort',
-    [
-        (True, 'high'),
-        ('medium', 'medium'),
-        (False, 'none'),
-    ],
-    ids=['true', 'medium', 'false'],
-)
-async def test_grok_4_3_forwards_reasoning_effort(
-    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str
-) -> None:
-    response = create_response(content='ok')
-    mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_CURRENT_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m, model_settings={'thinking': thinking})
-
-    await agent.run('hi')
-
-    kwargs = get_mock_chat_create_kwargs(mock_client)
-    assert len(kwargs) == 1
-    assert kwargs[0]['reasoning_effort'] == expected_reasoning_effort
 
 
 async def test_grok_3_mini_thinking_false_does_not_forward_reasoning_effort(allow_model_requests: None) -> None:

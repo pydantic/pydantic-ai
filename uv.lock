@@ -7414,7 +7414,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "vllm", marker = "(python_full_version < '3.12' and platform_machine != 'x86_64' and extra == 'outlines-vllm-offline') or (python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'outlines-vllm-offline')", specifier = ">=0.20.0" },
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
-    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.6.0" },
+    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.12.2" },
 ]
 provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "web-fetch", "xai"]
 
@@ -10814,7 +10814,7 @@ wheels = [
 
 [[package]]
 name = "xai-sdk"
-version = "1.6.0"
+version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -10826,9 +10826,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8b/38/751421b0b40050582ab5f5ed56f0074d322668cf72b0374b1b6f898388ac/xai_sdk-1.6.0.tar.gz", hash = "sha256:e0fc9df3a1cab1ec744a9c962d6802f0b27cfd91b4ca8c18f74dd5f4f944f7f7", size = 371793, upload-time = "2026-01-27T12:31:18.526Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/20/8e0824608923120aff1084258809eb1d1f7bbc63c00da247bae90cc2b50c/xai_sdk-1.14.0.tar.gz", hash = "sha256:aef21dc234885fedd91c7292514f6a734e8e712e504538e8764d935ec2a83046", size = 415759, upload-time = "2026-05-27T05:15:15.868Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/ca/9924cf64c1289ff7725572ca17fb2dea7573233d3cc964a16287260145cf/xai_sdk-1.6.0-py3-none-any.whl", hash = "sha256:b1e828dfb631233bfb3dfc3173ee4e37432710de76094b695f2a89f6cd659ba4", size = 224130, upload-time = "2026-01-27T12:31:17.222Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/dd/fcfac12b4a18b2d8b4d4778179aaf0ce928ccf443ff9c38ecec7516586cd/xai_sdk-1.14.0-py3-none-any.whl", hash = "sha256:02157e58ffd0c049b324eb0612c82ae44310f2a2b62343c5acbc5a87ca37afcd", size = 257346, upload-time = "2026-05-27T05:15:14.173Z" },
 ]
 
 [[package]]
