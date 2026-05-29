@@ -12,12 +12,47 @@ import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
+import httpx as _httpx_legacy
 import httpx2 as httpx
 
 from ._utils import run_in_executor
 from .models import get_user_agent
 
 __all__ = ['safe_download']
+
+
+# These exception classes inherit from BOTH `httpx2.*` (the actual exception classes raised
+# by the underlying client) and `httpx.*` (the legacy classes user code catches when wrapping
+# Agent.run() with ImageUrl/DocumentUrl inputs). This keeps existing `except httpx.HTTPStatusError`
+# blocks matching while internal HTTP is on httpx2. In pydantic-ai v2 the httpx base classes
+# will be dropped — track in the v2 deprecation cards.
+# Cooperative `super().__init__` is skipped because httpx and httpx2 have incompatible signatures
+# at the BaseHTTPStatusError layer; attributes are set directly to match both parents' public surface.
+
+
+# `httpx.Request` / `httpx.Response` and `httpx2.Request` / `httpx2.Response` are distinct classes
+# whose property setters/storage have incompatible static types — but the runtime contract is the
+# same. The reportIncompatibleVariableOverride / reportIncompatibleMethodOverride suppressions
+# below acknowledge that the compat class only ever holds httpx2 objects (the httpx parent is
+# satisfied structurally) and the runtime catch behavior is correct.
+
+
+class _SafeDownloadHTTPStatusError(  # pyright: ignore[reportIncompatibleMethodOverride, reportIncompatibleVariableOverride]
+    httpx.HTTPStatusError, _httpx_legacy.HTTPStatusError
+):
+    def __init__(self, message: str, *, request: httpx.Request, response: httpx.Response) -> None:
+        Exception.__init__(self, message)
+        self.request = request
+        self.response = response
+
+
+class _SafeDownloadRequestError(  # pyright: ignore[reportIncompatibleMethodOverride, reportIncompatibleVariableOverride]
+    httpx.RequestError, _httpx_legacy.RequestError
+):
+    def __init__(self, message: str, *, request: httpx.Request) -> None:
+        Exception.__init__(self, message)
+        self._request = request
+
 
 # Private IP ranges that should be blocked by default (i.e. unless allow_local=True).
 # IPv6 transition forms (6to4, NAT64, IPv4-mapped/-compatible, ISATAP) are not listed here;
@@ -482,7 +517,10 @@ async def safe_download(
     Raises:
         ValueError: If the URL fails SSRF validation, domain validation,
                 or too many redirects occur.
-        httpx.HTTPStatusError: If the response has an error status code.
+        httpx.HTTPStatusError: If the response has an error status code. Also catchable as
+                `httpx2.HTTPStatusError` (the compat class subclasses both). In pydantic-ai v2
+                the `httpx.HTTPStatusError` parent will be dropped; migrate `except` blocks to
+                `httpx2.HTTPStatusError`.
     """
     current_url = url
     redirects_followed = 0
@@ -511,12 +549,15 @@ async def safe_download(
             request_headers['Host'] = resolved.hostname
 
             # Make request with Host header set to original hostname
-            response = await client.get(
-                request_url,
-                headers=request_headers,
-                extensions=extensions,
-                follow_redirects=False,
-            )
+            try:
+                response = await client.get(
+                    request_url,
+                    headers=request_headers,
+                    extensions=extensions,
+                    follow_redirects=False,
+                )
+            except httpx.RequestError as e:
+                raise _SafeDownloadRequestError(str(e), request=e.request) from e
 
             # Check if we need to follow a redirect
             if response.is_redirect:
@@ -541,5 +582,8 @@ async def safe_download(
                 continue
 
             # Not a redirect, we're done
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                raise _SafeDownloadHTTPStatusError(str(e), request=e.request, response=e.response) from e
             return response

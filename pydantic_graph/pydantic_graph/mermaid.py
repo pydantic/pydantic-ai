@@ -7,6 +7,7 @@ from pathlib import Path
 from textwrap import indent
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
+import httpx as _httpx_legacy
 import httpx2 as httpx
 from annotated_types import Ge, Le
 from typing_extensions import TypedDict, Unpack
@@ -187,10 +188,12 @@ def request_image(
     httpx_client = kwargs.get('httpx_client') or httpx.Client()
     response = httpx_client.get(url, params=params)
     if not response.is_success:
+        # Static type widens to `httpx.* | httpx2.*` because MermaidConfig.httpx_client accepts
+        # either client. Runtime contract is identical; suppress to keep the union typing on the field.
         raise httpx.HTTPStatusError(
             f'{response.status_code} error generating image:\n{response.text}',
-            request=response.request,
-            response=response,
+            request=response.request,  # pyright: ignore[reportArgumentType]
+            response=response,  # pyright: ignore[reportArgumentType]
         )
     return response.content
 
@@ -265,8 +268,12 @@ class MermaidConfig(TypedDict, total=False):
 
     The scale must be a number between 1 and 3, and you can only set a scale if one or both of width and height are set.
     """
-    httpx_client: httpx.Client
-    """An HTTPX client to use for requests, mostly for testing purposes."""
+    httpx_client: _httpx_legacy.Client | httpx.Client
+    """An HTTPX client to use for requests, mostly for testing purposes.
+
+    Either an `httpx.Client` or an `httpx2.Client` is accepted. Internally `mermaid.ink` is
+    fetched via `httpx2` by default; passing your own client of either type is supported.
+    """
     direction: StateDiagramDirection
     """The direction of the state diagram."""
 
