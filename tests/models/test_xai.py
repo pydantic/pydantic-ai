@@ -5208,7 +5208,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
             {
                 'model': XAI_NON_REASONING_MODEL,
                 'messages': [{'content': [{'text': 'Search for test'}], 'role': 'ROLE_USER'}],
-                'tools': [{'web_search': {'enable_image_understanding': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
@@ -5233,7 +5233,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                     {'content': [{'text': 'Tool completed successfully.'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'What did you find?'}], 'role': 'ROLE_USER'},
                 ],
-                'tools': [{'web_search': {'enable_image_understanding': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
