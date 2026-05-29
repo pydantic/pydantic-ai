@@ -364,6 +364,7 @@ def test_xai_grok_3_mini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
+            'thinking_always_enabled': True,
             'supported_native_tools': frozenset(),
         }
     )
@@ -576,10 +577,7 @@ def test_bedrock_openai():
     """Bedrock-hosted OpenAI — only has the `openai` thinking variant, no upstream profile."""
     profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
     assert _normalize(profile) == snapshot(
-        {
-            'supports_thinking': True,
-            'bedrock_thinking_variant': 'openai',
-        }
+        {'supports_thinking': True, 'bedrock_thinking_variant': 'openai', 'thinking_always_enabled': True}
     )
 
 
@@ -593,6 +591,7 @@ def test_bedrock_qwen_qwq():
             'supported_native_tools': frozenset(),
             'supports_thinking': True,
             'bedrock_thinking_variant': 'qwen',
+            'thinking_always_enabled': True,
             'bedrock_supports_strict_tool_definition': False,
         }
     )
@@ -957,6 +956,7 @@ def test_xai_provider_grok_3_mini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
+            'thinking_always_enabled': True,
             'supported_native_tools': frozenset(),
         }
     )
