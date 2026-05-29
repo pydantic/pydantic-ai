@@ -72,14 +72,13 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         ('grok-4-fast-reasoning', True),
         ('grok-4-fast-non-reasoning', True),
         ('grok-4-1-fast-non-reasoning', True),
-        ('grok-code-fast-1', True),
+        # `grok-code-fast-1` redirects to `grok-build-0.1`, not Grok 4.3, so it gets no reasoning effort.
+        ('grok-code-fast-1', False),
         ('grok-3', True),
         ('grok-3-mini', True),
         ('grok-3-mini-fast', True),
         ('grok-3-fast', False),
         ('grok-4-1-reasoning', False),
-        ('grok-4.20', False),
-        ('grok-4.20-multi-agent', False),
     ],
     ids=[
         'grok-4.3',
@@ -92,8 +91,6 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         'grok-3-mini-fast',
         'grok-3-fast',
         'grok-4-1-reasoning',
-        'grok-4.20',
-        'grok-4.20-multi-agent',
     ],
 )
 def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool) -> None:

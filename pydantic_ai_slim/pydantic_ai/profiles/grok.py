@@ -15,21 +15,15 @@ _GROK_43_REASONING_MODELS = frozenset(
     (
         'grok-4.3',
         'grok-4.3-latest',
-        # Retired Grok 4/Grok 3 text slugs and their SDK aliases route to Grok 4.3.
-        'grok-4',
-        'grok-4-latest',
+        # Retired text slugs that xAI redirects to Grok 4.3, so they accept its `reasoning_effort`
+        # values. These exact six are the only slugs the retirement guide maps to Grok 4.3
+        # (`grok-code-fast-1` redirects to `grok-build-0.1` instead, so it is excluded).
+        # https://docs.x.ai/developers/migration/may-15-retirement
         'grok-4-0709',
-        'grok-4-1-fast',
         'grok-4-1-fast-reasoning',
-        'grok-4-1-fast-reasoning-latest',
         'grok-4-1-fast-non-reasoning',
-        'grok-4-1-fast-non-reasoning-latest',
-        'grok-4-fast',
         'grok-4-fast-reasoning',
-        'grok-4-fast-reasoning-latest',
         'grok-4-fast-non-reasoning',
-        'grok-4-fast-non-reasoning-latest',
-        'grok-code-fast-1',
         'grok-3',
     )
 )

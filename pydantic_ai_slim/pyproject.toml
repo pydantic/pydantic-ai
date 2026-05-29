@@ -73,6 +73,7 @@ cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.70.0"]
 anthropic = ["anthropic>=0.97.0"]
+# 1.12.2 is the first release whose `reasoning_effort` proto includes `EFFORT_NONE` (and `medium`), which Grok 4.3 support relies on.
 xai = ["xai-sdk>=1.12.2"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai>=2.8.0"]

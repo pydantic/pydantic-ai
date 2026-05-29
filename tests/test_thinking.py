@@ -1106,14 +1106,6 @@ class TestProfileThinkingCapabilities:
         assert profile.supports_thinking is False
         assert profile.grok_reasoning_efforts == frozenset()
 
-    @pytest.mark.parametrize('model_name', ['grok-4.20', 'grok-4.20-multi-agent'])
-    def test_grok_420_profile_thinking_support(self, model_name: str):
-        profile = grok_model_profile(model_name)
-        assert profile is not None
-        assert isinstance(profile, GrokModelProfile)
-        assert profile.supports_thinking is False
-        assert profile.grok_reasoning_efforts == frozenset()
-
     def test_cohere_profile_thinking_support(self):
         profile = cohere_model_profile('command-a-reasoning')
         assert profile is not None

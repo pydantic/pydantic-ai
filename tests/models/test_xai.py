@@ -1262,7 +1262,7 @@ async def test_xai_grok_3_mini_unified_medium_maps_to_high(allow_model_requests:
     ('model_name', 'thinking', 'profile'),
     [
         ('grok-3-mini', False, None),
-        ('grok-4.20', 'high', None),
+        ('grok-3-fast', 'high', None),
         ('grok-custom', 'high', GrokModelProfile(supports_thinking=True)),
     ],
 )
