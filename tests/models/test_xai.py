@@ -1188,9 +1188,9 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
 
 
 async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking='high' flows through to xAI reasoning_effort."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
-    agent = Agent(m, model_settings={'thinking': 'high'})
+    """Test that unified thinking='medium' flows through to xAI reasoning_effort."""
+    m = XaiModel('grok-4.3', provider=xai_provider)
+    agent = Agent(m, model_settings={'thinking': 'medium'})
 
     result = await agent.run('What is 2+2?')
     assert '4' in result.output
