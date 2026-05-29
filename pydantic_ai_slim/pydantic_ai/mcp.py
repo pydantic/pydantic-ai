@@ -128,6 +128,15 @@ __all__ = (
     'ProcessToolCallback',
     'CallToolFunc',
     'ToolResult',
+    'Prompt',
+    'PromptArgument',
+    'PromptMessage',
+    'PromptResult',
+    'Icon',
+    'ResourceLink',
+    'EmbeddedResource',
+    'ContentBlock',
+    'PromptRole',
 )
 
 
@@ -174,7 +183,7 @@ class MCPError(RuntimeError):
 class ResourceAnnotations:
     """Additional properties describing MCP entities.
 
-    See the [resource annotations in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#annotations).
+    See the [resource annotations in the MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#annotations).
     """
 
     audience: list[mcp_types.Role] | None = None
@@ -182,6 +191,9 @@ class ResourceAnnotations:
 
     priority: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
     """Priority level for this entity, ranging from 0.0 to 1.0."""
+
+    last_modified: str | None = None
+    """ISO 8601 timestamp of the last modification."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -192,7 +204,29 @@ class ResourceAnnotations:
         Args:
             mcp_annotations: The MCP SDK annotations object.
         """
-        return cls(audience=mcp_annotations.audience, priority=mcp_annotations.priority)
+        return cls(
+            audience=mcp_annotations.audience,
+            priority=mcp_annotations.priority,
+            # `lastModified` is in the 2025-11-25 spec on `Annotations` but absent from `mcp` v1.25.0;
+            # read defensively so we pick it up as soon as the SDK catches up.
+            last_modified=getattr(mcp_annotations, 'lastModified', None),
+        )
+
+
+@dataclass(repr=False, kw_only=True)
+class Icon:
+    """An icon for display in user interfaces."""
+
+    src: str
+    """URL or data URI for the icon."""
+
+    mime_type: str | None = None
+    """Optional MIME type for the icon."""
+
+    sizes: list[str] | None = None
+    """Optional list of strings specifying icon dimensions (e.g., ["48x48", "96x96"])."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False, kw_only=True)
@@ -214,6 +248,9 @@ class BaseResource(ABC):
     annotations: ResourceAnnotations | None = None
     """Optional annotations for the resource."""
 
+    icons: list[Icon] | None = None
+    """Optional icons for the resource."""
+
     metadata: dict[str, Any] | None = None
     """Optional metadata for the resource."""
 
@@ -224,7 +261,7 @@ class BaseResource(ABC):
 class Resource(BaseResource):
     """A resource that can be read from an MCP server.
 
-    See the [resources in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
+    See the [resources in the MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources).
     """
 
     uri: str
@@ -250,6 +287,9 @@ class Resource(BaseResource):
             annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource.annotations)
             if mcp_resource.annotations
             else None,
+            icons=[Icon(src=icon.src, mime_type=icon.mimeType, sizes=icon.sizes) for icon in mcp_resource.icons]
+            if mcp_resource.icons
+            else None,
             metadata=mcp_resource.meta,
         )
 
@@ -258,7 +298,7 @@ class Resource(BaseResource):
 class ResourceTemplate(BaseResource):
     """A template for parameterized resources on an MCP server.
 
-    See the [resource templates in the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/resources#resource-templates).
+    See the [resource templates in the MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources#resource-templates).
     """
 
     uri_template: str
@@ -280,8 +320,249 @@ class ResourceTemplate(BaseResource):
             annotations=ResourceAnnotations.from_mcp_sdk(mcp_template.annotations)
             if mcp_template.annotations
             else None,
+            icons=[Icon(src=icon.src, mime_type=icon.mimeType, sizes=icon.sizes) for icon in mcp_template.icons]
+            if mcp_template.icons
+            else None,
             metadata=mcp_template.meta,
         )
+
+
+@dataclass(repr=False, kw_only=True)
+class ResourceLink:
+    """A resource link referenced in a prompt or tool call result.
+
+    Unlike [`EmbeddedResource`][pydantic_ai.mcp.EmbeddedResource], this does not include the resource
+    content directly — it is a reference to a resource that the server can read.
+
+    Note: resource links returned by tools are not guaranteed to appear in the results of
+    `resources/list` requests.
+
+    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources).
+    """
+
+    uri: str
+    """The URI of the linked resource."""
+
+    name: str
+    """The programmatic name of the linked resource."""
+
+    title: str | None = None
+    """Human-readable title for UI contexts."""
+
+    description: str | None = None
+    """A description of what this linked resource represents."""
+
+    mime_type: str | None = None
+    """The MIME type of the linked resource, if known."""
+
+    size: int | None = None
+    """The size of the raw resource content in bytes (before base64 encoding), if known."""
+
+    annotations: ResourceAnnotations | None = None
+    """Optional annotations for the linked resource."""
+
+    icons: list[Icon] | None = None
+    """Optional icons for the linked resource."""
+
+    metadata: dict[str, Any] | None = None
+    """Optional metadata for the linked resource."""
+
+    type: Literal['resource_link'] = 'resource_link'
+    """Discriminator for resource link content."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    @classmethod
+    def from_mcp_sdk(cls, mcp_resource_link: mcp_types.ResourceLink) -> ResourceLink:
+        """Convert from MCP SDK ResourceLink to PydanticAI ResourceLink."""
+        return cls(
+            type='resource_link',
+            uri=str(mcp_resource_link.uri),
+            name=mcp_resource_link.name,
+            title=mcp_resource_link.title,
+            description=mcp_resource_link.description,
+            mime_type=mcp_resource_link.mimeType,
+            size=mcp_resource_link.size,
+            annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource_link.annotations)
+            if mcp_resource_link.annotations
+            else None,
+            icons=[Icon(src=icon.src, mime_type=icon.mimeType, sizes=icon.sizes) for icon in mcp_resource_link.icons]
+            if mcp_resource_link.icons
+            else None,
+            metadata=mcp_resource_link.meta,
+        )
+
+
+@dataclass(repr=False, kw_only=True)
+class PromptArgument:
+    """An argument for a prompt template."""
+
+    name: str
+    """The name of the argument."""
+
+    title: str | None = None
+    """Human-readable title for the argument."""
+
+    description: str | None = None
+    """A human-readable description of the argument."""
+
+    required: bool | None = None
+    """Whether the argument is required or optional. If not specified, the server may determine this based on context."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class Prompt:
+    """A prompt or prompt template that the server offers."""
+
+    name: str
+    """The programmatic name of the prompt."""
+
+    title: str | None = None
+    """Human-readable title for prompt."""
+
+    description: str | None = None
+    """An optional description of what this prompt provides."""
+
+    arguments: list[PromptArgument] | None = None
+    """A list of arguments to use for templating the prompt."""
+
+    icons: list[Icon] | None = None
+    """An optional list of icons for this prompt."""
+
+    metadata: dict[str, Any] | None = None
+    """
+    See [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta)
+    for notes on _meta usage.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    @classmethod
+    def from_mcp_sdk(cls, mcp_prompt: mcp_types.Prompt) -> Prompt:
+        """Convert from MCP SDK Prompt to PydanticAI Prompt.
+
+        Args:
+            mcp_prompt: The MCP SDK Prompt object.
+        """
+        return cls(
+            name=mcp_prompt.name,
+            title=mcp_prompt.title,
+            description=mcp_prompt.description,
+            arguments=[
+                PromptArgument(
+                    name=arg.name,
+                    # `title` is in the 2025-11-25 spec on `PromptArgument` (via `BaseMetadata`)
+                    # but absent from `mcp` v1.25.0; read defensively until the SDK catches up.
+                    title=getattr(arg, 'title', None),
+                    description=arg.description,
+                    required=arg.required,
+                )
+                for arg in mcp_prompt.arguments
+            ]
+            if mcp_prompt.arguments
+            else None,
+            icons=[
+                Icon(
+                    src=icon.src,
+                    mime_type=icon.mimeType,
+                    sizes=icon.sizes,
+                )
+                for icon in mcp_prompt.icons
+            ]
+            if mcp_prompt.icons
+            else None,
+            metadata=mcp_prompt.meta,
+        )
+
+
+PromptRole = Literal['user', 'assistant']
+
+
+@dataclass(repr=False, kw_only=True)
+class EmbeddedResource:
+    """A resource embedded into a prompt or tool call result.
+
+    Contains the actual resource content alongside its metadata, unlike
+    [`ResourceLink`][pydantic_ai.mcp.ResourceLink] which is only a reference.
+
+    See the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources).
+    """
+
+    uri: str
+    """The URI of the embedded resource."""
+
+    content: str | messages.BinaryContent
+    """The content of the embedded resource."""
+
+    type: Literal['resource'] = 'resource'
+    """Discriminator for embedded resource content."""
+
+    mime_type: str | None = None
+    """The MIME type of the resource, if known."""
+
+    annotations: ResourceAnnotations | None = None
+    """Optional annotations for the resource."""
+
+    metadata: dict[str, Any] | None = None
+    """
+    See [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta)
+    for notes on _meta usage.
+    """
+
+    resource_metadata: dict[str, Any] | None = None
+    """`_meta` carried on the nested resource contents (separate from the embedding's own `_meta`)."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    @classmethod
+    def from_mcp_sdk(cls, part: mcp_types.EmbeddedResource, content: str | messages.BinaryContent) -> EmbeddedResource:
+        """Convert from MCP SDK EmbeddedResource to PydanticAI EmbeddedResource."""
+        return cls(
+            uri=str(part.resource.uri),
+            content=content,
+            mime_type=part.resource.mimeType,
+            annotations=ResourceAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
+            metadata=part.meta,
+            resource_metadata=part.resource.meta,
+        )
+
+
+ContentBlock = messages.TextContent | messages.BinaryContent | ResourceLink | EmbeddedResource
+"""A content block that can be used in prompts and tool results."""
+
+
+@dataclass(repr=False, kw_only=True)
+class PromptMessage:
+    """A message returned as part of a prompt result."""
+
+    role: PromptRole
+    """The role of the message sender."""
+
+    content: ContentBlock
+    """The content of the message."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class PromptResult:
+    """The result of a [`get_prompt`][pydantic_ai.mcp.MCPServer.get_prompt] request."""
+
+    messages: list[PromptMessage]
+    """The prompt messages."""
+
+    description: str | None = None
+    """An optional description for the prompt."""
+
+    metadata: dict[str, Any] | None = None
+    """
+    See [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta)
+    for notes on _meta usage.
+    """
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass(repr=False, kw_only=True)
@@ -457,6 +738,14 @@ class MCPServer(AbstractToolset[Any], ABC):
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""
 
+    cache_prompts: bool
+    """Whether to cache the list of prompts.
+
+    When enabled (default), prompts are fetched once and cached until either:
+    - The server sends a `notifications/prompts/list_changed` notification
+    - The connection is closed
+    """
+
     cache_tools: bool
     """Whether to cache the list of tools.
 
@@ -503,6 +792,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _server_capabilities: ServerCapabilities
     _instructions: str | None
 
+    _cached_prompts: list[Prompt] | None
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
 
@@ -523,9 +813,10 @@ class MCPServer(AbstractToolset[Any], ABC):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        *,
+        cache_prompts: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
-        *,
         include_instructions: bool = False,
         include_return_schema: bool | None = None,
         id: str | None = None,
@@ -541,6 +832,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.sampling_model = sampling_model
         self.max_retries = max_retries
         self.elicitation_callback = elicitation_callback
+        self.cache_prompts = cache_prompts
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
         self.include_instructions = include_instructions
@@ -553,6 +845,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     def __post_init__(self):
         self._session_state = _MCPSessionState()
+        self._cached_prompts = None
         self._cached_tools = None
         self._cached_resources = None
 
@@ -640,6 +933,79 @@ class MCPServer(AbstractToolset[Any], ABC):
             # Durable execution wrappers detect this and fetch via activity/step.
             return None
         return messages.InstructionPart(content=instr, dynamic=True) if instr is not None else None
+
+    async def list_prompts(self) -> list[Prompt]:
+        """Retrieve prompts that are currently active on the server.
+
+        Prompts are cached by default, with cache invalidation on:
+        - `notifications/prompts/list_changed` notifications from the server
+        - Connection close (cache is cleared in `__aexit__`)
+
+        Set `cache_prompts=False` for servers that change prompts without sending notifications.
+
+        Raises:
+            MCPError: If the server returns an error.
+        """
+        if self.cache_prompts and self._cached_prompts is not None:
+            return self._cached_prompts
+
+        async with self:
+            if not self.capabilities.prompts:
+                return []
+            try:
+                # Follow `nextCursor` until the server stops handing one back. The pre-existing
+                # `list_tools` / `list_resources` on this class do not paginate yet; tracked as a
+                # follow-up so all three list methods behave the same.
+                # See https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/pagination
+                client = self._get_client()
+                prompts: list[Prompt] = []
+                cursor: str | None = None
+                while True:
+                    result = await client.list_prompts(params=mcp_types.PaginatedRequestParams(cursor=cursor))
+                    prompts.extend(Prompt.from_mcp_sdk(p) for p in result.prompts)
+                    # Treat falsy `nextCursor` (`None` or `""`) as end-of-results — guards against a
+                    # misbehaving server that would otherwise loop the client on `cursor=""` forever.
+                    if not result.nextCursor:
+                        break
+                    cursor = result.nextCursor
+                if self.cache_prompts:
+                    self._cached_prompts = prompts
+                return prompts
+            except mcp_exceptions.McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+
+    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> PromptResult:
+        """Retrieve a specific prompt by name.
+
+        Args:
+            name: The name of the prompt to retrieve.
+            arguments: Arguments to parameterize the prompt, if applicable.
+
+        Returns:
+            The prompt result with description and messages.
+
+        Raises:
+            MCPError: If the server doesn't advertise the `prompts` capability, or if it returns
+                an error response.
+        """
+        async with self:
+            if not self.capabilities.prompts:
+                raise MCPError(
+                    message=f'Server does not advertise the `prompts` capability; cannot get prompt {name!r}.',
+                    code=-32601,
+                )
+            try:
+                result = await self._get_client().get_prompt(name, arguments)
+            except mcp_exceptions.McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+
+            return PromptResult(
+                description=result.description,
+                metadata=result.meta,
+                messages=[
+                    PromptMessage(role=msg.role, content=_map_mcp_prompt_part(msg.content)) for msg in result.messages
+                ],
+            )
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
@@ -835,9 +1201,9 @@ class MCPServer(AbstractToolset[Any], ABC):
                 raise MCPError.from_mcp_sdk(e) from e
 
         return (
-            self._get_content(result.contents[0])
+            _resource_content_to_pai(result.contents[0])
             if len(result.contents) == 1
-            else [self._get_content(resource) for resource in result.contents]
+            else [_resource_content_to_pai(resource) for resource in result.contents]
         )
 
     def _get_client(self) -> ClientSession:
@@ -960,6 +1326,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             session_task_to_await = state.session_task
             state.session_task = None
             self._cached_tools = None
+            self._cached_prompts = None
             self._cached_resources = None
         # Await outside the lock: the session task's cancel scopes unwind inside the
         # task itself, so this await can safely happen from any caller. Bound the
@@ -1012,49 +1379,19 @@ class MCPServer(AbstractToolset[Any], ABC):
                 self._cached_tools = None
             elif isinstance(message.root, mcp_types.ResourceListChangedNotification):
                 self._cached_resources = None
+            elif isinstance(message.root, mcp_types.PromptListChangedNotification):
+                self._cached_prompts = None
 
     async def _map_tool_result_part(
         self, part: mcp_types.ContentBlock
     ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
-
-        if isinstance(part, mcp_types.TextContent):
-            text = part.text
-            if text.startswith(('[', '{')):
-                try:
-                    return pydantic_core.from_json(text)
-                except ValueError:
-                    pass
-            return text
-        elif isinstance(part, mcp_types.ImageContent):
-            return messages.BinaryImage(data=base64.b64decode(part.data), media_type=part.mimeType)
-        elif isinstance(part, mcp_types.AudioContent):
-            # NOTE: The FastMCP server doesn't support audio content.
-            # See <https://github.com/modelcontextprotocol/python-sdk/issues/952> for more details.
-            return messages.BinaryContent(
-                data=base64.b64decode(part.data), media_type=part.mimeType
-            )  # pragma: no cover
-        elif isinstance(part, mcp_types.EmbeddedResource):
-            resource = part.resource
-            return self._get_content(resource)
-        elif isinstance(part, mcp_types.ResourceLink):
+        # The only path that differs from the module-level `_map_mcp_tool_result` is `ResourceLink`:
+        # here we have a live session and can read the resource; the module-level helper used by
+        # `MCPToolset` is sync, so it returns the URI as a string. All other branches share logic.
+        if isinstance(part, mcp_types.ResourceLink):
             return await self.read_resource(str(part.uri))
-        else:
-            assert_never(part)
-
-    def _get_content(
-        self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
-    ) -> str | messages.BinaryContent:
-        if isinstance(resource, mcp_types.TextResourceContents):
-            return resource.text
-        elif isinstance(resource, mcp_types.BlobResourceContents):
-            return messages.BinaryContent.narrow_type(
-                messages.BinaryContent(
-                    data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
-                )
-            )
-        else:
-            assert_never(resource)
+        return _map_mcp_tool_result(part)
 
     def __eq__(self, value: object, /) -> bool:
         return isinstance(value, MCPServer) and self.id == value.id and self.tool_prefix == value.tool_prefix
@@ -1117,6 +1454,7 @@ class MCPServerStdio(MCPServer):
     sampling_model: models.Model | None
     max_retries: int
     elicitation_callback: ElicitationFnT | None = None
+    cache_prompts: bool
     cache_tools: bool
     cache_resources: bool
     include_instructions: bool
@@ -1138,6 +1476,7 @@ class MCPServerStdio(MCPServer):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        cache_prompts: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
         include_instructions: bool = False,
@@ -1162,6 +1501,8 @@ class MCPServerStdio(MCPServer):
             sampling_model: The model to use for sampling.
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
+            cache_prompts: Whether to cache the list of prompts.
+                See [`MCPServer.cache_prompts`][pydantic_ai.mcp.MCPServer.cache_prompts].
             cache_tools: Whether to cache the list of tools.
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
@@ -1189,8 +1530,9 @@ class MCPServerStdio(MCPServer):
             sampling_model,
             max_retries,
             elicitation_callback,
-            cache_tools,
-            cache_resources,
+            cache_prompts=cache_prompts,
+            cache_tools=cache_tools,
+            cache_resources=cache_resources,
             id=id,
             include_instructions=include_instructions,
             include_return_schema=include_return_schema,
@@ -1293,6 +1635,7 @@ class _MCPServerHTTP(MCPServer):
     sampling_model: models.Model | None
     max_retries: int
     elicitation_callback: ElicitationFnT | None = None
+    cache_prompts: bool
     cache_tools: bool
     cache_resources: bool
     include_instructions: bool
@@ -1314,6 +1657,7 @@ class _MCPServerHTTP(MCPServer):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
+        cache_prompts: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
         include_instructions: bool = False,
@@ -1338,6 +1682,8 @@ class _MCPServerHTTP(MCPServer):
             sampling_model: The model to use for sampling.
             max_retries: The maximum number of times to retry a tool call.
             elicitation_callback: Callback function to handle elicitation requests from the server.
+            cache_prompts: Whether to cache the list of prompts.
+                See [`MCPServer.cache_prompts`][pydantic_ai.mcp.MCPServer.cache_prompts].
             cache_tools: Whether to cache the list of tools.
                 See [`MCPServer.cache_tools`][pydantic_ai.mcp.MCPServer.cache_tools].
             cache_resources: Whether to cache the list of resources.
@@ -1377,6 +1723,7 @@ class _MCPServerHTTP(MCPServer):
             sampling_model=sampling_model,
             max_retries=max_retries,
             elicitation_callback=elicitation_callback,
+            cache_prompts=cache_prompts,
             cache_tools=cache_tools,
             cache_resources=cache_resources,
             include_instructions=include_instructions,
@@ -1721,6 +2068,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     `notifications/resources/list_changed` notifications.
     """
 
+    cache_prompts: bool
+    """Whether to cache the list of prompts across `list_prompts()` calls.
+
+    Same semantics as [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] but for
+    `notifications/prompts/list_changed` notifications.
+    """
+
     include_instructions: bool
     """Whether to include the server's `initialize` instructions string in the agent's instruction set.
 
@@ -1762,6 +2116,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _instructions: str | None
     _cached_tools: list[mcp_types.Tool] | None
     _cached_resources: list[Resource] | None
+    _cached_prompts: list[Prompt] | None
     _running_count: int
     _exit_stack: AsyncExitStack | None
     _user_message_handler: MessageHandlerT | None
@@ -1783,6 +2138,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         process_tool_call: ProcessToolCallback | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
+        cache_prompts: bool = True,
         include_instructions: bool = False,
         include_return_schema: bool | None = None,
         # Sampling — high-level shortcut and low-level escape hatch
@@ -1822,6 +2178,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 [`MCPToolset.cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools].
             cache_resources: Whether to cache the list of resources. See
                 [`MCPToolset.cache_resources`][pydantic_ai.mcp.MCPToolset.cache_resources].
+            cache_prompts: Whether to cache the list of prompts. See
+                [`MCPToolset.cache_prompts`][pydantic_ai.mcp.MCPToolset.cache_prompts].
             include_instructions: Whether to include the server's instructions in the agent's
                 instructions. See
                 [`MCPToolset.include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions].
@@ -1942,6 +2300,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.process_tool_call = process_tool_call
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
+        self.cache_prompts = cache_prompts
         self.include_instructions = include_instructions
         self.include_return_schema = include_return_schema
         self.sampling_model = sampling_model
@@ -1952,6 +2311,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._instructions = None
         self._cached_tools = None
         self._cached_resources = None
+        self._cached_prompts = None
         self._running_count = 0
         self._exit_stack = None
 
@@ -2018,6 +2378,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     def _invalidate_resources_cache(self) -> None:
         self._cached_resources = None
 
+    def _invalidate_prompts_cache(self) -> None:
+        self._cached_prompts = None
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._running_count == 0:
@@ -2055,6 +2418,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 self._instructions = None
                 self._cached_tools = None
                 self._cached_resources = None
+                self._cached_prompts = None
         return None
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> messages.InstructionPart | None:
@@ -2181,6 +2545,61 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             )
         return await self.direct_call_tool(name, tool_args, use_task=use_task)
 
+    async def list_prompts(self) -> list[Prompt]:
+        """Retrieve the prompts currently exposed by the server.
+
+        When [`cache_prompts`][pydantic_ai.mcp.MCPToolset.cache_prompts] is enabled (default),
+        results are cached and invalidated by `notifications/prompts/list_changed` or the
+        toolset's last `__aexit__`.
+
+        Returns an empty list if the server does not advertise the `prompts` capability.
+
+        Raises:
+            MCPError: If the server returns an error.
+        """
+        if self.cache_prompts and self._cached_prompts is not None:
+            return self._cached_prompts
+        async with self:
+            if not self.capabilities.prompts:
+                return []
+            try:
+                mcp_prompts = await self.client.list_prompts()
+            except mcp_exceptions.McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+            prompts = [Prompt.from_mcp_sdk(p) for p in mcp_prompts]
+            if self.cache_prompts:
+                self._cached_prompts = prompts
+            return prompts
+
+    async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> PromptResult:
+        """Retrieve a specific prompt from the server, optionally parameterized.
+
+        Args:
+            name: The name of the prompt to retrieve.
+            arguments: Arguments to parameterize the prompt, if applicable.
+
+        Raises:
+            MCPError: If the server doesn't advertise the `prompts` capability, or if it returns
+                an error response.
+        """
+        async with self:
+            if not self.capabilities.prompts:
+                raise MCPError(
+                    message=f'Server does not advertise the `prompts` capability; cannot get prompt {name!r}.',
+                    code=-32601,
+                )
+            try:
+                result = await self.client.get_prompt(name, arguments)
+            except mcp_exceptions.McpError as e:
+                raise MCPError.from_mcp_sdk(e) from e
+            return PromptResult(
+                description=result.description,
+                metadata=result.meta,
+                messages=[
+                    PromptMessage(role=msg.role, content=_map_mcp_prompt_part(msg.content)) for msg in result.messages
+                ],
+            )
+
     async def list_resources(self) -> list[Resource]:
         """Retrieve the resources currently exposed by the server.
 
@@ -2286,6 +2705,8 @@ def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandle
                 toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
             elif isinstance(message.root, mcp_types.ResourceListChangedNotification):
                 toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
+            elif isinstance(message.root, mcp_types.PromptListChangedNotification):
+                toolset._invalidate_prompts_cache()  # pyright: ignore[reportPrivateUsage]
         if user_handler is not None:
             await user_handler(message)
 
@@ -2395,6 +2816,10 @@ def _map_mcp_tool_results(
 
 
 def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
+    # Tool results don't preserve MCP annotations/`_meta` onto `BinaryContent.vendor_metadata`;
+    # only `_map_mcp_prompt_part` does that via `_map_mcp_binary_content`. The PR that added prompts
+    # made this asymmetric on purpose (tool returns flow to the model; prompt content flows to the
+    # user). Revisit if a future PR decides tool returns should also surface MCP annotations.
     if isinstance(part, mcp_types.TextContent):
         text = part.text
         if text.startswith(('[', '{')):
@@ -2413,6 +2838,38 @@ def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryC
         # Reading the linked resource requires a session reference; fall back to returning the URI.
         # For inline reading, callers can use `MCPToolset.read_resource(part.uri)` directly.
         return str(part.uri)
+    else:
+        assert_never(part)
+
+
+def _mcp_part_metadata(
+    part: mcp_types.TextContent | mcp_types.ImageContent | mcp_types.AudioContent,
+) -> dict[str, Any] | None:
+    metadata: dict[str, Any] = {}
+    if part.annotations:
+        metadata['mcp_annotations'] = ResourceAnnotations.from_mcp_sdk(part.annotations)
+    if part.meta:
+        metadata['mcp_meta'] = part.meta
+    return metadata or None
+
+
+def _map_mcp_binary_content(part: mcp_types.ImageContent | mcp_types.AudioContent) -> messages.BinaryContent:
+    data = base64.b64decode(part.data)
+    vendor_metadata = _mcp_part_metadata(part)
+    if isinstance(part, mcp_types.ImageContent):
+        return messages.BinaryImage(data=data, media_type=part.mimeType, vendor_metadata=vendor_metadata)
+    return messages.BinaryContent(data=data, media_type=part.mimeType, vendor_metadata=vendor_metadata)
+
+
+def _map_mcp_prompt_part(part: mcp_types.ContentBlock) -> ContentBlock:
+    if isinstance(part, mcp_types.TextContent):
+        return messages.TextContent(content=part.text, metadata=_mcp_part_metadata(part))
+    elif isinstance(part, (mcp_types.ImageContent, mcp_types.AudioContent)):
+        return _map_mcp_binary_content(part)
+    elif isinstance(part, mcp_types.EmbeddedResource):
+        return EmbeddedResource.from_mcp_sdk(part, _resource_content_to_pai(part.resource))
+    elif isinstance(part, mcp_types.ResourceLink):
+        return ResourceLink.from_mcp_sdk(part)
     else:
         assert_never(part)
 

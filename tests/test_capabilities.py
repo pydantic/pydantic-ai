@@ -695,6 +695,7 @@ Supported by:
                         'anthropic:claude-opus-4-5',
                         'anthropic:claude-opus-4-6',
                         'anthropic:claude-opus-4-7',
+                        'anthropic:claude-opus-4-8',
                         'anthropic:claude-sonnet-4-0',
                         'anthropic:claude-sonnet-4-20250514',
                         'anthropic:claude-sonnet-4-5-20250929',
@@ -785,6 +786,7 @@ Supported by:
                         'gateway/anthropic:claude-opus-4-5',
                         'gateway/anthropic:claude-opus-4-6',
                         'gateway/anthropic:claude-opus-4-7',
+                        'gateway/anthropic:claude-opus-4-8',
                         'gateway/anthropic:claude-sonnet-4-0',
                         'gateway/anthropic:claude-sonnet-4-20250514',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -5910,7 +5912,7 @@ class TestPrepareToolsCapability:
         assert result.output == "tools: ['public_tool']"
 
     async def test_prepare_tools_none_disables_all(self):
-        """PrepareTools treats None return as 'disable all tools', consistent with ToolsPrepareFunc docs."""
+        """Returning None still disables all function tools, but now emits the deprecation warning."""
         from pydantic_ai.capabilities import PrepareTools
 
         async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
@@ -5926,8 +5928,30 @@ class TestPrepareToolsCapability:
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        result = await agent.run('hello')
+        with pytest.warns(PydanticAIDeprecationWarning, match='returning `None` from a prepare callback is deprecated'):
+            result = await agent.run('hello')
         assert result.output == 'tools: []'
+
+    async def test_prepare_tools_empty_list_does_not_warn(self):
+        """Returning [] is the explicit 'disable all' alternative and must not emit the warning.
+
+        Relies on the suite-wide `filterwarnings = ['error']` in `pyproject.toml` to turn any
+        unexpected `PydanticAIDeprecationWarning` into a test failure.
+        """
+
+        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(disable_all)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'  # pragma: no cover
+
+        await agent.run('hello')
 
     async def test_prepare_tools_modifies_definitions(self):
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
@@ -6063,6 +6087,28 @@ class TestPrepareOutputToolsCapability:
         class Out(BaseModel):
             value: str
 
+        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response(f'output_tools: {len(info.output_tools)}')
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, ToolOutput(Out, name='out')],
+            capabilities=[PrepareOutputTools(disable_all)],
+        )
+
+        result = await agent.run('hello')
+        assert result.output == 'output_tools: 0'
+
+    async def test_prepare_output_tools_none_disables_all(self):
+        """Returning None still disables all output tools, but now emits the deprecation warning."""
+        from pydantic_ai.capabilities import PrepareOutputTools
+
+        class Out(BaseModel):
+            value: str
+
         async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
@@ -6075,7 +6121,8 @@ class TestPrepareOutputToolsCapability:
             capabilities=[PrepareOutputTools(disable_all)],
         )
 
-        result = await agent.run('hello')
+        with pytest.warns(PydanticAIDeprecationWarning, match='returning `None` from a prepare callback is deprecated'):
+            result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
 
     async def test_only_sees_output_tools(self):
@@ -15528,7 +15575,7 @@ class TestOutputHookEdgeCases:
             await toolset.call_tool(tool_name, {}, ctx, tool)
 
         with pytest.raises(NotImplementedError, match='validate_output_tool_call'):
-            asyncio.get_event_loop().run_until_complete(run())
+            asyncio.run(run())
 
     def test_hooks_on_output_process_via_hooks_class(self):
         """Test wrap_output_process via Hooks decorator API."""

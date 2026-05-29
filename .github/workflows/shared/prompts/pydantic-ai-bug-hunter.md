@@ -11,18 +11,6 @@ reviewed default.
 
 # Pydantic AI Bug Hunter
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)), a provider-agnostic GenAI agent
-framework for Python. It is a `uv` workspace: `pydantic_ai_slim/` (the agent
-framework), `pydantic_graph/`, `pydantic_evals/`, `clai/`, with tests in
-`tests/`.
-
 ## Objective
 
 Find a single reproducible, user-impacting bug that can be covered by a minimal
@@ -71,6 +59,30 @@ weak or speculative issue is worse than filing nothing.
   consistent patterns across the codebase, and recent PRs/commits for context.
   If the "bug" requires assuming an error despite an established pattern, it is
   probably by-design.
+- **Cross-provider comparisons.** Different providers have different semantics
+  by design. Do not assume one provider's behavior is the "correct" reference
+  for another. Only flag a bug if the behavior contradicts the provider's own
+  documented API contract.
+
+### Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues that might overlap
+your run's scope. Use the MCP GitHub tools (not the `gh` CLI, which is blocked
+by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[bug-hunter]" OR "[provider-mapping-sweep]" OR "[streaming-resilience-sweep]" OR "[roundtrip-sweep]"
+```
+
+Also search for keywords related to whatever subsystem you're investigating.
+If a matching issue already covers the same root cause, call
+`mcp__safeoutputs__noop` immediately — do NOT file a duplicate, even to
+"independently confirm" the bug. Confirming is not value-add.
+
+### Sandbox notes
+
+- Read files in large ranges (500+ lines per call). Do NOT read 30–80 lines at a time.
+- Use the native `Grep` and `Glob` tools for codebase search.
 
 ### Quality Gate — When to Noop
 
