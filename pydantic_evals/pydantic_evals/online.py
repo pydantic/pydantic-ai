@@ -199,9 +199,10 @@ class OnlineEvaluator:
     evaluator: Evaluator
     """The evaluator to run.
 
-    To version an evaluator, set `evaluator_version` as a class attribute on the
-    `Evaluator` subclass itself (see `Evaluator` docstring). The framework reads it
-    via `getattr` at dispatch time and propagates it to sinks alongside each result.
+    To version an evaluator, override
+    [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on the
+    `Evaluator` subclass (see `Evaluator` docstring). The framework calls it at dispatch time and
+    propagates the value to sinks alongside each result.
     """
     sample_rate: float | Callable[[SamplingContext], float | bool] | None = None
     """Probability of running this evaluator (0.0–1.0), or a callable returning a float or bool.
@@ -246,6 +247,15 @@ class OnlineEvaluator:
     failures — the value is intentionally broad.
     If `None`, uses the config's `on_error` default. If neither is set, exceptions are
     silently suppressed.
+    """
+    run_on_errors: bool = False
+    """Whether to run this evaluator when the wrapped function/agent raises.
+
+    When `False` (the default), the evaluator is skipped if the wrapped call raises —
+    only successful results reach the evaluator. When `True`, the raised exception is
+    passed as `EvaluatorContext.output` so the evaluator can score failure modes
+    (e.g. count tool errors, classify exception types). The exception still propagates
+    to the caller after dispatch.
     """
 
     def __post_init__(self) -> None:
@@ -498,8 +508,9 @@ class OnlineEvalConfig:
         `None`, which resolves to the config's `default_sample_rate` at each call — so
         changes to the config after decoration take effect.
 
-        To version an evaluator, set `evaluator_version` on the `Evaluator` subclass
-        itself — the framework reads it at dispatch time and records it on every
+        To version an evaluator, override
+        [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on the
+        `Evaluator` subclass — the framework calls it at dispatch time and records the value on every
         [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and
         [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] the evaluator emits:
 
@@ -512,10 +523,11 @@ class OnlineEvalConfig:
 
         @dataclass
         class Tone(Evaluator):
-            evaluator_version = 'v2'
-
             def evaluate(self, ctx: EvaluatorContext) -> str:
                 return 'neutral'
+
+            def get_evaluator_version(self) -> str | None:
+                return 'v2'
 
 
         @evaluate(Tone())
@@ -592,6 +604,42 @@ class _CallSpanSpec:
     record_return: bool
 
 
+def _dispatch_on_error(
+    exc: Exception,
+    sampled: list[OnlineEvaluator],
+    inputs: dict[str, Any],
+    get_eval_context_kwargs: Callable[[], dict[str, Any]] | None,
+    span: Any,
+    target: str,
+    config: OnlineEvalConfig,
+) -> None:
+    """Dispatch `run_on_errors=True` evaluators with the raised exception as `output`.
+
+    Shared between `_wrap_async` and `_wrap_sync`. The wrapper still re-raises after
+    calling this — error-path dispatch is fire-and-forget, just like the success path.
+    """
+    error_evaluators = [ev for ev in sampled if ev.run_on_errors]
+    if not error_evaluators or get_eval_context_kwargs is None:
+        return
+    metadata = dict(config.metadata) if config.metadata is not None else None
+    context = EvaluatorContext(
+        name=None,
+        inputs=inputs,
+        output=exc,
+        expected_output=None,
+        metadata=metadata,
+        **get_eval_context_kwargs(),
+    )
+    span_reference = _extract_span_reference(span)
+    coro = _online_internal.dispatch_evaluators(error_evaluators, context, span_reference, target, config)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        _online_internal.dispatch_in_background_thread(coro)
+    else:
+        _online_internal.dispatch_async(coro)
+
+
 def _wrap_async(
     func: Callable[_P, Awaitable[_R]],
     sig: inspect.Signature,
@@ -624,20 +672,23 @@ def _wrap_async(
         recorded_inputs = _select_recorded_inputs(inputs, call_span.extract_args)
 
         # Run the function with span tree capture and attribute/metric tracking
-        with (
-            _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
-            _task_run.run_task() as get_eval_context_kwargs,
-        ):
-            result = await func(*args, **kwargs)
-            if call_span.record_return:
-                # Swallow attribute-set failures so an exotic return value (e.g. one
-                # whose repr raises during logfire's JSON-schema serialisation) can't
-                # mask the function's real return. `record_return=True` is opt-in for
-                # observability, not a contract to fail the call.
-                try:
-                    span.set_attribute('return', result)
-                except Exception:  # pragma: no cover - defensive
-                    pass
+        get_eval_context_kwargs: Callable[[], dict[str, Any]] | None = None
+        with _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span:
+            try:
+                with _task_run.run_task() as get_eval_context_kwargs:
+                    result = await func(*args, **kwargs)
+                    if call_span.record_return:
+                        # Swallow attribute-set failures so an exotic return value (e.g. one
+                        # whose repr raises during logfire's JSON-schema serialisation) can't
+                        # mask the function's real return. `record_return=True` is opt-in for
+                        # observability, not a contract to fail the call.
+                        try:
+                            span.set_attribute('return', result)
+                        except Exception:  # pragma: no cover - defensive
+                            pass
+            except Exception as e:
+                _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)
+                raise
 
         # Build context
         metadata = dict(config.metadata) if config.metadata is not None else None
@@ -695,20 +746,23 @@ def _wrap_sync(
         recorded_inputs = _select_recorded_inputs(inputs, call_span.extract_args)
 
         # Run the function with span tree capture and attribute/metric tracking
-        with (
-            _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span,
-            _task_run.run_task() as get_eval_context_kwargs,
-        ):
-            result = func(*args, **kwargs)
-            if call_span.record_return:
-                # Swallow attribute-set failures so an exotic return value (e.g. one
-                # whose repr raises during logfire's JSON-schema serialisation) can't
-                # mask the function's real return. `record_return=True` is opt-in for
-                # observability, not a contract to fail the call.
-                try:
-                    span.set_attribute('return', result)
-                except Exception:  # pragma: no cover - defensive
-                    pass
+        get_eval_context_kwargs: Callable[[], dict[str, Any]] | None = None
+        with _open_call_span(call_span.msg_template, call_span.span_name, recorded_inputs) as span:
+            try:
+                with _task_run.run_task() as get_eval_context_kwargs:
+                    result = func(*args, **kwargs)
+                    if call_span.record_return:
+                        # Swallow attribute-set failures so an exotic return value (e.g. one
+                        # whose repr raises during logfire's JSON-schema serialisation) can't
+                        # mask the function's real return. `record_return=True` is opt-in for
+                        # observability, not a contract to fail the call.
+                        try:
+                            span.set_attribute('return', result)
+                        except Exception:  # pragma: no cover - defensive
+                            pass
+            except Exception as e:
+                _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)
+                raise
 
         # Build context
         metadata = dict(config.metadata) if config.metadata is not None else None

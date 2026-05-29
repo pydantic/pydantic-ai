@@ -23,6 +23,7 @@ import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
 from .. import _utils
+from .._deprecated_callable import deprecated_callable_property
 from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -41,12 +42,15 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    UserPromptPart,
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool
@@ -80,6 +84,7 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-opus-4-5',
         'anthropic:claude-opus-4-6',
         'anthropic:claude-opus-4-7',
+        'anthropic:claude-opus-4-8',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5-20250929',
@@ -170,6 +175,7 @@ KnownModelName = TypeAliasType(
         'gateway/anthropic:claude-opus-4-5',
         'gateway/anthropic:claude-opus-4-6',
         'gateway/anthropic:claude-opus-4-7',
+        'gateway/anthropic:claude-opus-4-8',
         'gateway/anthropic:claude-sonnet-4-0',
         'gateway/anthropic:claude-sonnet-4-20250514',
         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -182,16 +188,17 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-        'gateway/google-vertex:gemini-2.5-flash-image',
-        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'gateway/google-vertex:gemini-2.5-flash-lite',
-        'gateway/google-vertex:gemini-2.5-flash',
-        'gateway/google-vertex:gemini-2.5-pro',
-        'gateway/google-vertex:gemini-3-flash-preview',
-        'gateway/google-vertex:gemini-3-pro-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
-        'gateway/google-vertex:gemini-3.1-pro-preview',
+        'gateway/google-cloud:gemini-2.5-flash-image',
+        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+        'gateway/google-cloud:gemini-2.5-flash-lite',
+        'gateway/google-cloud:gemini-2.5-flash',
+        'gateway/google-cloud:gemini-2.5-pro',
+        'gateway/google-cloud:gemini-3-flash-preview',
+        'gateway/google-cloud:gemini-3-pro-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+        'gateway/google-cloud:gemini-3.1-pro-preview',
+        'gateway/google-cloud:gemini-3.5-flash',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -249,38 +256,40 @@ KnownModelName = TypeAliasType(
         'gateway/openai:o3',
         'gateway/openai:o4-mini-2025-04-16',
         'gateway/openai:o4-mini',
-        'google-gla:gemini-2.0-flash-lite',
-        'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.5-flash-image',
-        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-2.5-flash-lite',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
-        'google-gla:gemini-2.5-flash',
-        'google-gla:gemini-2.5-pro',
-        'google-gla:gemini-3-flash-preview',
-        'google-gla:gemini-3-pro-image-preview',
-        'google-gla:gemini-3-pro-preview',
-        'google-gla:gemini-3.1-flash-image-preview',
-        'google-gla:gemini-3.1-flash-lite-preview',
-        'google-gla:gemini-3.1-pro-preview',
-        'google-gla:gemini-flash-latest',
-        'google-gla:gemini-flash-lite-latest',
-        'google-vertex:gemini-2.0-flash-lite',
-        'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.5-flash-image',
-        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-2.5-flash-lite',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
-        'google-vertex:gemini-2.5-flash',
-        'google-vertex:gemini-2.5-pro',
-        'google-vertex:gemini-3-flash-preview',
-        'google-vertex:gemini-3-pro-image-preview',
-        'google-vertex:gemini-3-pro-preview',
-        'google-vertex:gemini-3.1-flash-image-preview',
-        'google-vertex:gemini-3.1-flash-lite-preview',
-        'google-vertex:gemini-3.1-pro-preview',
-        'google-vertex:gemini-flash-latest',
-        'google-vertex:gemini-flash-lite-latest',
+        'google-cloud:gemini-2.0-flash-lite',
+        'google-cloud:gemini-2.0-flash',
+        'google-cloud:gemini-2.5-flash-image',
+        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+        'google-cloud:gemini-2.5-flash-lite',
+        'google-cloud:gemini-2.5-flash-preview-09-2025',
+        'google-cloud:gemini-2.5-flash',
+        'google-cloud:gemini-2.5-pro',
+        'google-cloud:gemini-3-flash-preview',
+        'google-cloud:gemini-3-pro-image-preview',
+        'google-cloud:gemini-3-pro-preview',
+        'google-cloud:gemini-3.1-flash-image-preview',
+        'google-cloud:gemini-3.1-flash-lite-preview',
+        'google-cloud:gemini-3.1-pro-preview',
+        'google-cloud:gemini-3.5-flash',
+        'google-cloud:gemini-flash-latest',
+        'google-cloud:gemini-flash-lite-latest',
+        'google:gemini-2.0-flash-lite',
+        'google:gemini-2.0-flash',
+        'google:gemini-2.5-flash-image',
+        'google:gemini-2.5-flash-lite-preview-09-2025',
+        'google:gemini-2.5-flash-lite',
+        'google:gemini-2.5-flash-preview-09-2025',
+        'google:gemini-2.5-flash',
+        'google:gemini-2.5-pro',
+        'google:gemini-3-flash-preview',
+        'google:gemini-3-pro-image-preview',
+        'google:gemini-3-pro-preview',
+        'google:gemini-3.1-flash-image-preview',
+        'google:gemini-3.1-flash-lite-preview',
+        'google:gemini-3.1-pro-preview',
+        'google:gemini-3.5-flash',
+        'google:gemini-flash-latest',
+        'google:gemini-flash-lite-latest',
         'grok:grok-2-image-1212',
         'grok:grok-2-vision-1212',
         'grok:grok-3-fast',
@@ -877,6 +886,9 @@ class Model(ABC, Generic[InterfaceClient]):
         inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
         adapter sees a normal function-call exchange against `search_tools`.
 
+        Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
+        the profile's `supports_inline_system_prompts` is `False`.
+
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
@@ -884,7 +896,11 @@ class Model(ABC, Generic[InterfaceClient]):
         if ToolSearchTool not in self.profile.supported_native_tools:
             from .._tool_search import synthesize_local_tool_search_messages
 
-            return synthesize_local_tool_search_messages(messages)
+            messages = synthesize_local_tool_search_messages(messages)
+
+        if not self.profile.supports_inline_system_prompts:
+            messages = _wrap_non_leading_system_prompts(messages)
+
         return messages
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
@@ -1164,6 +1180,7 @@ class StreamedResponse(ABC):
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
+    _finished: bool = field(default=False, init=False)
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1250,6 +1267,14 @@ class StreamedResponse(ABC):
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
+                else:
+                    # Only natural `StopAsyncIteration` flips `_finished`. Early
+                    # `break` / `aclose()` (raising `GeneratorExit` at the suspended
+                    # `yield`) and any in-flight exception leave `_finished=False`
+                    # so `get()` reports the truncated response as `'incomplete'`
+                    # rather than silently stamping it `'complete'`. The cancel
+                    # branch above explicitly sets `_cancelled` (→ `'interrupted'`).
+                    self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(
                 iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
@@ -1309,20 +1334,28 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        if self._cancelled:
+            state: ModelResponseState = 'interrupted'
+        elif self._finished:
+            state = 'complete'
+        else:
+            state = 'incomplete'
         return ModelResponse(
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
-            usage=self.usage(),
+            usage=self.usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
-            state='interrupted' if self._cancelled else 'complete',
+            state=state,
         )
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`StreamedResponse.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
@@ -1402,7 +1435,7 @@ _LEGACY_MODEL_PREFIXES: dict[str, str] = {
     'o1': 'openai',
     'o3': 'openai',
     'claude': 'anthropic',
-    'gemini': 'google-gla',
+    'gemini': 'google',
 }
 """Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
 
@@ -1499,10 +1532,10 @@ def infer_model(  # noqa: C901
 
     if provider_name == 'vertexai':  # pragma: no cover
         warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
-            DeprecationWarning,
+            "The 'vertexai' provider name is deprecated. Use 'google-cloud' instead.",
+            PydanticAIDeprecationWarning,
         )
-        provider_name = 'google-vertex'
+        provider_name = 'google-cloud'
 
     provider = provider_factory(provider_name)
 
@@ -1542,7 +1575,7 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex'):
+    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
@@ -1777,3 +1810,35 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
+
+
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Wrap `SystemPromptPart`s outside the first `ModelRequest` as `<system>`-tagged `UserPromptPart`s.
+
+    `SystemPromptPart`s in the first `ModelRequest` aren't transformed; the provider's `_map_messages` hoists them.
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    first_request_idx = next(
+        (i for i, m in enumerate(messages) if isinstance(m, ModelRequest)),
+        None,
+    )
+    if first_request_idx is None:
+        return messages
+
+    new_messages: list[ModelMessage] = list(messages[: first_request_idx + 1])
+    changed = False
+    for msg in messages[first_request_idx + 1 :]:
+        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
+            new_parts = [
+                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
+                if isinstance(part, SystemPromptPart)
+                else part
+                for part in msg.parts
+            ]
+            new_messages.append(replace(msg, parts=new_parts))
+            changed = True
+        else:
+            new_messages.append(msg)
+
+    return new_messages if changed else messages

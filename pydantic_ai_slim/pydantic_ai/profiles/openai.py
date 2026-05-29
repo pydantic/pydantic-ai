@@ -107,6 +107,9 @@ class OpenAIModelProfile(ModelProfile):
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
+    supports_inline_system_prompts: bool = True
+    """OpenAI's APIs accept `system`/`developer`/`user`-role messages at any position."""
+
     openai_chat_supports_multiple_system_messages: bool = True
     """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation.
 
@@ -273,7 +276,23 @@ _STRICT_COMPATIBLE_STRING_FORMATS = [
     'uuid',
 ]
 
+_REGEX_LOOKAROUND_TOKENS = ('(?=', '(?!', '(?<=', '(?<!')
+
 _sentinel = object()
+
+
+def _regex_contains_lookaround(pattern: str) -> bool:
+    escaped = False
+    for i, char in enumerate(pattern):
+        if escaped:
+            escaped = False
+            continue
+        if char == '\\':
+            escaped = True
+            continue
+        if pattern.startswith(_REGEX_LOOKAROUND_TOKENS, i):
+            return True
+    return False
 
 
 @dataclass(init=False)
@@ -337,6 +356,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if format := schema.get('format'):
             if format not in _STRICT_COMPATIBLE_STRING_FORMATS:
                 incompatible_values['format'] = format
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_contains_lookaround(pattern):
+            incompatible_values['pattern'] = pattern
         description = schema.get('description')
         if incompatible_values:
             if self.strict is True:

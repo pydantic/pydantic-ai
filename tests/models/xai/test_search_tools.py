@@ -21,6 +21,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import PartStartEvent, RequestUsage
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
 from pydantic_ai.usage import RunUsage
 
@@ -66,19 +67,19 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
 
 
 @pytest.mark.parametrize(
-    'model_name,expected_thinking',
+    'model_name,expected_thinking,expected_always_enabled',
     [
-        ('grok-4.3', True),
-        ('grok-4-fast-reasoning', True),
-        ('grok-4-fast-non-reasoning', True),
-        ('grok-4-1-fast-non-reasoning', True),
+        ('grok-4.3', True, False),
+        ('grok-4-fast-reasoning', True, False),
+        ('grok-4-fast-non-reasoning', True, False),
+        ('grok-4-1-fast-non-reasoning', True, False),
         # `grok-code-fast-1` redirects to `grok-build-0.1`, not Grok 4.3, so it gets no reasoning effort.
-        ('grok-code-fast-1', False),
-        ('grok-3', True),
-        ('grok-3-mini', True),
-        ('grok-3-mini-fast', True),
-        ('grok-3-fast', False),
-        ('grok-4-1-reasoning', False),
+        ('grok-code-fast-1', False, False),
+        ('grok-3', True, False),
+        ('grok-3-mini', True, True),
+        ('grok-3-mini-fast', True, True),
+        ('grok-3-fast', False, False),
+        ('grok-4-1-reasoning', False, False),
     ],
     ids=[
         'grok-4.3',
@@ -93,11 +94,13 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
         'grok-4-1-reasoning',
     ],
 )
-def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool) -> None:
+def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool, expected_always_enabled: bool) -> None:
     profile = grok_model_profile(model_name)
     assert profile is not None
     assert profile.supports_thinking == expected_thinking
-    assert profile.thinking_always_enabled is False
+    # Only models whose `reasoning_effort` set lacks `'none'` (the grok-3-mini family) are always-on;
+    # Grok 4.3 and its redirect slugs accept `'none'`, so `thinking=False` disables reasoning there.
+    assert profile.thinking_always_enabled == expected_always_enabled
 
 
 async def test_grok_4_reasoning_model_forwards_reasoning_effort(allow_model_requests: None) -> None:
@@ -113,6 +116,25 @@ async def test_grok_4_reasoning_model_forwards_reasoning_effort(allow_model_requ
     kwargs = get_mock_chat_create_kwargs(mock_client)
     assert len(kwargs) == 1
     assert kwargs[0]['reasoning_effort'] == 'low'
+
+
+async def test_xai_thinking_false_with_non_always_on_profile_is_dropped(allow_model_requests: None) -> None:
+    """Defensive guard: no `reasoning_effort` is emitted when `thinking=False` survives the gate
+    (only possible under a profile with `supports_thinking=True` and `thinking_always_enabled=False`).
+    The profile here exposes no `reasoning_effort` values, so `_map_reasoning_effort` returns `None`
+    and the parameter is omitted rather than forwarded."""
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    custom_profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
+    m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client), profile=custom_profile)
+    settings: XaiModelSettings = {'thinking': False}
+    agent = Agent(m, model_settings=settings)
+
+    await agent.run('hi')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 1
+    assert 'reasoning_effort' not in kwargs[0]
 
 
 def test_grok_model_profile_builtin_tools() -> None:

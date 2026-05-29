@@ -59,14 +59,7 @@ async def run_evaluator(
 
         evaluate = tenacity_retry(**retry)(evaluate)
 
-    # Read `evaluator_version` off the subclass if it was declared — an optional
-    # class attribute, fetched via getattr to keep it opt-in without touching the
-    # base signature.
-    # TODO(v2): declare `evaluator_version: ClassVar[str | None] = None` on the
-    # `Evaluator` base (alongside `evaluation_name`) and read it directly.
-    raw_version = getattr(evaluator, 'evaluator_version', None)
-    evaluator_version: str | None = raw_version if isinstance(raw_version, str) else None
-
+    evaluator_version = evaluator.get_evaluator_version()
     evaluator_name = evaluator.get_default_evaluation_name()
     source = evaluator.as_spec()
 

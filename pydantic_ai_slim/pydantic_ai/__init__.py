@@ -5,6 +5,7 @@ from ._template import TemplateStr
 from .agent import (
     Agent,
     AgentModelSettings,
+    AgentRetries,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -39,6 +40,7 @@ from .exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
@@ -166,6 +168,7 @@ __all__ = (
     # agent
     'Agent',
     'AgentModelSettings',
+    'AgentRetries',
     'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
@@ -198,6 +201,7 @@ __all__ = (
     'SkipModelRequest',
     'SkipToolExecution',
     'SkipToolValidation',
+    'UndrainedPendingMessagesError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
