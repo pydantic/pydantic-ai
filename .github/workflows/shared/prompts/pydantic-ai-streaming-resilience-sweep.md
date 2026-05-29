@@ -11,15 +11,7 @@ needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI Streaming Resilience Sweep
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)). The streaming/agent-loop code
-is in `pydantic_ai_slim/pydantic_ai/` (`_agent_graph`, `result`, `messages`,
+The streaming/agent-loop code is in `pydantic_ai_slim/pydantic_ai/` (`_agent_graph`, `result`, `messages`,
 `run`) and the AG-UI / Vercel adapters.
 
 ## Objective

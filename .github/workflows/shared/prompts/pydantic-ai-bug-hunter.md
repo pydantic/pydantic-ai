@@ -11,18 +11,6 @@ reviewed default.
 
 # Pydantic AI Bug Hunter
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)), a provider-agnostic GenAI agent
-framework for Python. It is a `uv` workspace: `pydantic_ai_slim/` (the agent
-framework), `pydantic_graph/`, `pydantic_evals/`, `clai/`, with tests in
-`tests/`.
-
 ## Objective
 
 Find a single reproducible, user-impacting bug that can be covered by a minimal

@@ -38,6 +38,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_thinking=supports_thinking_effort,
+        # grok-3-mini reasons by default; xAI's `reasoning_effort` has no `'none'`.
+        thinking_always_enabled=supports_thinking_effort,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         supported_native_tools=supported_native_tools,
     )
