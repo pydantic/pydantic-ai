@@ -879,6 +879,12 @@ class GoogleModel(Model[Client]):
         if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
+        # `google_cached_content` will strip `tools` (and `tool_config` / `system_instruction`)
+        # below — resolve it up front so `prompted` output-mode sees the post-strip tool set
+        # and still enables JSON mode when the cache effectively leaves the request tool-less.
+        cached_content = model_settings.get('google_cached_content')
+        effective_tools = None if cached_content else tools
+
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
@@ -890,7 +896,7 @@ class GoogleModel(Model[Client]):
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
-        elif model_request_parameters.output_mode == 'prompted' and not tools:
+        elif model_request_parameters.output_mode == 'prompted' and not effective_tools:
             if not self.profile.supports_json_object_output:
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
@@ -920,7 +926,6 @@ class GoogleModel(Model[Client]):
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
-        cached_content = model_settings.get('google_cached_content')
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
 
         config = GenerateContentConfigDict(
@@ -939,7 +944,7 @@ class GoogleModel(Model[Client]):
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
             cached_content=cached_content,
-            tools=None if cached_content else cast(ToolListUnionDict, tools),
+            tools=cast(ToolListUnionDict, effective_tools) if effective_tools is not None else None,
             tool_config=None if cached_content else tool_config,
             response_mime_type=response_mime_type,
             response_json_schema=response_schema,
