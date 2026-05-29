@@ -1258,6 +1258,18 @@ async def test_xai_grok_3_mini_unified_medium_maps_to_high(allow_model_requests:
     assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == 'high'
 
 
+async def test_xai_grok_3_mini_unified_true_maps_to_high(allow_model_requests: None) -> None:
+    response = create_response(content='ok')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel('grok-3-mini', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=True))
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == 'high'
+
+
 @pytest.mark.parametrize(
     ('model_name', 'thinking', 'profile'),
     [
