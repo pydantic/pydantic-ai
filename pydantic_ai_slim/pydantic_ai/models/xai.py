@@ -73,6 +73,17 @@ XAI_EFFORT_MAP: dict[ThinkingLevel, XaiReasoningEffort] = {
 }
 """Maps unified thinking values to xAI `reasoning_effort` values."""
 
+XAI_LOW_HIGH_EFFORT_MAP: dict[ThinkingLevel, XaiReasoningEffort | None] = {
+    False: None,
+    True: 'high',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Maps unified thinking values to xAI `reasoning_effort` values when only `'low'`/`'high'` are supported."""
+
 try:
     import grpc
     import xai_sdk.chat as chat_types
@@ -235,7 +246,8 @@ class XaiModelSettings(ModelSettings, total=False):
     xai_reasoning_effort: XaiReasoningEffort
     """Reasoning effort level for Grok reasoning models.
 
-    Supported values are `'none'`, `'low'`, `'medium'`, and `'high'`.
+    Supported values vary by model. `grok-4.3` supports `'none'`, `'low'`, `'medium'`, and `'high'`;
+    older `grok-3-mini` aliases support only `'low'` and `'high'`.
     See https://docs.x.ai/developers/model-capabilities/text/reasoning for details.
     """
 
@@ -730,7 +742,11 @@ class XaiModel(Model[AsyncClient]):
 
         # Fall back to unified thinking when xai_reasoning_effort is not set
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
-            xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[model_request_parameters.thinking]
+            effort_map = (
+                XAI_LOW_HIGH_EFFORT_MAP if profile.grok_reasoning_effort_support == 'low_high' else XAI_EFFORT_MAP
+            )
+            if reasoning_effort := effort_map[model_request_parameters.thinking]:
+                xai_settings['reasoning_effort'] = reasoning_effort
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []

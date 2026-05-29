@@ -1,9 +1,12 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
 
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from . import ModelProfile
+
+GrokReasoningEffortSupport: TypeAlias = Literal['full', 'low_high']
 
 
 @dataclass(kw_only=True)
@@ -19,6 +22,9 @@ class GrokModelProfile(ModelProfile):
     grok_supports_tool_choice_required: bool = True
     """Whether the provider accepts the value `tool_choice='required'` in the request payload."""
 
+    grok_reasoning_effort_support: GrokReasoningEffortSupport = 'full'
+    """Which `reasoning_effort` values are supported by the model."""
+
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
@@ -32,6 +38,7 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         model_name.startswith('grok-4.3') or model_name.startswith('grok-3-mini') or model_name == 'grok-latest'
     )
     thinking_always_enabled = model_name.startswith('grok-3-mini')
+    reasoning_effort_support: GrokReasoningEffortSupport = 'low_high' if thinking_always_enabled else 'full'
 
     supported_native_tools: frozenset[type[AbstractNativeTool]] = (
         SUPPORTED_NATIVE_TOOLS if grok_supports_builtin_tools else frozenset()
@@ -45,5 +52,6 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         # grok-3-mini reasons by default; unlike grok-4.3, it has no `'none'`.
         thinking_always_enabled=thinking_always_enabled,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
+        grok_reasoning_effort_support=reasoning_effort_support,
         supported_native_tools=supported_native_tools,
     )
