@@ -277,6 +277,10 @@
         "slug": "logfire"
       },
       {
+        "label": "Runtime Security with Vaultak",
+        "slug": "vaultak"
+      },
+      {
         "label": "Durable Execution",
         "items": [
           {
