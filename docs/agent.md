@@ -1178,7 +1178,7 @@ This visibility is invaluable for:
 
 ### Systematic Testing with Evals
 
-For systematic evaluation of agent behavior beyond runtime debugging, [Pydantic Evals](evals.md) provides a code-first framework for testing AI systems:
+For systematic evaluation of agent behavior beyond runtime debugging, [Pydantic Evals](evals/) provides a code-first framework for testing AI systems:
 
 ```python {test="skip" lint="skip" format="skip"}
 from pydantic_evals import Case, Dataset

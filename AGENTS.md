@@ -79,7 +79,7 @@ The repo contains a `uv` workspace defining multiple Python packages:
 - `pydantic-ai-slim` in `pydantic_ai_slim/`: the [agent framework](docs/agent.md), including the `Agent` class and `Model` classes for each model provider/API
     - This is a slim package with minimal dependencies and optional dependency groups for each model provider (e.g. `openai`, `anthropic`, `google`) or integration (e.g. `logfire`, `mcp`, `temporal`).
 - `pydantic-graph` in `pydantic_graph/`: the type-hint based [graph library](docs/graph.md) that powers the agent loop
-- `pydantic-evals` in `pydantic_evals/`: the [evaluation framework](docs/evals.md) for evaluating the arbitrary stochastic functions including LLMs and agents
+- `pydantic-evals` in `pydantic_evals/`: the [evaluation framework](docs/evals/index.md) for evaluating the arbitrary stochastic functions including LLMs and agents
 - `clai` in `clai/`: a [CLI](docs/cli.md) (with an optional [web UI](docs/web.md)) to chat with Pydantic AI agents
 - `pydantic-ai` defined in `pyproject.toml` at the root, bringing in the packages above as well the optional dependency groups for all model providers and select integrations.
 

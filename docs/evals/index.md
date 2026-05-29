@@ -20,33 +20,33 @@ title: Pydantic Evals
 **Getting Started:**
 
 - [Installation](#installation)
-- [Quick Start](evals/quick-start.md)
-- [Core Concepts](evals/core-concepts.md)
+- [Quick Start](quick-start.md)
+- [Core Concepts](core-concepts.md)
 
 **Evaluators:**
 
-- [Evaluators Overview](evals/evaluators/overview.md) - Compare evaluator types and learn when to use each approach
-- [Built-in Evaluators](evals/evaluators/built-in.md) - Complete reference for exact match, instance checks, and other ready-to-use evaluators
-- [LLM as a Judge](evals/evaluators/llm-judge.md) - Use LLMs to evaluate subjective qualities, complex criteria, and natural language outputs
-- [Custom Evaluators](evals/evaluators/custom.md) - Implement domain-specific scoring logic and custom evaluation metrics
-- [Span-Based Evaluation](evals/evaluators/span-based.md) - Evaluate internal agent behavior (tool calls, execution flow) using OpenTelemetry traces. Essential for complex agents where correctness depends on _how_ the answer was reached, not just the final output. Also ensures eval assertions align with production telemetry.
+- [Evaluators Overview](evaluators/overview.md) - Compare evaluator types and learn when to use each approach
+- [Built-in Evaluators](evaluators/built-in.md) - Complete reference for exact match, instance checks, and other ready-to-use evaluators
+- [LLM as a Judge](evaluators/llm-judge.md) - Use LLMs to evaluate subjective qualities, complex criteria, and natural language outputs
+- [Custom Evaluators](evaluators/custom.md) - Implement domain-specific scoring logic and custom evaluation metrics
+- [Span-Based Evaluation](evaluators/span-based.md) - Evaluate internal agent behavior (tool calls, execution flow) using OpenTelemetry traces. Essential for complex agents where correctness depends on _how_ the answer was reached, not just the final output. Also ensures eval assertions align with production telemetry.
 
 **How-To Guides:**
 
-- [Logfire Integration](evals/how-to/logfire-integration.md) - Visualize results
-- [Dataset Management](evals/how-to/dataset-management.md) - Save, load, generate
-- [Concurrency & Performance](evals/how-to/concurrency.md) - Control parallel execution
-- [Retry Strategies](evals/how-to/retry-strategies.md) - Handle transient failures
-- [Metrics & Attributes](evals/how-to/metrics-attributes.md) - Track custom data
-- [Case Lifecycle Hooks](evals/how-to/lifecycle.md) - Per-case setup, teardown, and context enrichment
+- [Logfire Integration](how-to/logfire-integration.md) - Visualize results
+- [Dataset Management](how-to/dataset-management.md) - Save, load, generate
+- [Concurrency & Performance](how-to/concurrency.md) - Control parallel execution
+- [Retry Strategies](how-to/retry-strategies.md) - Handle transient failures
+- [Metrics & Attributes](how-to/metrics-attributes.md) - Track custom data
+- [Case Lifecycle Hooks](how-to/lifecycle.md) - Per-case setup, teardown, and context enrichment
 
 **Examples:**
 
-- [Simple Validation](evals/examples/simple-validation.md) - Basic example
+- [Simple Validation](examples/simple-validation.md) - Basic example
 
 **Reference:**
 
-- [API Documentation](api/pydantic_evals/dataset.md)
+- [API Documentation](../api/pydantic_evals/dataset.md)
 
 ## Code-First Evaluation
 
