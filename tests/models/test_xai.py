@@ -5202,13 +5202,21 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     result1 = await agent.run('Search for test')
     result2 = await agent.run('What did you find?', message_history=result1.new_messages())
 
+    # `enable_image_search` is only present in the `web_search` proto from xai-sdk>=1.14.0; the floor
+    # (1.12.2) omits it. We never set it, so drop it to keep the snapshot SDK-version-agnostic.
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    for call in kwargs:
+        for tool in call['tools']:
+            if 'web_search' in tool:
+                tool['web_search'].pop('enable_image_search', None)
+
     # Verify kwargs - second call should have WebSearchTool builtin call mapped
-    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+    assert kwargs == snapshot(
         [
             {
                 'model': XAI_NON_REASONING_MODEL,
                 'messages': [{'content': [{'text': 'Search for test'}], 'role': 'ROLE_USER'}],
-                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
@@ -5233,7 +5241,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                     {'content': [{'text': 'Tool completed successfully.'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'What did you find?'}], 'role': 'ROLE_USER'},
                 ],
-                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
