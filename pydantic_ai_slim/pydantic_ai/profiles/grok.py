@@ -34,6 +34,7 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         or model_name == 'grok-latest'
         or 'code' in model_name
     )
+    # grok-4.20-multi-agent's effort controls agent count, not the unified thinking-depth setting.
     supports_thinking_effort = (
         model_name.startswith('grok-4.3') or model_name.startswith('grok-3-mini') or model_name == 'grok-latest'
     )

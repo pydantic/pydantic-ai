@@ -12,35 +12,35 @@ interactions:
       ChIKDgoMV2hhdCBpcyAyKzI/EAESCGdyb2stNC4zmAEC
   response_sample:
     json:
-      id: cf3f800d-3306-92a5-9557-e50c6d4e880a
+      id: d743d147-bc4c-9bb9-a468-33c10f88e0fd
       outputs:
       - finish_reason: REASON_STOP
         message:
           content: '**4**'
           role: ROLE_ASSISTANT
-          reasoning_content: 'The question is "What is 2+2?" This is a straightforward
-            math question. The answer is 4.
+          reasoning_content: 'The user asked: "What is 2+2?" This is a straightforward
+            math question. It''s 4.
 
             '
-      created: '2026-05-29T04:17:50.461014735Z'
+      created: '2026-05-29T13:51:57.622543618Z'
       model: grok-4.3
       system_fingerprint: fp_eb3c003fc66c14ed
       usage:
         completion_tokens: 3
         prompt_tokens: 137
-        total_tokens: 322
+        total_tokens: 300
         prompt_text_tokens: 137
-        reasoning_tokens: 182
-        cached_prompt_text_tokens: 64
-        cost_in_usd_ticks: '5665500'
+        reasoning_tokens: 160
+        cached_prompt_text_tokens: 128
+        cost_in_usd_ticks: '4443500'
       settings:
         parallel_tool_calls: true
         reasoning_effort: EFFORT_MEDIUM
         temperature: 0.7
         top_p: 0.95
     raw: !!binary |
-      CiRjZjNmODAwZC0zMzA2LTkyYTUtOTU1Ny1lNTBjNmQ0ZTg4MGESaggDGmYKBSoqNCoqEAIiWVRo
-      ZSBxdWVzdGlvbiBpcyAiV2hhdCBpcyAyKzI/IiBUaGlzIGlzIGEgc3RyYWlnaHRmb3J3YXJkIG1h
-      dGggcXVlc3Rpb24uIFRoZSBhbnN3ZXIgaXMgNC4KOAEqDAjupuTQBhDPjerbATIIZ3Jvay00LjM6
-      E2ZwX2ViM2MwMDNmYzY2YzE0ZWRKHQgDEIkBGMICIIkBMLYBOEBY3OXZApABiQGYAbkBWg4QASAC
-      LTMzMz9NMzNzPw==
+      CiRkNzQzZDE0Ny1iYzRjLTliYjktYTQ2OC0zM2MxMGY4OGUwZmQSYQgDGl0KBSoqNCoqEAIiUFRo
+      ZSB1c2VyIGFza2VkOiAiV2hhdCBpcyAyKzI/IiBUaGlzIGlzIGEgc3RyYWlnaHRmb3J3YXJkIG1h
+      dGggcXVlc3Rpb24uIEl0J3MgNC4KOAEqDAj9s+bQBhCChu2oAjIIZ3Jvay00LjM6E2ZwX2ViM2Mw
+      MDNmYzY2YzE0ZWRKHggDEIkBGKwCIIkBMKABOIABWOyajwKQAYkBmAGjAVoOEAEgAi0zMzM/TTMz
+      cz8=

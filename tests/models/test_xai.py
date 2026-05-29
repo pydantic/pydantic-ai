@@ -19,6 +19,7 @@ from __future__ import annotations as _annotations
 import json
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -97,6 +98,7 @@ from .mock_xai import (
     get_grok_tool_chunk,
     get_mock_chat_create_kwargs,
 )
+from .xai_proto_cassettes import SampleInteraction, XaiProtoCassette
 
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
@@ -128,6 +130,20 @@ pytestmark = [
 # Test model constants
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
 XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
+
+
+def _xai_proto_request_json(provider: XaiProvider, test_name: str) -> dict[str, object]:
+    provider_cassette = getattr(provider.client, 'cassette', None)
+    if isinstance(provider_cassette, XaiProtoCassette) and provider_cassette.interactions:
+        cassette = provider_cassette
+    else:
+        cassette_path = Path(__file__).with_name('cassettes') / 'test_xai' / f'{test_name}.xai.yaml'
+        cassette = XaiProtoCassette.load(cassette_path)
+    assert len(cassette.interactions) == 1
+    interaction = cassette.interactions[0]
+    assert isinstance(interaction, SampleInteraction)
+    assert interaction.request_json is not None
+    return interaction.request_json
 
 
 def test_xai_init():
@@ -1188,26 +1204,24 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
 
 
 async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking='medium' flows through to xAI reasoning_effort."""
     m = XaiModel('grok-4.3', provider=xai_provider)
     agent = Agent(m, model_settings={'thinking': 'medium'})
 
     result = await agent.run('What is 2+2?')
     assert '4' in result.output
-    # Verify we get thinking parts (reasoning model with high effort)
     response_messages = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
     assert len(response_messages) >= 1
-    # The reasoning model should produce some output
     assert result.output
+    assert _xai_proto_request_json(xai_provider, 'test_xai_unified_thinking')['reasoning_effort'] == 'EFFORT_MEDIUM'
 
 
 async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking=False on a reasoning model is silently ignored (no reasoning_effort sent)."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
+    m = XaiModel('grok-4.3', provider=xai_provider)
     agent = Agent(m, model_settings={'thinking': False})
 
     result = await agent.run('What is 2+2?')
     assert '4' in result.output
+    assert _xai_proto_request_json(xai_provider, 'test_xai_unified_thinking_false')['reasoning_effort'] == 'EFFORT_NONE'
 
 
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
