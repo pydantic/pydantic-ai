@@ -926,6 +926,51 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://example.com/page', allowed_domains=['example.com'])
 
+    async def test_http_status_error_catchable_as_httpx_and_httpx2(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """`safe_download` translates `httpx2.HTTPStatusError` raised by `raise_for_status()` into a
+        compat class catchable as both `httpx.HTTPStatusError` and `httpx2.HTTPStatusError`. Drops the
+        `httpx` parent in v2.
+        """
+        import httpx as httpx_legacy
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        request = httpx.Request('GET', 'https://example.com/file.txt')
+        response = httpx.Response(404, request=request)
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = response
+        mock_ssrf_client.return_value = mock_client
+
+        with pytest.raises(httpx_legacy.HTTPStatusError) as exc_info:
+            await safe_download('https://example.com/file.txt')
+        assert isinstance(exc_info.value, httpx.HTTPStatusError)
+        assert exc_info.value.response is response
+
+    async def test_request_error_catchable_as_httpx_and_httpx2(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """`safe_download` translates `httpx2.RequestError` raised by `client.get()` (e.g. connect
+        failures) into a compat class catchable as both `httpx.RequestError` and `httpx2.RequestError`.
+        """
+        import httpx as httpx_legacy
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        request = httpx.Request('GET', 'https://example.com/file.txt')
+        underlying = httpx.ConnectError('connection refused', request=request)
+
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = underlying
+        mock_ssrf_client.return_value = mock_client
+
+        with pytest.raises(httpx_legacy.RequestError) as exc_info:
+            await safe_download('https://example.com/file.txt')
+        assert isinstance(exc_info.value, httpx.RequestError)
+        assert exc_info.value.__cause__ is underlying
+
 
 class TestDnsRebindingPrevention:
     """Tests specifically for DNS rebinding attack prevention."""
