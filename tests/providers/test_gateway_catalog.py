@@ -52,7 +52,7 @@ def _gateway_supported_providers() -> set[str]:
 
 
 async def _run_gateway_smoke_test(model_name: str) -> None:
-    agent = Agent(model_name, model_settings={'max_tokens': 256}, retries=3)
+    agent = Agent(model_name, model_settings={'max_tokens': 256}, retries={'tools': 3, 'output': 3})
     result = await agent.run('Reply with exactly OK.')
     assert result.output.strip()
 

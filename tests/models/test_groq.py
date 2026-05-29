@@ -18,8 +18,6 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
@@ -27,6 +25,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -42,11 +42,12 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
 )
-from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -79,10 +80,10 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -162,20 +163,21 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -190,11 +192,13 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -209,6 +213,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -253,6 +258,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -273,6 +279,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -285,6 +292,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -352,6 +360,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -373,6 +382,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -385,6 +395,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -406,6 +417,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -418,6 +430,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -432,6 +445,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -538,13 +552,14 @@ async def test_stream_structured(allow_model_requests: None):
         )
         assert result.is_complete
 
-    assert result.usage() == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -561,6 +576,7 @@ async def test_stream_structured(allow_model_requests: None):
                 provider_details={'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)},
                 provider_response_id='x',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -573,6 +589,7 @@ async def test_stream_structured(allow_model_requests: None):
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -687,6 +704,7 @@ async def test_image_as_binary_content_tool_response(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='911ra51k8')],
@@ -699,6 +717,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -711,6 +730,7 @@ async def test_image_as_binary_content_tool_response(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
@@ -723,6 +743,7 @@ async def test_image_as_binary_content_tool_response(
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -821,6 +842,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
@@ -836,6 +858,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -843,7 +866,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
 
 async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
     assert result.output == snapshot("""\
@@ -864,6 +887,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -968,13 +992,13 @@ Based on the search results, the current weather in San Francisco is partly clou
 The weather in San Francisco today is partly cloudy with a high of 17°C (62.6°F).\
 """
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is the weather in San Francisco today?'},
                         tool_call_id=IsStr(),
                         provider_name='groq',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'images': None,
@@ -1109,6 +1133,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 provider_response_id='stub',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1116,7 +1141,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
 
 async def test_groq_model_web_search_tool_stream(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
-    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='What is the weather in San Francisco today?') as agent_run:
@@ -1139,6 +1164,7 @@ async def test_groq_model_web_search_tool_stream(allow_model_requests: None, gro
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1151,13 +1177,13 @@ To find the current weather in San Francisco, I will use the search tool to look
 search(What is the weather in San Francisco today?)
 """
                     ),
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is the weather in San Francisco today?'},
                         tool_call_id=IsStr(),
                         provider_name='groq',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'images': None,
@@ -1281,6 +1307,7 @@ search(What is the weather in San Francisco today?)
                 provider_response_id='stub',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1348,7 +1375,7 @@ search(What is the weather in San Francisco today?)
             ),
             PartStartEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
                     tool_call_id=IsStr(),
@@ -1358,7 +1385,7 @@ search(What is the weather in San Francisco today?)
             ),
             PartEndEvent(
                 index=1,
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
                     tool_call_id=IsStr(),
@@ -1368,7 +1395,7 @@ search(What is the weather in San Francisco today?)
             ),
             PartStartEvent(
                 index=2,
-                part=BuiltinToolReturnPart(
+                part=NativeToolReturnPart(
                     tool_name='web_search',
                     content={
                         'images': None,
@@ -1903,7 +1930,7 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                 ),
             ),
             BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=BuiltinToolCallPart(
+                part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
                     tool_call_id=IsStr(),
@@ -1911,7 +1938,7 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                 )
             ),
             BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=BuiltinToolReturnPart(
+                result=NativeToolReturnPart(
                     tool_name='web_search',
                     content={
                         'images': None,
@@ -2036,6 +2063,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
@@ -2051,6 +2079,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2067,6 +2096,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
@@ -2082,6 +2112,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2093,6 +2124,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
@@ -2108,6 +2140,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2141,6 +2174,7 @@ async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_ap
                 timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2233,6 +2267,7 @@ Enjoy your homemade Uruguayan alfajores!\
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3489,6 +3524,7 @@ Enjoy your homemade Uruguayan alfajores!\
                 timestamp=IsDatetime(),
                 instructions='You are a chef.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3600,6 +3636,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5440,6 +5477,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5455,6 +5493,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 provider_url='https://api.groq.com',
                 finish_reason='error',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5481,6 +5520,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5502,6 +5542,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 provider_response_id=IsStr(),
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5515,6 +5556,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5534,6 +5576,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5569,6 +5612,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5588,6 +5632,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 provider_details={'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-4f39f3af-3267-4ac1-a0cf-6aa7451877dc',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5614,6 +5659,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5635,6 +5681,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 provider_response_id='chatcmpl-e35442a8-12c0-4fb4-8be4-0e51727ce7b7',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5648,6 +5695,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5665,6 +5713,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 provider_response_id='chatcmpl-935610b8-ec6a-4b1d-8a58-84b34ab0590e',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5693,6 +5742,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='maybe')],
@@ -5702,6 +5752,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                 provider_url='https://api.groq.com',
                 finish_reason='error',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5712,7 +5763,6 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                                 'loc': (),
                                 'msg': 'Invalid JSON: expected value at line 1 column 1',
                                 'input': 'maybe',
-                                'ctx': {'error': 'expected value at line 1 column 1'},
                             }
                         ],
                         tool_call_id=IsStr(),
@@ -5722,6 +5772,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5746,6 +5797,7 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                 provider_response_id='chatcmpl-9fc28492-a04d-4b0f-b9a0-a9149d048b37',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5758,6 +5810,7 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5793,6 +5846,7 @@ async def test_tool_use_failed_error_streaming_with_text(allow_model_requests: N
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5812,6 +5866,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                 provider_details={'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-fd87720a-9b48-4161-bcd7-6127bd0d3696',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5822,7 +5877,6 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                                 'loc': (),
                                 'msg': 'Invalid JSON: expected value at line 1 column 1',
                                 'input': 'maybe',
-                                'ctx': {'error': 'expected value at line 1 column 1'},
                             }
                         ],
                         tool_call_id=IsStr(),
@@ -5832,6 +5886,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                 timestamp=IsDatetime(),
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5853,6 +5908,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                 provider_response_id='chatcmpl-0b76b1ce-aa40-4950-9c90-a167b11d4b09',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -5865,6 +5921,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5905,6 +5962,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5925,6 +5983,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -5953,6 +6012,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -5973,6 +6033,44 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 provider_response_id=IsStr(),
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_stream_cancel(allow_model_requests: None):
+    stream = text_chunk('hello '), text_chunk('world'), chunk([])
+    mock_client = MockGroq.create_mock_stream(stream)
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                model_name='llama-3.3-70b-versatile',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_url='https://api.groq.com',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='x',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
             ),
         ]
     )

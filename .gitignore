@@ -27,12 +27,16 @@ AGENTS.override.md
 .agents/*
 !.agents/skills/
 .agents/skills/*
+!.agents/skills/complete-partial-pr/
+!.agents/skills/complete-partial-pr/SKILL.md
 .claude/*
 !.claude/plans/
 !.claude/skills/
 .claude/skills/*
+!.claude/skills/complete-partial-pr
 !.claude/skills/address-feedback
 !.claude/skills/pre-push-review
+!.claude/skills/testing-skill
 .github/.review-context/
 /.cursor/
 /.devcontainer/

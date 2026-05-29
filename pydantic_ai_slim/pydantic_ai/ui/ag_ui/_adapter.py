@@ -22,16 +22,17 @@ from ... import ExternalToolset, ToolDefinition
 from ...messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     DocumentUrl,
     FilePart,
+    ForceDownloadMode,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -78,7 +79,7 @@ try:
         parse_ag_ui_version,
         thinking_encrypted_metadata,
     )
-except ImportError as e:  # pragma: no cover
+except ImportError as e:
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
@@ -98,14 +99,14 @@ if TYPE_CHECKING:
 else:
     try:
         from ag_ui.core import ReasoningMessage
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ReasoningMessage:
             """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
 
     try:
         from ag_ui.core import AudioInputContent, DocumentInputContent, ImageInputContent, VideoInputContent
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ImageInputContent:
             """Stub for ag-ui-protocol < 0.1.15."""
@@ -256,6 +257,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
+        allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -265,6 +268,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             ag_ui_version=ag_ui_version,
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
+            allowed_file_url_schemes=allowed_file_url_schemes,
+            allowed_file_url_force_download=allowed_file_url_force_download,
             **kwargs,
         )
 
@@ -291,6 +296,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             return None
 
         return cast('dict[str, Any]', state)
+
+    @cached_property
+    def conversation_id(self) -> str | None:
+        """Conversation ID from the AG-UI `RunAgentInput.threadId`."""
+        return self.run_input.thread_id
 
     @classmethod
     def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:  # noqa: C901
@@ -365,7 +375,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                                 _, provider_name, original_id = tool_call_id.split('|', 2)
                                 builder.add(
-                                    BuiltinToolCallPart(
+                                    NativeToolCallPart(
                                         tool_name=tool_name,
                                         args=tool_call.function.arguments,
                                         tool_call_id=original_id,
@@ -395,7 +405,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             except json.JSONDecodeError:
                                 pass
                         builder.add(
-                            BuiltinToolReturnPart(
+                            NativeToolReturnPart(
                                 tool_name=tool_name,
                                 content=content,
                                 tool_call_id=original_id,
@@ -581,7 +591,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_calls_list: list[ToolCall] = []
         tool_messages: list[ToolMessage] = []
 
-        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, BuiltinToolReturnPart)}
+        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)}
 
         def flush() -> None:
             nonlocal text_content, tool_calls_list, tool_messages
@@ -624,7 +634,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
                     )
                 )
-            elif isinstance(part, BuiltinToolCallPart):
+            elif isinstance(part, NativeToolCallPart):
                 prefixed_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', part.tool_call_id])
                 tool_calls_list.append(
                     ToolCall(
@@ -640,8 +650,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_call_id=prefixed_id,
                         )
                     )
-            elif isinstance(part, BuiltinToolReturnPart):
-                # Emitted when matching BuiltinToolCallPart is processed above.
+            elif isinstance(part, NativeToolReturnPart):
+                # Emitted when matching NativeToolCallPart is processed above.
                 pass
             elif isinstance(part, FilePart):
                 if preserve_file_data:
@@ -688,9 +698,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
-        - `BuiltinToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
+        - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
-        - `BuiltinToolReturnPart.provider_details` is lost.
+        - `NativeToolReturnPart.provider_details` is lost.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.

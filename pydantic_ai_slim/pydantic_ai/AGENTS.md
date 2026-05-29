@@ -2,6 +2,8 @@
 
 # pydantic_ai_slim/pydantic_ai/ Guidelines
 
+For non-trivial changes to this package, also read [Pydantic AI Slim Architecture](../../agent_docs/pydantic-ai-slim.md).
+
 ## API Design
 
 <!-- rule:587 -->

@@ -8,8 +8,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.beta.graph import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
-from pydantic_graph.beta.step import NodeStep
+from pydantic_graph.graph_builder import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
+from pydantic_graph.step import NodeStep
 
 from . import (
     _agent_graph,
@@ -18,6 +18,9 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
+from ._deprecated_callable import deprecated_callable_property
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._instrumentation import current_otel_traceparent
 from .output import OutputDataT
 from .tools import AgentDepsT
 
@@ -33,7 +36,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     You generally obtain an `AgentRun` instance by calling `async with my_agent.iter(...) as agent_run:`.
 
     Once you have an instance, you can use it to iterate through the run's nodes as they execute. When an
-    [`End`][pydantic_graph.nodes.End] is reached, the run finishes and [`result`][pydantic_ai.agent.AgentRun.result]
+    [`End`][pydantic_graph.basenode.End] is reached, the run finishes and [`result`][pydantic_ai.agent.AgentRun.result]
     becomes available.
 
     Example:
@@ -68,6 +71,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     ],
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             CallToolsNode(
@@ -77,6 +81,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     model_name='gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
+                    conversation_id='...',
                 )
             ),
             End(data=FinalResult(output='The capital of France is Paris.')),
@@ -103,6 +108,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def _traceparent(self) -> str: ...
     def _traceparent(self, *, required: bool = True) -> str | None:
         traceparent = self._graph_run._traceparent(required=False)  # type: ignore[reportPrivateUsage]
+        if traceparent is None:
+            # Fall back to the active OTel span, which is the agent run span
+            # when the Instrumentation capability is active.
+            traceparent = current_otel_traceparent()
         if traceparent is None and required:  # pragma: no cover
             raise AttributeError('No span was created for this agent run')
         return traceparent
@@ -131,7 +140,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def result(self) -> AgentRunResult[OutputDataT] | None:
         """The final result of the run if it has ended, otherwise `None`.
 
-        Once the run returns an [`End`][pydantic_graph.nodes.End] node, `result` is populated
+        Once the run returns an [`End`][pydantic_graph.basenode.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
         if self._result_override is not None:
@@ -208,7 +217,20 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         except BaseException as exc:
             self._node_error = exc
             raise
-        return self._task_to_node(task)
+        node = self._task_to_node(task)
+        if isinstance(node, End) and self._graph_run.state.pending_messages:
+            # `asap` messages drain in `before_model_request` (which fires either way), but
+            # `when_idle` messages and end-of-run redirects drain in `after_node_run`, which
+            # bare iteration skips. Reaching `End` with a non-empty queue means those were
+            # stranded — fail loudly rather than silently dropping the messages.
+            raise exceptions.UndrainedPendingMessagesError(
+                'The agent run ended with undrained pending messages enqueued via `enqueue`. '
+                'Bare `async for node in agent_run` does not drain `when_idle` messages or '
+                'end-of-run redirects, because they fire in `after_node_run`, which bare iteration '
+                'skips. Use `agent_run.next(node)` to advance the run, or `agent.run()` which drives '
+                'via `next()` automatically.'
+            )
+        return node
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]
@@ -312,7 +334,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Manually drive the agent run by passing in the node you want to run next.
 
         This lets you inspect or mutate the node before continuing execution, or skip certain nodes
-        under dynamic conditions. The agent run should be stopped when you return an [`End`][pydantic_graph.nodes.End]
+        under dynamic conditions. The agent run should be stopped when you return an [`End`][pydantic_graph.basenode.End]
         node.
 
         Example:
@@ -350,6 +372,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             ],
                             timestamp=datetime.datetime(...),
                             run_id='...',
+                            conversation_id='...',
                         )
                     ),
                     CallToolsNode(
@@ -359,6 +382,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             model_name='gpt-5.2',
                             timestamp=datetime.datetime(...),
                             run_id='...',
+                            conversation_id='...',
                         )
                     ),
                     End(data=FinalResult(output='The capital of France is Paris.')),
@@ -372,14 +396,16 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             node: The node to run next in the graph.
 
         Returns:
-            The next node returned by the graph logic, or an [`End`][pydantic_graph.nodes.End] node if
+            The next node returned by the graph logic, or an [`End`][pydantic_graph.basenode.End] node if
             the run has completed.
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
         return await self._run_node_with_hooks(node, self._advance_graph)
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`AgentRun.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
@@ -394,10 +420,58 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """The unique identifier for the agent run."""
         return self._graph_run.state.run_id
 
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._graph_run.state.conversation_id
+
+    @property
+    def pending_messages(self) -> list[PendingMessage]:
+        """Internal: live view of the queue mutated by `enqueue` and drained by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+
+        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
+        """
+        return self._graph_run.state.pending_messages
+
+    def enqueue(
+        self,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+    ) -> None:
+        """Enqueue content to be injected into the conversation.
+
+        Designed to be called from the same event loop driving `agent.iter()`. If
+        you're forwarding events from a different thread (e.g. a webhook handler
+        running on its own loop or thread), marshal the call back onto the agent's
+        loop first (e.g. `loop.call_soon_threadsafe(agent_run.enqueue, msg)`).
+        The drain's `queue[:] = remaining` pattern in `_drain_by_priority` isn't
+        atomic against concurrent appends from a different thread.
+
+        Args:
+            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+                Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
+                content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
+                [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each
+                [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
+                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is coalesced with adjacent
+                part-style items into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; a complete
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] or
+                [`ModelResponse`][pydantic_ai.messages.ModelResponse] is kept as its own message. The
+                assembled sequence must end in a request. Calling with no positional args is a no-op.
+            priority: When to deliver:
+                `'asap'` (default) — at the earliest opportunity (next model request,
+                    or a redirect if the agent would otherwise end).
+                `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+        """
+        pending = PendingMessage.from_content(*content, priority=priority)
+        if pending is None:
+            return
+        self._graph_run.state.pending_messages.append(pending)
+
     def __repr__(self) -> str:  # pragma: no cover
         result = self._graph_run.output
         result_repr = '<run not finished>' if result is None else repr(result.output)
-        return f'<{type(self).__name__} result={result_repr} usage={self.usage()}>'
+        return f'<{type(self).__name__} result={result_repr} usage={self.usage}>'
 
 
 @dataclasses.dataclass
@@ -518,12 +592,16 @@ class AgentRunResult(Generic[OutputDataT]):
                 return message
         raise ValueError('No response found in the message history')  # pragma: no cover
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`AgentRunResult.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`AgentRunResult.timestamp` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
@@ -537,6 +615,11 @@ class AgentRunResult(Generic[OutputDataT]):
     def run_id(self) -> str:
         """The unique identifier for the agent run."""
         return self._state.run_id
+
+    @property
+    def conversation_id(self) -> str:
+        """The unique identifier for the conversation this run belongs to."""
+        return self._state.conversation_id
 
 
 @dataclasses.dataclass(repr=False)
