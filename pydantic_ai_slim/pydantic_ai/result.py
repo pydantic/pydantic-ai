@@ -788,9 +788,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """
         if self.is_complete or self._stream_response is None:
             return
-        # Keep this tuple narrow: precedent #5313 deliberately rejected blanket
-        # `Exception` suppression so a real bug in `close_stream()` still surfaces.
-        # Widening here would also let a body exception be shadowed by cleanup.
+        # Keep this tuple narrow so a real bug in `close_stream()` still surfaces.
+        # Widening to bare `Exception` would also let a body exception be shadowed
+        # by a cleanup-side failure during implicit `__aexit__` cleanup.
         # The two-deep reach into `_raw_stream_response` is intentional — no user
         # has asked for the cancel-error tuple at the `AgentStream` surface yet,
         # so we don't add a public delegator for one internal helper to use.
