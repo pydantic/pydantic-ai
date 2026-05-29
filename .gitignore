@@ -23,8 +23,6 @@ node_modules/
 CLAUDE.local.md
 AGENTS.local.md
 AGENTS.override.md
-Claude.md
-tests/Claude.md
 .grok/*
 .codex/*
 .agents/*
