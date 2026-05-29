@@ -82,6 +82,7 @@ XAI_CURRENT_REASONING_MODEL = 'grok-4.3'
         ('grok-4.20', False, False, 'full'),
         ('grok-4.20-reasoning', False, False, 'full'),
         ('grok-4.20-multi-agent', False, False, 'full'),
+        ('grok-build-0.1', False, False, 'full'),
         ('grok-3-mini', True, True, 'low_high'),
         ('grok-3-mini-fast', True, True, 'low_high'),
         ('grok-3', False, False, 'full'),
@@ -97,6 +98,7 @@ XAI_CURRENT_REASONING_MODEL = 'grok-4.3'
         'grok-4.20',
         'grok-4.20-reasoning',
         'grok-4.20-multi-agent',
+        'grok-build-0.1',
         'grok-3-mini',
         'grok-3-mini-fast',
         'grok-3',
@@ -206,6 +208,11 @@ def test_grok_model_profile_builtin_tools() -> None:
     assert current_profile is not None
     assert isinstance(current_profile, GrokModelProfile)
     assert current_profile.grok_supports_builtin_tools is True
+
+    build_profile = grok_model_profile('grok-build-0.1')
+    assert build_profile is not None
+    assert isinstance(build_profile, GrokModelProfile)
+    assert build_profile.grok_supports_builtin_tools is True
 
     grok3_profile = grok_model_profile('grok-3')
     assert grok3_profile is not None

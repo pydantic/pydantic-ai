@@ -155,6 +155,7 @@ XaiChatModelName: TypeAlias = Literal[
     'grok-4.3',
     'grok-4.3-latest',
     'grok-latest',
+    'grok-build-0.1',
     'grok-code-fast-1',
 ]
 """Known xAI chat model names."""
