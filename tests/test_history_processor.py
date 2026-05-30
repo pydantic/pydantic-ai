@@ -139,6 +139,8 @@ async def test_history_processor_run_replaces_message_history(
                     ),
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         ]
     )
@@ -207,6 +209,8 @@ async def test_history_processor_streaming_replaces_message_history(
                     ),
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         ]
     )
@@ -1114,6 +1118,8 @@ async def test_history_processor_reorder_old_new(function_model: FunctionModel, 
                     UserPromptPart(content='Old question', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         ]
     )

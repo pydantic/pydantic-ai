@@ -3690,6 +3690,28 @@ def test_prepare_messages_then_clean_history_merges_consecutive_requests() -> No
     assert isinstance(last.parts[1], UserPromptPart)
 
 
+def test_clean_message_history_preserves_request_metadata_when_merging() -> None:
+    cleaned = _clean_message_history(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='first')],
+                run_id='run-1',
+                conversation_id='conv-1',
+                metadata={'source': 'history'},
+            ),
+            ModelRequest(parts=[UserPromptPart(content='second')]),
+        ]
+    )
+
+    assert len(cleaned) == 1
+    request = cleaned[0]
+    assert isinstance(request, ModelRequest)
+    assert [part.content for part in request.parts] == ['first', 'second']
+    assert request.run_id == 'run-1'
+    assert request.conversation_id == 'conv-1'
+    assert request.metadata == {'source': 'history'}
+
+
 def test_narrow_type_local_return_passthrough_when_already_narrowed() -> None:
     """Narrowing an already-typed `ToolSearchReturnPart` returns the input instance."""
     part = ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='c1')
