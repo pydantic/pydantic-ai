@@ -57,7 +57,13 @@ from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
-from pydantic_ai.models import Model, ModelRequestParameters, create_async_http_client, infer_model_profile
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    create_async_http_client,
+    infer_model,
+    infer_model_profile,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -1458,6 +1464,72 @@ async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None
             task_queue=TASK_QUEUE,
         )
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
+# Regression test for the workflow-sandbox passthrough list (`_workflow_runner` in
+# `durable_exec/temporal/__init__.py`). When a model is named by string (e.g. `gateway/anthropic:`
+# or `anthropic:`) it is constructed lazily via `infer_model` *inside* the workflow, so the
+# provider's SDK client `__init__` runs under the `SandboxedWorkflowRunner`. Provider SDKs
+# increasingly touch the filesystem at construction time — e.g. `anthropic>=0.99.0` calls
+# `Path.home()` to resolve `~/.config/anthropic` — which the sandbox forbids unless the SDK module
+# is passed through. Every other test builds its model at module scope (outside the sandbox), so
+# this seam was previously uncovered. Construction-only (no model request) keeps it deterministic.
+@workflow.defn
+class ConstructModelInWorkflow:
+    @workflow.run
+    async def run(self, model_name: str) -> str:
+        # Constructing the model also constructs its provider and underlying SDK client, all inside
+        # the workflow sandbox. We only assert this succeeds; no request is made to the model.
+        return type(infer_model(model_name)).__name__
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_model_class'),
+    [
+        # The reported regression: `gateway/anthropic:` resolved in-workflow tripped
+        # `Cannot access pathlib.Path.home.__call__ from inside a workflow`. Uses the latest Sonnet.
+        pytest.param('gateway/anthropic:claude-sonnet-4-6', 'AnthropicModel', id='gateway-anthropic'),
+        # The direct route hits the same `AsyncAnthropic.__init__` path, so it's not gateway-specific.
+        pytest.param('anthropic:claude-sonnet-4-6', 'AnthropicModel', id='anthropic'),
+        # OpenAI and Gemini don't touch the home directory at construction *today*, so these pass
+        # without needing their SDKs in the passthrough list. They're canaries: if a future SDK
+        # release starts reading `~/...` (or makes any other restricted call) during client
+        # construction, the corresponding case turns red here instead of in a user's workflow.
+        pytest.param('gateway/openai-chat:gpt-5', 'OpenAIChatModel', id='gateway-openai'),
+        pytest.param('gateway/google-cloud:gemini-2.5-pro', 'GoogleModel', id='gateway-google'),
+    ],
+)
+async def test_model_construction_in_workflow_passes_sandbox(
+    model_name: str,
+    expected_model_class: str,
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Credentials are read from the environment during construction; dummy values suffice since no
+    # request is made. The gateway key must encode a region (`pylf_v<n>_<region>_...`) so the base
+    # URL can be inferred; the gateway routes all authenticate with it, so no per-provider key is
+    # needed beyond the direct-anthropic case.
+    monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'pylf_v1_us_0123456789abcdef')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'mock-anthropic-key')
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ConstructModelInWorkflow],
+        # A sandbox violation surfaces as a workflow *task* failure, which Temporal retries forever
+        # by default — so a regression would hang rather than fail. Promote any in-workflow exception
+        # (e.g. `RestrictedWorkflowAccessError`) to a workflow failure so it surfaces immediately.
+        workflow_failure_exception_types=[Exception],
+    ):
+        # Without the `anthropic` passthrough this fails with a `WorkflowFailureError` caused by a
+        # `RestrictedWorkflowAccessError` for `pathlib.Path.home`.
+        result = await client.execute_workflow(
+            ConstructModelInWorkflow.run,
+            args=[model_name],
+            id=f'construct_model_{re.sub(r"[^a-zA-Z0-9]", "_", model_name)}',
+            task_queue=TASK_QUEUE,
+        )
+    assert result == expected_model_class
 
 
 async def test_temporal_agent():
