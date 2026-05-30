@@ -1,6 +1,7 @@
 """One-time script to apply serializer redaction to an existing cassette."""
 
 import sys
+
 sys.path.insert(0, 'tests')
 
 from json_body_serializer import deserialize, serialize
@@ -10,14 +11,14 @@ cassette_path = sys.argv[1] if len(sys.argv) > 1 else (
     'test_multimodal_tool_return_matrix[direct-uploaded_file-image-bedrock_nova].yaml'
 )
 
-with open(cassette_path) as f:
+with open(cassette_path, encoding='utf-8') as f:
     content = f.read()
 
 # Round-trip through deserialize/serialize to apply redaction
 cassette_dict = deserialize(content)
 redacted = serialize(cassette_dict)
 
-with open(cassette_path, 'w') as f:
+with open(cassette_path, 'w', encoding='utf-8') as f:
     f.write(redacted)
 
 # Verify
