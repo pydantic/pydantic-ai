@@ -83,6 +83,7 @@ try:
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
+    from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import (
@@ -91,6 +92,7 @@ try:
         PydanticAIPlugin,
         PydanticAIWorkflow,
         TemporalAgent,
+        _workflow_runner,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
@@ -4008,6 +4010,12 @@ def test_pydantic_ai_plugin_with_non_pydantic_converter_preserves_codec() -> Non
         result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'].payload_converter_class is PydanticPayloadConverter
     assert result['data_converter'].payload_codec is codec
+
+
+def test_pydantic_ai_plugin_provider_passthrough_modules() -> None:
+    runner = _workflow_runner(SandboxedWorkflowRunner())
+    assert isinstance(runner, SandboxedWorkflowRunner)
+    assert {'anthropic', 'certifi', 'google.auth'} <= runner.restrictions.passthrough_modules
 
 
 def test_temporal_model_profile_with_no_provider_prefix() -> None:

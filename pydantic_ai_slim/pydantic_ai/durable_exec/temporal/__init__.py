@@ -80,6 +80,9 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'anyio',
             'sniffio',
             'httpcore',
+            'anthropic',
+            'certifi',
+            'google.auth',
             # `fastmcp` (and the `mcp` SDK it transitively imports) calls `Path.expanduser` at
             # import time when resolving its config directory — restricted by the workflow
             # sandbox. Safe to pass through: the call only happens once at module init.
