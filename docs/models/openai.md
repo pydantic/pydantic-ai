@@ -345,6 +345,21 @@ agent = Agent(model)
 ...
 ```
 
+For example, a governed OpenAI-compatible endpoint such as [Tuning Engines](https://www.tuningengines.com/) can be configured without changing your agent code:
+
+```python
+model = OpenAIChatModel(
+    'gpt-4o-mini',
+    provider=OpenAIProvider(
+        base_url='https://api.tuningengines.com/v1',
+        api_key='your-tuning-engines-key',
+    ),
+)
+agent = Agent(model)
+```
+
+This lets Pydantic AI continue to handle agent logic and tool execution while the gateway centralizes model routing, policy controls, audit logs, traces, approvals, and cost visibility.
+
 Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
 When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("moonshotai:kimi-k2-0711-preview")`, instead of building the `OpenAIChatModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatModel` instead of instantiating the provider class explicitly.
 
