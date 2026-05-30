@@ -35,12 +35,13 @@ Every tool call the agent makes is intercepted before and after execution.
 import asyncio
 from typing import Any
 
+from vaultak import Vaultak
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolDefinition
-from vaultak import Vaultak
 
 vt = Vaultak(api_key="vtk_...", agent_name="my-agent")
 RISK_THRESHOLD = 7.0
@@ -106,12 +107,13 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from vaultak import Vaultak
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolDefinition
-from vaultak import Vaultak
 
 
 @dataclass
@@ -201,7 +203,7 @@ agent = Agent(
     `risk_threshold` to `5.0` to block anything above medium risk:
 
     ```python
-    VaultakSecurity(api_key="vtk_...", agent_name="finance-agent", risk_threshold=5.0)  # noqa: F821
+    VaultakSecurity(api_key='vtk_...', agent_name='finance-agent', risk_threshold=5.0)  # noqa: F821
     ```
 
 ## Configuration reference
