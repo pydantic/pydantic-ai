@@ -33,3 +33,8 @@ node_modules/
 /.cursor/
 /.devcontainer/
 .claude/plans/
+
+# Local agent artifacts
+.maintenance/
+AGENTS.md.bak-*
+claude-progress.txt
