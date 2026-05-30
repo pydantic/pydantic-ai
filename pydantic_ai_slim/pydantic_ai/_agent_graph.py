@@ -916,7 +916,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary.
         #
         # Run a first pass so `prepare_messages` sees a normalized history.
-        messages = _clean_message_history(messages)
+        messages = _clean_message_history(messages, preserve_request_context=False)
 
         # Hand off to the model class for any history shapes the active provider can't
         # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
@@ -934,7 +934,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # messages are merged. The default `prepare_messages` returns the input list
         # unchanged, so the identity check skips the redundant second pass.
         if prepared is not messages:
-            messages = _clean_message_history(prepared)
+            messages = _clean_message_history(prepared, preserve_request_context=False)
         else:
             messages = prepared
 
@@ -2173,7 +2173,9 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
     )
 
 
-def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
+def _clean_message_history(
+    messages: list[_messages.ModelMessage], *, preserve_request_context: bool = True
+) -> list[_messages.ModelMessage]:
     """Clean the message history by merging consecutive messages."""
     clean_messages: list[_messages.ModelMessage] = []
     for message in messages:
@@ -2195,10 +2197,30 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     # Tool return parts always need to be at the start
                     key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
                 )
+                metadata = last_message.metadata
+                if message.metadata is not None:
+                    metadata = {**(last_message.metadata or {}), **message.metadata}
+                run_id = message.run_id if preserve_request_context else None
+                if (
+                    preserve_request_context
+                    and last_message.run_id is not None
+                    and last_message.run_id == message.run_id
+                ):
+                    run_id = last_message.run_id
+                conversation_id = message.conversation_id if preserve_request_context else None
+                if (
+                    preserve_request_context
+                    and last_message.conversation_id is not None
+                    and last_message.conversation_id == message.conversation_id
+                ):
+                    conversation_id = last_message.conversation_id
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
                     timestamp=message.timestamp or last_message.timestamp,
+                    run_id=run_id,
+                    conversation_id=conversation_id,
+                    metadata=metadata,
                 )
                 clean_messages[-1] = merged_message
             else:
