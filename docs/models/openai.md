@@ -348,6 +348,10 @@ agent = Agent(model)
 For example, a governed OpenAI-compatible endpoint such as [Tuning Engines](https://www.tuningengines.com/) can be configured without changing your agent code:
 
 ```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
 model = OpenAIChatModel(
     'gpt-4o-mini',
     provider=OpenAIProvider(
