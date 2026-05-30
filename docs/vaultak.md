@@ -43,7 +43,7 @@ from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolDefinition
 
-vt = Vaultak(api_key="vtk_...", agent_name="my-agent")
+vt = Vaultak(api_key='vtk_...', agent_name='my-agent')
 RISK_THRESHOLD = 7.0
 
 hooks = Hooks()
@@ -65,8 +65,8 @@ async def vaultak_score(
         # SkipToolExecution returns the message to the LLM as the tool's result
         raise SkipToolExecution(
             f"[Vaultak] Tool '{call.tool_name}' blocked — risk score "
-            f"{result.score:.1f}/10 meets or exceeds threshold {RISK_THRESHOLD}. "
-            "Review at app.vaultak.com"
+            f'{result.score:.1f}/10 meets or exceeds threshold {RISK_THRESHOLD}. '
+            'Review at app.vaultak.com'
         )
     await asyncio.to_thread(vt.check_policy, tool_name=call.tool_name, input_data=str(args))
     return args
@@ -87,10 +87,10 @@ async def vaultak_mask_pii(
     return result
 
 
-agent = Agent("openai:gpt-4o", capabilities=[hooks])
+agent = Agent('openai:gpt-4o', capabilities=[hooks])
 
 result = agent.run_sync(
-    "Look up customer record #42 and email the summary to alice@example.com"
+    'Look up customer record #42 and email the summary to alice@example.com'
 )
 print(result.output)
 ```
@@ -121,7 +121,7 @@ class VaultakSecurity(AbstractCapability[Any]):
     """Runtime security capability — risk-scores tool calls and masks PII in outputs."""
 
     api_key: str
-    agent_name: str = "pydantic-ai-agent"
+    agent_name: str = 'pydantic-ai-agent'
     risk_threshold: float = 7.0
     verbose: bool = False
     _vt: Vaultak = field(init=False, repr=False)
@@ -141,12 +141,12 @@ class VaultakSecurity(AbstractCapability[Any]):
             self._vt.score_action, action=call.tool_name, context=args
         )
         if self.verbose:
-            print(f"[Vaultak] {call.tool_name}: risk {result.score:.1f}/10")
+            print(f'[Vaultak] {call.tool_name}: risk {result.score:.1f}/10')
         if result.score >= self.risk_threshold:
             raise SkipToolExecution(
                 f"[Vaultak] Tool '{call.tool_name}' blocked — risk score "
-                f"{result.score:.1f}/10 meets or exceeds threshold {self.risk_threshold}. "
-                "Review at app.vaultak.com"
+                f'{result.score:.1f}/10 meets or exceeds threshold {self.risk_threshold}. '
+                'Review at app.vaultak.com'
             )
         await asyncio.to_thread(
             self._vt.check_policy, tool_name=call.tool_name, input_data=str(args)
@@ -178,7 +178,7 @@ class VaultakSecurity(AbstractCapability[Any]):
         # Alert Vaultak dashboard, then re-raise so the agent can retry normally
         await asyncio.to_thread(
             self._vt.alert,
-            level="error",
+            level='error',
             message=f"Tool '{call.tool_name}' raised {type(error).__name__}: {error}",
         )
         raise error
@@ -186,11 +186,11 @@ class VaultakSecurity(AbstractCapability[Any]):
 
 # Attach to any agent — all tool calls are now monitored
 agent = Agent(
-    "openai:gpt-4o",
+    'openai:gpt-4o',
     capabilities=[
         VaultakSecurity(
-            api_key="vtk_...",
-            agent_name="production-agent",
+            api_key='vtk_...',
+            agent_name='production-agent',
             risk_threshold=7.0,
             verbose=True,
         )
@@ -202,7 +202,7 @@ agent = Agent(
     For agents with access to databases, payment systems, or external APIs, lower
     `risk_threshold` to `5.0` to block anything above medium risk:
 
-    ```python
+    ```python {test="skip"}
     VaultakSecurity(api_key='vtk_...', agent_name='finance-agent', risk_threshold=5.0)  # noqa: F821
     ```
 
