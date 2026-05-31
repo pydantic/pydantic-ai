@@ -10,6 +10,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from xai_sdk import AsyncClient
 
+    from pydantic_ai.providers import xai as xai_provider_module
     from pydantic_ai.providers.xai import XaiProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed')
@@ -38,6 +39,24 @@ def test_xai_pass_xai_client() -> None:
     xai_client = AsyncClient(api_key='api-key')
     provider = XaiProvider(xai_client=xai_client)
     assert provider.client == xai_client
+
+
+def test_xai_provider_passes_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeAsyncClient:
+        kwargs: dict[str, object]
+
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+            clients.append(self)
+
+    clients: list[FakeAsyncClient] = []
+
+    monkeypatch.setattr(xai_provider_module, 'AsyncClient', FakeAsyncClient)
+
+    provider = XaiProvider(api_key='api-key', timeout=30)
+
+    assert provider.client is clients[0]
+    assert clients[0].kwargs == {'api_key': 'api-key', 'timeout': 30}
 
 
 def test_xai_model_profile():
