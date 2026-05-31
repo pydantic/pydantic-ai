@@ -48,7 +48,13 @@ class GrokModelProfile(ModelProfile):
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
-    grok_supports_builtin_tools = model_name.startswith('grok-4') or 'code' in model_name
+    # The retirement-redirect slugs in `_GROK_43_REASONING_MODELS` (e.g. `grok-3`) route to Grok 4.3,
+    # which supports builtin tools, so they're builtin-capable too even when the name doesn't match the
+    # `grok-4`/`code` patterns. Kept as its own flag rather than folded into reasoning-effort support:
+    # the two gate different behaviors and shouldn't be derived from a single predicate.
+    grok_supports_builtin_tools = (
+        model_name.startswith('grok-4') or 'code' in model_name or model_name in _GROK_43_REASONING_MODELS
+    )
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     if model_name in _GROK_43_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_43_REASONING_EFFORTS

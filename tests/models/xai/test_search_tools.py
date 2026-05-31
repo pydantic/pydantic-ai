@@ -108,14 +108,14 @@ async def test_grok_4_reasoning_model_forwards_reasoning_effort(allow_model_requ
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    settings: XaiModelSettings = {'thinking': True}
+    settings: XaiModelSettings = {'thinking': 'high'}
     agent = Agent(m, model_settings=settings)
 
     await agent.run('hi')
 
     kwargs = get_mock_chat_create_kwargs(mock_client)
     assert len(kwargs) == 1
-    assert kwargs[0]['reasoning_effort'] == 'low'
+    assert kwargs[0]['reasoning_effort'] == 'high'
 
 
 async def test_xai_thinking_false_with_non_always_on_profile_is_dropped(allow_model_requests: None) -> None:
@@ -143,10 +143,16 @@ def test_grok_model_profile_builtin_tools() -> None:
     assert isinstance(grok4_profile, GrokModelProfile)
     assert grok4_profile.grok_supports_builtin_tools is True
 
+    # `grok-3` redirects to Grok 4.3, so it's builtin-capable despite not matching the `grok-4`/`code` patterns.
     grok3_profile = grok_model_profile('grok-3')
     assert grok3_profile is not None
     assert isinstance(grok3_profile, GrokModelProfile)
-    assert grok3_profile.grok_supports_builtin_tools is False
+    assert grok3_profile.grok_supports_builtin_tools is True
+
+    grok3_mini_profile = grok_model_profile('grok-3-mini')
+    assert grok3_mini_profile is not None
+    assert isinstance(grok3_mini_profile, GrokModelProfile)
+    assert grok3_mini_profile.grok_supports_builtin_tools is False
 
 
 # =============================================================================

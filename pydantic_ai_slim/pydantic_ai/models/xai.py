@@ -109,9 +109,17 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
 
     if thinking is False:
         return 'none' if 'none' in supported_efforts else None
-    elif thinking is True:
-        return 'low' if 'none' in supported_efforts else 'high'
-    elif thinking in ('minimal', 'low'):
+    if thinking is True:
+        # `True` requests reasoning at the model's default level rather than a specific effort.
+        # Models that accept `'none'` (Grok 4.3) treat `reasoning_effort` as optional and apply their
+        # own default, so we omit it. Always-on models like grok-3-mini don't expose a default-omission
+        # path, so they fall back to `'medium'` (consistent with OpenAI), normalized to the nearest
+        # supported value by the `'medium'` handling below.
+        if 'none' in supported_efforts:
+            return None
+        thinking = 'medium'
+
+    if thinking in ('minimal', 'low'):
         return 'low'
     elif thinking == 'medium':
         return 'medium' if 'medium' in supported_efforts else 'high'
@@ -119,6 +127,35 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return 'high'
     else:
         assert_never(thinking)
+
+
+# Deprecated: the unified `thinking` -> xAI `reasoning_effort` mapping is now derived per model from
+# `GrokModelProfile.grok_reasoning_efforts` (see `_map_reasoning_effort`). Kept importable as a public
+# symbol for backwards compatibility; exposed via the module-level `__getattr__` below so access warns.
+_XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
+    True: 'high',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'high',
+    'high': 'high',
+    'xhigh': 'high',
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name == 'XAI_EFFORT_MAP':
+        import warnings
+
+        from .._warnings import PydanticAIDeprecationWarning
+
+        warnings.warn(
+            '`XAI_EFFORT_MAP` is deprecated; the `thinking` to `reasoning_effort` mapping is now '
+            'derived per model from `GrokModelProfile.grok_reasoning_efforts`.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return _XAI_EFFORT_MAP
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {

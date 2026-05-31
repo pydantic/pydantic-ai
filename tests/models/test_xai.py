@@ -61,6 +61,7 @@ from pydantic_ai import (
     WebSearchTool,
 )
 from pydantic_ai._utils import PeekableAsyncStream
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -1214,7 +1215,8 @@ async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provid
     ('thinking', 'expected_reasoning_effort'),
     [
         (False, 'none'),
-        (True, 'low'),
+        # `True` maps to the model's default: reasoning_effort is omitted so Grok 4.3 applies its own default.
+        (True, None),
         ('minimal', 'low'),
         ('low', 'low'),
         ('medium', 'medium'),
@@ -1223,7 +1225,7 @@ async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provid
     ],
 )
 async def test_xai_grok_43_unified_thinking_reasoning_effort(
-    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str
+    allow_model_requests: None, thinking: ThinkingLevel, expected_reasoning_effort: str | None
 ) -> None:
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
@@ -1233,7 +1235,11 @@ async def test_xai_grok_43_unified_thinking_reasoning_effort(
     result = await agent.run('Hello')
 
     assert result.output == 'ok'
-    assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == expected_reasoning_effort
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    if expected_reasoning_effort is None:
+        assert 'reasoning_effort' not in kwargs
+    else:
+        assert kwargs['reasoning_effort'] == expected_reasoning_effort
 
 
 async def test_xai_grok_43_explicit_reasoning_effort_takes_precedence(allow_model_requests: None) -> None:
@@ -1296,6 +1302,16 @@ async def test_xai_unified_thinking_omits_reasoning_effort(
 
     assert result.output == 'ok'
     assert 'reasoning_effort' not in get_mock_chat_create_kwargs(mock_client)[0]
+
+
+def test_xai_effort_map_deprecated():
+    """`XAI_EFFORT_MAP` stays importable but deprecated; the mapping is now profile-derived."""
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`XAI_EFFORT_MAP` is deprecated'):
+        mapping = xai_module.XAI_EFFORT_MAP
+    assert mapping[True] == 'high'
+
+    with pytest.raises(AttributeError, match=r'has no attribute'):
+        xai_module.DefinitelyDoesNotExist
 
 
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
@@ -5207,8 +5223,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     kwargs = get_mock_chat_create_kwargs(mock_client)
     for call in kwargs:
         for tool in call['tools']:
-            if 'web_search' in tool:
-                tool['web_search'].pop('enable_image_search', None)
+            tool['web_search'].pop('enable_image_search', None)
 
     # Verify kwargs - second call should have WebSearchTool builtin call mapped
     assert kwargs == snapshot(
