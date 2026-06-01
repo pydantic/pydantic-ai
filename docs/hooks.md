@@ -280,10 +280,8 @@ agent = Agent('test', capabilities=[hooks])
 Tool hooks (validation and execution) support a `tools` parameter to target specific tools by name:
 
 ```python {title="hooks_tool_filter.py"}
-from typing import Any
-
 from pydantic_ai import Agent, RunContext, ToolDefinition
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.messages import ToolCallPart
 
 hooks = Hooks()
@@ -296,8 +294,8 @@ async def audit_dangerous_tools(
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,
-    args: dict[str, Any],
-) -> dict[str, Any]:
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
     call_log.append(f'audit: {call.tool_name}')
     return args
 
