@@ -96,6 +96,7 @@ try:
         ImageConfigDict,
         MediaResolution,
         Modality,
+        ModelArmorConfigDict,
         Part,
         PartDict,
         SafetySettingDict,
@@ -308,6 +309,16 @@ class GoogleModelSettings(ModelSettings, total=False):
 
     google_service_tier: GoogleServiceTier
     """Deprecated: use `service_tier` for Gemini API (GLA) or `google_cloud_service_tier` for Google Cloud."""
+
+    google_model_armor_config: ModelArmorConfigDict
+    """Model Armor configuration for screening prompts and responses.
+
+    Specifies the Model Armor templates to use for sanitizing user prompts and model responses.
+    Both fields are optional — omit either to skip screening for that direction.
+
+    Only supported with `GoogleCloudProvider` (Google Cloud / Vertex AI). Using this with the
+    Gemini API (`GoogleProvider`) raises [`UserError`][pydantic_ai.exceptions.UserError].
+    """
 
 
 def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> GoogleServiceTier | None:
@@ -834,6 +845,16 @@ class GoogleModel(Model[Client]):
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
 
+    def _get_model_armor_config(self, model_settings: GoogleModelSettings) -> ModelArmorConfigDict | None:
+        """Return model_armor_config, raising UserError if used with a non-Cloud provider."""
+        model_armor_config = model_settings.get('google_model_armor_config')
+        if model_armor_config is not None and self.system not in _GOOGLE_CLOUD_PROVIDER_NAMES:
+            raise UserError(
+                'google_model_armor_config is only supported with GoogleCloudProvider (Google Cloud / Vertex AI). '
+                'Model Armor is not available in the Gemini API.'
+            )
+        return model_armor_config or None
+
     async def _build_content_and_config(
         self,
         messages: list[ModelMessage],
@@ -884,6 +905,8 @@ class GoogleModel(Model[Client]):
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
+        model_armor_config = self._get_model_armor_config(model_settings)
+
         config = GenerateContentConfigDict(
             http_options=http_options,
             system_instruction=system_instruction,
@@ -906,6 +929,7 @@ class GoogleModel(Model[Client]):
             response_json_schema=response_schema,
             response_modalities=modalities,
             image_config=image_config,
+            model_armor_config=model_armor_config,
         )
 
         if gla_service_tier is not None:
