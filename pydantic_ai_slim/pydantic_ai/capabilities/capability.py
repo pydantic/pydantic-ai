@@ -83,6 +83,13 @@ class Capability(AbstractCapability[AgentDepsT]):
         self._function_toolset = FunctionToolset[AgentDepsT](tools)
         self._instructions = list(normalize_instructions(instructions))
 
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        # Not spec-constructible: holds function tools, instructions, and callable
+        # descriptions that don't round-trip through YAML/JSON. Matches the other
+        # non-serializable capabilities (`Hooks`, `PrefixTools`, `WrapperCapability`, ...).
+        return None
+
     def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
         return self._description
 

@@ -62,7 +62,7 @@ agent = Agent(
 Initial request:
 
 - deferred capability instructions are not included
-- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`; providers may receive hidden corpus entries, but the tools are not callable until the capability loads
+- deferred capability function tools are present in the framework toolset but marked with `defer_loading=True`; they go through client-executed local search, so the provider's hosted search never sees them, and they are not callable until the capability loads
 - non-deferred capabilities are treated as already loaded
 - the framework adds `load_capability` if any deferred capability exists
 

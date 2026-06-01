@@ -124,7 +124,7 @@ Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wr
 | `node_run` | `node_run=` | `wrap_node_run` |
 | `node_run_error` | `node_run_error=` | `on_node_run_error` |
 
-Node hooks fire for each graph step (`UserPromptNode`, `ModelRequestNode`, `CallToolsNode`).
+Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.UserPromptNode], [`ModelRequestNode`][pydantic_ai.ModelRequestNode], [`CallToolsNode`][pydantic_ai.CallToolsNode]).
 
 !!! note
     `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but **not** when iterating with bare `async for node in agent_run:`.
@@ -138,7 +138,7 @@ Node hooks fire for each graph step (`UserPromptNode`, `ModelRequestNode`, `Call
 | `model_request` | `model_request=` | `wrap_model_request` |
 | `model_request_error` | `model_request_error=` | `on_model_request_error` |
 
-Model request hooks fire around each LLM call. `ModelRequestContext` bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
+Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. To swap the model for a given request, set `request_context.model` to a different [`Model`][pydantic_ai.models.Model] instance.
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 

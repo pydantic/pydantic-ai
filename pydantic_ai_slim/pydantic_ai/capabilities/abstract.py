@@ -171,6 +171,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     id: str | None = None
     """Optional identifier used to reference this capability within a run.
 
+    Must be unique within a run, not per instance: it identifies the capability across the
+    run — including the fresh instance a [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
+    override may return — rather than a specific object.
+
     Required when `defer_loading=True`. If omitted for an always-available
     capability, the run derives a local id from the class name.
     """

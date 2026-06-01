@@ -2581,6 +2581,17 @@ def test_capability_tool_combines_with_toolsets():
     assert provided_toolset is toolset
 
 
+def test_capability_opts_out_of_spec_serialization():
+    """`Capability` holds non-serializable state (function tools, instructions, callable
+    descriptions), so it opts out of spec construction like the other non-serializable
+    capabilities, and passing it as a custom capability type fails loudly."""
+    from pydantic_ai.agent.spec import get_capability_registry
+
+    assert Capability.get_serialization_name() is None
+    with pytest.raises(ValueError, match='Capability has opted out of serialization'):
+        get_capability_registry(custom_types=[Capability])
+
+
 async def test_toolset_capability_in_agent():
     """A Toolset capability's tools are available to the agent."""
     ts = FunctionToolset[None]()
@@ -2935,6 +2946,61 @@ def test_load_capability_narrow_type_promotes_and_is_idempotent() -> None:
     promoted_return = ToolReturnPart.narrow_type(base_return)
     assert isinstance(promoted_return, LoadCapabilityReturnPart)
     assert ToolReturnPart.narrow_type(promoted_return) is promoted_return
+
+
+def test_load_capability_parts_round_trip_through_message_history() -> None:
+    """`capability-load` parts survive history (de)serialization as typed subclasses, and a
+    user tool named `load_capability` without `tool_kind` is left as a plain `ToolCallPart`."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
+
+    raw: list[dict[str, Any]] = [
+        {
+            'kind': 'response',
+            'parts': [
+                {
+                    'part_kind': 'tool-call',
+                    'tool_name': 'load_capability',
+                    'tool_kind': 'capability-load',
+                    'args': {'id': 'refunds'},
+                    'tool_call_id': 'c1',
+                },
+                # User tool colliding on the name but without `tool_kind`: must stay base.
+                {
+                    'part_kind': 'tool-call',
+                    'tool_name': 'load_capability',
+                    'args': {'foo': 'bar'},
+                    'tool_call_id': 'c2',
+                },
+            ],
+        },
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 'load_capability',
+                    'tool_kind': 'capability-load',
+                    'content': {'instructions': 'Confirm the order id.'},
+                    'tool_call_id': 'c1',
+                },
+            ],
+        },
+    ]
+    response, request = ModelMessagesTypeAdapter.validate_python(raw)
+    assert isinstance(response, ModelResponse)
+    assert isinstance(response.parts[0], LoadCapabilityCallPart)
+    assert response.parts[0].capability_id == 'refunds'
+    # Collision on `tool_name='load_capability'` without `tool_kind` stays a base part.
+    assert type(response.parts[1]) is ToolCallPart
+    assert response.parts[1].args == {'foo': 'bar'}
+    assert isinstance(request, ModelRequest)
+    assert isinstance(request.parts[0], LoadCapabilityReturnPart)
+    assert request.parts[0].instructions == 'Confirm the order id.'
+
+    # Full JSON dump -> load round-trip preserves the typed subclasses.
+    rebuilt = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response, request]))
+    assert isinstance(rebuilt[0].parts[0], LoadCapabilityCallPart)
+    assert isinstance(rebuilt[1].parts[0], LoadCapabilityReturnPart)
 
 
 async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
