@@ -57,7 +57,7 @@ If you've used [Anthropic's Agent Skills](https://www.anthropic.com/engineering/
 
 The minimum: set an `id`, set `defer_loading=True`, give the model a hint with `description`.
 
-```python {title="on_demand_capability.py" test="skip" lint="skip"}
+```python {title="on_demand_capability.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 
@@ -80,8 +80,6 @@ agent = Agent(
     instructions='You are a customer support assistant.',
     capabilities=[refunds],
 )
-result = agent.run_sync('What is the refund status of order ABC-123?')
-print(result.output)
 ```
 
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
