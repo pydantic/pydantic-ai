@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from typing_extensions import Self
 
@@ -46,7 +46,7 @@ class CompletedStreamedResponse(StreamedResponse):
         '`StreamedResponse.usage` is no longer a method; access it as a property (drop the parentheses).'
     )
     def usage(self) -> RequestUsage:
-        return self.response.usage  # pragma: no cover
+        return cast(RequestUsage, self.response.usage)  # pragma: no cover
 
     @property
     def model_name(self) -> str:

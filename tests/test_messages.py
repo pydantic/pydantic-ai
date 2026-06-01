@@ -24,6 +24,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     RequestUsage,
     RetryPromptPart,
+    RunUsage,
     TextContent,
     TextPart,
     ThinkingPart,
@@ -507,6 +508,26 @@ def test_pre_usage_refactor_messages_deserializable():
             ),
         ]
     )
+
+
+def test_model_response_preserves_run_usage_roundtrip():
+    response = ModelResponse(
+        parts=[TextPart(content='Hello!')],
+        usage=RunUsage(requests=5, tool_calls=3, input_tokens=1000, output_tokens=500),
+        model_name='test',
+    )
+
+    serialized = ModelMessagesTypeAdapter.dump_json([response])
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+    msg = deserialized[0]
+    assert isinstance(msg, ModelResponse)
+    usage = msg.usage
+    assert isinstance(usage, RunUsage)
+    assert usage.requests == 5
+    assert usage.tool_calls == 3
+    assert usage.input_tokens == 1000
+    assert usage.output_tokens == 500
 
 
 def test_file_part_has_content():

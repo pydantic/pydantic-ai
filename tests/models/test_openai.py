@@ -5283,7 +5283,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
         # Verify usage is updated at each step via stream_response
         usage_at_each_step: list[RequestUsage] = []
         async for response in result.stream_response(debounce_by=None):
-            usage_at_each_step.append(response.usage)
+            usage_at_each_step.append(cast(RequestUsage, response.usage))
 
         # Each step should have the cumulative usage from that chunk (not accumulated)
         # The stream emits responses for each content chunk plus final

@@ -28,7 +28,7 @@ from ._instrumentation import serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UnexpectedModelBehavior
-from .usage import RequestUsage
+from .usage import RequestUsage, RunUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
@@ -2083,7 +2083,7 @@ class ModelResponse:
 
     _: KW_ONLY
 
-    usage: RequestUsage = field(default_factory=RequestUsage)
+    usage: RequestUsage | RunUsage = field(default_factory=RequestUsage)
     """Usage information for the request.
 
     This has a default to make tests easier, and to support loading old messages where usage will be missing.
