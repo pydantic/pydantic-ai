@@ -13,49 +13,9 @@ This makes them the primary extension point for Pydantic AI. Whether you're buil
 
 ## On-demand capabilities {#on-demand-capabilities}
 
-A multi-workflow agent typically sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks throughout the run — even though any given user request usually needs one workflow. The cost compounds in two ways: input tokens grow linearly with the number of visible workflows, and tool selection accuracy degrades as the visible tool set gets larger (the same threshold that motivates [tool search](tools-advanced.md#tool-search) — past ~30–50 tools, models start picking the wrong one).
+A multi-workflow agent normally sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks for the whole run — even though most requests need just one workflow. That cost grows with each workflow you add: more input tokens, and worse tool selection once the visible tool set passes the ~30–50-tool mark where models start picking the wrong one (the same pressure behind [tool search](tools-advanced.md#tool-search)).
 
-Marking a capability with `defer_loading=True` keeps the model-facing pieces it provides — instructions, function tools, and native tools — hidden until the model asks for them. Model settings and lifecycle hooks are registered up front, but stay inactive until the capability is loaded. In the initial request, each deferred capability is collapsed to a catalog entry: its stable `id` plus its `description`, if provided. When the model calls the `load_capability` tool with an `id`, that bundle activates and stays active for the rest of the run.
-
-What you get from one flag:
-
-- **Smaller initial prompt** — instructions and tool schemas for unused workflows stay out of the initial request, while settings and hooks for those workflows stay inactive.
-- **Better tool selection** — the model picks from a small visible toolset until it opts into a workflow, instead of disambiguating across every workflow's tools at once.
-- **Bundle-level loading** — one `load_capability` tool call activates the whole workflow: its typed function tools, per-step model settings, and lifecycle hooks, not just its instructions.
-- **No architectural change** — same agent, same run loop, same `capabilities=[...]` argument. Adding `defer_loading=True` to a capability you already register is a one-line change.
-- **Cross-provider** — works on every model, using the provider's native progressive-disclosure surface where one exists and a local discovery tool otherwise (see [Cross-provider behavior](#cross-provider-behavior)).
-- **Resumable** — loaded state is reconstructed from message history, so a conversation persisted to a database can resume days later — or continue on a different model — with the same capabilities already loaded.
-
-### What you can defer
-
-Every part of a capability bundle activates together as a single unit:
-
-| Part | Before load | After load |
-|---|---|---|
-| Instructions (static or dynamic) | Not sent | Returned as the `load_capability` tool result; included in subsequent requests |
-| Function tools | Not exposed | Exposed on the next request |
-| Model settings (static or per-step) | Not applied | Merged into the run's settings for subsequent requests |
-| Lifecycle [hooks](#hooking-into-the-lifecycle) | Do not fire | Fire after the capability is loaded |
-| [Native tools](native-tools.md) | Not exposed | Exposed on the next request — see [Cache implications](#cache-implications) |
-
-### When to use it
-
-**Reach for on-demand capabilities when:**
-
-- the agent serves multiple distinct workflows (refunds, returns, fraud review, account security…) where most turns need one
-- a workflow needs *more than instructions* — its own tools, raised reasoning effort, an approval hook — and those should travel together as a unit
-- you want skills-style progressive disclosure but also want the loaded bundle to bring tools and settings, not just a runbook
-
-**Skip it when:**
-
-- the capability is used on most turns — the discovery round-trip costs more than the tokens it saves
-- you have a flat catalog of individually-discoverable tools with no shared instructions — use [tool search](tools-advanced.md#tool-search) instead, which discovers individual tools by name rather than loading bundles
-
-If you've used [Anthropic's Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills), this is the same idea generalised: a skill is a markdown file the model can pull in on demand. An on-demand capability does that *plus* typed function tools, per-step model settings, and lifecycle hooks.
-
-### Example
-
-The minimum: set an `id`, set `defer_loading=True`, give the model a hint with `description`.
+Mark a capability with `defer_loading=True` and give it a stable `id`, and it collapses to a one-line catalog entry — its `id` plus an optional `description` — that the model pulls in on demand. Here's the minimal shape:
 
 ```python {title="on_demand_capability.py"}
 from pydantic_ai import Agent
@@ -95,10 +55,39 @@ The model does not receive the refund instructions, and `refund_status` is not c
 2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result, and registers `refund_status` for the next request.
 3. **Request 2.** The model now sees those instructions in history and `refund_status` in its tool list. It calls `refund_status(order_id='ABC-123')` and answers the user from the result.
 
-Already-loaded capabilities stay loaded for the rest of the run. The model does not need to load a capability again once it has opened it.
+Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one.
+
+Loading activates the whole bundle, not just instructions: the capability's function tools, model settings, and lifecycle hooks come live together (see [What you can defer](#what-you-can-defer)). It's a one-line change to a capability you already register, it works on [every provider](#cross-provider-behavior), and it [survives history replay](#resumable-across-runs).
 
 !!! note
     The `load_capability` tool name is reserved whenever any on-demand capability is present. Capability `id` values must be stable and explicit — see [Resumable across runs](#resumable-across-runs).
+
+### What you can defer
+
+Every part of a capability bundle activates together as a single unit:
+
+| Part | Before load | After load |
+|---|---|---|
+| Instructions (static or dynamic) | Not sent | Returned as the `load_capability` tool result; included in subsequent requests |
+| Function tools | Not exposed | Exposed on the next request |
+| Model settings (static or per-step) | Not applied | Merged into the run's settings for subsequent requests |
+| Lifecycle [hooks](#hooking-into-the-lifecycle) | Do not fire | Fire after the capability is loaded |
+| [Native tools](native-tools.md) | Not exposed | Exposed on the next request — see [Cache implications](#cache-implications) |
+
+### When to use it
+
+**Reach for on-demand capabilities when:**
+
+- the agent serves multiple distinct workflows (refunds, returns, fraud review, account security…) where most turns need one
+- a workflow needs *more than instructions* — its own tools, raised reasoning effort, an approval hook — and those should travel together as a unit
+- you want skills-style progressive disclosure but also want the loaded bundle to bring tools and settings, not just a runbook
+
+**Skip it when:**
+
+- the capability is used on most turns — the discovery round-trip costs more than the tokens it saves
+- you have a flat catalog of individually-discoverable tools with no shared instructions — use [tool search](tools-advanced.md#tool-search) instead, which discovers individual tools by name rather than loading bundles
+
+If you've used [Anthropic's Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills), this is the same idea generalised: a skill is a markdown file the model can pull in on demand. An on-demand capability does that *plus* typed function tools, per-step model settings, and lifecycle hooks.
 
 ### Retrofitting an existing capability
 
