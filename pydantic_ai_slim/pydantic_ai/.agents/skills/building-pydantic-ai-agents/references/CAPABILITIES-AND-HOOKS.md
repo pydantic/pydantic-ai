@@ -56,8 +56,10 @@ Supported effort values:
 Use `Hooks` for decorator-based lifecycle interception.
 
 ```python
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import ValidatedToolArgs
 from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 
 hooks = Hooks()
@@ -70,7 +72,13 @@ async def log_request(ctx: RunContext[None], request_context: ModelRequestContex
 
 
 @hooks.on.before_tool_execute(tools=['send_email'])
-async def audit_tool(ctx, *, call, tool_def, args):
+async def audit_tool(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
     print(f'Executing {call.tool_name}')
     return args
 
