@@ -6,7 +6,7 @@ results across billions of web pages.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, overload
+from typing import Literal, overload
 
 from typing_extensions import Any, TypedDict
 
@@ -15,18 +15,12 @@ from pydantic_ai.tools import Tool
 
 try:
     from exa_py import AsyncExa
-    from exa_py.api import TextContentsOptions
+    from exa_py.api import ContentsOptions, TextContentsOptions
 except ImportError as _import_error:
     raise ImportError(
         'Please install `exa-py` to use the Exa tools, '
         'you can use the `exa` optional group — `pip install "pydantic-ai-slim[exa]"`'
     ) from _import_error
-
-if TYPE_CHECKING:
-    # `ContentsOptions` is only referenced in (never-evaluated) local annotations, so it can be
-    # imported under `TYPE_CHECKING`. This keeps the `exa` floor at `exa-py>=2.0.0`, which predates
-    # `ContentsOptions` being exported from `exa_py.api`.
-    from exa_py.api import ContentsOptions
 
 __all__ = (
     'ExaToolset',
