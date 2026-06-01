@@ -1470,16 +1470,14 @@ async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None
 # `durable_exec/temporal/__init__.py`). When a model is named by string (e.g. `gateway/anthropic:`
 # or `anthropic:`) it is constructed lazily via `infer_model` *inside* the workflow, so the
 # provider's SDK client `__init__` runs under the `SandboxedWorkflowRunner`. Provider SDKs
-# increasingly touch the filesystem at construction time — e.g. `anthropic>=0.99.0` calls
-# `Path.home()` to resolve `~/.config/anthropic` — which the sandbox forbids unless the SDK module
-# is passed through. Every other test builds its model at module scope (outside the sandbox), so
-# this seam was previously uncovered. Construction-only (no model request) keeps it deterministic.
+# increasingly touch the filesystem at construction time, which the sandbox forbids unless the SDK
+# module is passed through. Every other test builds its model at module scope (outside the sandbox),
+# so this seam was previously uncovered. Construction-only (no model request) keeps it deterministic.
 @workflow.defn
 class ConstructModelInWorkflow:
     @workflow.run
     async def run(self, model_name: str) -> str:
-        # Constructs the provider and its SDK client inside the sandbox; we assert only that this
-        # succeeds — no request is made.
+        # We assert only that construction succeeds — no request is made.
         return type(infer_model(model_name)).__name__
 
 
