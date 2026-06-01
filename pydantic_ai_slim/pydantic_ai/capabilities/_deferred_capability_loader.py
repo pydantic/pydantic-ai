@@ -33,6 +33,22 @@ async def _resolve_capability_description(
 
 
 async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT]) -> str:
+    # Deliberately lists EVERY deferred capability on every turn, including ones the model
+    # has already loaded — do not filter by load state here.
+    #
+    # This catalog is a dynamic instruction, so it renders into the request *prefix* (ahead
+    # of the message history). With static descriptions it renders byte-identical on every
+    # request, which keeps the provider's prompt-cache prefix warm across loads — the entire
+    # reason the native tool-search path exists. Dropping (or annotating) already-loaded
+    # capabilities would mutate that prefix the moment any capability loads, and because
+    # instructions sit at the very front, it would invalidate essentially the whole cached
+    # prefix on every single load.
+    #
+    # The cost of keeping the list stable is that a loaded capability still appears as
+    # "loadable". That is intentional and cheap: the model rarely re-loads something whose
+    # instructions and tools it can already see, and if it does, the loader tool bounces the
+    # redundant call with an "already available" ModelRetry. One occasional wasted retry is
+    # far cheaper than busting the prefix cache on every load.
     catalog = {
         cap_id: await _resolve_capability_description(cap.get_description(), ctx)
         for cap_id, cap in ctx.capabilities.items()

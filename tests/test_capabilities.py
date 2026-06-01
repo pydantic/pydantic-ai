@@ -2869,8 +2869,14 @@ async def test_duplicate_capability_ids_raise() -> None:
 
 async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
     """A partial/stale `load_capability` call in history must not load a capability on replay."""
+    captured_messages: list[ModelMessage] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
     agent = Agent(
-        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+        FunctionModel(model_fn),
         capabilities=[
             Capability[None](
                 id='reports',
@@ -2890,6 +2896,15 @@ async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
     )
 
     assert result.output == 'done'
+    # `output == 'done'` alone would pass even if the stale partial load had wrongly marked
+    # `reports` loaded, so assert the gating directly. The catalog lists `reports` whether or
+    # not it is loaded (kept stable for prompt caching), so the real discriminator is the
+    # capability's loaded-only instructions: they must be absent because it never loaded.
+    final_instructions = next(
+        msg.instructions for msg in reversed(captured_messages) if isinstance(msg, ModelRequest) and msg.instructions
+    )
+    assert 'Report instructions.' not in final_instructions
+    assert 'reports: Report tools.' in final_instructions
 
 
 @pytest.mark.parametrize(

@@ -35,7 +35,7 @@ from functools import cache
 from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter, ValidationError
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, assert_never
 
 from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
@@ -43,6 +43,7 @@ from ..exceptions import ModelRetry, UserError
 from ..messages import (
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     NativeToolSearchReturnPart,
     ToolReturnPart,
     ToolSearchReturnPart,
@@ -206,10 +207,12 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
                     # surfacing a user-defined `search_tools` whose metadata has no legacy
                     # shape.
                     _collect_legacy(part.metadata, discovered)
-        else:  # ModelResponse — the only other variant of ModelMessage.
+        elif isinstance(msg, ModelResponse):
             for part in msg.parts:
                 if isinstance(part, NativeToolSearchReturnPart):
                     _collect_typed(part.content, discovered)
+        else:
+            assert_never(msg)
     return discovered
 
 

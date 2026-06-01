@@ -76,7 +76,7 @@ def refund_status(order_id: str) -> str:
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'openai-responses:gpt-5.4',
     instructions='You are a customer support assistant.',
     capabilities=[refunds],
 )
@@ -109,7 +109,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'openai-responses:gpt-5.4',
     capabilities=[
         MCP(
             url='https://mcp.example.com/analytics',
@@ -123,6 +123,9 @@ agent = Agent(
 ```
 
 Until the model loads `analytics-mcp`, none of the MCP server's tool definitions enter the prompt. The same flag works on [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`Hooks`][pydantic_ai.capabilities.Hooks], and any custom [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] subclass — see [Building custom capabilities](#building-custom-capabilities) for adding `defer_loading` to your own subclass.
+
+!!! note "Deferred `MCP`: set a stable `id`"
+    [`MCP`][pydantic_ai.capabilities.MCP] derives its `id` from the server URL when you omit one, so `defer_loading=True` works without an explicit `id`. Pass one anyway if you persist and [resume](#resumable-across-runs) conversations: a URL-derived id changes if the URL does (different environment, path version, …), which silently breaks the resumed capability's loaded state.
 
 ### Resumable across runs {#resumable-across-runs}
 
@@ -219,7 +222,7 @@ class DeepReasoning(AbstractCapability[Any]):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'openai-responses:gpt-5.4',
     capabilities=[
         DeepReasoning(
             id='deep-reasoning',
@@ -255,7 +258,7 @@ class AccountSecurityWorkflow(AbstractCapability[None]):
         return args
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[AccountSecurityWorkflow()])
+agent = Agent('openai-responses:gpt-5.4', capabilities=[AccountSecurityWorkflow()])
 ```
 
 !!! note "Checking other capabilities"
@@ -352,7 +355,7 @@ class AccountSecurity(AbstractCapability[Store]):
 
 
 support_agent = Agent(
-    'openai:gpt-5.2',
+    'openai-responses:gpt-5.4',
     deps_type=Store,
     instructions='You are a customer-support agent for an e-commerce store.',
     capabilities=[orders, AccountSecurity()],
@@ -400,7 +403,7 @@ refund_policy = Capability(
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'openai-responses:gpt-5.4',
     capabilities=[
         refund_policy,
         RunbookRequired(requirements={'issue_refund': 'refund-policy'}),
@@ -456,7 +459,7 @@ def load_skill(path: Path) -> Capability:
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    'openai-responses:gpt-5.4',
     instructions='You are a customer support assistant.',
     capabilities=[load_skill(p) for p in Path('skills').glob('*.md')],
 )

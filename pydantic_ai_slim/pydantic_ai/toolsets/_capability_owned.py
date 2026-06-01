@@ -60,10 +60,11 @@ def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapab
     A capability with no explicit `id` is registered under a derived id (see
     `_build_run_capabilities`), so the resolved id only exists as a registry key.
     """
-    return next(
-        capability_id
-        for capability_id, registered_capability in ctx.capabilities.items()
-        if registered_capability is capability
+    for capability_id, registered_capability in ctx.capabilities.items():
+        if registered_capability is capability:
+            return capability_id
+    raise RuntimeError(  # pragma: no cover
+        f'Capability {capability!r} is not registered in this run; this is an internal error in Pydantic AI.'
     )
 
 

@@ -93,7 +93,7 @@ async def require_approval(ctx, *, call, tool_def, args):
     return args
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[approval_hooks])
+agent = Agent('openai-responses:gpt-5.4', capabilities=[approval_hooks])
 ```
 
 You do not need to guard hooks owned by a deferred `Hooks` instance with `ctx.capability_loaded`; Pydantic AI skips those hooks until the model calls the `load_capability` tool for that capability. Once the hook runs, `ctx.capability_loaded` is true for that hook's owning capability. To check a different capability, inspect `ctx.loaded_capability_ids` or `ctx.available_capability_ids`.
