@@ -5,7 +5,6 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import XSearchTool
@@ -39,7 +38,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     for example `'xai:grok-4-1-fast-non-reasoning'`.
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
-    that returns a `Model` instance.
+    that returns a `Model` instance or model name string.
     """
 
     allowed_x_handles: list[str] | None
@@ -83,7 +82,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         fallback_model: Model
         | KnownModelName
         | str
-        | Callable[[RunContext[AgentDepsT]], Awaitable[Model] | Model]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str]
         | None = None,
         allowed_x_handles: list[str] | None = None,
         excluded_x_handles: list[str] | None = None,
@@ -157,6 +156,3 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         if not overrides:
             return base
         return replace(base, **overrides)
-
-
-install_deprecated_kwarg_alias(XSearch, old='builtin', new='native')

@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-from dataclasses import replace
 from typing import overload
 
 import httpx
@@ -11,6 +10,7 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -88,7 +88,7 @@ def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
     profile = google_model_profile(model_name)
     if profile is None:  # pragma: no cover
         return None
-    return replace(profile, json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer)
+    return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
 
 
 class OpenRouterProvider(Provider[AsyncOpenAI]):
@@ -131,17 +131,25 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
-        # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
-        # OpenRouter accepts `reasoning` universally, so the gate should always forward `thinking`.
-        return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer,
-            openai_chat_send_back_thinking_parts='field',
-            openai_chat_thinking_field='reasoning',
-            openai_chat_supports_file_urls=True,
-            openai_chat_supports_web_search=True,
-            supports_thinking=True,
-        ).update(profile)
+        # Three-layer merge:
+        # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
+        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
+        # 2. Upstream profile — model-specific traits from the lab's profile function.
+        # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
+        #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field). OpenRouter accepts
+        #    `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
+        #    setting is always forwarded regardless of the upstream model's own thinking support.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            OpenAIModelProfile(
+                openai_chat_send_back_thinking_parts='field',
+                openai_chat_thinking_field='reasoning',
+                openai_chat_supports_file_urls=True,
+                openai_chat_supports_web_search=True,
+                supports_thinking=True,
+            ),
+        )
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

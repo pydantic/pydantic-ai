@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
@@ -94,9 +91,18 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         elif callable(self.local) and not isinstance(self.local, (Tool, AbstractToolset)):
             self.local = Tool(self.local)
 
-        # Catch contradictory config: native disabled but constraint fields require it
+        # Catch contradictory config: native disabled but constraint fields require it.
+        # Checked first because adding `local=` can't fix it — the user needs to either drop
+        # the constraint or re-enable native.
         if self.native is False and self._requires_native():
             raise UserError(f'{type(self).__name__}: constraint fields require the native tool, but native=False')
+
+        # Disallow `native=False` without an explicit local — would produce a silent no-op capability.
+        if self.native is False and self.local is None:  # pyright: ignore[reportUnknownMemberType]
+            raise UserError(
+                f'{type(self).__name__}(native=False) requires an explicit local tool — '
+                'pass `local=...` (e.g. a strategy string, `True`, a callable, or a `Tool`/`AbstractToolset`).'
+            )
 
     # --- Subclass hooks (not abstract — direct use is supported) ---
 
@@ -178,17 +184,3 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
             return PreparedToolset(wrapped=toolset, prepare_func=_add_unless_native)
         return toolset
-
-    def __getattr__(self, name: str) -> Any:
-        # Deprecated alias for read access to the renamed `builtin=` field.
-        if name == 'builtin':
-            warnings.warn(
-                f'`{type(self).__name__}.builtin` is deprecated, use `.native` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            return self.native
-        raise AttributeError(name)
-
-
-install_deprecated_kwarg_alias(NativeOrLocalTool, old='builtin', new='native')

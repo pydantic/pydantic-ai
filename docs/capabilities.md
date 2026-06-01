@@ -20,11 +20,11 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model [thinking/reasoning](thinking.md) at configurable effort | Yes |
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](hooks.md) registration | — |
 | [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] | OpenTelemetry/Logfire tracing — see [Debugging and Monitoring](logfire.md) | Yes |
-| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — native when supported, [local fallback](common-tools.md#duckduckgo-search-tool) with [`duckduckgo` extra](install.md#slim-install) | Yes |
-| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — native when supported, [local fallback](common-tools.md#web-fetch-tool) with [`web-fetch` extra](install.md#slim-install) | Yes |
-| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — native when supported, subagent fallback via `fallback_model` | Yes |
+| [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — native by default, optional [local fallback](common-tools.md#duckduckgo-search-tool) via `local='duckduckgo'` | Yes |
+| [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — native by default, optional [local fallback](common-tools.md#web-fetch-tool) via `local=True` | Yes |
+| [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — native by default, optional subagent fallback via `fallback_model` | Yes |
 | [`XSearch`][pydantic_ai.capabilities.XSearch] | X search — native on xAI, explicit subagent fallback via `fallback_model` | Yes |
-| [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — native when supported, direct connection otherwise | Yes |
+| [`MCP`][pydantic_ai.capabilities.MCP] | MCP server — runs locally by default; `native=True` opts into the model provider's native MCP support | Yes |
 | [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] | Discovery of [deferred tools](tools-advanced.md#tool-search) — native when supported, local `search_tools` function tool otherwise | Yes |
 | [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] | Filters or modifies function [tool definitions](tools.md) per step | — |
 | [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] | Filters or modifies [output tool][pydantic_ai.output.ToolOutput] definitions per step | — |
@@ -107,7 +107,7 @@ from pydantic_ai.capabilities import Hooks
 hooks = Hooks()
 
 @hooks.on.before_model_request
-async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
     agent_name = ctx.agent.name if ctx.agent else 'unknown'
     print(f'[{agent_name}] Sending {len(request_context.messages)} messages')
     return request_context
@@ -126,57 +126,151 @@ See the dedicated [Hooks](hooks.md) page for the full API: decorator and constru
 
 ### Provider-adaptive tools
 
-[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] provide model-agnostic access to common tool types. When the model supports the tool natively (as a [native tool](native-tools.md)), it's used directly. When it doesn't, a local function tool handles it instead — so your agent works across providers without code changes.
+[`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], [`XSearch`][pydantic_ai.capabilities.XSearch], and [`MCP`][pydantic_ai.capabilities.MCP] each cover a single capability (web search, URL fetch, image generation, X search, MCP) across two implementations:
 
-Each accepts `native` and `local` keyword arguments to control which side is used. [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] and [`XSearch`][pydantic_ai.capabilities.XSearch] also accept `fallback_model` to enable their default subagent fallbacks:
+- **Native** — invoked by the model provider when the model supports it. The work happens on the provider's side (e.g. Anthropic's web search runs server-side, returning results inline).
+- **Local** — runs in your Python process. Used when the model doesn't support the native tool; your code does the work (e.g. calling DuckDuckGo directly).
 
-```python {title="provider_adaptive_tools.py" test="skip"}
+Configure each side via the `native=` and `local=` kwargs. `native=` accepts `True` (use the capability's default [native tool](native-tools.md) instance), `False` (disable native), or an explicit instance like `WebSearchTool(...)` for fine-grained config. `local=` accepts `True` (the bundled local fallback), `False` (disable local), a named strategy string where supported, or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset]. Optional installs needed for the local fallback are opt-in — the capability raises a [`UserError`][pydantic_ai.exceptions.UserError] at construction (with an install hint) when you ask for a local strategy whose extra isn't installed.
+
+```python {title="provider_adaptive_tools.py" test="skip" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP, ImageGeneration, WebFetch, WebSearch, XSearch
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
-        # Native when supported; falls back to DuckDuckGo locally
+        # Native when supported; DuckDuckGo fallback on unsupported models
         WebSearch(local='duckduckgo'),
-        # Native when supported; falls back to the markdownify-based local tool
+        # Native when supported; markdownify-based fallback on unsupported models
         WebFetch(local=True),
-        # Native when supported; falls back to a subagent running an
-        # image-generation-capable model
+        # Native when supported; subagent fallback via `fallback_model`
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
         XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning'),
-        # Native when supported; falls back to a local MCP transport derived from the URL
-        MCP(url='https://mcp.example.com/api', native=True),
+        # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
+        MCP('https://mcp.example.com/api'),
     ],
 )
 ```
 
+`MCP` defaults the other way from the others: because MCP carries credentials, it runs locally by default and you opt into native MCP with `native=True`. The others default to native and you opt into local with `local=`.
+
 [`XSearch`][pydantic_ai.capabilities.XSearch] is slightly different from [`WebSearch`][pydantic_ai.capabilities.WebSearch] and [`WebFetch`][pydantic_ai.capabilities.WebFetch]: there is no default non-xAI fallback. If your agent is not running on an xAI model, set `fallback_model` explicitly to an xAI model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool].
 
-To force native-only (errors on unsupported models instead of falling back to local):
-
-```python {title="native_only.py" test="skip" lint="skip"}
-MCP(url='https://mcp.example.com/api', native=True, local=False)
-```
-
-To force local-only (never use the native tool, even when the model supports it):
-
-```python {title="local_only.py" test="skip" lint="skip"}
-MCP(url='https://mcp.example.com/api', native=False)
-```
-
-Some constraint fields require the native tool because the local fallback can't enforce them. When these are set and the model doesn't support the native tool, a [`UserError`][pydantic_ai.exceptions.UserError] is raised. For example, [`WebSearch`][pydantic_ai.capabilities.WebSearch] domain constraints require the native tool, while [`WebFetch`][pydantic_ai.capabilities.WebFetch] enforces them locally:
+Some constraint fields require the native tool (the bundled local fallback can't enforce them) — passing them locks the capability to the native path. If the model doesn't support the native tool, the capability raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ```python {title="constraints.py" test="skip" lint="skip"}
-# Only search example.com — requires native support
-WebSearch(allowed_domains=['example.com'])
+# Limit to 5 searches per run — requires native (the local fallback can't track call count)
+WebSearch(max_uses=5)
 
 # Only fetch example.com — enforced locally when native is unavailable
-WebFetch(allowed_domains=['example.com'])
+WebFetch(allowed_domains=['example.com'], local=True)
 ```
 
-All of these capabilities are subclasses of [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] with a local fallback:
+#### WebSearch
+
+[`WebSearch`][pydantic_ai.capabilities.WebSearch] defaults to native-only. Backed by [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] on the native side (see [Web Search Tool](native-tools.md#web-search-tool) for provider support and configuration) — pass `native=WebSearchTool(...)` directly when you need full control over the native instance.
+
+For the local side, pass `local='duckduckgo'` (or `local=True`) for a [DuckDuckGo](common-tools.md#duckduckgo-search-tool) fallback (requires the `duckduckgo` optional group); for other search providers, use a [Tavily][pydantic_ai.common_tools.tavily.tavily_search_tool] or [Exa][pydantic_ai.common_tools.exa.ExaSearchTool] wrapper from [`common_tools`](common-tools.md), or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset].
+
+Native constraint fields: `search_context_size`, `user_location`, `blocked_domains`, `allowed_domains`, `max_uses`. The domain and `max_uses` constraints require native support (the shipped DuckDuckGo fallback doesn't enforce them).
+
+```python {title="web_search.py" test="skip" lint="skip"}
+from pydantic_ai.capabilities import WebSearch
+
+# Native-only — raises on models without native web search
+WebSearch()
+
+# Native preferred; DuckDuckGo fallback (needs `pydantic-ai-slim[duckduckgo]`)
+WebSearch(local='duckduckgo')
+
+# Native preferred; custom callable as fallback
+def my_search(query: str) -> str: ...
+WebSearch(local=my_search)
+```
+
+#### WebFetch
+
+[`WebFetch`][pydantic_ai.capabilities.WebFetch] defaults to native-only. Backed by [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] on the native side (see [Web Fetch Tool](native-tools.md#web-fetch-tool) for provider support and configuration) — pass `native=WebFetchTool(...)` directly for full control.
+
+For the local side, pass `local=True` for the bundled [markdownify-based fetch tool](common-tools.md#web-fetch-tool) (requires the `web-fetch` optional group), or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset].
+
+Native constraint fields: `allowed_domains`, `blocked_domains`, `max_uses`, `enable_citations`, `max_content_tokens`. Only `max_uses` requires native; domain filters are enforced locally when native isn't available.
+
+```python {title="web_fetch.py" test="skip" lint="skip"}
+from pydantic_ai.capabilities import WebFetch
+
+# Native-only — raises on models without native web fetch
+WebFetch()
+
+# Native preferred; markdownify-based fallback (needs `pydantic-ai-slim[web-fetch]`)
+WebFetch(local=True)
+
+# Domain filters enforced locally when native isn't available
+WebFetch(allowed_domains=['example.com'], local=True)
+```
+
+#### ImageGeneration
+
+[`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] defaults to native-only. Backed by [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] on the native side (see [Image Generation Tool](native-tools.md#image-generation-tool) for provider support and configuration) — pass `native=ImageGenerationTool(...)` directly for full control.
+
+For the local side, pass `fallback_model='…'` to delegate unsupported requests to a subagent running an image-generation-capable model (e.g. `openai-responses:gpt-5.4`), or `local=` with any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] for a custom generator.
+
+```python {title="image_generation.py" test="skip" lint="skip"}
+from pydantic_ai.capabilities import ImageGeneration
+
+# Native-only — raises on models without native image generation
+ImageGeneration()
+
+# Native preferred; subagent fallback for unsupported models
+ImageGeneration(fallback_model='openai-responses:gpt-5.4')
+
+# Native preferred; custom callable as fallback
+def my_generator(prompt: str) -> bytes: ...
+ImageGeneration(local=my_generator)
+```
+
+#### MCP
+
+[`MCP`][pydantic_ai.capabilities.MCP] is the primary entry point for [MCP](mcp/overview.md) in Pydantic AI. It runs the MCP server locally by default — keeping credentials, hooks, and tracing under your control — and supports both URL-based servers and direct client / toolset / transport inputs.
+
+Backed by [`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool] on the native side (see [MCP Server Tool](native-tools.md#mcp-server-tool) for provider support and configuration) — pass `native=MCPServerTool(...)` directly when you need full control (e.g. a different `id`, `authorization_token`, or `description` than the capability would derive). On the local side, `local=` accepts any [`MCPToolset`][pydantic_ai.mcp.MCPToolset] input (URL, `fastmcp.Client`, transport, in-process `FastMCP` server, script path, …) — non-toolset inputs are wrapped in `MCPToolset` automatically.
+
+```python {title="mcp.py" test="skip" lint="skip"}
+from pydantic_ai.capabilities import MCP
+from pydantic_ai.native_tools import MCPServerTool
+
+# URL-based MCP server, running locally (requires `pydantic-ai-slim[mcp]`)
+MCP('https://mcp.example.com/api')
+
+# Local client without a URL — pass any `MCPToolset` input
+# (URL, `fastmcp.Client`, transport, in-process `FastMCP` server, script path, etc.)
+MCP(local=my_fastmcp_client)
+
+# Native preferred; URL-based local fallback
+MCP('https://mcp.example.com/api', native=True)
+
+# Strict native-only (no local — does not require the `mcp` extra)
+MCP('https://mcp.example.com/api', native=True, local=False)
+
+# Explicit native + explicit local — independent configuration on each side
+# (e.g. provider-relay URL for native, direct connection for local)
+MCP(
+    native=MCPServerTool(
+        id='public-mcp',
+        url='https://relay.example.com/mcp',
+        authorization_token='relay-token',
+    ),
+    local=my_fastmcp_client,
+)
+```
+
+For lower-level access — managing the [`MCPToolset`][pydantic_ai.mcp.MCPToolset] lifecycle directly, advanced transport / client configuration, or using MCP servers without going through a capability — see the [MCP documentation](mcp/overview.md).
+
+#### Building your own
+
+All four capabilities are subclasses of [`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool], which you can use directly or subclass to build your own provider-adaptive tools. For example, to pair [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] with a local fallback:
 
 ```python {title="custom_native_or_local.py" test="skip" lint="skip"}
 from pydantic_ai.native_tools import CodeExecutionTool
@@ -202,14 +296,14 @@ See [Tool Search](tools-advanced.md#tool-search) for when to reach for it, the f
 
 ### PrepareTools and PrepareOutputTools
 
-[`PrepareTools`][pydantic_ai.capabilities.PrepareTools] and [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] wrap a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability, for filtering or modifying [tool definitions](tools.md) per step. `PrepareTools` handles function tools; `PrepareOutputTools` handles [output tools][pydantic_ai.output.ToolOutput]. The Agent constructor's [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] / [`prepare_output_tools`][pydantic_ai.tools.ToolsPrepareFunc] arguments are sugar that injects these capabilities automatically. Both capabilities follow the same return-value rules and `None` warning behavior as [`prepare_tools`](tools-advanced.md#prepare-tools).
+[`PrepareTools`][pydantic_ai.capabilities.PrepareTools] and [`PrepareOutputTools`][pydantic_ai.capabilities.PrepareOutputTools] wrap a [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc] as a capability, for filtering or modifying [tool definitions](tools.md) per step. `PrepareTools` handles function tools; `PrepareOutputTools` handles [output tools][pydantic_ai.output.ToolOutput].
 
 ```python {title="prepare_tools_native.py"}
 from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import PrepareTools
 
 
-async def hide_dangerous(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+async def hide_dangerous(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     return [td for td in tool_defs if not td.name.startswith('delete_')]
 
 
@@ -543,11 +637,11 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class ThinkingOnRetry(AbstractCapability[None]):
+class ThinkingOnRetry(AbstractCapability):
     """Enables thinking mode when the agent is retrying."""
 
     def get_model_settings(self):
-        def resolve(ctx: RunContext[None]) -> ModelSettings:
+        def resolve(ctx: RunContext) -> ModelSettings:
             if ctx.run_step > 1:
                 return ModelSettings(thinking='high')
             return ModelSettings()
@@ -844,9 +938,6 @@ class StreamAuditor(AbstractCapability[Any]):
 
 Matching against [`ToolCallEvent`][pydantic_ai.messages.ToolCallEvent] and [`ToolResultEvent`][pydantic_ai.messages.ToolResultEvent] handles both function tool calls ([`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] / [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]) and output tool calls ([`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] / [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent]). Match against the specific subclass when you need to treat them differently.
 
-!!! note "Migration from `FunctionToolCallEvent` / `FunctionToolResultEvent`"
-    For output tool calls, match `OutputToolCallEvent` / `OutputToolResultEvent` (or the shared `ToolCallEvent` / `ToolResultEvent` bases). `FunctionToolCallEvent` / `FunctionToolResultEvent` will stop firing for output tool calls in v2.
-
 For building web UIs that transform streamed events into protocol-specific formats (like SSE), see the [UI event streams](ui/overview.md) documentation and the [`UIEventStream`][pydantic_ai.ui.UIEventStream] base class.
 
 #### Error hooks
@@ -914,7 +1005,7 @@ Capabilities can resolve [deferred tool calls](deferred-tools.md) — calls that
 |---|---|---|
 | [`handle_deferred_tool_calls`][pydantic_ai.capabilities.AbstractCapability.handle_deferred_tool_calls] | `(ctx: RunContext, *, requests: DeferredToolRequests) -> DeferredToolResults \| None` | Resolve some or all pending approval/external calls inline |
 
-Multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output for the caller to handle.
+Multiple capabilities can each handle a subset: dispatch accumulates results across the chain, passing only the still-unresolved requests to the next capability. Returning `None` (or a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] with no entries) declines handling. Anything still unresolved bubbles up as a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output for the caller to handle.
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](deferred-tools.md#resolving-deferred-calls-with-a-handler).
 

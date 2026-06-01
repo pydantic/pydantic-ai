@@ -253,10 +253,7 @@ _(This example is complete, it can be run "as is")_
 
 In addition to per-tool `prepare` methods, you can also define an agent-wide `prepare_tools` function. This function is called at each step of a run and allows you to filter or modify the list of all tool definitions available to the agent for that step. This is especially useful if you want to enable or disable multiple tools at once, or apply global logic based on the current context.
 
-The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step).
-
-!!! warning
-    Returning `None` from the callback disables **all** tools for that step and emits a `PydanticAIDeprecationWarning`; it is not a "pass through unchanged" shortcut. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools intentionally.
+The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns the tool definitions to expose for that step. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools.
 
 !!! note
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
@@ -273,8 +270,8 @@ from pydantic_ai.models.test import TestModel
 
 
 async def turn_on_strict_if_openai(
-    ctx: RunContext[None], tool_defs: list[ToolDefinition]
-) -> list[ToolDefinition] | None:
+    ctx: RunContext, tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition]:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
@@ -315,7 +312,7 @@ def launch_potato(target: str) -> str:
 
 async def filter_out_tools_by_name(
     ctx: RunContext[bool], tool_defs: list[ToolDefinition]
-) -> list[ToolDefinition] | None:
+) -> list[ToolDefinition]:
     if ctx.deps:
         return [tool_def for tool_def in tool_defs if tool_def.name != 'launch_potato']
     return tool_defs
@@ -402,14 +399,14 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
 
 
-class RequireFirstCall(AbstractCapability[None]):
+class RequireFirstCall(AbstractCapability):
     """Force `tool_name` to be called successfully before anything else."""
 
     def __init__(self, tool_name: str) -> None:
         self.tool_name = tool_name
 
     def get_model_settings(self):
-        def settings(ctx: RunContext[None]) -> ModelSettings:
+        def settings(ctx: RunContext) -> ModelSettings:
             called = any(
                 isinstance(part, ToolReturnPart) and part.tool_name == self.tool_name
                 for message in ctx.messages
@@ -566,8 +563,51 @@ The validation result is exposed via the `args_valid` field on [`FunctionToolCal
 
 ### Parallel tool calls & concurrency
 
-When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`.
-If a tool requires sequential/serial execution, you can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering the tool, or wrap the agent run in the [`with agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] context manager.
+When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`, executing them in the order the model emitted them.
+
+To stop a specific tool from overlapping with others, mark it `sequential=True` — it then acts as a barrier: tools the model emitted before it finish first, it runs alone, and tools emitted after it start only once it finishes.
+
+```python {title="sequential_tool.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+agent = Agent()
+
+calls: list[str] = []
+
+
+@agent.tool_plain
+def fetch_record(record_id: int) -> str:
+    calls.append(f'fetch_record({record_id})')
+    return f'record-{record_id}'
+
+
+@agent.tool_plain(sequential=True)
+def write_to_database(record: str) -> str:
+    calls.append(f'write_to_database({record!r})')
+    return 'written'
+
+
+def call_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:  # first request: ask for both tools at once
+        return ModelResponse(
+            parts=[
+                ToolCallPart('fetch_record', {'record_id': 1}),
+                ToolCallPart('write_to_database', {'record': 'data'}),
+            ]
+        )
+    return ModelResponse(parts=[TextPart('done')])
+
+
+result = agent.run_sync('store the record', model=FunctionModel(call_tools))
+print(result.output)
+#> done
+# `write_to_database` waited for `fetch_record` to finish before running.
+print(calls)
+#> ['fetch_record(1)', "write_to_database('data')"]
+```
+
+You can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering any function tool, and the same barrier is available for [output tools](output.md#tool-output) via [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] (see [Controlling output tool parallelism](output.md#controlling-output-tool-parallelism)). To run an entire run's tools serially regardless of which tools were called, wrap the run in the [`with agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] context manager, or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
@@ -603,9 +643,9 @@ async def lifespan(app):
 #### Output Tool Calls
 
 When a model calls an [output tool](output.md#tool-output) in parallel with other tools, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] parameter controls how these tool calls are executed.
-The `'graceful'` strategy ensures all function tools are executed even after a final result is found, while skipping remaining output tools. The `'exhaustive'` strategy goes further and also executes all output tools. Both are useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
+The default `'graceful'` strategy ensures all function tools are executed even after a final result is found, while skipping remaining output tools. The `'exhaustive'` strategy goes further and also executes all output tools. Both are useful when tools have side effects (like logging, sending notifications, or updating metrics) that should always execute.
 
-For more information on how `end_strategy` works with both function tools and output tools, see the [Output Tool](output.md#parallel-output-tool-calls) docs.
+For more information on how `end_strategy` works with both function tools and output tools, see [Parallel Output Tool Calls](output.md#parallel-output-tool-calls).
 
 ## Tool Search
 
@@ -619,7 +659,7 @@ Reach for it when:
 
 Skip it when you have a small, hot toolset where every tool is used most turns — deferring everything would just add a discovery round-trip for no benefit. As a rule of thumb, keep your handful of most-used tools eagerly loaded; defer the long tail.
 
-To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [MCP servers](mcp/client.md) and [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
+To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
@@ -650,9 +690,9 @@ For MCP servers, use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.d
 
 ```python {title="tool_search_mcp.py" lint="skip" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerHTTP
+from pydantic_ai.mcp import MCPToolset
 
-mcp = MCPServerHTTP('http://localhost:8000/mcp')
+mcp = MCPToolset('http://localhost:8000/mcp')
 agent = Agent('anthropic:claude-sonnet-4-6', toolsets=[mcp.defer_loading()])
 ```
 
@@ -669,7 +709,7 @@ from pydantic_ai.tools import ToolDefinition
 
 
 def fuzzy_search(
-    ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+    ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]
 ) -> list[str]:
     """Match tools whose name or description contains any query word."""
     needles = [n for q in queries for n in q.lower().split()]

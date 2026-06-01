@@ -53,14 +53,19 @@ from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CompactionPart,
     InstructionPart,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool
+from pydantic_ai.native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
+    CodeExecutionTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
@@ -149,12 +154,6 @@ pytestmark = [
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
@@ -605,8 +604,8 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
         model_name, provider=AnthropicProvider(anthropic_client=_mock_anthropic_client(client_cls, base_url))
     )
     assert m.model_name == model_name
-    assert m.profile.supports_json_schema_output is True
-    assert ToolSearchTool in m.profile.supported_native_tools
+    assert m.profile.get('supports_json_schema_output', False) is True
+    assert ToolSearchTool in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
 def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:
@@ -5793,182 +5792,6 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 """
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "San Francisco weather today"}',
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '6 days ago',
-                            'title': 'San Francisco, CA Weather Forecast | AccuWeather',
-                            'type': 'web_search_result',
-                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '6 days ago',
-                            'title': '10-Day Weather Forecast for San Francisco, CA - The Weather Channel | weather.com',
-                            'type': 'web_search_result',
-                            'url': 'https://weather.com/weather/tenday/l/San+Francisco+CA+USCA0987:1:US',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Weather Forecast and Conditions for San Francisco, CA - The Weather Channel | Weather.com',
-                            'type': 'web_search_result',
-                            'url': 'https://weather.com/weather/today/l/USCA0987:1:US',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA 10-Day Weather Forecast | Weather Underground',
-                            'type': 'web_search_result',
-                            'url': 'https://www.wunderground.com/forecast/us/ca/san-francisco',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 week ago',
-                            'title': 'National Weather Service',
-                            'type': 'web_search_result',
-                            'url': 'https://forecast.weather.gov/MapClick.php?lat=37.7771&lon=-122.4196',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 week ago',
-                            'title': 'San Francisco Bay Area weather forecast – NBC Bay Area',
-                            'type': 'web_search_result',
-                            'url': 'https://www.nbcbayarea.com/weather/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA Current Weather - The Weather Network',
-                            'type': 'web_search_result',
-                            'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current?_guid_iss_=1',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '6 days ago',
-                            'title': 'San Francisco, CA Weather Conditions | Weather Underground',
-                            'type': 'web_search_result',
-                            'url': 'https://www.wunderground.com/weather/us/ca/san-francisco',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA Hourly Weather Forecast | Weather Underground',
-                            'type': 'web_search_result',
-                            'url': 'https://www.wunderground.com/hourly/us/ca/san-francisco',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 week ago',
-                            'title': 'Live Doppler 7 | Bay Area Weather News - ABC7 San Francisco',
-                            'type': 'web_search_result',
-                            'url': 'https://abc7news.com/weather/',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01FYcUbzEaqqQh1WBRj1QX3h',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "San Francisco weather September 16 2025"}',
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco weather in September 2025 | Weather25.com',
-                            'type': 'web_search_result',
-                            'url': 'https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Weather in San Francisco in September 2025 (California) - detailed Weather Forecast for a month',
-                            'type': 'web_search_result',
-                            'url': 'https://world-weather.info/forecast/usa/san_francisco/september-2025/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, CA Monthly Weather | AccuWeather',
-                            'type': 'web_search_result',
-                            'url': 'https://www.accuweather.com/en/us/san-francisco/94103/september-weather/347629',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Weather San Francisco in September 2025: Temperature & Climate',
-                            'type': 'web_search_result',
-                            'url': 'https://en.climate-data.org/north-america/united-states-of-america/california/san-francisco-385/t/september-9/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco weather in September 2025 | California',
-                            'type': 'web_search_result',
-                            'url': 'https://www.weather2travel.com/california/san-francisco/september/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco, Weather for September, USA',
-                            'type': 'web_search_result',
-                            'url': 'https://www.holiday-weather.com/san_francisco/averages/september/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Monthly Weather Forecast for San Francisco, CA - weather.com',
-                            'type': 'web_search_result',
-                            'url': 'https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '3 weeks ago',
-                            'title': 'September 2025 Weather - San Francisco',
-                            'type': 'web_search_result',
-                            'url': 'https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'San Francisco Weather in September | Thomas Cook',
-                            'type': 'web_search_result',
-                            'url': 'https://www.thomascook.com/holidays/weather/usa/california/san-francisco/september/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 days ago',
-                            'title': IsStr(),
-                            'type': 'web_search_result',
-                            'url': 'https://www.sfchronicle.com/weather-forecast/article/weather-forecast-san-francisco-21043269.php',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01FDqc7ruGpVRoNuD5G6jkUx',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
-            ),
         ]
     )
 
@@ -7849,31 +7672,6 @@ Following the standard **order of operations (PEMDAS/BODMAS)** — multiplicatio
 """
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"command": "echo \\"65465-6544 * 65464-6+1.02255\\" | bc -l"}',
-                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={
-                        'content': [],
-                        'return_code': 0,
-                        'stderr': '',
-                        'stdout': '-428330955.97745\n',
-                        'type': 'bash_code_execution_result',
-                    },
-                    tool_call_id='srvtoolu_01MwXaweAHve88x6s3Fc8x6Q',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
-                )
-            ),
         ]
     )
 
@@ -9120,74 +8918,6 @@ Everything looks perfect! The file contains the text you specified.\
 """
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
-                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"command": "view", "path": "/tmp/hello.txt"}',
-                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
-                    tool_call_id='srvtoolu_01Xd8YZU6yAcvd5JbLCTRfFi',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={
-                        'error_code': 'unavailable',
-                        'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
-                        'type': 'text_editor_code_execution_tool_result_error',
-                    },
-                    tool_call_id='srvtoolu_01F3VxYFjEyogm8Ynuc75zfs',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"command": "view", "path": "/tmp/hello.txt"}',
-                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={
-                        'content': 'Hello, world!',
-                        'file_type': 'text',
-                        'num_lines': 1,
-                        'start_line': 1,
-                        'total_lines': 1,
-                        'type': 'text_editor_code_execution_view_result',
-                    },
-                    tool_call_id='srvtoolu_01UZ1EtACaBJ87pPA9guaxHU',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                )
-            ),
         ]
     )
 
@@ -10138,182 +9868,6 @@ These stories represent major international diplomatic developments, significant
 """
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "top world news today"}',
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'World news - breaking news, video, headlines and opinion | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Breaking News, World News and Video from Al Jazeera',
-                            'type': 'web_search_result',
-                            'url': 'https://www.aljazeera.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'News: U.S. and World News Headlines : NPR',
-                            'type': 'web_search_result',
-                            'url': 'https://www.npr.org/sections/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '7 hours ago',
-                            'title': 'NBC News - Breaking News & Top Stories - Latest World, US & Local News | NBC News',
-                            'type': 'web_search_result',
-                            'url': 'https://www.nbcnews.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '3 hours ago',
-                            'title': 'Breaking News, Latest News and Videos | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '14 hours ago',
-                            'title': "World news: Latest news, breaking news, today's news stories from around the world, updated daily from CBS News",
-                            'type': 'web_search_result',
-                            'url': 'https://www.cbsnews.com/world/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'International News | Latest World News, Videos & Photos -ABC News - ABC News',
-                            'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/International',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Google News',
-                            'type': 'web_search_result',
-                            'url': 'https://news.google.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 days ago',
-                            'title': 'World News Headlines - US News and World Report',
-                            'type': 'web_search_result',
-                            'url': 'https://www.usnews.com/news/world',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '2 hours ago',
-                            'title': 'Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos',
-                            'type': 'web_search_result',
-                            'url': 'https://www.foxnews.com/',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01NcU4XNwyxWK6a9tcJZ8wGY',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args='{"query": "breaking news headlines August 14 2025"}',
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
-                    provider_name='anthropic',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=[
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Breaking News, Latest News and Videos | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://edition.cnn.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'News: U.S. and World News Headlines : NPR',
-                            'type': 'web_search_result',
-                            'url': 'https://www.npr.org/sections/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'ABC News – Breaking News, Latest News and Videos',
-                            'type': 'web_search_result',
-                            'url': 'https://abcnews.go.com/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '4 hours ago',
-                            'title': 'Newspaper headlines: Thursday, August 14, 2025 - Adomonline.com',
-                            'type': 'web_search_result',
-                            'url': 'https://www.adomonline.com/newspaper-headlines-thursday-august-14-2025/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Global News - Breaking International News And Headlines | Inquirer.net',
-                            'type': 'web_search_result',
-                            'url': 'https://globalnation.inquirer.net',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'News – The White House',
-                            'type': 'web_search_result',
-                            'url': 'https://www.whitehouse.gov/news/',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '1 hour ago',
-                            'title': 'Latest News: Top News, Breaking News, LIVE News Headlines from India & World | Business Standard',
-                            'type': 'web_search_result',
-                            'url': 'https://www.business-standard.com/latest-news',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': '10 hours ago',
-                            'title': 'Ukraine News Today: Breaking Updates & Live Coverage - August 14, 2025 from Kyiv Post',
-                            'type': 'web_search_result',
-                            'url': 'https://www.kyivpost.com/thread/58085',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': 'July 14, 2025',
-                            'title': '5 things to know for July 14: Immigration, Gaza, Epstein files, Kentucky shooting, Texas flooding | CNN',
-                            'type': 'web_search_result',
-                            'url': 'https://www.cnn.com/2025/07/14/us/5-things-to-know-for-july-14-immigration-gaza-epstein-files-kentucky-shooting-texas-flooding',
-                        },
-                        {
-                            'encrypted_content': IsStr(),
-                            'page_age': None,
-                            'title': 'Daily Show for July 14, 2025 | Democracy Now!',
-                            'type': 'web_search_result',
-                            'url': 'https://www.democracynow.org/shows/2025/7/14',
-                        },
-                    ],
-                    tool_call_id='srvtoolu_01WiP3ZfXZXSykVQEL78XJ4T',
-                    timestamp=IsDatetime(),
-                    provider_name='anthropic',
-                )
-            ),
         ]
     )
 
@@ -10739,6 +10293,10 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
     Verifies multi-turn caching works: result2 passes message_history from result1,
     and the API accepts cache_control with TTL without error.
     """
+    # `AsyncAnthropicBedrock`'s SigV4 signer imports `botocore` at request-prep time, which only
+    # ships under the `bedrock` extra (not in the default `pydantic-ai` install on v2).
+    pytest.importorskip('botocore')
+
     from anthropic import AsyncAnthropicBedrock
 
     bedrock_client = AsyncAnthropicBedrock(

@@ -8,7 +8,6 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
 from pydantic import ValidationError
-from typing_extensions import deprecated
 
 from . import messages as _messages
 from ._output import (
@@ -109,14 +108,6 @@ class ToolManager(Generic[AgentDepsT]):
         finally:
             _parallel_execution_mode_ctx_var.reset(token)
 
-    @classmethod
-    @contextmanager
-    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
-    def sequential_tool_calls(cls) -> Iterator[None]:
-        """Run tool calls sequentially during the context."""
-        with cls.parallel_execution_mode('sequential'):
-            yield
-
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
         if self.ctx is not None:
@@ -152,20 +143,24 @@ class ToolManager(Generic[AgentDepsT]):
 
         return [tool.tool_def for tool in self.tools.values()]
 
-    def get_parallel_execution_mode(self, calls: list[ToolCallPart]) -> ParallelExecutionMode:
-        """Get the effective parallel execution mode for a list of tool calls.
+    def get_parallel_execution_mode(self) -> ParallelExecutionMode:
+        """Get the run-scoped parallel execution mode set via [`parallel_execution_mode`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode].
 
-        This takes into account both the context variable and whether any tool
-        has `sequential=True` set. If any tool requires sequential execution,
-        returns `'sequential'` regardless of the context variable.
+        Per-tool `sequential=True` barriers are applied separately during execution and don't
+        affect this run-scoped mode: a single barrier tool no longer forces the whole batch
+        serial (the v1 behavior). Use `parallel_execution_mode('sequential')` to opt the entire
+        run into serial execution.
         """
-        # Check if any tool requires sequential execution
-        if any(tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))):
-            return 'sequential'
+        return _parallel_execution_mode_ctx_var.get()
 
-        mode = _parallel_execution_mode_ctx_var.get()
+    def is_sequential(self, call: ToolCallPart) -> bool:
+        """Whether a tool call must run as a barrier (`sequential=True`), executing alone.
 
-        return mode
+        Tools emitted before a barrier complete first; the barrier runs by itself; tools emitted
+        after it start only once it finishes. Other tools parallelize around it.
+        """
+        tool_def = self.get_tool_def(call.tool_name)
+        return tool_def is not None and tool_def.sequential
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -9,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -155,39 +153,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        # If a subclass overrides only the deprecated `get_builtin_tools()` method (and not
-        # the new `get_native_tools()`), wire the legacy override through so the framework
-        # still picks up the user's declared tools — with a warning at class creation time.
-        own = cls.__dict__
-        if 'get_builtin_tools' in own and 'get_native_tools' not in own:
-            warnings.warn(
-                f'{cls.__name__} overrides `get_builtin_tools()`, which is deprecated — '
-                'override `get_native_tools()` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            # Promote the legacy override to be this class's `get_native_tools`, and replace
-            # its `get_builtin_tools` with a stub that warns and delegates to the modern
-            # method. This keeps the mixed-generation MRO case working: a further subclass
-            # overriding only `get_native_tools()` still wins on a legacy-name call, because
-            # `Sub.get_builtin_tools()` resolves to the delegating stub installed here,
-            # which routes to `self.get_native_tools()` (modern override on `Sub`).
-            cls.get_native_tools = own['get_builtin_tools']
-
-            def _get_builtin_tools_delegating(
-                self: AbstractCapability[Any],
-            ) -> Sequence[AgentNativeTool[Any]]:
-                warnings.warn(
-                    '`AbstractCapability.get_builtin_tools()` is deprecated, use `get_native_tools()` instead.',
-                    PydanticAIDeprecationWarning,
-                    stacklevel=2,
-                )
-                return self.get_native_tools()
-
-            cls.get_builtin_tools = _get_builtin_tools_delegating
-
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
 
@@ -277,15 +242,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         """Return native tools to register with the agent."""
         return []
-
-    def get_builtin_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
-        """Deprecated: use [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] instead."""
-        warnings.warn(
-            '`AbstractCapability.get_builtin_tools()` is deprecated, use `get_native_tools()` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return self.get_native_tools()
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.

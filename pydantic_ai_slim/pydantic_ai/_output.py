@@ -18,7 +18,6 @@ from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
-    DeferredToolRequests,
     NativeOutput,
     OutputContext,
     OutputDataT,
@@ -32,7 +31,7 @@ from .output import (
     ToolOutput,
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
-from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
+from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
@@ -1432,12 +1431,14 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            sequential = False
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
                 tool_max_retries = output.max_retries
+                sequential = output.sequential
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -1474,6 +1475,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict=object_def.strict,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
                 kind='output',
+                sequential=sequential,
             )
             processors[name] = processor
             tool_defs.append(tool_def)

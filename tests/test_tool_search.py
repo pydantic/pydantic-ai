@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
@@ -57,8 +57,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchTool
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
@@ -249,7 +250,7 @@ def _extract_search_args(result: AgentRunResult[str]) -> list[dict[str, str]]:
     return args_list
 
 
-def _build_agent(model_name: str) -> Agent[None, str]:
+def _build_agent(model_name: str) -> Agent[object, str]:
     """Build an agent with a visible tool and several deferred tools for testing.
 
     Forces the local `search_tools` function-tool path on every provider by removing
@@ -263,12 +264,15 @@ def _build_agent(model_name: str) -> Agent[None, str]:
     setattr(
         model,
         'profile',
-        replace(
+        merge_profile(
             model.profile,
-            supported_native_tools=model.profile.supported_native_tools - {ToolSearchTool},
+            ModelProfile(
+                supported_native_tools=model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+                - {ToolSearchTool}
+            ),
         ),
     )
-    agent: Agent[None, str] = Agent(model=model)
+    agent = Agent(model=model)
 
     @agent.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -448,12 +452,6 @@ _CASES = [
 
 @pytest.mark.skipif(not evals_available(), reason='pydantic-evals not installed')
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 @pytest.mark.parametrize(
     'case',
     [pytest.param(c, id=c.model_name.split(':')[0], marks=c.marks) for c in _CASES],
@@ -508,8 +506,8 @@ def _build_run_context(
     )
 
 
-def _create_function_toolset() -> FunctionToolset[None]:
-    toolset: FunctionToolset[None] = FunctionToolset()
+def _create_function_toolset() -> FunctionToolset:
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -639,7 +637,7 @@ async def test_tool_search_toolset_search_matches_description():
 
 
 async def test_tool_search_toolset_prefers_specific_term_matches():
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def github_get_me() -> str:  # pragma: no cover
@@ -669,7 +667,7 @@ async def test_tool_search_toolset_prefers_specific_term_matches():
 
 
 async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def stock_price() -> str:  # pragma: no cover
@@ -699,7 +697,7 @@ async def test_tool_search_toolset_keeps_lower_scoring_matches_after_top_hits():
 
 
 async def test_tool_search_toolset_does_not_match_substrings_inside_words():
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def github_get_me() -> str:  # pragma: no cover
@@ -767,7 +765,7 @@ async def test_tool_search_toolset_search_non_tokenizable_query(query: str):
 
 async def test_tool_search_toolset_max_results():
     """Test that results are capped at `_MAX_SEARCH_RESULTS` (10)."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     for i in range(15):
 
@@ -857,7 +855,7 @@ async def test_tool_search_toolset_keeps_search_tool_after_all_discovered():
 
 async def test_tool_search_toolset_reserved_name_collision():
     """Test that `UserError` is raised if a tool is named 'search_tools' and deferred tools exist."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain
     def search_tools(query: str) -> str:  # pragma: no cover
@@ -878,7 +876,7 @@ async def test_tool_search_toolset_reserved_name_collision():
 
 async def test_tool_search_toolset_no_deferred_tools_returns_all():
     """Test that when there are no deferred tools, all tools are returned without search_tools."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -957,7 +955,7 @@ async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     searchable = ToolSearchToolset(wrapped=toolset)
     ctx = _build_run_context(None)
 
-    tool_manager = ToolManager[None](searchable)
+    tool_manager = ToolManager(searchable)
     run_step_toolset = await tool_manager.for_run_step(ctx)
 
     managed_names = {t.name for t in run_step_toolset.tool_defs if t.with_native == 'tool_search'}
@@ -982,7 +980,7 @@ async def test_tool_manager_with_tool_search_toolset_marks_corpus():
 
 async def test_tool_search_toolset_tool_with_none_description():
     """Test that tools with None description are handled correctly in search."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def no_desc_tool() -> str:  # pragma: no cover
@@ -1031,7 +1029,7 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
 
 async def test_function_toolset_all_deferred():
     """Test FunctionToolset with all tools having defer_loading=True."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def deferred_tool1() -> str:  # pragma: no cover
@@ -1104,7 +1102,7 @@ async def test_deferred_loading_toolset_marks_all_tools():
     on every tool. After wrapping with `ToolSearchToolset`, all of them appear under
     their real name with `defer_loading=True` (visibility hidden until discovered).
     `search_tools` is the only directly-callable tool up front."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain
     def tool_a() -> str:  # pragma: no cover
@@ -1129,7 +1127,7 @@ async def test_deferred_loading_toolset_marks_all_tools():
 async def test_deferred_loading_toolset_marks_specific_tools():
     """`DeferredLoadingToolset` with explicit names only flips `defer_loading=True`
     on the listed tools; others stay visible."""
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain
     def tool_a() -> str:  # pragma: no cover
@@ -1190,7 +1188,7 @@ async def test_tool_search_toolset_custom_search_fn_is_used():
     """A custom `search_fn` replaces the default keyword-matching algorithm."""
     calls: list[Sequence[str]] = []
 
-    def custom_search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+    def custom_search(ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
         calls.append(queries)
         # Pick anything with 'price' in the name, regardless of query tokens.
         return [t.name for t in tools if 'price' in t.name]
@@ -1219,7 +1217,7 @@ async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
     `Model.prepare_request`, not here."""
 
     def custom_search(
-        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+        ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]
     ) -> list[str]:  # pragma: no cover
         return []
 
@@ -1235,12 +1233,6 @@ async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 async def test_anthropic_native_tool_search_round_trip(allow_model_requests: None, anthropic_api_key: str) -> None:
     """End-to-end against live Anthropic: native BM25 server-side tool search
     populates `NativeToolCallPart` / `NativeToolReturnPart`, the model invokes
@@ -1251,7 +1243,7 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     pytest.importorskip('anthropic')
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent: Agent[None, str] = Agent(model=model)
+    agent = Agent(model=model)
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
@@ -1328,15 +1320,13 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
     gets unlocked for the next turn."""
     pytest.importorskip('anthropic')
 
-    def match_exchange_rate(
-        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
-    ) -> list[str]:
+    def match_exchange_rate(ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
         # replay doesn't depend on the exact keywords the model picks.
         return ['get_exchange_rate']
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent: Agent[None, str] = Agent(
+    agent = Agent(
         model=model,
         capabilities=[ToolSearch(strategy=match_exchange_rate)],
     )
@@ -1412,8 +1402,6 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
 async def test_anthropic_promotes_local_search_history_round_trip(
     allow_model_requests: None, anthropic_api_key: str
 ) -> None:
@@ -1427,7 +1415,7 @@ async def test_anthropic_promotes_local_search_history_round_trip(
     pytest.importorskip('anthropic')
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
+    agent = Agent(model=model, capabilities=[ToolSearch()])
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
@@ -1512,8 +1500,6 @@ async def test_anthropic_promotes_local_search_history_round_trip(
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
 async def test_openai_promotes_local_search_history_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end against live OpenAI: a turn with local-shape `ToolSearch*Part`
     history runs cleanly on OpenAI Responses. The adapter promotes the local-shape
@@ -1523,7 +1509,7 @@ async def test_openai_promotes_local_search_history_round_trip(allow_model_reque
     pytest.importorskip('openai')
 
     model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
+    agent = Agent(model=model, capabilities=[ToolSearch()])
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
@@ -1597,7 +1583,7 @@ async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests:
     pytest.importorskip('anthropic')
 
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
+    agent = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:  # pragma: no cover
@@ -1656,7 +1642,7 @@ async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_req
     )
     mock_client = MockAnthropic.create_mock(response)
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
+    agent = Agent(model=model, capabilities=[ToolSearch(strategy='regex')])
 
     @agent.tool_plain(defer_loading=True)
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -1741,7 +1727,7 @@ async def test_anthropic_drops_orphaned_tool_search_call_on_replay(allow_model_r
     )
     mock_client = MockAnthropic.create_mock(response)
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
+    agent = Agent(model=model, capabilities=[ToolSearch()])
 
     @agent.tool_plain
     def send_status(message: str) -> str:  # pragma: no cover
@@ -1791,7 +1777,7 @@ async def test_anthropic_cache_tool_definitions_skips_deferred_tools(allow_model
     )
     mock_client = MockAnthropic.create_mock(response)
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent: Agent[None, str] = Agent(
+    agent = Agent(
         model=model,
         capabilities=[ToolSearch()],
         model_settings=AnthropicModelSettings(anthropic_cache_tool_definitions=True),
@@ -1831,7 +1817,7 @@ async def test_anthropic_cache_tool_definitions_skips_when_all_tools_deferred(al
     )
     mock_client = MockAnthropic.create_mock(response)
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent: Agent[None, str] = Agent(
+    agent = Agent(
         model=model,
         capabilities=[ToolSearch()],
         model_settings=AnthropicModelSettings(anthropic_cache_tool_definitions=True),
@@ -1862,7 +1848,7 @@ async def test_openai_rejects_anthropic_named_strategy(allow_model_requests: Non
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch(strategy='bm25')])
+    agent = Agent(model=model, capabilities=[ToolSearch(strategy='bm25')])
 
     @agent.tool_plain(defer_loading=True)
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -1944,7 +1930,7 @@ async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_req
     )
     mock_client = MockOpenAIResponses.create_mock(followup)
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
+    agent = Agent(model=model, capabilities=[ToolSearch()])
 
     @agent.tool_plain(defer_loading=True)
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -2086,12 +2072,6 @@ def test_openai_map_tool_search_call_unit():
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 async def test_openai_native_tool_search_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end against live OpenAI Responses: native server-executed `tool_search`
     populates `NativeToolCallPart` / `NativeToolReturnPart`, the model invokes the
@@ -2100,7 +2080,7 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None, 
     """
 
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-    agent: Agent[None, str] = Agent(model=model)
+    agent = Agent(model=model)
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
@@ -2176,15 +2156,13 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     local `search_tools` function, and the resulting `ToolReturnPart` is replayed
     as a `tool_search_output` (execution='client') carrying the discovered tool defs."""
 
-    def match_exchange_rate(
-        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
-    ) -> list[str]:
+    def match_exchange_rate(ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
         # replay doesn't depend on the exact keywords the model picks.
         return ['get_exchange_rate']
 
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-    agent: Agent[None, str] = Agent(
+    agent = Agent(
         model=model,
         instructions=(
             'When you need a capability not provided by your visible tools, call the built-in '
@@ -2254,12 +2232,6 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 async def test_anthropic_native_tool_search_streaming(allow_model_requests: None, anthropic_api_key: str) -> None:
     """End-to-end streaming against live Anthropic: native BM25 server-side tool search
     streams `NativeToolSearchCallPart` / `NativeToolSearchReturnPart` through the part
@@ -2268,7 +2240,7 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
     pytest.importorskip('anthropic')
 
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent: Agent[None, str] = Agent(model=model)
+    agent = Agent(model=model)
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
@@ -2319,12 +2291,6 @@ async def test_anthropic_native_tool_search_streaming(allow_model_requests: None
 
 
 @pytest.mark.vcr
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-)
-@pytest.mark.filterwarnings(
-    'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-)
 async def test_openai_native_tool_search_streaming(allow_model_requests: None, openai_api_key: str) -> None:
     """End-to-end streaming against live OpenAI Responses: native server-executed
     `tool_search` streams `NativeToolSearchCallPart` / `NativeToolSearchReturnPart`
@@ -2333,7 +2299,7 @@ async def test_openai_native_tool_search_streaming(allow_model_requests: None, o
     text response."""
 
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-    agent: Agent[None, str] = Agent(model=model)
+    agent = Agent(model=model)
 
     @agent.tool_plain(defer_loading=True)
     def get_exchange_rate(from_currency: str, to_currency: str) -> str:
@@ -2385,15 +2351,13 @@ async def test_openai_client_tool_search_streaming(allow_model_requests: None, o
     callable strategy, the model follows up with the discovered deferred tool, and
     the run completes with a final text response."""
 
-    def match_exchange_rate(
-        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
-    ) -> list[str]:
+    def match_exchange_rate(ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
         # Deterministic: always point the model at `get_exchange_rate` so the cassette
         # replay doesn't depend on the exact keywords the model picks.
         return ['get_exchange_rate']
 
     model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-    agent: Agent[None, str] = Agent(
+    agent = Agent(
         model=model,
         instructions=(
             'When you need a capability not provided by your visible tools, call the built-in '
@@ -2475,7 +2439,7 @@ async def test_agent_graph_without_builtin_tools(allow_model_requests: None, mon
     """
 
     monkeypatch.setattr(agent_module, '_AUTO_INJECT_CAPABILITY_TYPES', ())
-    agent: Agent[None, str] = Agent('test')
+    agent = Agent('test')
     result = await agent.run('hi')
     assert isinstance(result.output, str)
 
@@ -2506,7 +2470,7 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
 async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
     """Names returned by `search_fn` that aren't in the deferred set are discarded."""
 
-    def custom_search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+    def custom_search(ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
         return ['stock_price', 'not_a_real_tool', 'crypto_price']
 
     toolset = _create_function_toolset()
@@ -2526,7 +2490,7 @@ async def test_tool_search_toolset_custom_search_fn_filters_unknown_names():
 async def test_tool_search_toolset_custom_search_fn_no_matches():
     """Custom search function returning no names produces the 'no matches' message."""
 
-    def custom_search(ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+    def custom_search(ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
         return []
 
     toolset = _create_function_toolset()
@@ -2547,9 +2511,7 @@ async def test_tool_search_capability_strategy_callable_registers_custom_builtin
     `tool_reference` result blocks, OpenAI's `execution='client'`) can use it; models
     without support drop it as optional and fall back to the local `search_tools` tool."""
 
-    def noop(
-        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
-    ) -> list[str]:  # pragma: no cover
+    def noop(ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:  # pragma: no cover
         return []
 
     cap = ToolSearch(strategy=noop)
@@ -2629,7 +2591,7 @@ async def test_tool_search_named_strategy_agent_run_raises_on_unsupported_model(
     error on adapters that can't honor the choice; previously the toolset always
     registered the local `search_tools` function as a fallback, which masked the
     error by letting `_resolve_builtin_tool_swap` drop the optional-False builtin."""
-    agent: Agent[None, str] = Agent(TestModel(), capabilities=[ToolSearch(strategy=cast(Any, strategy))])
+    agent = Agent(TestModel(), capabilities=[ToolSearch(strategy=cast(Any, strategy))])
 
     @agent.tool_plain(defer_loading=True)
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -2643,7 +2605,7 @@ async def test_tool_search_keywords_agent_run_falls_back_on_unsupported_model():
     """Inverse of the named-strategy test: `strategy='keywords'` has a local
     implementation, so the request must fall back silently on a model without native
     tool-search support — running the agent should not raise."""
-    agent: Agent[None, str] = Agent(TestModel(), capabilities=[ToolSearch(strategy='keywords')])
+    agent = Agent(TestModel(), capabilities=[ToolSearch(strategy='keywords')])
 
     @agent.tool_plain(defer_loading=True)
     def get_weather(city: str) -> str:  # pragma: no cover
@@ -2923,7 +2885,7 @@ async def test_tool_search_toolset_protects_user_collision_on_builtin_tool_name(
     `NativeToolSearchReturnPart` instances. This is the typed-trust contract: the
     framework constructs typed subclasses; user collisions on names alone don't get
     treated as our search payload."""
-    base_toolset = FunctionToolset[None]()
+    base_toolset = FunctionToolset()
 
     history: list[ModelMessage] = [
         ModelResponse(
@@ -2974,7 +2936,7 @@ async def test_local_tool_search_stream_emits_typed_call_part_from_first_event()
         def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
             return frozenset(super().supported_native_tools()) - {ToolSearchTool}
 
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def calculate_mortgage(principal: float, rate: float, years: int) -> str:  # pragma: no cover
@@ -2998,7 +2960,7 @@ async def test_local_tool_search_stream_emits_typed_call_part_from_first_event()
 
     typed_at_start: list[bool] = []
 
-    async def event_stream_handler(_ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async def event_stream_handler(_ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in stream:
             if (
                 isinstance(event, PartStartEvent)
@@ -3026,7 +2988,7 @@ async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
     `_parse_discovered_tools`' isinstance check nor the legacy-metadata reader caught
     it, so previously-discovered tools reverted to hidden on every subsequent turn.
     """
-    toolset: FunctionToolset[None] = FunctionToolset()
+    toolset: FunctionToolset = FunctionToolset()
 
     @toolset.tool_plain(defer_loading=True)
     def calculate_mortgage(principal: float, rate: float, years: int) -> str:  # pragma: no cover
@@ -3080,7 +3042,7 @@ async def test_tool_search_toolset_replays_main_branch_legacy_shape() -> None:
 
     This is the wire shape on the `main` branch as of the merge-base.
     """
-    base_toolset = FunctionToolset[None]()
+    base_toolset = FunctionToolset()
 
     history: list[ModelMessage] = [
         ModelResponse(
@@ -3159,7 +3121,7 @@ def test_synthetic_injection_translates_builtin_to_local_tool_search_parts() -> 
     assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]}
 
     # And the toolset's parser surfaces the discovery off the translated history.
-    base_toolset = FunctionToolset[None]()
+    base_toolset = FunctionToolset()
     ts = ToolSearchToolset(wrapped=base_toolset)
     discovered = ts._parse_discovered_tools(  # pyright: ignore[reportPrivateUsage]
         cast(Any, type('_Ctx', (), {'messages': translated})()),
@@ -3222,7 +3184,7 @@ def test_prepare_messages_translates_on_non_native_model() -> None:
     splits into `ModelResponse(call) + ModelRequest(return)`."""
     # Default `TestModel` excludes `ToolSearchTool` from `supported_native_tools`.
     model = TestModel()
-    assert ToolSearchTool not in model.profile.supported_native_tools
+    assert ToolSearchTool not in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
@@ -3277,7 +3239,7 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
             return frozenset({ToolSearchTool})
 
     model = NativeToolSearchTestModel()
-    assert ToolSearchTool in model.profile.supported_native_tools
+    assert ToolSearchTool in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Find me a mortgage tool.')]),
@@ -3899,9 +3861,7 @@ def test_builtin_tool_search_return_part_message_accessor() -> None:
 async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
     """Custom search functions can be `async`; the toolset awaits them."""
 
-    async def async_match(
-        _ctx: RunContext[None], _queries: Sequence[str], tools: Sequence[ToolDefinition]
-    ) -> Sequence[str]:
+    async def async_match(_ctx: RunContext, _queries: Sequence[str], tools: Sequence[ToolDefinition]) -> Sequence[str]:
         return [t.name for t in tools]
 
     ts = ToolSearchToolset(wrapped=_create_function_toolset(), search_fn=async_match)

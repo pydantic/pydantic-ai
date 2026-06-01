@@ -176,7 +176,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -268,12 +267,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'agent.iter')
-        if extra_capabilities:
-            capabilities = [*(capabilities or ()), *extra_capabilities]
-        retries = _utils.consume_deprecated_output_retries(_deprecated_kwargs, 'agent.iter', current_retries=retries)
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         async with self.wrapped.iter(
             user_prompt=user_prompt,
             output_type=output_type,
@@ -309,7 +302,6 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-        **_deprecated_kwargs: Any,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent configuration.
 
@@ -331,15 +323,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 dict for finer control. When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec to apply as overrides.
         """
-        native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
-        # Forward the deprecated `output_retries=` kwarg as-is to the underlying override(), which
-        # warns and translates it. Drop it from our kwargs to avoid double-handling.
-        legacy_output_retries = _deprecated_kwargs.pop('output_retries', _utils.UNSET)
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
-
         forward_kwargs: dict[str, Any] = {}
-        if _utils.is_set(legacy_output_retries):
-            forward_kwargs['output_retries'] = legacy_output_retries
         if _utils.is_set(retries):
             forward_kwargs['retries'] = retries
 
