@@ -77,8 +77,9 @@ Both sync and async hook functions are accepted. Sync functions are automaticall
 [`Hooks`][pydantic_ai.capabilities.Hooks] is a capability, so it can be loaded on demand just like any other capability:
 
 ```python {title="deferred_hooks_capability.py"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
+from pydantic_ai.messages import ToolCallPart
 
 approval_hooks = Hooks(
     id='approval-hooks',
@@ -88,7 +89,13 @@ approval_hooks = Hooks(
 
 
 @approval_hooks.on.before_tool_execute
-async def require_approval(ctx, *, call, tool_def, args):
+async def require_approval(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
     # Runs only after the model loads `approval-hooks`.
     return args
 
