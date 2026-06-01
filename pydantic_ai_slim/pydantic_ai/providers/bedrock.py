@@ -62,33 +62,45 @@ _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
 class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     """Transforms schemas to the subset supported by Bedrock structured outputs.
 
-    Transformation is applied when:
-    - `NativeOutput` is used as the `output_type` of the Agent
-    - `strict=True` is set on the `Tool`
+    The transformer is applied to Bedrock tool and output schemas during request
+    customization. Strict-mode rewrites are applied when:
+    - `NativeOutput` is used as the `output_type` of the Agent. `BedrockConverseModel`
+      forces native output schemas to `strict=True` before request customization.
+    - `strict=True` is set explicitly on a Tool.
 
-    When `strict=None` (the default), simple schemas without incompatible constraints are
-    auto-promoted to `strict=True`. Schemas with any key listed in
-    `_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE` remain `strict=False`.
+    Like `AnthropicJsonSchemaTransformer`, Bedrock does not infer strict tool mode
+    from `strict=None`. Strict tool definitions are opt-in: callers must set
+    `strict=True` explicitly. This avoids silently changing large toolsets into
+    strict toolsets, which can exceed Anthropic/Bedrock's 20 strict-tools-per-request
+    limit, and avoids applying potentially lossy strict-mode schema rewrites unless
+    requested.
 
-    When `strict=True`, keys Bedrock rejects (see the module-level constant for the
-    empirically-verified list) are popped off the schema and re-emitted into the field's
+    When `strict=True`, `additionalProperties: false` is injected on objects and keys
+    Bedrock rejects are removed from the schema and re-emitted into the field's
     `description` so the model still has the hint.
     """
+
+    def walk(self) -> JsonSchema:
+        schema = super().walk()
+
+        # `_customize_tool_def()` and `_customize_output_object()` use this flag
+        # to resolve `strict=None`. For Bedrock tools, strict mode is opt-in, so
+        # only an explicit `strict=True` should resolve to strict-compatible.
+        self.is_strict_compatible = self.strict is True
+
+        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('$schema', None)
 
+        if not self.strict:
+            return schema
+
         schema_type = schema.get('type')
 
         if schema_type == 'object':
-            if self.strict:
-                schema['additionalProperties'] = False
-            elif self.strict is None:
-                if schema.get('additionalProperties', None) not in (None, False):
-                    self.is_strict_compatible = False
-                else:
-                    schema['additionalProperties'] = False
+            schema['additionalProperties'] = False
 
         incompatible: dict[str, object] = {}
         if isinstance(schema_type, str):
@@ -99,16 +111,13 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                 incompatible['minItems'] = schema['minItems']
 
         if incompatible:
-            if self.strict:
-                notes: list[str] = []
-                for key, value in incompatible.items():
-                    schema.pop(key)
-                    notes.append(f'{key}={value}')
-                notes_str = ', '.join(notes)
-                desc = schema.get('description')
-                schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
-            elif self.strict is None:
-                self.is_strict_compatible = False
+            notes: list[str] = []
+            for key, value in incompatible.items():
+                schema.pop(key)
+                notes.append(f'{key}={value}')
+            notes_str = ', '.join(notes)
+            desc = schema.get('description')
+            schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
 
         return schema
 
@@ -166,9 +175,10 @@ class BedrockModelProfile(ModelProfile):
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # Opus 4.1 supports structured output on the direct Anthropic API but is not listed
-    # in the Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = ('claude-opus-4-1',)
+    # These Opus models support structured output on the direct Anthropic API but are not listed
+    # in the Bedrock Runtime structured-output docs:
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+    bedrock_structured_output_unsupported = ('claude-opus-4-1', 'claude-opus-4-7', 'claude-opus-4-8')
     downstream = anthropic_model_profile(model_name)
     # Read anthropic_* capability flags before update() strips them: ModelProfile.update()
     # only copies fields that exist on self, so anthropic-prefixed fields would be lost.
@@ -239,10 +249,13 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
     models_that_support_structured_output = ('qwen3',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
+    # Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3 — no disable value.
+    supports_reasoning = 'qwq' in model_name or 'qwen3' in model_name
     return replace(
         BedrockModelProfile(
             bedrock_thinking_variant='qwen',
-            supports_thinking='qwq' in model_name or 'qwen3' in model_name,
+            supports_thinking=supports_reasoning,
+            thinking_always_enabled=supports_reasoning,
         ).update(_without_builtin_tools(qwen_model_profile(model_name))),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
@@ -339,9 +352,11 @@ class BedrockProvider(Provider[BaseClient]):
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
             'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            # Converse rejects `reasoning_effort='none'` — mark always-on.
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,
+                thinking_always_enabled=True,
             ),
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,

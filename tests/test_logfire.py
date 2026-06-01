@@ -928,6 +928,101 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('version', [2, 3])
+def test_prompted_output_schema_instructions_do_not_set_variable_instructions(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    version: Literal[2, 3],
+) -> None:
+    class City(BaseModel):
+        name: str
+        population: int
+
+    my_agent = Agent(
+        model=TestModel(custom_output_text='{"name":"Paris","population":2148000}'),
+        instructions='Be helpful',
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=version))],
+        output_type=PromptedOutput(City, template='Return JSON matching this schema:\n{schema}'),
+    )
+
+    result = my_agent.run_sync('Tell me about Paris')
+    assert result.output == snapshot(City(name='Paris', population=2148000))
+
+    summary = get_logfire_summary()
+    agent_run_attrs = summary.attributes[0]
+    assert 'Be helpful' in agent_run_attrs['gen_ai.system_instructions']
+    assert 'pydantic_ai.variable_instructions' not in agent_run_attrs
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [2, 3])
+def test_stable_instructions_across_tool_calls_do_not_set_variable_instructions(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    version: Literal[2, 3],
+) -> None:
+    @dataclass
+    class MyOutput:
+        content: str
+
+    my_agent = Agent(
+        model=TestModel(),
+        instructions='Be helpful',
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=version))],
+    )
+    instruction_calls = 0
+
+    @my_agent.tool_plain
+    def my_tool() -> str:
+        nonlocal instruction_calls
+        instruction_calls += 1
+        return 'tool result'
+
+    result = my_agent.run_sync('Hello', output_type=MyOutput)
+    assert result.output == MyOutput(content='a')
+    # Ensure multi-step execution occurred so instructions were compared across requests
+    assert instruction_calls >= 1
+
+    summary = get_logfire_summary()
+    assert 'pydantic_ai.variable_instructions' not in summary.attributes[0]
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [2, 3])
+def test_dynamic_instructions_toggling_from_none_sets_variable_instructions(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    version: Literal[2, 3],
+) -> None:
+    @dataclass
+    class MyOutput:
+        content: str
+
+    my_agent = Agent(
+        model=TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=version))],
+    )
+    instruction_calls = 0
+
+    @my_agent.instructions
+    def instructions(_: RunContext[None]) -> str | None:
+        nonlocal instruction_calls
+        instruction_calls += 1
+        if instruction_calls == 1:
+            return None
+        return 'This is a later step'
+
+    @my_agent.tool_plain
+    def my_tool() -> str:
+        return 'This is a tool call'
+
+    result = my_agent.run_sync('Hello', output_type=MyOutput)
+    assert result.output == MyOutput(content='a')
+    # Ensure multi-step execution occurred so instructions actually toggled
+    assert instruction_calls >= 2
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0]['pydantic_ai.variable_instructions'] is True
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [2, 3])
 def test_instructions_with_structured_output_exclude_content_v2_v3(
     get_logfire_summary: Callable[[], LogfireSummary],
     version: Literal[2, 3],

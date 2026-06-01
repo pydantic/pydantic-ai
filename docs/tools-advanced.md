@@ -255,6 +255,9 @@ In addition to per-tool `prepare` methods, you can also define an agent-wide `pr
 
 The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step).
 
+!!! warning
+    Returning `None` from the callback disables **all** tools for that step and emits a `PydanticAIDeprecationWarning`; it is not a "pass through unchanged" shortcut. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools intentionally.
+
 !!! note
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
 To modify output tools, you can set a `prepare_output_tools` function instead.
@@ -457,7 +460,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| Bedrock | `tool_choice` is a list of multiple tools |
+| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled or on a model that doesn't support forcing |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
