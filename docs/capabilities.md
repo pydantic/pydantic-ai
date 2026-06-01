@@ -62,6 +62,9 @@ Loading activates the whole bundle, not just instructions: the capability's func
 !!! note
     The `load_capability` tool name is reserved whenever any on-demand capability is present. Capability `id` values must be stable and explicit — see [Resumable across runs](#resumable-across-runs).
 
+!!! note "Deferred instructions reach client-facing message history"
+    A deferred capability's instructions come back as the `load_capability` tool *result*, so they land in the run's message history — including the copy a [UI adapter](ui/overview.md) serializes to the client. Instructions on an always-on capability stay in the server-side system prompt instead. If a capability's instructions shouldn't be exposed to the client, keep it always-on rather than deferred.
+
 ### What you can defer
 
 Every part of a capability bundle activates together as a single unit:
