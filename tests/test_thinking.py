@@ -1196,6 +1196,8 @@ class TestProfileThinkingCapabilities:
         [
             'grok-4.3',
             'grok-4.3-latest',
+            # Floating alias for the newest Grok, currently 4.3.
+            'grok-latest',
             'grok-4-1-fast-reasoning',
             'grok-4-fast-non-reasoning',
             'grok-3',

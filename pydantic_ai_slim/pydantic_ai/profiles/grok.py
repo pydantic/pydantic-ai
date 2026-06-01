@@ -15,6 +15,9 @@ _GROK_43_REASONING_MODELS = frozenset(
     (
         'grok-4.3',
         'grok-4.3-latest',
+        # `grok-latest` is xAI's floating alias for the newest Grok model, which is currently Grok 4.3,
+        # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
+        'grok-latest',
         # Retired text slugs that xAI redirects to Grok 4.3, so they accept its `reasoning_effort`
         # values. These exact six are the only slugs the retirement guide maps to Grok 4.3
         # (`grok-code-fast-1` redirects to `grok-build-0.1` instead, so it is excluded).
@@ -50,10 +53,14 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
     # The retirement-redirect slugs in `_GROK_43_REASONING_MODELS` (e.g. `grok-3`) route to Grok 4.3,
     # which supports builtin tools, so they're builtin-capable too even when the name doesn't match the
-    # `grok-4`/`code` patterns. Kept as its own flag rather than folded into reasoning-effort support:
-    # the two gate different behaviors and shouldn't be derived from a single predicate.
+    # `grok-4`/`code`/`build` patterns (the `code`/`build` coding models also support builtin tools).
+    # Kept as its own flag rather than folded into reasoning-effort support: the two gate different
+    # behaviors and shouldn't be derived from a single predicate.
     grok_supports_builtin_tools = (
-        model_name.startswith('grok-4') or 'code' in model_name or model_name in _GROK_43_REASONING_MODELS
+        model_name.startswith('grok-4')
+        or 'code' in model_name
+        or 'build' in model_name
+        or model_name in _GROK_43_REASONING_MODELS
     )
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     if model_name in _GROK_43_REASONING_MODELS:

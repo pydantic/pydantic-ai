@@ -70,11 +70,19 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
     'model_name,expected_thinking,expected_always_enabled',
     [
         ('grok-4.3', True, False),
+        ('grok-4.3-latest', True, False),
+        # `grok-latest` is the floating alias for the newest Grok (currently 4.3), so it mirrors its efforts.
+        ('grok-latest', True, False),
         ('grok-4-fast-reasoning', True, False),
         ('grok-4-fast-non-reasoning', True, False),
         ('grok-4-1-fast-non-reasoning', True, False),
-        # `grok-code-fast-1` redirects to `grok-build-0.1`, not Grok 4.3, so it gets no reasoning effort.
+        # `grok-4.20`'s effort knob controls agent count, not thinking depth, so unified thinking is unsupported.
+        ('grok-4.20', False, False),
+        ('grok-4.20-multi-agent', False, False),
+        ('grok-4.20-reasoning', False, False),
+        # `grok-code-fast-1` redirects to `grok-build-0.1`, not Grok 4.3, so they get no reasoning effort.
         ('grok-code-fast-1', False, False),
+        ('grok-build-0.1', False, False),
         ('grok-3', True, False),
         ('grok-3-mini', True, True),
         ('grok-3-mini-fast', True, True),
@@ -83,10 +91,16 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
     ],
     ids=[
         'grok-4.3',
+        'grok-4.3-latest',
+        'grok-latest',
         'grok-4-fast-reasoning',
         'grok-4-fast-non-reasoning',
         'grok-4-1-fast-non-reasoning',
+        'grok-4.20',
+        'grok-4.20-multi-agent',
+        'grok-4.20-reasoning',
         'grok-code-fast-1',
+        'grok-build-0.1',
         'grok-3',
         'grok-3-mini',
         'grok-3-mini-fast',
@@ -148,6 +162,12 @@ def test_grok_model_profile_builtin_tools() -> None:
     assert grok3_profile is not None
     assert isinstance(grok3_profile, GrokModelProfile)
     assert grok3_profile.grok_supports_builtin_tools is True
+
+    # `grok-build-0.1` is a coding model (the `grok-code-fast-1` redirect target) and supports builtin tools.
+    grok_build_profile = grok_model_profile('grok-build-0.1')
+    assert grok_build_profile is not None
+    assert isinstance(grok_build_profile, GrokModelProfile)
+    assert grok_build_profile.grok_supports_builtin_tools is True
 
     grok3_mini_profile = grok_model_profile('grok-3-mini')
     assert grok3_mini_profile is not None
