@@ -1,15 +1,15 @@
 """Agent banner display — logo, agent info, and next-steps guide.
 
-Prints a branded banner to stderr the first time an agent runs. Subsequent calls
-for the same agent instance are no-ops. Each unique agent instance gets its own
-banner.
+Prints a branded banner to stderr the first time any agent runs. Subsequent calls
+are no-ops — the banner only prints once per process, regardless of how many
+agent instances exist.
 """
 
 from __future__ import annotations
 
+import os
 import platform
 import sys
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from . import __version__
@@ -17,8 +17,8 @@ from . import __version__
 if TYPE_CHECKING:
     from .agent import Agent as _Agent
 
-# Track which agent instances have already been displayed (process-wide).
-_displayed_agent_ids: set[int] = set()
+# Track whether the banner has already been displayed (process-wide, once only).
+_banner_displayed: bool = False
 
 LOGO_PREAMBLE = r"""
 pydantic-ai v{version} • Python {python_version}
@@ -91,7 +91,7 @@ def _get_output_type_name(agent: _Agent[Any, Any]) -> str:
         ot = agent.output_type
         return getattr(ot, '__name__', str(ot))
     except Exception:
-        return 'str'
+        return '(unknown)'
 
 
 def _get_tool_names(agent: _Agent[Any, Any]) -> str:
@@ -108,27 +108,26 @@ def _get_tool_names(agent: _Agent[Any, Any]) -> str:
 def _get_logfire_status(agent: _Agent[Any, Any]) -> str:
     """Check whether Logfire instrumentation is configured."""
     try:
-        settings = agent._resolve_instrumentation_settings()
-        return 'configured' if settings is not None else 'not configured'
+        return 'configured' if agent.instrument else 'not configured'
     except Exception:
         return 'unknown'
 
 
 def display_agent_banner(agent: _Agent[Any, Any]) -> None:
-    """Display the agent banner to stderr, once per agent instance per process.
+    """Display the agent banner to stderr, once per process.
+
+    Set ``PYDANTIC_AI_HIDE_BANNER=1`` to suppress the banner.
 
     Args:
         agent: The agent to display the banner for.
     """
-    import os
-
     if os.environ.get('PYDANTIC_AI_HIDE_BANNER'):
         return
 
-    agent_id = id(agent)
-    if agent_id in _displayed_agent_ids:
+    global _banner_displayed
+    if _banner_displayed:
         return
-    _displayed_agent_ids.add(agent_id)
+    _banner_displayed = True
 
     name = agent.name or '(unnamed)'
     model = _get_model_name(agent)
@@ -136,12 +135,10 @@ def display_agent_banner(agent: _Agent[Any, Any]) -> None:
     tools = _get_tool_names(agent)
     logfire_status = _get_logfire_status(agent)
     python_version = platform.python_version()
-    timestamp = datetime.now(tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
     banner = BANNER.format(
         version=__version__,
         python_version=python_version,
-        timestamp=timestamp,
         name=name,
         model=model,
         output_type=output_type,
