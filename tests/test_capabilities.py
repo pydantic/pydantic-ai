@@ -2849,22 +2849,26 @@ async def test_load_capability_tool_name_conflict_raises() -> None:
     )
 
 
-async def test_duplicate_capability_ids_raise() -> None:
-    """Capability ids are used as a run registry, so duplicates must fail loudly."""
-    agent = Agent(
-        TestModel(),
-        capabilities=[
-            Capability[None](id='dup', description='First capability.', instructions='First.'),
-            Capability[None](id='dup', description='Second capability.', instructions='Second.'),
-        ],
-    )
-
+def test_duplicate_capability_ids_raise() -> None:
+    """Capability ids are used as a run registry, so duplicates must fail loudly — at construction."""
     with pytest.raises(UserError) as exc_info:
-        await agent.run('hi')
+        Agent(
+            TestModel(),
+            capabilities=[
+                Capability[None](id='dup', description='First capability.', instructions='First.'),
+                Capability[None](id='dup', description='Second capability.', instructions='Second.'),
+            ],
+        )
 
     assert str(exc_info.value) == snapshot(
         "Capability id 'dup' is used by multiple capabilities. Capability ids must be unique within a run."
     )
+
+
+def test_deferred_capability_without_id_raises_at_construction() -> None:
+    """A statically-provided deferred capability without an `id` fails fast at construction."""
+    with pytest.raises(UserError, match='stable explicit `id` values'):
+        Agent(TestModel(), capabilities=[Capability[None](description='No id.', defer_loading=True)])
 
 
 async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
@@ -9257,18 +9261,19 @@ async def _registered_capability_context(
     return captured_capabilities, captured_available_ids
 
 
-async def test_deferred_dataclass_capability_without_id_raises_when_registered() -> None:
-    """Deferred capabilities need stable ids, checked when capabilities are handled."""
+async def test_deferred_capability_without_id_set_after_construction_raises_at_run() -> None:
+    """`defer_loading` flipped on after construction escapes the eager check, so the run-time guard still fires."""
 
     @dataclass
     class DeferredCap(AbstractCapability[None]):
         pass
 
     cap = DeferredCap()
-    cap.defer_loading = True
-
-    assert cap.id is None
+    # Not deferred at construction, so the eager check passes; the run-time check is what catches it.
     agent = Agent(TestModel(), capabilities=[cap])
+    cap.defer_loading = True
+    assert cap.id is None
+
     with pytest.raises(UserError, match='stable explicit `id` values'):
         await agent.run('hi')
 
@@ -9318,8 +9323,8 @@ async def test_custom_init_capability_can_initialize_metadata_without_post_init(
     assert 'deferred_cap' in non_deferred_available_ids
 
 
-async def test_duplicate_explicit_capability_ids_raise_at_registration() -> None:
-    """Explicit duplicate ids are rejected by run registration."""
+async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at_run() -> None:
+    """Ids that only collide after construction escape the eager check, so run registration still rejects them."""
 
     @dataclass
     class FirstCap(AbstractCapability[None]):
@@ -9329,7 +9334,10 @@ async def test_duplicate_explicit_capability_ids_raise_at_registration() -> None
     class SecondCap(AbstractCapability[None]):
         pass
 
-    agent = Agent(TestModel(), capabilities=[FirstCap(id='same'), SecondCap(id='same')])
+    first = FirstCap(id='same')
+    second = SecondCap()  # no id at construction, so the eager check passes
+    agent = Agent(TestModel(), capabilities=[first, second])
+    second.id = 'same'  # collision introduced after construction
 
     with pytest.raises(UserError, match="Capability id 'same' is used by multiple capabilities"):
         await agent.run('hi')

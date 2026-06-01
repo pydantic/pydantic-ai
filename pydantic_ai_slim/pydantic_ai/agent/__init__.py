@@ -443,6 +443,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
 
+        # Validate the statically-provided capabilities eagerly so misconfiguration (a deferred
+        # capability without an `id`, or duplicate ids) fails fast here in `Agent(...)` instead of
+        # on the first run. Capabilities supplied per-run or resolved by `for_run` (e.g. capability
+        # functions) can only be checked at run time, in `_build_run_capabilities`.
+        static_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self._root_capability.apply(static_capabilities.append)
+        _validate_capability_ids(static_capabilities)
+
         self.model_settings = model_settings
 
         self._output_type = output_type
@@ -2932,12 +2940,22 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
             capabilities.append(cap_type())
 
 
-def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
-    capabilities: list[AbstractCapability[AgentDepsT]] = []
-    capability.apply(capabilities.append)
+def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:
+    """Validate capability `id`s and return the set of explicit ones.
 
+    Rejects deferred capabilities that lack an explicit `id` and explicit ids used by more than
+    one capability. Shared by two call sites: construction-time validation over the
+    statically-provided capabilities (so misconfiguration fails fast in `Agent(...)` rather than
+    on the first run), and run-time assembly in `_build_run_capabilities`, which also covers
+    capabilities supplied per-run or returned by `for_run` and so can't be checked at construction.
+    """
     explicit_ids: set[str] = set()
     for cap in capabilities:
+        if cap.defer_loading is True and cap.id is None:
+            raise exceptions.UserError(
+                'Deferred capabilities must use stable explicit `id` values. '
+                'Pass `id=...` when using `defer_loading=True`.'
+            )
         if cap.id is None:
             continue
         if cap.id in explicit_ids:
@@ -2946,16 +2964,18 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
                 'Capability ids must be unique within a run.'
             )
         explicit_ids.add(cap.id)
+    return explicit_ids
+
+
+def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
+    capabilities: list[AbstractCapability[AgentDepsT]] = []
+    capability.apply(capabilities.append)
+
+    explicit_ids = _validate_capability_ids(capabilities)
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
     for cap in capabilities:
         capability_id = cap.id
-        if cap.defer_loading is True and capability_id is None:
-            raise exceptions.UserError(
-                'Deferred capabilities must use stable explicit `id` values. '
-                'Pass `id=...` when using `defer_loading=True`.'
-            )
-
         if capability_id is None:
             base_id = to_snake(type(cap).__name__)
             capability_id = base_id

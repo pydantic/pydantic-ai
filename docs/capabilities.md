@@ -23,7 +23,7 @@ What you get from one flag:
 - **Better tool selection** — the model picks from a small visible toolset until it opts into a workflow, instead of disambiguating across every workflow's tools at once.
 - **Bundle-level loading** — one `load_capability` tool call activates the whole workflow: its typed function tools, per-step model settings, and lifecycle hooks, not just its instructions.
 - **No architectural change** — same agent, same run loop, same `capabilities=[...]` argument. Adding `defer_loading=True` to a capability you already register is a one-line change.
-- **Cross-provider** — works on every model. Native progressive-disclosure surfaces (Anthropic tool search, OpenAI Responses `tool_search`) are used automatically where supported; other providers get a local discovery tool with the same context-shrinking benefit.
+- **Cross-provider** — works on every model, using the provider's native progressive-disclosure surface where one exists and a local discovery tool otherwise (see [Cross-provider behavior](#cross-provider-behavior)).
 - **Resumable** — loaded state is reconstructed from message history, so a conversation persisted to a database can resume days later — or continue on a different model — with the same capabilities already loaded.
 
 ### What you can defer
@@ -104,7 +104,7 @@ Already-loaded capabilities stay loaded for the rest of the run. The model does 
 
 `defer_loading=True` is not specific to the [`Capability`][pydantic_ai.capabilities.Capability] convenience class. The shared fields live on [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability], and built-in capabilities expose `id`, `description`, and `defer_loading` on construction. For custom capabilities, set those attributes on the instance.
 
-```python {title="defer_existing_capability.py" test="skip" lint="skip"}
+```python {title="defer_existing_capability.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 
@@ -168,7 +168,7 @@ When preserving the cache prefix matters, prefer instruction-only or function-to
 
 [`Capability`][pydantic_ai.capabilities.Capability] bundles instructions, function tools, and toolsets without subclassing. Register tools with the decorator that mirrors [`@agent.tool`](tools.md#registering-function-tools-via-decorator):
 
-```python {title="capability_decorator.py" test="skip" lint="skip"}
+```python {title="capability_decorator.py"}
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import Capability
 
@@ -183,7 +183,7 @@ refunds = Capability(
 @refunds.tool
 def refund_status(ctx: RunContext[None], order_id: str) -> str:
     """Look up the refund status for an order."""
-    ...
+    return f'Order {order_id}: refund issued on 2026-05-01.'
 ```
 
 In addition to `@capability.tool` and `@capability.tool_plain`, you can pass existing functions or [`Tool`][pydantic_ai.tools.Tool] instances via `tools=`, or hand in one or more [toolsets](toolsets.md) via `toolsets=`. For dynamic instructions, use the [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] decorator. For a dynamic catalog entry, pass a callable as `description=`.
@@ -194,14 +194,7 @@ For anything beyond instructions, function tools, toolsets, and descriptions —
 
 ### Beyond instructions: tools, settings, hooks, native tools {#beyond-instructions}
 
-`defer_loading=True` doesn't only hide instructions and tool schemas — the same flag controls when a workflow's model settings, lifecycle hooks, and native tools become live. [Agent Skills](https://www.anthropic.com/news/agent-skills) defer instructions only; an on-demand capability defers the whole bundle — what the model knows, what it can do, and how it does it — in one load:
-
-- typed function tools the model can call directly
-- per-step model settings (e.g. raise reasoning effort just for this workflow)
-- lifecycle hooks that only run after the workflow is loaded (e.g. require approval before a destructive tool runs)
-- native tools (e.g. web search), with the trade-off described in [Cache implications](#cache-implications)
-
-The [`Capability`][pydantic_ai.capabilities.Capability] example earlier covers deferred instructions and function tools. The snippets below show each of the other pieces.
+The [`Capability`][pydantic_ai.capabilities.Capability] example above deferred instructions and a function tool, but the same flag gates the whole bundle — what the model knows, what it can do, and how it does it (see [What you can defer](#what-you-can-defer)). The snippets below show the remaining pieces in turn: model settings, hooks, and native tools.
 
 #### Deferred model settings
 
@@ -237,7 +230,7 @@ agent = Agent(
 
 Hooks can live on deferred capabilities too. They do not run until the model loads the capability that owns them:
 
-```python {title="deferred_hooks.py" lint="skip"}
+```python {title="deferred_hooks.py"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
@@ -294,7 +287,7 @@ A realistic on-demand capability rarely consists of just one piece. The example 
 
 For those workflows, turn 1 exposes only the two-line catalog. Base instructions, always-on tools, the framework-managed `load_capability` tool, and any provider/tool-search plumbing still appear as usual. Loading `account-security` activates the runbook, the destructive tool, the higher reasoning effort, *and* the approval gate together — that's what we mean by bundle-level disclosure.
 
-```python {title="support_agent.py" lint="skip"}
+```python {title="support_agent.py"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, ModelSettings, RunContext
@@ -368,7 +361,7 @@ A "where is my order?" request loads only `orders`. A "someone is logging into m
 
 Want the model to actually *read the runbook* before taking a destructive action? Make the runbook a deferred capability, then check `ctx.loaded_capability_ids` in a one-method hook:
 
-```python {title="runbook_required.py" test="skip" lint="skip"}
+```python {title="runbook_required.py"}
 from dataclasses import dataclass, field
 
 from pydantic_ai import Agent, ModelRetry
@@ -438,7 +431,7 @@ Never issue refunds over $500 without manager approval.
 
 Load it into an agent as an on-demand capability:
 
-```python {title="skill_from_markdown.py" test="skip" lint="skip"}
+```python {title="skill_from_markdown.py" test="skip"}
 from pathlib import Path
 
 import yaml
@@ -470,7 +463,7 @@ Each file shows up in the model's catalog as its `id` plus `description`; the bo
 !!! note "Composes with"
     On-demand capabilities are orthogonal to the rest of the framework — they layer onto features you may already be using:
 
-    - **[Tool search](tools-advanced.md#tool-search)** — capability-level `defer_loading=True` gates the bundle as a unit: once the model loads the capability, all tools owned by that deferred capability become visible together. Tool-level `defer_loading` on a tool *inside* a deferred capability is a no-op — the capability already gates its tools together, so they're revealed on load regardless. Use tool-level `defer_loading=True` on tools or toolsets in a non-deferred capability (or on `@agent.tool`) when you want per-tool discovery.
+    - **[Tool search](tools-advanced.md#tool-search)** — capability-level `defer_loading=True` gates the whole bundle as a unit; for per-*tool* discovery, set tool-level `defer_loading=True` on a non-deferred capability or on `@agent.tool`.
     - **[MCP servers](mcp/client.md)** — the [`MCP`][pydantic_ai.capabilities.MCP] capability accepts `defer_loading=True`, hiding the server's full tool list until the model opts in.
     - **[Native tools](native-tools.md)** — [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] all defer the same way as function tools (see [Cache implications](#cache-implications)).
     - **[Hooks](hooks.md)** — lifecycle hooks declared on a deferred capability (or via a deferred [`Hooks`][pydantic_ai.capabilities.Hooks] capability) stay dormant until the model opts in.

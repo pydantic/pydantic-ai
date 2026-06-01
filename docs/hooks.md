@@ -76,7 +76,7 @@ Both sync and async hook functions are accepted. Sync functions are automaticall
 
 [`Hooks`][pydantic_ai.capabilities.Hooks] is a capability, so it can be loaded on demand just like any other capability:
 
-```python {title="deferred_hooks_capability.py" test="skip" lint="skip"}
+```python {title="deferred_hooks_capability.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Hooks
 
@@ -100,7 +100,7 @@ You do not need to guard hooks owned by a deferred `Hooks` instance with `ctx.ca
 
 If a hook must enforce a rule before a workflow is loaded, keep that hook in an always-available capability and inspect `ctx.loaded_capability_ids`; an on-demand hook cannot run before the model loads its own capability.
 
-`before_run` on a deferred hooks capability only fires when that capability is already loaded at the start of the run, for example after resuming from message history. It cannot fire before the model has had a chance to load the capability in a new conversation.
+The run-scoped hooks — `before_run` and `wrap_run` — are bound at the start of the run, so a capability the model loads mid-run won't get them for that run; they only fire when the capability is already loaded at the start (for example after resuming from message history). The capability's other hooks (node, model-request, tool, output, and `after_run`) still fire from the next step onwards, once it has loaded.
 
 ## Hook types
 
