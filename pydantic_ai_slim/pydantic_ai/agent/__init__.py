@@ -1384,7 +1384,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
         capabilities_dict = _build_run_capabilities(run_capability)
-        if any(capability.defer_loading is True for capability in capabilities_dict.values()):
+        # Inject the loader only if a deferred capability is present AND `for_run` didn't already
+        # return one, mirroring the `has_capability_type` guard used for instrumentation above.
+        # Without it, a `for_run` result that already carries a loader would get double-wrapped
+        # (cf. #5047) — a second loader toolset then errors on the reserved `load_capability` name.
+        if any(
+            capability.defer_loading is True for capability in capabilities_dict.values()
+        ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
             run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
             capabilities_dict = _build_run_capabilities(run_capability)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None

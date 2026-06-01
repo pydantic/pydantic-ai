@@ -68,6 +68,11 @@ def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapab
     )
 
 
+# This is the wire-side resolver: `ToolSearchToolset.get_tools` calls it to decide which
+# capability-owned deferred tools to actually surface in the request this turn. It is deliberately
+# separate from `RunContext.available_tool_names` (the read-side resolver hooks query) — the two
+# answer different questions (what to send vs. what the user can observe) over different inputs
+# (the toolset's tool defs vs. the run context), so they aren't duplicated logic to fold together.
 def tool_defs_for_loaded_capabilities(
     ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]
 ) -> dict[str, ToolDefinition]:

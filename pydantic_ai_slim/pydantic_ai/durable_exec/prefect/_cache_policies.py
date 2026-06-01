@@ -39,6 +39,11 @@ def _replace_run_context(
                 'retry': value.retry,
                 'max_retries': value.max_retries,
                 'run_step': value.run_step,
+                # Deferred-load state must be part of the key: two runs identical except for which
+                # capabilities/tools have been loaded see different tools and must not share a cache
+                # entry. Sorted for a deterministic key (sets have no stable iteration order).
+                'loaded_capability_ids': sorted(value.loaded_capability_ids),
+                'discovered_tool_names': sorted(value.discovered_tool_names),
             }
 
     return inputs

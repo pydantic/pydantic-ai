@@ -1421,6 +1421,8 @@ def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAg
     """Refresh the history-derived loaded capability ids from the current graph state."""
     loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
 
+    # Mutate in place (not reassign): this set is shared by reference with the run's `RunContext`
+    # copies made via `replace(ctx, ...)`, so clear + update keeps them all in sync.
     ctx.deps.loaded_capability_ids.clear()
     ctx.deps.loaded_capability_ids.update(loaded_capability_ids)
 
@@ -1429,6 +1431,7 @@ def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAg
     """Refresh the history-derived discovered tool names from the current graph state."""
     discovered_tool_names = parse_discovered_tools(ctx.state.message_history)
 
+    # Mutate in place (not reassign), for the same shared-by-reference reason as the set above.
     ctx.deps.discovered_tool_names.clear()
     ctx.deps.discovered_tool_names.update(discovered_tool_names)
 
