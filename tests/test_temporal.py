@@ -1467,12 +1467,12 @@ async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None
 
 
 # Regression test for the workflow-sandbox passthrough list (`_workflow_runner` in
-# `durable_exec/temporal/__init__.py`). When a model is named by string (e.g. `gateway/anthropic:`
-# or `anthropic:`) it is constructed lazily via `infer_model` *inside* the workflow, so the
-# provider's SDK client `__init__` runs under the `SandboxedWorkflowRunner`. Provider SDKs
-# increasingly touch the filesystem at construction time, which the sandbox forbids unless the SDK
-# module is passed through. Every other test builds its model at module scope (outside the sandbox),
-# so this seam was previously uncovered. Construction-only (no model request) keeps it deterministic.
+# `durable_exec/temporal/__init__.py`). A `gateway/` model named by string is constructed lazily via
+# `infer_model` *inside* the workflow, so the provider's SDK is imported and its client built under
+# the `SandboxedWorkflowRunner`. Provider SDKs touch the filesystem/env at construction time, which
+# the sandbox forbids unless the SDK module is passed through. Every other test builds its model at
+# module scope (outside the sandbox), so this seam was previously uncovered. Construction-only (no
+# model request) keeps it deterministic.
 @workflow.defn
 class ConstructModelInWorkflow:
     @workflow.run
@@ -1484,10 +1484,14 @@ class ConstructModelInWorkflow:
 @pytest.mark.parametrize(
     ('model_name', 'expected_model_class'),
     [
-        # The reported regression: `gateway/anthropic:` in-workflow tripped `Path.home` access.
+        # Only `gateway/` providers exercise the sandbox: they import their SDK lazily inside
+        # `gateway_provider()`, so the import and client construction run *inside* the workflow. Direct
+        # providers (e.g. `anthropic:`) import their SDK at module level, which rides Temporal's
+        # transitive passthrough of `pydantic_ai` and never trips — so they give no regression coverage.
+        #
+        # The reported regression: `gateway/anthropic:` in-workflow tripped the `anthropic` SDK's
+        # `Path.home()` access.
         pytest.param('gateway/anthropic:claude-sonnet-4-6', 'AnthropicModel', id='gateway-anthropic'),
-        # Same `AsyncAnthropic.__init__` path off the gateway — not gateway-specific.
-        pytest.param('anthropic:claude-sonnet-4-6', 'AnthropicModel', id='anthropic'),
         # Canary: OpenAI needs no passthrough today; turns red here (not in a user's workflow) if a
         # future SDK release makes a restricted call (e.g. reads `~/...`) during construction.
         pytest.param('gateway/openai-chat:gpt-5', 'OpenAIChatModel', id='gateway-openai'),
@@ -1503,10 +1507,8 @@ async def test_model_construction_in_workflow_passes_sandbox(
     monkeypatch: pytest.MonkeyPatch,
 ):
     # Dummy credentials suffice since no request is made. The gateway key must encode a region
-    # (`pylf_v<n>_<region>_...`) so the base URL can be inferred; only the direct-anthropic case
-    # also needs a provider key.
+    # (`pylf_v<n>_<region>_...`) so the base URL can be inferred.
     monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'pylf_v1_us_0123456789abcdef')
-    monkeypatch.setenv('ANTHROPIC_API_KEY', 'mock-anthropic-key')
 
     async with Worker(
         client,
@@ -1517,8 +1519,9 @@ async def test_model_construction_in_workflow_passes_sandbox(
         # (e.g. `RestrictedWorkflowAccessError`) to a workflow failure so it surfaces immediately.
         workflow_failure_exception_types=[Exception],
     ):
-        # Without the `anthropic` passthrough this fails with a `WorkflowFailureError` caused by a
-        # `RestrictedWorkflowAccessError` for `pathlib.Path.home`.
+        # Without the SDK passed through this fails with a `WorkflowFailureError`: under the suite's
+        # warnings-as-errors, Temporal's "imported after initial workflow load" becomes a hard error;
+        # in production the SDK's restricted `Path.home()`/env access raises `RestrictedWorkflowAccessError`.
         result = await client.execute_workflow(
             ConstructModelInWorkflow.run,
             args=[model_name],
