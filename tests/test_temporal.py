@@ -1478,24 +1478,23 @@ async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None
 class ConstructModelInWorkflow:
     @workflow.run
     async def run(self, model_name: str) -> str:
-        # Constructing the model also constructs its provider and underlying SDK client, all inside
-        # the workflow sandbox. We only assert this succeeds; no request is made to the model.
+        # Constructs the provider and its SDK client inside the sandbox; we assert only that this
+        # succeeds — no request is made.
         return type(infer_model(model_name)).__name__
 
 
 @pytest.mark.parametrize(
     ('model_name', 'expected_model_class'),
     [
-        # The reported regression: `gateway/anthropic:` resolved in-workflow tripped
-        # `Cannot access pathlib.Path.home.__call__ from inside a workflow`. Uses the latest Sonnet.
+        # The reported regression: `gateway/anthropic:` in-workflow tripped `Path.home` access.
         pytest.param('gateway/anthropic:claude-sonnet-4-6', 'AnthropicModel', id='gateway-anthropic'),
-        # The direct route hits the same `AsyncAnthropic.__init__` path, so it's not gateway-specific.
+        # Same `AsyncAnthropic.__init__` path off the gateway — not gateway-specific.
         pytest.param('anthropic:claude-sonnet-4-6', 'AnthropicModel', id='anthropic'),
-        # OpenAI and Gemini don't touch the home directory at construction *today*, so these pass
-        # without needing their SDKs in the passthrough list. They're canaries: if a future SDK
-        # release starts reading `~/...` (or makes any other restricted call) during client
-        # construction, the corresponding case turns red here instead of in a user's workflow.
+        # Canary: OpenAI needs no passthrough today; turns red here (not in a user's workflow) if a
+        # future SDK release makes a restricted call (e.g. reads `~/...`) during construction.
         pytest.param('gateway/openai-chat:gpt-5', 'OpenAIChatModel', id='gateway-openai'),
+        # Positive coverage of the `google.auth` (+`certifi`) passthrough: `google-genai` lazily
+        # imports `google.auth` during construction, which the sandbox flags without it.
         pytest.param('gateway/google-cloud:gemini-2.5-pro', 'GoogleModel', id='gateway-google'),
     ],
 )
@@ -1505,10 +1504,9 @@ async def test_model_construction_in_workflow_passes_sandbox(
     client: Client,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    # Credentials are read from the environment during construction; dummy values suffice since no
-    # request is made. The gateway key must encode a region (`pylf_v<n>_<region>_...`) so the base
-    # URL can be inferred; the gateway routes all authenticate with it, so no per-provider key is
-    # needed beyond the direct-anthropic case.
+    # Dummy credentials suffice since no request is made. The gateway key must encode a region
+    # (`pylf_v<n>_<region>_...`) so the base URL can be inferred; only the direct-anthropic case
+    # also needs a provider key.
     monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'pylf_v1_us_0123456789abcdef')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'mock-anthropic-key')
 
