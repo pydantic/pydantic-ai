@@ -2771,6 +2771,7 @@ def _make_httpx_client_factory(
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
+        **_kwargs: Any,
     ) -> httpx.AsyncClient:
         return http_client
 

@@ -107,6 +107,17 @@ class TestMCPToolsetConstruction:
         assert toolset.client.transport.httpx_client_factory is not None
         assert toolset.client.transport.httpx_client_factory() is client
 
+    def test_http_client_factory_tolerates_extra_kwargs(self):
+        """The factory returned by _make_httpx_client_factory must accept extra
+        kwargs (e.g. ``follow_redirects``) that FastMCP transports may pass."""
+        client = httpx.AsyncClient()
+        toolset = MCPToolset('https://example.com/mcp', http_client=client)
+        factory = toolset.client.transport.httpx_client_factory
+        assert factory is not None
+        # FastMCP's StreamableHttpTransport passes follow_redirects=
+        result = factory(follow_redirects=True)
+        assert result is client
+
     def test_http_kwargs_with_non_url_input_raises(self):
         """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection
         target isn't an HTTP URL — otherwise the kwargs are silently dropped on stdio / Path /
