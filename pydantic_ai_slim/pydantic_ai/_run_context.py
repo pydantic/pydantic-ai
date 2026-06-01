@@ -199,6 +199,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
         from .native_tools._tool_search import ToolSearchTool
 
         tools = self.tools
+        # "Always available" = not search-managed AND not deferred. We deliberately keep the
+        # `not defer_loading` check rather than relying on `with_native is None` alone: depending
+        # on hook timing, a deferred tool can be read here before the tool-search toolset has
+        # stamped `with_native='tool-search'` on it, so `with_native is None` by itself would leak
+        # a still-hidden tool. Gating on `defer_loading` keeps it hidden until it's genuinely revealed.
         always_available = {
             name
             for name, tool_def in tools.items()

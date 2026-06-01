@@ -100,7 +100,7 @@ You do not need to guard hooks owned by a deferred `Hooks` instance with `ctx.ca
 
 If a hook must enforce a rule before a workflow is loaded, keep that hook in an always-available capability and inspect `ctx.loaded_capability_ids`; an on-demand hook cannot run before the model loads its own capability.
 
-The run-scoped hooks — `before_run` and `wrap_run` — are bound at the start of the run, so a capability the model loads mid-run won't get them for that run; they only fire when the capability is already loaded at the start (for example after resuming from message history). The capability's other hooks (node, model-request, tool, output, and `after_run`) still fire from the next step onwards, once it has loaded.
+The run-scoped hooks — `before_run` and `wrap_run` — are bound at the start of the run, so a capability the model loads mid-run won't get them for that run; they only fire when the capability is already loaded at the start (for example after resuming from message history). The capability's per-step hooks (node, model-request, tool, output) fire from the next step onwards once it has loaded, and `after_run` fires at the end of the run if it was loaded at any point during it.
 
 ## Hook types
 
