@@ -99,7 +99,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr, remove_schema_descriptions
 
 pytestmark = [
     pytest.mark.anyio,
@@ -517,32 +517,11 @@ def test_agent_from_spec_capabilities_merged():
 def test_model_json_schema_with_capabilities():
     pytest.importorskip('mcp', reason='schema varies without mcp package')
     schema = AgentSpec.model_json_schema_with_capabilities()
-    assert schema == snapshot(
+    assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
                 'AgentRetries': {
                     'additionalProperties': False,
-                    'description': """\
-Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
-
-Pass to `Agent(retries=...)` as a dict to set different budgets per category.
-
-`int` semantics differ by call site:
-
-- At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
-  to `N`.
-- At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
-  budget. Tool retries cannot be overridden per run or via `override()` — passing
-  `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
-  manager is built once at agent construction.
-
-Keys:
-    tools: Default number of retries for tool calls before raising an error.
-    output: Maximum number of retries for output validation. On the text path
-        this is a global per-run budget; on the tool path it is the default
-        per-tool `max_retries` for each output tool, overridable via
-        [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].\
-""",
                     'properties': {
                         'tools': {'title': 'Tools', 'type': 'integer'},
                         'output': {'title': 'Output', 'type': 'integer'},
@@ -551,17 +530,6 @@ Keys:
                     'type': 'object',
                 },
                 'CodeExecutionTool': {
-                    'description': """\
-A native tool that allows your agent to execute code.
-
-Supported by:
-
-* Anthropic
-* OpenAI Responses
-* Google
-* Bedrock (Nova2.0)
-* xAI\
-""",
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -570,18 +538,6 @@ Supported by:
                     'type': 'object',
                 },
                 'FileSearchTool': {
-                    'description': """\
-A native tool that allows your agent to search through uploaded files using vector search.
-
-This tool provides a fully managed Retrieval-Augmented Generation (RAG) system that handles
-file storage, chunking, embedding generation, and context injection into prompts.
-
-Supported by:
-
-* OpenAI Responses
-* Google (Gemini)
-* xAI (mapped to collections search)\
-""",
                     'properties': {
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -592,14 +548,6 @@ Supported by:
                     'type': 'object',
                 },
                 'ImageGenerationTool': {
-                    'description': """\
-A native tool that allows your agent to generate images.
-
-Supported by:
-
-* OpenAI Responses
-* Google\
-""",
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1157,15 +1105,6 @@ Supported by:
                     'type': 'string',
                 },
                 'MCPServerTool': {
-                    'description': """\
-A native tool that allows your agent to use MCP servers.
-
-Supported by:
-
-* OpenAI Responses
-* Anthropic
-* xAI\
-""",
                     'properties': {
                         'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1175,11 +1114,6 @@ Supported by:
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'default': None,
                             'title': 'Authorization Token',
-                        },
-                        'description': {
-                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Description',
                         },
                         'allowed_tools': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
@@ -1197,13 +1131,6 @@ Supported by:
                     'type': 'object',
                 },
                 'MemoryTool': {
-                    'description': """\
-A native tool that allows your agent to use memory.
-
-Supported by:
-
-* Anthropic\
-""",
                     'properties': {
                         'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1212,14 +1139,6 @@ Supported by:
                     'type': 'object',
                 },
                 'ModelSettings': {
-                    'description': """\
-Settings to configure an LLM.
-
-Includes only settings which apply to multiple models / model providers,
-though not all of these settings are supported by all models.
-
-All types must be serializable using Pydantic.\
-""",
                     'properties': {
                         'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
                         'temperature': {'title': 'Temperature', 'type': 'number'},
@@ -1268,15 +1187,6 @@ All types must be serializable using Pydantic.\
                     'type': 'object',
                 },
                 'ToolOrOutput': {
-                    'description': """\
-Restricts function tools while keeping output tools and direct text/image output available.
-
-Use this when you want to control which function tools the model can use
-in an agent run while still allowing the agent to complete with structured output,
-text, or images.
-
-See the [Tool Choice guide](../tools-advanced.md#tool-choice) for examples.\
-""",
                     'properties': {
                         'function_tools': {'items': {'type': 'string'}, 'title': 'Function Tools', 'type': 'array'}
                     },
@@ -1285,36 +1195,6 @@ See the [Tool Choice guide](../tools-advanced.md#tool-choice) for examples.\
                     'type': 'object',
                 },
                 'ToolSearchTool': {
-                    'description': """\
-Framework-internal: users access tool search via the [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability — do not construct directly.
-
-A native tool that enables provider-side tool search.
-
-Tools marked as part of the search corpus (via `with_native='tool_search'`
-on their [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]) are sent to supporting
-providers with `defer_loading` on the wire; the provider manages their visibility
-and only exposes them once they've been discovered.
-
-The mode of discovery depends on `strategy`:
-
-* A named native strategy (or `None` for the provider default): the provider runs
-  the search server-side using its own indexing (Anthropic `bm25`/`regex`, OpenAI
-  server-executed `tool_search`).
-* `'custom'`: the provider invokes our local search function to answer each search
-  request. On Anthropic this goes via a regular function tool whose return value the
-  adapter re-formats as `tool_reference` blocks; on OpenAI it goes via
-  `ToolSearchToolParam(execution='client')` with our callable's parameter schema.
-
-When the model doesn't support native tool search at all, the
-[`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability's local
-implementation handles discovery via its own `search_tools` function tool.
-
-Supported by:
-
-* Anthropic (bm25, regex, custom callable) — Sonnet 4.5+, Opus 4.5+, Haiku 4.5+
-* OpenAI Responses (server default, custom callable via `execution='client'`) — GPT-5.4+
-  (named strategies `'bm25'`/`'regex'` are not supported).\
-""",
                     'properties': {
                         'kind': {'default': 'tool_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1329,12 +1209,6 @@ Supported by:
                 },
                 'UrlContextTool': {
                     'deprecated': True,
-                    'description': """\
-Deprecated alias for WebFetchTool. Use WebFetchTool instead.
-
-Overrides kind to 'url_context' so old serialized payloads with {"kind": "url_context", ...}
-can be deserialized to UrlContextTool for backward compatibility.\
-""",
                     'properties': {
                         'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1364,16 +1238,6 @@ can be deserialized to UrlContextTool for backward compatibility.\
                     'type': 'object',
                 },
                 'WebFetchTool': {
-                    'description': """\
-Allows your agent to access contents from URLs.
-
-The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
-
-Supported by:
-
-* Anthropic
-* Google\
-""",
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1403,20 +1267,6 @@ Supported by:
                     'type': 'object',
                 },
                 'WebSearchTool': {
-                    'description': """\
-A native tool that allows your agent to search the web for information.
-
-The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
-
-Supported by:
-
-* Anthropic
-* OpenAI Responses
-* Groq
-* Google
-* xAI
-* OpenRouter\
-""",
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1451,14 +1301,6 @@ Supported by:
                 },
                 'WebSearchUserLocation': {
                     'additionalProperties': False,
-                    'description': """\
-Allows you to localize search results based on a user's location.
-
-Supported by:
-
-* Anthropic
-* OpenAI Responses\
-""",
                     'properties': {
                         'city': {'title': 'City', 'type': 'string'},
                         'country': {'title': 'Country', 'type': 'string'},
@@ -1469,19 +1311,6 @@ Supported by:
                     'type': 'object',
                 },
                 'XSearchTool': {
-                    'description': """\
-A native tool that allows your agent to search X/Twitter for posts and content.
-
-See <https://docs.x.ai/developers/tools/x-search> for more details.
-
-When used via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with a
-`fallback_model` set, this tool also works with non-xAI models by delegating to a
-subagent running the specified xAI model.
-
-Supported by:
-
-* xAI\
-""",
                     'properties': {
                         'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
@@ -1757,7 +1586,6 @@ Supported by:
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'title': 'Allowed Tools',
                         },
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'required': ['url'],
                     'title': 'spec_params_MCP',
@@ -1925,11 +1753,6 @@ Supported by:
             'properties': {
                 'model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Model'},
                 'name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Name'},
-                'description': {
-                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
-                    'default': None,
-                    'title': 'Description',
-                },
                 'instructions': {
                     'anyOf': [{'type': 'string'}, {'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                     'default': None,

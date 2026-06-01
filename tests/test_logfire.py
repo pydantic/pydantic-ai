@@ -24,7 +24,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr
+from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics
 
 try:
     import logfire
@@ -59,7 +59,11 @@ class LogfireSummary:
             span_lookup[tid] = span_summary = SpanSummary(
                 id=id_counter, name=span['name'], message=span['attributes']['logfire.msg']
             )
-            self.attributes[id_counter] = span['attributes']
+            # `logfire.metrics` is a logfire-version-dependent span decoration (added in 4.3x): newer
+            # logfire attaches the aggregated `gen_ai.client.token.usage` metric to spans, older does not.
+            # Strip it so these assertions hold across the supported logfire range; the token usage itself
+            # is still covered by the stable `gen_ai.usage.*` attributes and `get_collected_metrics()`.
+            self.attributes[id_counter] = {k: v for k, v in span['attributes'].items() if k != 'logfire.metrics'}
             id_counter += 1
             if parent := span['parent']:
                 parent_span = span_lookup[(parent['trace_id'], parent['span_id'])]
@@ -298,7 +302,6 @@ def test_logfire(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 103}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 12}], "total": 115}}',
             }
         )
     else:
@@ -369,7 +372,6 @@ def test_logfire(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 103}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 12}], "total": 115}}',
             }
         )
     chat_span_attributes = next(
@@ -692,7 +694,6 @@ def test_instructions_with_structured_output(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
             }
         )
 
@@ -809,7 +810,6 @@ def test_instructions_with_structured_output(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
             }
         )
 
@@ -901,7 +901,6 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                     }
                 )
             ),
-            'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
         }
     )
     chat_span_attributes = summary.attributes[1]
@@ -1120,7 +1119,6 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     }
                 )
             ),
-            'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
         }
     )
     chat_span_attributes = summary.attributes[1]
@@ -1253,7 +1251,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
 
     await agent.run('Hello')
 
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
 
     # Verify that agent run span uses aggregated_usage attribute names
     agent_run_span = next(s for s in spans if s['name'] == 'agent run')
@@ -1279,35 +1277,6 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
             'logfire.json_schema': {
                 'type': 'object',
                 'properties': {'pydantic_ai.all_messages': {'type': 'array'}, 'final_result': {'type': 'object'}},
-            },
-            'logfire.metrics': {
-                'gen_ai.client.token.usage': {
-                    'details': [
-                        {
-                            'attributes': {
-                                'gen_ai.operation.name': 'chat',
-                                'gen_ai.provider.name': 'function',
-                                'gen_ai.request.model': 'function:model_function:',
-                                'gen_ai.response.model': 'function:model_function:',
-                                'gen_ai.system': 'function',
-                                'gen_ai.token.type': 'input',
-                            },
-                            'total': 10,
-                        },
-                        {
-                            'attributes': {
-                                'gen_ai.operation.name': 'chat',
-                                'gen_ai.provider.name': 'function',
-                                'gen_ai.request.model': 'function:model_function:',
-                                'gen_ai.response.model': 'function:model_function:',
-                                'gen_ai.system': 'function',
-                                'gen_ai.token.type': 'output',
-                            },
-                            'total': 5,
-                        },
-                    ],
-                    'total': 15,
-                }
             },
         }
     )
@@ -1335,7 +1304,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
     assert traceparent == snapshot('00-00000000000000000000000000000001-0000000000000001-01')
     record_feedback(traceparent, 'factuality', 0.1, comment='the agent lied', extra={'foo': 'bar'})
 
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat test',
@@ -1423,35 +1392,6 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                             'pydantic_ai.all_messages': {'type': 'array'},
                             'final_result': {'type': 'object'},
                         },
-                    },
-                    'logfire.metrics': {
-                        'gen_ai.client.token.usage': {
-                            'details': [
-                                {
-                                    'attributes': {
-                                        'gen_ai.operation.name': 'chat',
-                                        'gen_ai.provider.name': 'test',
-                                        'gen_ai.request.model': 'test',
-                                        'gen_ai.response.model': 'test',
-                                        'gen_ai.system': 'test',
-                                        'gen_ai.token.type': 'input',
-                                    },
-                                    'total': 51,
-                                },
-                                {
-                                    'attributes': {
-                                        'gen_ai.operation.name': 'chat',
-                                        'gen_ai.provider.name': 'test',
-                                        'gen_ai.request.model': 'test',
-                                        'gen_ai.response.model': 'test',
-                                        'gen_ai.system': 'test',
-                                        'gen_ai.token.type': 'output',
-                                    },
-                                    'total': 4,
-                                },
-                            ],
-                            'total': 55,
-                        }
                     },
                 },
             },
@@ -2689,7 +2629,6 @@ def test_static_function_instructions_in_agent_run_span(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
             }
         )
 
@@ -2806,7 +2745,6 @@ def test_static_function_instructions_in_agent_run_span(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 5}], "total": 56}}',
             }
         )
 
@@ -2941,7 +2879,6 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 107}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 9}], "total": 116}}',
             }
         )
 
@@ -3090,7 +3027,6 @@ def test_dynamic_function_instructions_in_agent_run_span(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 107}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 9}], "total": 116}}',
             }
         )
 
@@ -3224,7 +3160,6 @@ def test_function_instructions_with_history_in_agent_run_span(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 52}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 6}], "total": 58}}',
             }
         )
 
@@ -3359,7 +3294,6 @@ def test_function_instructions_with_history_in_agent_run_span(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 52}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 6}], "total": 58}}',
             }
         )
 
@@ -3459,7 +3393,6 @@ async def test_run_stream(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 4}], "total": 55}}',
             }
         )
 
@@ -3546,7 +3479,6 @@ async def test_run_stream(
                         }
                     )
                 ),
-                'logfire.metrics': '{"gen_ai.client.token.usage": {"details": [{"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "input"}, "total": 51}, {"attributes": {"gen_ai.operation.name": "chat", "gen_ai.provider.name": "test", "gen_ai.request.model": "test", "gen_ai.response.model": "test", "gen_ai.system": "test", "gen_ai.token.type": "output"}, "total": 4}], "total": 55}}',
             }
         )
 
@@ -3567,7 +3499,7 @@ async def test_run_stream(
 
 def _get_tool_span(capfire: CaptureLogfire) -> dict[str, Any]:
     """Get the completed tool span from exported spans."""
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
     tool_span = next(
         s for s in spans if s['attributes'].get('logfire.span_type') == 'span' and 'tool' in s['name'].lower()
     )
@@ -4110,7 +4042,7 @@ def test_instrumentation_capability_template_description(
     result = agent.run_sync('Hello', deps=MyDeps(name='testing'))
     assert result.output == snapshot('success (no tool calls)')
 
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
     agent_span = spans[-1]  # outermost span is the agent run
     assert agent_span['attributes']['gen_ai.agent.description'] == snapshot('Agent for testing')
 
