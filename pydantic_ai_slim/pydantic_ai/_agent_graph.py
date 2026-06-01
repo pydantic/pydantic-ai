@@ -31,6 +31,7 @@ from pydantic_graph.graph_builder import Graph
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._deferred_capabilities import parse_loaded_capabilities
+from ._instructions import normalize_toolset_instructions
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
@@ -457,18 +458,7 @@ async def _get_instructions(
         parts.extend(base)
 
     toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
-    if toolset_result:
-        # The top-level toolset is always a CombinedToolset which returns a list,
-        # but the return type also allows a single str or InstructionPart for custom subclasses.
-        items = [toolset_result] if isinstance(toolset_result, (str, _messages.InstructionPart)) else toolset_result
-        for item in items:
-            if isinstance(item, _messages.InstructionPart):
-                if item.content.strip():
-                    parts.append(item)
-            else:
-                # Plain str from toolsets: treat as dynamic (external/changeable source)
-                if item.strip():
-                    parts.append(_messages.InstructionPart(content=item, dynamic=True))
+    parts.extend(normalize_toolset_instructions(toolset_result))
 
     return parts or None
 

@@ -3436,7 +3436,7 @@ async def test_two_deferred_capabilities_loaded_sequentially_both_stay_available
         names = {part.tool_name for part in tool_returns}
 
         # Turn 1: load A.
-        if 'alpha' not in {part.args.get('id') for part in _load_calls(messages)}:  # type: ignore[union-attr]
+        if 'alpha' not in {part.capability_id for part in _load_calls(messages)}:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'alpha'}, tool_call_id='load-a')]
             )

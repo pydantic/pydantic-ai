@@ -842,11 +842,12 @@ class ToolDefinition:
     """
 
     capability_id: str | None = None
-    """The run-local id of the capability that contributed this tool, or `None` if the tool is not owned by a capability.
+    """The id of the capability that contributed this tool, or `None` if the tool is not owned by a capability.
 
-    Set by the framework when a capability's toolset is assembled. For a tool owned by a deferred
-    capability it gates visibility: the tool is revealed once that capability's id appears in
-    [`RunContext.loaded_capability_ids`][pydantic_ai.tools.RunContext.loaded_capability_ids].
+    Assigned once when the run's capabilities are set up and then carried on the `ToolDefinition`
+    for the rest of that run — it does not change or reset between steps. For a tool owned by a
+    deferred capability it gates visibility: the tool is revealed once that capability's id appears
+    in [`RunContext.loaded_capability_ids`][pydantic_ai.tools.RunContext.loaded_capability_ids].
     """
 
     @cached_property

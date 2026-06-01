@@ -55,7 +55,7 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
 
 
 def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> str:
-    """Recover the run-local id a capability was registered under in `ctx.capabilities`.
+    """Recover the id a capability was registered under in `ctx.capabilities` for the current run.
 
     A capability with no explicit `id` is registered under a derived id (see
     `_build_run_capabilities`), so the resolved id only exists as a registry key.
