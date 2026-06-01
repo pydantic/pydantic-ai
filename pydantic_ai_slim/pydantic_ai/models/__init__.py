@@ -22,8 +22,7 @@ import httpx
 import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
-from .. import _utils
-from .._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
+from .. import _deferred_capabilities, _utils
 from .._deprecated_callable import deprecated_callable_property
 from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
@@ -1795,7 +1794,8 @@ def _resolve_tool_search_native_for_capability_owned_corpus(
     equivalent, so we raise rather than silently substitute a different algorithm.
     """
     capability_owns_corpus = any(
-        t.with_native == ToolSearchTool.kind and (t.metadata or {}).get(DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
+        t.with_native == ToolSearchTool.kind
+        and (t.metadata or {}).get(_deferred_capabilities.DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
         for t in function_tools
     )
     if not capability_owns_corpus:

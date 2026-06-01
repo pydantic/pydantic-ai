@@ -5,10 +5,11 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
+from pydantic_ai._deferred_capabilities import LoadCapabilityArgs, LoadCapabilityReturn
 from pydantic_ai._instructions import normalize_toolset_instructions, resolve_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import InstructionPart, LoadCapabilityArgs, LoadCapabilityReturn
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool

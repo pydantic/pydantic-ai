@@ -90,8 +90,7 @@ class LoadCapabilityReturnPart(ToolReturnPart):
     content: LoadCapabilityReturn
     """Load-capability return payload.
 
-    Narrows the parent's `ToolReturnContent` to a typed
-    [`LoadCapabilityReturn`][pydantic_ai.messages.LoadCapabilityReturn].
+    Narrows the parent's `ToolReturnContent` to a typed `LoadCapabilityReturn`.
     """
 
     tool_name: Literal['load_capability'] = 'load_capability'  # pyright: ignore[reportIncompatibleVariableOverride]

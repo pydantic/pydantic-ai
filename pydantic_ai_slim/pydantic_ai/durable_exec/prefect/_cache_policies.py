@@ -42,6 +42,9 @@ def _replace_run_context(
                 # Deferred-load state must be part of the key: two runs identical except for which
                 # capabilities/tools have been loaded see different tools and must not share a cache
                 # entry. Sorted for a deterministic key (sets have no stable iteration order).
+                # `capability_loaded` is deliberately omitted (unlike Temporal's serializer, which
+                # round-trips every field a hook might read): it's derived from `loaded_capability_ids`
+                # plus the static capability set, so it adds no entropy the two fields above don't.
                 'loaded_capability_ids': sorted(value.loaded_capability_ids),
                 'discovered_tool_names': sorted(value.discovered_tool_names),
             }

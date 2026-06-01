@@ -3216,6 +3216,58 @@ The following capabilities are deferred and can be loaded using the `load_capabi
     )
 
 
+async def test_deferred_capability_tool_registered_after_construction_defers_until_load() -> None:
+    """A tool registered via `@cap.tool` *after* construction defers like a constructor tool: hidden until load.
+
+    Deferred tools stay in the toolset tagged `defer_loading=True` (the wire-level filter in
+    `Model.prepare_request` is what hides them from a real provider), so the regression signal is the
+    flag flipping `True` -> `False` once the capability loads, not the tool's mere presence.
+    """
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    # Register on the deferred capability *after* construction (decorator path, not the `tools=` arg).
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    defer_flag_by_phase: dict[str, bool | None] = {}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        loaded = any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns)
+        refund_def = next((tool for tool in info.function_tools if tool.name == 'lookup_refund_policy'), None)
+        defer_flag_by_phase['after_load' if loaded else 'before_load'] = (
+            refund_def.defer_loading if refund_def else None
+        )
+
+        if not loaded:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        if not any(part.tool_name == 'lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='lookup_refund_policy', args={'order_id': 'order-1'}, tool_call_id='look')
+                ]
+            )
+        result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund_policy')
+        return make_text_response(f'final: {result}')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == snapshot('final: order-1: refund allowed for 30 days')
+    # Deferred before the capability loads, revealed (and callable) afterward.
+    assert defer_flag_by_phase == snapshot({'before_load': True, 'after_load': False})
+
+
 async def test_deferred_capability_tool_stays_available_across_turns() -> None:
     """A capability-owned tool stays callable across every turn after `load_capability`.
 

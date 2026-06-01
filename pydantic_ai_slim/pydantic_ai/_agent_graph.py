@@ -1429,6 +1429,15 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
 
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
     """Refresh the history-derived loaded capability ids from the current graph state."""
+    # The `load_capability` tool (and therefore any `LoadCapability*` history parts) only exists
+    # when a deferred capability is configured — the same condition that injects the loader. Without
+    # one, the set can never change during the run, so the seeded value stays in sync without rescanning.
+    # (`discovered_tool_names` has no equally-cheap guard: tool search is auto-injected and its trigger
+    # is "deferred tools exist", which isn't known without resolving toolsets, so its refresh stays
+    # unconditional.)
+    if not any(capability.defer_loading is True for capability in ctx.deps.capabilities.values()):
+        return
+
     loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
 
     # Mutate in place (not reassign): this set is shared by reference with the run's `RunContext`

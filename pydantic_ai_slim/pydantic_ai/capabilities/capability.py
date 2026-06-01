@@ -26,7 +26,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 
 
-@dataclass
+@dataclass(init=False)
 class Capability(AbstractCapability[AgentDepsT]):
     """Convenience capability for bundling instructions, tools, and toolsets without subclassing.
 
@@ -118,6 +118,9 @@ class Capability(AbstractCapability[AgentDepsT]):
         toolsets.extend(self.toolsets)
 
         if not toolsets:
+            # Return the live (currently-empty) function toolset rather than `None` so tools
+            # registered after construction via `@tool`/`@tool_plain` still surface: the agent
+            # wires in this reference once, and `None` would drop it and hide late additions.
             return self._function_toolset
         if len(toolsets) == 1:
             return toolsets[0]

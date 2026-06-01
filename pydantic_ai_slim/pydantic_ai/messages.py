@@ -1981,9 +1981,7 @@ deserialized). Same population pattern.
 # Typed subclasses live outside this module; import them here for discriminator
 # unions, narrower registration, and public re-exports from `pydantic_ai.messages`.
 from ._deferred_capabilities import (  # noqa: E402
-    LoadCapabilityArgs as LoadCapabilityArgs,
     LoadCapabilityCallPart as LoadCapabilityCallPart,
-    LoadCapabilityReturn as LoadCapabilityReturn,
     LoadCapabilityReturnPart as LoadCapabilityReturnPart,
 )
 
