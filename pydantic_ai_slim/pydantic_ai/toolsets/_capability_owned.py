@@ -60,9 +60,6 @@ def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapab
     A capability with no explicit `id` is registered under a derived id (see
     `_build_run_capabilities`), so the resolved id only exists as a registry key.
     """
-    capability_id = ctx.capability_id_by_instance.get(id(capability))
-    if capability_id is not None:
-        return capability_id
     return next(
         capability_id
         for capability_id, registered_capability in ctx.capabilities.items()

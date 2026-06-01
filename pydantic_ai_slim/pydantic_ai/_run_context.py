@@ -126,15 +126,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
     """All capabilities registered for the current run, including deferred ones."""
 
-    capability_id_by_instance: dict[int, str] = field(default_factory=dict[int, str], repr=False)
-    """Run-local capability id lookup keyed by `id(capability)`.
-
-    Some capabilities have derived run-local ids rather than explicit
-    [`id`][pydantic_ai.capabilities.AbstractCapability.id] values. The agent builds this
-    map from `capabilities` once per run so hook dispatch and capability-owned toolsets can
-    recover those ids without scanning the registry for every hook/toolset call.
-    """
-
     loaded_capability_ids: set[str] = field(default_factory=set[str])
     """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
 
@@ -189,21 +180,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     @property
     def available_tool_names(self) -> set[str]:
-        """Names of tools callable by the model on the current turn (non-deferred visible + discovered + loaded-capability).
+        """Names of function tools the model can call on the current turn.
 
-        Tool-search corpus membership is identified by `with_native='tool_search'`, because
-        `defer_loading` is both the user-input deferral flag and the per-step visibility flag
-        after tool-search wrapping. Available tools are therefore always-visible non-corpus
-        tools, corpus tools revealed by tool search, and corpus tools owned by loaded
-        deferred capabilities.
+        The visible subset of [`tools`][pydantic_ai.tools.RunContext.tools]: always-visible
+        tools, tools revealed via [tool search](../tools-advanced.md#tool-search), and tools
+        owned by loaded deferred capabilities.
 
-        Only fully populated once `tool_manager` has resolved the turn's tools, which happens
-        during model-request preparation. It is therefore reliable in model-request hooks
-        (`before_model_request`, `wrap_model_request`, `after_model_request`) and tool hooks,
-        but returns only `discovered_tool_names` (history-derived) in earlier hooks like
-        `before_run` where no tool manager is set yet. The tool manager is also re-resolved
-        between hooks within a step, so where you read this in the
-        [hook order](../hooks.md#hook-ordering) determines what you see.
+        Only fully populated once the turn's tools have been resolved during model-request
+        preparation, so it is reliable in model-request hooks (`before_model_request`,
+        `wrap_model_request`, `after_model_request`) and tool hooks. In earlier hooks like
+        `before_run` it falls back to `discovered_tool_names` (reconstructed from history).
+        See [hook ordering](../hooks.md#hook-ordering) for how timing affects what you see.
         """
         if self.tool_manager is None or self.tool_manager.tools is None:
             return set[str]() | self.discovered_tool_names

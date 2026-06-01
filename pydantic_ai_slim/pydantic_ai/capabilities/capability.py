@@ -266,7 +266,8 @@ class Capability(AbstractCapability[AgentDepsT]):
 
         Example:
         ```python
-        from pydantic_ai import Capability, RunContext
+        from pydantic_ai import RunContext
+        from pydantic_ai.capabilities import Capability
 
         cap = Capability[str](instructions='base instructions')
 

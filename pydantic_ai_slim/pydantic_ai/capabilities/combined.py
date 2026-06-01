@@ -21,7 +21,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
-from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset, resolve_capability_id
+from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._ordering import collect_leaves, sort_capabilities
@@ -807,14 +807,7 @@ def _capability_loaded(capability: AbstractCapability[AgentDepsT], ctx: RunConte
     if capability.defer_loading is not True:
         return True
 
-    capability_id = _capability_id_or_none(capability, ctx)
-    return capability_id is not None and capability_id in ctx.available_capability_ids
-
-
-def _capability_id_or_none(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> str | None:
-    if ctx.capabilities or ctx.capability_id_by_instance:
-        try:
-            return resolve_capability_id(ctx, capability)
-        except StopIteration:
-            pass
-    return capability.id
+    # Deferred capabilities are required to have an explicit `id` (enforced in
+    # `_build_run_capabilities`), which is also the key they're registered under, so we read
+    # it directly rather than resolving the instance back to its run-local registry id.
+    return capability.id is not None and capability.id in ctx.available_capability_ids

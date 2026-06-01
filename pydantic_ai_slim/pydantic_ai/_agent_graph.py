@@ -201,7 +201,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     root_capability: AbstractCapability[DepsT]
 
     capabilities: dict[str, AbstractCapability[DepsT]]
-    capability_id_by_instance: dict[int, str]
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
@@ -1419,7 +1418,6 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
         capabilities=ctx.deps.capabilities,
-        capability_id_by_instance=ctx.deps.capability_id_by_instance,
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,

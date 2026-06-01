@@ -2771,7 +2771,6 @@ async def test_deferred_capability_partitions_native_tools() -> None:
         model=TestModel(),
         usage=RunUsage(),
         capabilities={'web-search': native_cap},
-        capability_id_by_instance={id(native_cap): 'web-search'},
     )
     assert native_tool_func(native_tool_ctx) is None
     native_tool_ctx.loaded_capability_ids.add('web-search')
@@ -3962,19 +3961,18 @@ def _build_run_context(deps: Any = None) -> RunContext[Any]:
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage(), run_step=0)
 
 
-def test_resolve_capability_id_uses_run_context_reverse_lookup() -> None:
+def test_resolve_capability_id_scans_run_context_capabilities() -> None:
     @dataclass
     class SimpleCap(AbstractCapability[None]):
         pass
 
     target = SimpleCap()
-    fallback = SimpleCap()
+    other = SimpleCap()
     ctx = RunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        capabilities={'fallback': fallback},
-        capability_id_by_instance={id(target): 'target'},
+        capabilities={'other': other, 'target': target},
     )
 
     assert resolve_capability_id(ctx, target) == 'target'

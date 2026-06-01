@@ -12,7 +12,7 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
@@ -1375,11 +1375,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
-        run_capabilities = _build_run_capabilities(run_capability)
-        if any(capability.defer_loading is True for capability in run_capabilities.by_id.values()):
+        capabilities_dict = _build_run_capabilities(run_capability)
+        if any(capability.defer_loading is True for capability in capabilities_dict.values()):
             run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
-            run_capabilities = _build_run_capabilities(run_capability)
-        capabilities_dict = run_capabilities.by_id
+            capabilities_dict = _build_run_capabilities(run_capability)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:
@@ -1493,7 +1492,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             validation_context=self._validation_context,
             root_capability=run_capability,
             capabilities=capabilities_dict,
-            capability_id_by_instance=run_capabilities.id_by_instance,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
             native_tools=cap_native_tools,
@@ -2934,13 +2932,7 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
             capabilities.append(cap_type())
 
 
-@dataclasses.dataclass
-class _RunCapabilities(Generic[AgentDepsT]):
-    by_id: dict[str, AbstractCapability[AgentDepsT]]
-    id_by_instance: dict[int, str]
-
-
-def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> _RunCapabilities[AgentDepsT]:
+def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
@@ -2956,7 +2948,6 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> _RunC
         explicit_ids.add(cap.id)
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
-    id_by_instance: dict[int, str] = {}
     for cap in capabilities:
         capability_id = cap.id
         if cap.defer_loading is True and capability_id is None:
@@ -2974,9 +2965,8 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> _RunC
                 suffix += 1
 
         by_id[capability_id] = cap
-        id_by_instance.setdefault(id(cap), capability_id)
 
-    return _RunCapabilities(by_id=by_id, id_by_instance=id_by_instance)
+    return by_id
 
 
 def _validate_spec(
