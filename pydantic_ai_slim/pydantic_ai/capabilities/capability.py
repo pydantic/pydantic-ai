@@ -69,6 +69,21 @@ class Capability(AbstractCapability[AgentDepsT]):
         description: CapabilityDescription[AgentDepsT] | None = None,
         defer_loading: bool = False,
     ) -> None:
+        """Build a capability from instructions, tools, toolsets, and an optional description.
+
+        Args:
+            instructions: Static instructions and/or instruction function(s), available via
+                `get_instructions()`. Register more with the
+                [`instructions`][pydantic_ai.capabilities.Capability.instructions] decorator.
+            toolsets: Toolsets to register with the agent.
+            tools: Function tools to register with the agent.
+            id: Stable identifier for the capability. Required when `defer_loading=True`, so the
+                model's `load_capability` call can reference it.
+            description: Static string or callable description, returned from `get_description()`.
+                For a deferred capability it is shown to the model so it can decide whether to load it.
+            defer_loading: When `True`, the capability's tools and instructions stay hidden until the
+                model loads it on demand via the `load_capability` tool; requires `id`.
+        """
         resolved_toolsets: tuple[AgentToolset[AgentDepsT], ...]
         if toolsets is not None:
             resolved_toolsets = tuple(toolsets)
@@ -157,6 +172,11 @@ class Capability(AbstractCapability[AgentDepsT]):
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
+        """Decorator to register a plain (no-[`RunContext`][pydantic_ai.tools.RunContext]) function tool on this capability.
+
+        Mirrors [`Agent.tool_plain`][pydantic_ai.Agent.tool_plain]: the tool is added to this
+        capability's function toolset and registered with the agent whenever the capability is active.
+        """
         decorator = self._function_toolset.tool_plain(
             name=name,
             description=description,
@@ -222,6 +242,11 @@ class Capability(AbstractCapability[AgentDepsT]):
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
+        """Decorator to register a function tool (taking [`RunContext`][pydantic_ai.tools.RunContext]) on this capability.
+
+        Mirrors [`Agent.tool`][pydantic_ai.Agent.tool]: the tool is added to this capability's
+        function toolset and registered with the agent whenever the capability is active.
+        """
         decorator = self._function_toolset.tool(
             name=name,
             description=description,

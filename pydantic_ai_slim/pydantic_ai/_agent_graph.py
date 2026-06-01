@@ -206,8 +206,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # Invariant: these two sets are shared by reference into every `RunContext` this run (their
     # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
     # place — never reassigned. The per-step refresh and the `load_capability` tool body rely on
-    # that shared identity; `build_run_context` asserts it. Reassigning either (here or via a
-    # `replace(ctx, ...=...)`) would silently break in-step capability loads / tool reveals.
+    # that shared identity. Reassigning either (here, or by passing it to a `replace(ctx, ...=...)`)
+    # would silently break in-step capability loads / tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
@@ -1419,12 +1419,11 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         pending_messages=ctx.state.pending_messages,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
+    # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the
+    # shared identity of `loaded_capability_ids`/`discovered_tool_names` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add either set here — forking the object would
+    # silently break in-step capability loads / tool reveals.
     run_context = replace(run_context, validation_context=validation_context)
-    # `replace` must preserve the identity of these two sets — see the invariant on
-    # `GraphAgentDeps.loaded_capability_ids`. Passing either to `replace` above would fork the
-    # object and silently break in-step capability loads / tool reveals.
-    assert run_context.loaded_capability_ids is ctx.deps.loaded_capability_ids
-    assert run_context.discovered_tool_names is ctx.deps.discovered_tool_names
     return run_context
 
 
