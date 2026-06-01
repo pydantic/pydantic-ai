@@ -24,6 +24,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     RequestUsage,
     RetryPromptPart,
+    RunUsage,
     TextContent,
     TextPart,
     ThinkingPart,
@@ -655,6 +656,43 @@ def test_model_messages_type_adapter_preserves_conversation_id():
     deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
 
     assert [message.conversation_id for message in deserialized] == snapshot(['conv-abc', 'conv-abc'])
+
+
+def test_model_messages_type_adapter_preserves_request_usage():
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[TextPart(content='Hello!')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        ),
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    [deserialized] = ModelMessagesTypeAdapter.validate_json(serialized)
+
+    assert isinstance(deserialized, ModelResponse)
+    assert isinstance(deserialized.usage, RequestUsage)
+    assert not isinstance(deserialized.usage, RunUsage)
+    assert deserialized.usage.input_tokens == 10
+    assert deserialized.usage.output_tokens == 5
+
+
+def test_model_messages_type_adapter_preserves_run_usage():
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[TextPart(content='Hello!')],
+            usage=RunUsage(requests=5, tool_calls=3, input_tokens=1000, output_tokens=500),
+        ),
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    [deserialized] = ModelMessagesTypeAdapter.validate_json(serialized)
+
+    assert isinstance(deserialized, ModelResponse)
+    assert isinstance(deserialized.usage, RunUsage)
+    assert deserialized.usage.requests == 5
+    assert deserialized.usage.tool_calls == 3
+    assert deserialized.usage.input_tokens == 1000
+    assert deserialized.usage.output_tokens == 500
 
 
 def test_model_messages_type_adapter_back_compat_missing_conversation_id():
