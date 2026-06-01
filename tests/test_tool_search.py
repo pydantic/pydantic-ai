@@ -1771,7 +1771,9 @@ async def test_anthropic_promotes_local_search_history_round_trip(
 @pytest.mark.vcr
 @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
 @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
-async def test_openai_promotes_local_search_history_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
+async def test_openai_promotes_local_search_history_round_trip(
+    allow_model_requests: None, openai_api_key: str, vcr: Any
+) -> None:
     """End-to-end against live OpenAI: a turn with local-shape `ToolSearch*Part`
     history runs cleanly on OpenAI Responses. The adapter promotes the local-shape
     pair into `tool_search_call` + `tool_search_output` items with
@@ -1820,30 +1822,30 @@ async def test_openai_promotes_local_search_history_round_trip(allow_model_reque
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
 
+    request_inputs = [json.loads(request.body).get('input', []) for request in vcr.requests]
+
     # Wire-level: cassette confirms the local-shape pair got promoted to
     # `tool_search_call` + `tool_search_output` items with `execution='client'`.
-    cassette_path = (
-        Path(__file__).parent
-        / 'cassettes'
-        / 'test_tool_search'
-        / 'test_openai_promotes_local_search_history_round_trip.yaml'
-    )
-    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
-    interactions = cast(list[dict[str, Any]], cassette['interactions'])
-
-    first_request_input = cast(list[dict[str, Any]], interactions[0]['request']['parsed_body']['input'])
-    promoted_calls = [item for item in first_request_input if item.get('type') == 'tool_search_call']
-    promoted_outputs = [item for item in first_request_input if item.get('type') == 'tool_search_output']
+    promoted_calls = [item for item in request_inputs[0] if item.get('type') == 'tool_search_call']
+    promoted_outputs = [item for item in request_inputs[0] if item.get('type') == 'tool_search_output']
     assert promoted_calls, 'expected the local-shape call to be promoted to tool_search_call'
     assert promoted_outputs, 'expected the local-shape return to be promoted to tool_search_output'
     assert all(item.get('execution') == 'client' for item in promoted_calls)
     assert all(item.get('execution') == 'client' for item in promoted_outputs)
-    promoted_tool_names = {
-        cast(str, t.get('name'))
-        for output in promoted_outputs
-        for t in cast(list[dict[str, Any]], output.get('tools', []))
-    }
+    promoted_tool_names = {t.get('name') for output in promoted_outputs for t in output.get('tools', [])}
     assert 'get_exchange_rate' in promoted_tool_names
+
+    # Wire-level: once the discovered tool is dispatched, its replayed `function_call` must carry a
+    # `namespace` — OpenAI rejects a tool-search-discovered call without one. Guards the namespace
+    # emission in `_map_messages` (a regression would only surface as a live 422 otherwise).
+    replayed_calls = [
+        item
+        for request_input in request_inputs
+        for item in request_input
+        if item.get('type') == 'function_call' and item.get('name') == 'get_exchange_rate'
+    ]
+    assert replayed_calls, 'expected the discovered tool call to be replayed to OpenAI'
+    assert any(item.get('namespace') == 'get_exchange_rate' for item in replayed_calls)
 
 
 @pytest.mark.vcr
@@ -3005,7 +3007,7 @@ async def test_openai_native_tool_search_round_trip(allow_model_requests: None, 
 
 
 @pytest.mark.vcr
-async def test_openai_execution_client_round_trip(allow_model_requests: None, openai_api_key: str) -> None:
+async def test_openai_execution_client_round_trip(allow_model_requests: None, openai_api_key: str, vcr: Any) -> None:
     """End-to-end: a custom callable `ToolSearch` strategy surfaces natively on OpenAI
     Responses as `ToolSearchToolParam(execution='client')` — the provider emits a
     `tool_search_call` with `execution='client'` whose arguments we dispatch to the
@@ -3087,6 +3089,16 @@ async def test_openai_execution_client_round_trip(allow_model_requests: None, op
     ]
     assert len(rate_returns) == 1
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
+
+    # Wire-level: with a custom (client-executed) strategy, OpenAI rejects the `tool_search` tool
+    # without a non-null `description`, so the adapter always sends one. Confirm the recorded
+    # request carries it (guards the description default against a silent regression → live 422).
+    request_tools = json.loads(vcr.requests[0].body)['tools']
+    client_tool_search = [
+        tool for tool in request_tools if tool.get('type') == 'tool_search' and tool.get('execution') == 'client'
+    ]
+    assert client_tool_search, 'expected a client-executed tool_search tool in the request'
+    assert client_tool_search[0].get('description'), 'tool_search description must be non-null'
 
 
 @pytest.mark.vcr
