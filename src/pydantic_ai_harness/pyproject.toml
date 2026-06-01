@@ -65,6 +65,7 @@ dev = [
     'logfire[httpx]>=4.31.0',
     "dirty-equals>=0.9.0",
     "inline-snapshot>=0.32.5",
+    "pytest-examples>=0.0.18",
 ]
 lint = [
     'ruff>=0.14',
@@ -104,6 +105,8 @@ max-complexity = 15
 convention = 'google'
 
 [tool.ruff.format]
+# don't format python in docstrings, pytest-examples takes care of it
+docstring-code-format = false
 quote-style = 'single'
 
 [tool.pyright]
