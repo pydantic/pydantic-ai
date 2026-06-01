@@ -34,7 +34,12 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.messages import (
+    INVALID_JSON_KEY,
+    MULTI_MODAL_CONTENT_TYPES,
+    ToolSearchReturnPart,
+    is_multi_modal_content,
+)
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -1224,6 +1229,64 @@ def test_tool_return_content_nested_multimodal():
     assert isinstance(reloaded_content['images'][0], ImageUrl)
     assert isinstance(reloaded_content['documents'][0], DocumentUrl)
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
+
+
+def test_tool_return_part_in_model_response_round_trips():
+    """`ToolReturnPart` inside a `ModelResponse` must survive serialization round-trip.
+
+    Regression test for #5721: the `ModelResponsePart` discriminated union omitted the
+    base `ToolReturnPart` (`part_kind='tool-return'`), so `_agent_graph` parts persisted
+    inside a `ModelResponse` (resumed runs, durable workflows, AG-UI/Vercel adapters)
+    failed to deserialize with a `union_tag_invalid` `ValidationError`.
+    """
+    msg = ModelResponse(
+        parts=[
+            ToolReturnPart(
+                tool_name='my_tool',
+                content={'result': 'success'},
+                tool_call_id='call-abc',
+                metadata={'custom': 'data'},
+            )
+        ]
+    )
+
+    # python mode
+    dumped_py = ModelMessagesTypeAdapter.dump_python([msg], mode='python')
+    reloaded_py = ModelMessagesTypeAdapter.validate_python(dumped_py)
+    part_py = reloaded_py[0].parts[0]
+    assert isinstance(part_py, ToolReturnPart)
+    assert part_py.content == {'result': 'success'}
+    assert part_py.tool_call_id == 'call-abc'
+    # metadata is the field that silently round-tripped to a wrong shape before the fix
+    assert part_py.metadata == {'custom': 'data'}
+
+    # json mode
+    dumped_json = ModelMessagesTypeAdapter.dump_json([msg])
+    reloaded_json = ModelMessagesTypeAdapter.validate_json(dumped_json)
+    part_json = reloaded_json[0].parts[0]
+    assert isinstance(part_json, ToolReturnPart)
+    assert part_json.content == {'result': 'success'}
+    assert part_json.metadata == {'custom': 'data'}
+
+
+def test_tool_search_return_part_in_model_request_still_narrows():
+    """Adding base `ToolReturnPart` to the response union must not regress its `ToolSearchReturnPart` subclass.
+
+    `ToolSearchReturnPart` carries `tool_kind='tool-search'` and is registered under the
+    `'tool-search-return'` tag; the discriminator must still route it there (in a
+    `ModelRequest`, where search returns live) rather than to the base `'tool-return'` tag.
+    """
+    search_return = ToolSearchReturnPart(
+        tool_name='search_tools',
+        content={'discovered_tools': [{'name': 'a_tool', 'description': 'does a thing'}]},
+        tool_call_id='call-search',
+    )
+    msg = ModelRequest(parts=[search_return])
+
+    reloaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([msg]))
+    part = reloaded[0].parts[0]
+    assert isinstance(part, ToolSearchReturnPart)
+    assert part.tool_name == 'search_tools'
 
 
 def test_multi_modal_content_types_matches_union():

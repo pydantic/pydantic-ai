@@ -598,6 +598,9 @@ class MistralModel(Model[Mistral]):
                     elif isinstance(part, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
+                    elif isinstance(part, ToolReturnPart):  # pragma: no cover
+                        # User-defined tool returns the framework stores on a ModelResponse are not replayed to the provider.
+                        pass
                     else:
                         assert_never(part)
                 if thinking_chunks:

@@ -2066,6 +2066,7 @@ ModelResponsePart = Annotated[
     | Annotated[NativeToolCallPart, pydantic.Tag('builtin-tool-call')]
     | Annotated[NativeToolSearchReturnPart, pydantic.Tag('builtin-tool-search-return')]
     | Annotated[NativeToolReturnPart, pydantic.Tag('builtin-tool-return')]
+    | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[ThinkingPart, pydantic.Tag('thinking')]
     | Annotated[CompactionPart, pydantic.Tag('compaction')]
     | Annotated[FilePart, pydantic.Tag('file')],
@@ -2710,7 +2711,16 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'tool-return',
+            'compaction',
+            'file',
+        ]
         | None
     ) = None
     """The kind of the previous part, if any.
@@ -2751,7 +2761,16 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'tool-return',
+            'compaction',
+            'file',
+        ]
         | None
     ) = None
     """The kind of the next part, if any.

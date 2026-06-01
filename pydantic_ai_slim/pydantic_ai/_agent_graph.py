@@ -1190,6 +1190,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.CompactionPart):
                         if part.content:
                             compaction_text += part.content
+                    elif isinstance(part, _messages.ToolReturnPart):
+                        # User-defined tool returns the framework stores on a ModelResponse produce no streamed event here.
+                        pass
                     else:
                         assert_never(part)
 

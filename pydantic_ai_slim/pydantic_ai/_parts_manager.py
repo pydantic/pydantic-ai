@@ -526,6 +526,9 @@ class ModelResponsePartsManager:
         self, existing_part: ModelResponsePart | ToolCallPartDelta, provider_name: str | None
     ) -> str | None:
         """Return the provider name if it has not been set on previous parts."""
-        if existing_part.provider_name is None or provider_name != existing_part.provider_name:
+        # `ToolReturnPart` is a valid `ModelResponsePart` member but is never tracked by the parts
+        # manager (it carries no `provider_name`); `getattr` keeps this resolution type-safe.
+        existing_provider_name = getattr(existing_part, 'provider_name', None)
+        if existing_provider_name is None or provider_name != existing_provider_name:
             return provider_name
         return None

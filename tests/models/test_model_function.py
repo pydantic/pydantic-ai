@@ -21,7 +21,13 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    _estimate_usage,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
 from pydantic_ai.usage import RequestUsage
@@ -567,3 +573,25 @@ async def test_return_empty():
     with pytest.raises(ValueError, match='Stream function must return at least one item'):
         async with agent.run_stream(''):
             pass
+
+
+def test_estimate_usage_handles_tool_return_part_in_response():
+    """Regression for #5721: a `ToolReturnPart` stored on a `ModelResponse` must be handled.
+
+    Adding the base `ToolReturnPart` to the `ModelResponsePart` union means every consumer
+    that iterates `ModelResponse.parts` (here the usage estimator) must handle the new
+    variant rather than falling through to `assert_never`. The framework stores these parts
+    on responses for user-defined output tools, so they appear in real message history.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart(content='hello'),
+                ToolReturnPart(tool_name='my_tool', content='tool result here', tool_call_id='call-1'),
+            ]
+        )
+    ]
+    estimated = _estimate_usage(messages)
+    # Text + the tool return content are both counted; the key assertion is that no
+    # `assert_never` is raised for the response-embedded `ToolReturnPart`.
+    assert estimated.output_tokens is not None and estimated.output_tokens > 0
