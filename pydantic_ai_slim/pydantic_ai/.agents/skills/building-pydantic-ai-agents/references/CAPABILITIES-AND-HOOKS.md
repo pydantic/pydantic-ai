@@ -56,8 +56,10 @@ Supported effort values:
 Use `Hooks` for decorator-based lifecycle interception.
 
 ```python
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import ValidatedToolArgs
 from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 
 hooks = Hooks()
@@ -70,7 +72,13 @@ async def log_request(ctx: RunContext[None], request_context: ModelRequestContex
 
 
 @hooks.on.before_tool_execute(tools=['send_email'])
-async def audit_tool(ctx, *, call, tool_def, args):
+async def audit_tool(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
     print(f'Executing {call.tool_name}')
     return args
 
@@ -100,3 +108,9 @@ Reach for a custom capability when:
 - the behavior should be installable or declarative
 
 Keep custom capabilities focused. If the user only needs one tool or one hook, do not introduce a capability.
+
+For every capability, consider whether `defer_loading=True` would improve the system by keeping instructions and tool schemas out of the eager context. Keep it eager only when the model benefits from that capability on most turns, when its hooks/settings must always apply, or when deferral would make capability selection unreliable.
+
+## Defer Capability Loading
+
+For capabilities on demand, load [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md). Use it when the user mentions deferred capabilities, capability progressive disclosure, `defer_loading=True` on a capability, or `load_capability`; also use it proactively when an agent design includes optional instructions, specialist workflows, long-tail tools, or context the model does not need on most turns.

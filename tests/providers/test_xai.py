@@ -72,9 +72,10 @@ def test_xai_model_profile():
     from pydantic_ai.profiles.grok import GrokModelProfile
 
     provider = XaiProvider(api_key='api-key')
-    profile = provider.model_profile('grok-4-1-fast-non-reasoning')
+    profile = provider.model_profile('grok-4.3')
     assert isinstance(profile, GrokModelProfile)
     assert profile.grok_supports_builtin_tools is True
+    assert profile.grok_reasoning_efforts == frozenset({'none', 'low', 'medium', 'high'})
 
 
 def test_xai_provider_recreates_client_on_new_loop():

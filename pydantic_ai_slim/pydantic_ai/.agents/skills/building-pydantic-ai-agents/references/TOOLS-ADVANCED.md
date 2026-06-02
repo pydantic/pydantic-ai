@@ -111,9 +111,9 @@ For tool-call retries, use `ModelRetry` and tool `retries=...`.
 
 For HTTP request retries at the transport layer, use the library's retry configuration separately. Do not assume `ModelRetry` alone solves provider transport failures.
 
-## Tool Search and Deferred Loading
+## Tool Search and Tool-Level Deferred Loading
 
-Use deferred loading when the agent has many tools and the model should discover them on demand via `search_tools`.
+Use tool-level deferred loading when the agent has many tools and the model should discover individual tools on demand via `search_tools`.
 
 ```python
 from pydantic_ai import Agent
@@ -131,3 +131,5 @@ Good fit:
 - large MCP servers
 - big tool catalogs
 - situations where loading all tool schemas would bloat context
+
+For bundle-level progressive disclosure of instructions plus tools, read [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md) instead.
