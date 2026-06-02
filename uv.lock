@@ -18,6 +18,7 @@ members = [
     "pydantic-graph",
 ]
 constraints = [
+    { name = "aiohttp", specifier = "<3.14" },
     { name = "authlib", specifier = ">=1.6.7" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "idna", specifier = ">=3.15" },
