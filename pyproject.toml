@@ -105,6 +105,10 @@ members = [
 [tool.uv]
 default-groups = ["dev", "lint", "docs"]
 constraint-dependencies = [
+    # Temporary ceiling: aiohttp 3.14.0 removed the internal `aiohttp.streams.AsyncStreamReaderMixin`
+    # that vcrpy (<=8.1.1) subclasses, breaking test collection under `--resolution lowest-direct`.
+    # Dev/CI-only (not in published metadata). Remove once vcrpy ships a fix (vcrpy#995 / pydantic-ai#5751).
+    "aiohttp<3.14",
     "ray>=2.55.0",
     "authlib>=1.6.7",
     # Security-driven floors for purely transitive deps. Each line lifts the
@@ -120,6 +124,8 @@ constraint-dependencies = [
     "python-dotenv>=1.2.2",
     "pygments>=2.20.0",
     "xgrammar>=0.1.32",
+    # TODO: Remove or loosen once vcrpy includes https://github.com/kevin1024/vcrpy/pull/996.
+    "aiohttp<3.14",
     "langchain-core>=1.3.3",
     "langchain-text-splitters>=1.1.2",
     "langsmith>=0.8.0",

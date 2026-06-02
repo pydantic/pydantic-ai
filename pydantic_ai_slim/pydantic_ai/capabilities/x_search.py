@@ -24,7 +24,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     On xAI models, uses the native X search directly with no extra configuration.
 
     On non-xAI models, you must explicitly set `fallback_model` to an xAI model
-    (e.g. `'xai:grok-4-1-fast-non-reasoning'`) to enable a subagent-based fallback.
+    (e.g. `'xai:grok-4.3'`) to enable a subagent-based fallback.
     There is no default fallback model — attempting to use `XSearch` on a non-xAI
     model without `fallback_model` will error.
     """
@@ -35,7 +35,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     Required for non-xAI models; leave as `None` (the default) when running on an xAI
     model. Must be a model that supports X search via the
     [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] native tool (i.e. an xAI model),
-    for example `'xai:grok-4-1-fast-non-reasoning'`.
+    for example `'xai:grok-4.3'`.
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
     that returns a `Model` instance or model name string.
@@ -91,12 +91,18 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         enable_image_understanding: bool | None = None,
         enable_video_understanding: bool | None = None,
         include_output: bool | None = None,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> None:
         if fallback_model is not None and local is not None:
             raise UserError(
                 'XSearch: cannot specify both `fallback_model` and `local` — '
                 'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
             )
+        self.id = id
+        self.description = description
+        self.defer_loading = defer_loading
         self.native = native
         self.local = local
         self.fallback_model = fallback_model

@@ -43,9 +43,6 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     Required when using native MCP. Optional when using a local-only client via `local=`."""
 
-    id: str | None
-    """Unique identifier for the MCP server. Defaults to a slug derived from the URL."""
-
     authorization_token: str | None
     """Authorization header value for MCP server requests. Passed to both native and local."""
 
@@ -55,7 +52,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     allowed_tools: list[str] | None
     """Filter to only these tools. Applied to both native and local."""
 
-    description: str | None
+    description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""
 
     def __init__(
@@ -71,6 +68,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
         description: str | None = None,
+        defer_loading: bool = False,
     ) -> None:
         # Native MCP requires a URL only when the capability auto-constructs an `MCPServerTool`
         # (i.e. `native=True`). Explicit `MCPServerTool(...)` instances and per-run callables
@@ -105,13 +103,18 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.headers = headers
         self.allowed_tools = allowed_tools
         self.description = description
+        self.defer_loading = defer_loading
         self.__post_init__()
 
     @cached_property
     def _resolved_id(self) -> str:
         if self.id:
             return self.id
-        # `_resolved_id` is only read through native paths, which require a URL (enforced in `__init__`).
+        # An explicit `native=MCPServerTool(id=...)` carries its own id; key off it so the local
+        # fallback's `unless_native` marker matches the native tool that's actually advertised.
+        if isinstance(self.native, MCPServerTool):
+            return self.native.id
+        # Otherwise `_resolved_id` is only read through native paths, which require a URL (enforced in `__init__`).
         assert self.url is not None
         # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
         parsed = urlparse(self.url)
@@ -195,6 +198,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         headers: dict[str, str] | None = None,
         allowed_tools: list[str] | None = None,
         description: str | None = None,
+        defer_loading: bool = False,
     ) -> MCP[AgentDepsT]:
         """Construct an `MCP` capability from spec-serializable args.
 
@@ -214,6 +218,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             headers=headers,
             allowed_tools=allowed_tools,
             description=description,
+            defer_loading=defer_loading,
         )
 
 

@@ -651,6 +651,8 @@ For more information on how `end_strategy` works with both function tools and ou
 
 Agents with many tools (e.g. [MCP servers](mcp/client.md) exposing dozens of endpoints) can spend a lot of input tokens on tool definitions before any work happens, and tool selection accuracy noticeably degrades past ~30–50 available tools. Marking tools for deferred loading hides them from the model's initial context; the model discovers hidden tools by keyword when it needs them.
 
+For workflow *bundles* — instructions, tools, model settings, and hooks that travel together — see [on-demand capabilities](capabilities.md#on-demand-capabilities), which build on the same machinery but disclose at the bundle level rather than the individual-tool level.
+
 Reach for it when:
 
 * the agent exposes ~10+ tools or more than ~10k tokens of tool definitions
@@ -663,11 +665,13 @@ To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Too
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
-* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility.
+* **Native provider search** on supporting models (Anthropic Sonnet 4.5+, Opus 4.5+, Haiku 4.5+ via [BM25/regex](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool); OpenAI Responses on GPT-5.4+). Standalone deferred tools are sent to the provider with `defer_loading` on the wire and the provider manages their visibility. Tools owned by on-demand capabilities use client-executed local search on native-supporting providers, because provider-side search cannot enforce capability gating before `load_capability` succeeds.
 * **Custom callable** via [`ToolSearch(strategy=...)`][pydantic_ai.capabilities.ToolSearch] — a user-supplied search function. Executed on our side, but routed through the provider's client-executed native surface (Anthropic `tool_reference` blocks, OpenAI `execution='client'`) where supported so the model sees a tool-search call rather than a regular function tool.
 * **Local fallback** on every other model: a `search_tools` function tool matches keywords against tool names and descriptions.
 
 Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) — the deferred tools never enter the prompt prefix, so prompt caching is preserved across rounds. The local fallback, by contrast, flips each discovered tool's `defer_loading=False` between rounds, which changes the tool-definition prefix and invalidates the cached request prefix on every discovery turn.
+
+Runs that include tools owned by [on-demand capabilities](capabilities.md#on-demand-capabilities) trade hosted-search quality for capability gating and cache stability on native-supporting providers: deferred function tools are searched by Pydantic AI through the provider's client-executed native surface, so each `load_capability` reveal can keep the prompt-cache prefix warm without exposing tools from unloaded capabilities. Runs with only standalone deferred tools keep using the provider's hosted search.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 

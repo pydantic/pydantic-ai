@@ -54,22 +54,12 @@ from ..models import (
 )
 from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
-from ..profiles.grok import GrokModelProfile
+from ..profiles.grok import GrokModelProfile, GrokReasoningEffort
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._tool_choice import resolve_tool_choice
-
-XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
-    True: 'high',
-    'minimal': 'low',
-    'low': 'low',
-    'medium': 'high',
-    'high': 'high',
-    'xhigh': 'high',
-}
-"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'."""
 
 try:
     import grpc
@@ -115,6 +105,35 @@ XaiModelName = str | ChatModel
 # `'grok'` alias (when `GrokProvider` existed) so persisted messages from before the rename still
 # route their thinking and native-tool parts back to this provider.
 _XAI_PROVIDER_NAMES = frozenset({'xai', 'grok'})
+
+
+def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) -> GrokReasoningEffort | None:
+    """Map unified thinking values to the xAI `reasoning_effort` values a model accepts."""
+    supported_efforts = profile.get('grok_reasoning_efforts', frozenset())
+    if not supported_efforts:
+        return None
+
+    if thinking is False:
+        return 'none' if 'none' in supported_efforts else None
+    if thinking is True:
+        # `True` requests reasoning at the model's default level rather than a specific effort.
+        # Models that accept `'none'` (Grok 4.3) treat `reasoning_effort` as optional and apply their
+        # own default, so we omit it. Always-on models like grok-3-mini don't expose a default-omission
+        # path, so they fall back to `'medium'` (consistent with OpenAI), normalized to the nearest
+        # supported value by the `'medium'` handling below.
+        if 'none' in supported_efforts:
+            return None
+        thinking = 'medium'
+
+    if thinking in ('minimal', 'low'):
+        return 'low'
+    elif thinking == 'medium':
+        return 'medium' if 'medium' in supported_efforts else 'high'
+    elif thinking in ('high', 'xhigh'):
+        return 'high'
+    else:
+        assert_never(thinking)
+
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
     'stop': 'stop',
@@ -197,7 +216,7 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `collections_search_call.outputs` value of the `include` parameter in the Responses API.
     """
 
-    xai_reasoning_effort: Literal['low', 'high']
+    xai_reasoning_effort: GrokReasoningEffort
     """Reasoning effort level for Grok reasoning models.
 
     See https://docs.x.ai for details.
@@ -240,7 +259,7 @@ class XaiModel(Model[AsyncClient]):
         """Initialize the xAI model.
 
         Args:
-            model_name: The name of the xAI model to use (e.g., "grok-4-1-fast-non-reasoning")
+            model_name: The name of the xAI model to use (e.g., "grok-4.3")
             provider: The provider to use for API calls. Defaults to `'xai'`.
             profile: Optional model profile specification. Defaults to a profile picked by the provider based on the model name.
             settings: Optional model settings.
@@ -696,11 +715,11 @@ class XaiModel(Model[AsyncClient]):
         # Map model settings to xAI SDK parameters
         xai_settings = _map_model_settings(model_settings)
 
-        # Fall back to unified thinking when xai_reasoning_effort is not set
+        # Fall back to unified thinking when xai_reasoning_effort is not set.
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
-            thinking = model_request_parameters.thinking
-            if thinking is not False:
-                xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
+            reasoning_effort = _map_reasoning_effort(model_request_parameters.thinking, profile)
+            if reasoning_effort is not None:
+                xai_settings['reasoning_effort'] = reasoning_effort
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
