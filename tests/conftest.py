@@ -140,14 +140,22 @@ JsonSchemaValue: TypeAlias = 'dict[str, JsonSchemaValue] | list[JsonSchemaValue]
 
 
 def remove_schema_descriptions(schema: JsonSchemaValue) -> JsonSchemaValue:
-    """Recursively drop `description` keys from a JSON schema for version-tolerant comparison.
+    """Recursively drop docstring-derived `description` keys from a JSON schema for version-tolerant comparison.
 
     Pydantic 2.13 emits class and stdlib-dataclass docstrings as schema `description`s, where 2.12
     suppressed stdlib-dataclass docstrings (see pydantic#12812). Dropping descriptions keeps these
     schema snapshots stable across the supported pydantic range while still asserting structure.
+
+    Only string-valued `description` keys (the docstring/annotation form) are dropped; a `description`
+    key whose value is a sub-schema is a property literally named `description` (e.g. a capability's
+    `description` field) and must be preserved.
     """
     if isinstance(schema, dict):
-        return {k: remove_schema_descriptions(v) for k, v in schema.items() if k != 'description'}
+        return {
+            k: remove_schema_descriptions(v)
+            for k, v in schema.items()
+            if not (k == 'description' and isinstance(v, str))
+        }
     if isinstance(schema, list):
         return [remove_schema_descriptions(v) for v in schema]
     return schema

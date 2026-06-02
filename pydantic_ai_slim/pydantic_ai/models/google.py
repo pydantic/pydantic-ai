@@ -1614,7 +1614,7 @@ def _decode_inline_thought_signature(
     if not item.provider_details:
         return None
     if m.provider_name not in accepted_provider_names and item.provider_name not in accepted_provider_names:
-        return None  # pragma: no cover
+        return None
     raw = item.provider_details.get('thought_signature')
     if not raw:
         return None  # pragma: no cover
