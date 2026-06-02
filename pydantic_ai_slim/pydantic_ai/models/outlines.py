@@ -507,7 +507,7 @@ class OutlinesModel(Model):
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
                     elif isinstance(part, ToolReturnPart):  # pragma: no cover
-                        # User-defined tool returns the framework stores on a ModelResponse are not replayed to the provider.
+                        # User-defined tool returns in user-constructed message history are not replayed to the provider.
                         pass
                     else:
                         assert_never(part)

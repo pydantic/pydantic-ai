@@ -382,7 +382,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self.handle_compaction(part):
                     yield e
             case ToolReturnPart():  # pragma: no cover
-                # User-defined tool returns stored on a ModelResponse have no UI start event.
+                # User-defined tool returns in user-constructed message history have no UI start event.
                 pass
 
     async def handle_part_delta(self, event: PartDeltaEvent) -> AsyncIterator[EventT]:

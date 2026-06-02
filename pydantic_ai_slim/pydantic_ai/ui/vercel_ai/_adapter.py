@@ -683,7 +683,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in the UI
             elif isinstance(part, ToolReturnPart):  # pragma: no cover
-                pass  # User-defined tool returns stored on a ModelResponse are not rendered in the UI
+                pass  # User-defined tool returns in user-constructed message history are not rendered in the UI
             else:
                 assert_never(part)
 

@@ -1311,7 +1311,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     # Compaction parts are not sent back to the Chat Completions API.
                     pass
                 elif isinstance(item, ToolReturnPart):  # pragma: no cover
-                    # User-defined tool returns the framework stores on a ModelResponse are not replayed to the provider.
+                    # User-defined tool returns in user-constructed message history are not replayed to the provider.
                     pass
                 else:
                     assert_never(item)
@@ -2773,7 +2773,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 for item in message.parts:
                     if isinstance(item, ToolReturnPart):  # pragma: no cover
-                        # User-defined tool returns the framework stores on a ModelResponse are not replayed to the provider.
+                        # User-defined tool returns in user-constructed message history are not replayed to the provider.
                         continue
                     should_send_item_id = send_item_ids and (
                         item.provider_name == self.system

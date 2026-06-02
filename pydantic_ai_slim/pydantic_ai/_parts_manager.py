@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolPartKind,
+    ToolReturnPart,
 )
 
 from ._utils import generate_tool_call_id as _generate_tool_call_id
@@ -527,8 +528,9 @@ class ModelResponsePartsManager:
     ) -> str | None:
         """Return the provider name if it has not been set on previous parts."""
         # `ToolReturnPart` is a valid `ModelResponsePart` member but is never tracked by the parts
-        # manager (it carries no `provider_name`); `getattr` keeps this resolution type-safe.
-        existing_provider_name = getattr(existing_part, 'provider_name', None)
-        if existing_provider_name is None or provider_name != existing_provider_name:
+        # manager, and unlike the other members it carries no `provider_name`.
+        if isinstance(existing_part, ToolReturnPart):
+            return provider_name
+        if existing_part.provider_name is None or provider_name != existing_part.provider_name:
             return provider_name
         return None

@@ -679,7 +679,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in AG-UI
             elif isinstance(part, ToolReturnPart):  # pragma: no cover
-                pass  # User-defined tool returns stored on a ModelResponse are not rendered in AG-UI
+                pass  # User-defined tool returns in user-constructed message history are not rendered in AG-UI
             else:
                 assert_never(part)
 

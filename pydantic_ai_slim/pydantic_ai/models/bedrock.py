@@ -1066,9 +1066,13 @@ class BedrockConverseModel(Model[BaseClient]):
                     elif isinstance(item, CompactionPart | FilePart):
                         # Compaction and file parts are not sent back to models that don't support them.
                         pass  # pragma: no cover
-                    else:
-                        assert isinstance(item, ToolCallPart)
+                    elif isinstance(item, ToolReturnPart):  # pragma: no cover
+                        # User-defined tool returns in user-constructed message history are not replayed to the provider.
+                        pass
+                    elif isinstance(item, ToolCallPart):
                         content.append(self._map_tool_call(item))
+                    else:
+                        assert_never(item)
                 if content:
                     bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
