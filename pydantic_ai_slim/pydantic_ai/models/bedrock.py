@@ -865,10 +865,16 @@ class BedrockConverseModel(Model[BaseClient]):
             return None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'tool': {'name': next(iter(tool_names))}} if supports else {'auto': {}}
+                if supports:
+                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
+                else:
+                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = {'auto': {}}
             else:
+                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
         else:
             assert_never(resolved_tool_choice)
