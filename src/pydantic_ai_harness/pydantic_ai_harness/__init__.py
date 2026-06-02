@@ -1,11 +1,13 @@
-"""The batteries for your Pydantic AI agent -- the official capability library."""
+"""Pydantic AI capability library."""
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .code_mode import CodeMode
+    from .filesystem import FileSystem
+    from .shell import Shell
 
-__all__ = ['CodeMode']
+__all__ = ['CodeMode', 'FileSystem', 'Shell']
 
 
 def __getattr__(name: str) -> object:
@@ -13,4 +15,12 @@ def __getattr__(name: str) -> object:
         from .code_mode import CodeMode
 
         return CodeMode
+    elif name == 'FileSystem':
+        from .filesystem import FileSystem
+
+        return FileSystem
+    elif name == 'Shell':
+        from .shell import Shell
+
+        return Shell
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
