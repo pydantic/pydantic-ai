@@ -26,7 +26,11 @@ pytestmark = [
 
 
 async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking='high' flows through to xAI reasoning_effort."""
+    """End-to-end smoke test that thinking='high' runs against grok-3-mini.
+
+    The thinking -> reasoning_effort mapping is asserted at the wire level by the mock-client
+    tests below; this only confirms the cassette-backed call succeeds.
+    """
     m = XaiModel('grok-3-mini', provider=xai_provider)
     agent = Agent(m, model_settings={'thinking': 'high'})
 
@@ -40,7 +44,11 @@ async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: Xa
 
 
 async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking=False on a reasoning model is silently ignored (no reasoning_effort sent)."""
+    """End-to-end smoke test that thinking=False runs against grok-3-mini.
+
+    That `reasoning_effort` is omitted for grok-3-mini + False is asserted at the wire level by
+    `test_xai_unified_thinking_omits_reasoning_effort`.
+    """
     m = XaiModel('grok-3-mini', provider=xai_provider)
     agent = Agent(m, model_settings={'thinking': False})
 
