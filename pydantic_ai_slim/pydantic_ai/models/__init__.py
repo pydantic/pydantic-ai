@@ -22,7 +22,8 @@ import httpx
 import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 
-from .. import _utils
+from .. import _deferred_capabilities, _utils
+from .._deprecated_callable import deprecated_callable_property
 from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -45,9 +46,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    UserPromptPart,
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool
@@ -81,6 +84,7 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-opus-4-5',
         'anthropic:claude-opus-4-6',
         'anthropic:claude-opus-4-7',
+        'anthropic:claude-opus-4-8',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
         'anthropic:claude-sonnet-4-5-20250929',
@@ -171,6 +175,7 @@ KnownModelName = TypeAliasType(
         'gateway/anthropic:claude-opus-4-5',
         'gateway/anthropic:claude-opus-4-6',
         'gateway/anthropic:claude-opus-4-7',
+        'gateway/anthropic:claude-opus-4-8',
         'gateway/anthropic:claude-sonnet-4-0',
         'gateway/anthropic:claude-sonnet-4-20250514',
         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -193,6 +198,7 @@ KnownModelName = TypeAliasType(
         'gateway/google-cloud:gemini-3.1-flash-image-preview',
         'gateway/google-cloud:gemini-3.1-flash-lite-preview',
         'gateway/google-cloud:gemini-3.1-pro-preview',
+        'gateway/google-cloud:gemini-3.5-flash',
         'gateway/groq:llama-3.1-8b-instant',
         'gateway/groq:llama-3.3-70b-versatile',
         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -264,6 +270,7 @@ KnownModelName = TypeAliasType(
         'google-cloud:gemini-3.1-flash-image-preview',
         'google-cloud:gemini-3.1-flash-lite-preview',
         'google-cloud:gemini-3.1-pro-preview',
+        'google-cloud:gemini-3.5-flash',
         'google-cloud:gemini-flash-latest',
         'google-cloud:gemini-flash-lite-latest',
         'google:gemini-2.0-flash-lite',
@@ -280,6 +287,7 @@ KnownModelName = TypeAliasType(
         'google:gemini-3.1-flash-image-preview',
         'google:gemini-3.1-flash-lite-preview',
         'google:gemini-3.1-pro-preview',
+        'google:gemini-3.5-flash',
         'google:gemini-flash-latest',
         'google:gemini-flash-lite-latest',
         'grok:grok-2-image-1212',
@@ -874,6 +882,9 @@ class Model(ABC, Generic[InterfaceClient]):
         inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
         adapter sees a normal function-call exchange against `search_tools`.
 
+        Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
+        the profile's `supports_inline_system_prompts` is `False`.
+
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
@@ -881,7 +892,11 @@ class Model(ABC, Generic[InterfaceClient]):
         if ToolSearchTool not in self.profile.supported_native_tools:
             from .._tool_search import synthesize_local_tool_search_messages
 
-            return synthesize_local_tool_search_messages(messages)
+            messages = synthesize_local_tool_search_messages(messages)
+
+        if not self.profile.supports_inline_system_prompts:
+            messages = _wrap_non_leading_system_prompts(messages)
+
         return messages
 
     def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
@@ -936,11 +951,21 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
+        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(
+            supported_natives, params.function_tools
+        )
+        supported_natives = tool_search_resolution.native_tools
+        tool_search_kept_local = tool_search_resolution.keep_search_tools_local
+
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
-            # Rule 1: drop local fallback when the native tool is supported.
+            # Rule 1: drop local fallback when the native tool is supported — except for
+            # `search_tools` when tool search was kept local for capability visibility,
+            # where the local function tool is the callback the client-executed native
+            # surface dispatches to.
             if t.unless_native and t.unless_native in supported_ids:
-                continue
+                if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
+                    continue
             # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
             if t.with_native and t.with_native not in supported_ids and t.defer_loading:
                 continue
@@ -1325,7 +1350,7 @@ class StreamedResponse(ABC):
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
-            usage=self.usage(),
+            usage=self.usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
@@ -1334,7 +1359,9 @@ class StreamedResponse(ABC):
             state=state,
         )
 
-    # TODO (v2): Make this a property
+    @deprecated_callable_property(
+        '`StreamedResponse.usage` is no longer a method; access it as a property (drop the parentheses).'
+    )
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
@@ -1739,6 +1766,62 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
     )
 
 
+@dataclass
+class _ToolSearchNativeResolution:
+    native_tools: list[AbstractNativeTool]
+    keep_search_tools_local: bool
+
+
+def _resolve_tool_search_native_for_capability_owned_corpus(
+    supported_natives: Sequence[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
+) -> _ToolSearchNativeResolution:
+    """Resolve tool search's native mode when a deferred capability owns a corpus tool.
+
+    Provider-side tool search (Anthropic `bm25`/`regex`, OpenAI server-managed `tool_search`)
+    is a black box: it indexes whatever we send and returns matches. It can't honor "this tool
+    is only visible after its owning capability has been loaded." Our local search loop in
+    `ToolSearchToolset._search_tools` *can* — it filters the corpus by
+    `ctx.available_capability_ids`. So whenever a capability-owned tool sits in the corpus,
+    search must run client-side or hidden tools will leak.
+
+    Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
+    the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
+    OpenAI `execution='client'`) which dispatches into our local `search_tools` callback;
+    (2) the caller keeps `search_tools` in the request parameters — that callback is what
+    the client-executed surface invokes. Adapters may still render that callback as a
+    native client-executed tool-search item rather than as a regular function tool on the
+    provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
+    equivalent, so we raise rather than silently substitute a different algorithm.
+    """
+    capability_owns_corpus = any(
+        t.with_native == ToolSearchTool.kind
+        and (t.metadata or {}).get(_deferred_capabilities.DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
+        for t in function_tools
+    )
+    if not capability_owns_corpus:
+        return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
+
+    resolved_natives: list[AbstractNativeTool] = []
+    keep_search_tools_local = False
+    for t in supported_natives:
+        if not isinstance(t, ToolSearchTool):
+            resolved_natives.append(t)
+            continue
+        if t.strategy not in (None, 'custom'):
+            raise UserError(
+                f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
+                "capabilities. Server-side strategies can't "
+                "honor capability gating and would reveal tools whose owning capability hasn't "
+                'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
+                "deferred capability is present), `strategy='keywords'`, or a custom callable."
+            )
+        keep_search_tools_local = True
+        if t.strategy is None:
+            t = replace(t, strategy='custom')
+        resolved_natives.append(t)
+    return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
+
+
 def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
     """Resolve return schemas: clear on tools that haven't opted in, inject into descriptions for non-native models.
 
@@ -1789,3 +1872,35 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
+
+
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Wrap `SystemPromptPart`s outside the first `ModelRequest` as `<system>`-tagged `UserPromptPart`s.
+
+    `SystemPromptPart`s in the first `ModelRequest` aren't transformed; the provider's `_map_messages` hoists them.
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    first_request_idx = next(
+        (i for i, m in enumerate(messages) if isinstance(m, ModelRequest)),
+        None,
+    )
+    if first_request_idx is None:
+        return messages
+
+    new_messages: list[ModelMessage] = list(messages[: first_request_idx + 1])
+    changed = False
+    for msg in messages[first_request_idx + 1 :]:
+        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
+            new_parts = [
+                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
+                if isinstance(part, SystemPromptPart)
+                else part
+                for part in msg.parts
+            ]
+            new_messages.append(replace(msg, parts=new_parts))
+            changed = True
+        else:
+            new_messages.append(msg)
+
+    return new_messages if changed else messages

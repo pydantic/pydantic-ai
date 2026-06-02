@@ -1,10 +1,15 @@
 """Utilities for handling Pydantic AI and Vercel data streams."""
 
 from collections.abc import Iterable, Iterator
+from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     BaseToolReturnPart,
+    ModelMessage,
     ProviderDetailsDelta,
     ToolReturnPart,
     tool_return_ta,
@@ -38,6 +43,25 @@ from pydantic_ai.ui.vercel_ai.response_types import (
 __all__ = []
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
+
+
+class _PydanticAIMessageMetadata(BaseModel):
+    """Schema for the `pydantic_ai` key in `UIMessage.metadata`.
+
+    Internal protocol contract for round-tripping framework-side `ModelMessage` fields
+    through Vercel AI `UIMessage.metadata`. Adding a field here extends the wire format;
+    field changes need a deprecation cycle.
+
+    Only `timestamp` is carried. `UIMessage.metadata` is client-controlled, so dumping
+    server fields can leak infrastructure details (e.g. `provider_url`) and loading them
+    trusts client input (e.g. a forged `provider_response_id` chaining into another user's
+    conversation via OpenAI's `previous_response_id='auto'`). Exposing more fields needs an
+    explicit, user-controlled opt-in -- see https://github.com/pydantic/pydantic-ai/issues/5174.
+    """
+
+    model_config = ConfigDict(extra='ignore')
+
+    timestamp: datetime | None = None
 
 
 def tool_return_output(part: BaseToolReturnPart) -> Any:
@@ -83,6 +107,52 @@ def dump_provider_metadata(
         return {wrapper_key: filtered} if filtered else None
     else:
         return filtered if filtered else None
+
+
+def dump_message_metadata(message: ModelMessage) -> dict[str, Any]:
+    """Dump application metadata plus framework message fields into `UIMessage.metadata`.
+
+    May return an empty dict for a `ModelRequest` with no application metadata, since
+    `ModelRequest.timestamp` is optional. For a `ModelResponse` the result always contains
+    at least `{'pydantic_ai': {'timestamp': ...}}` since `ModelResponse.timestamp` is set.
+
+    `UIMessage.metadata` is typed as `unknown` since AI SDK v5, so older frontends will
+    silently ignore the field rather than reject the message.
+    """
+    metadata = dict(message.metadata) if message.metadata else {}
+
+    pydantic_metadata = _PydanticAIMessageMetadata(timestamp=message.timestamp)
+    if pydantic_metadata_dump := pydantic_metadata.model_dump(mode='json', exclude_defaults=True):
+        metadata[PROVIDER_METADATA_KEY] = pydantic_metadata_dump
+    return metadata
+
+
+def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
+    """Load `UIMessage.metadata` back onto a Pydantic AI message.
+
+    Only `timestamp` is restored from the `pydantic_ai` key; see `_PydanticAIMessageMetadata`
+    for why other fields are excluded. Application metadata (non-`pydantic_ai` keys) is
+    restored as-is onto `message.metadata`; an empty/missing app-side dict leaves any
+    previously-attached `message.metadata` untouched, which matters when consecutive
+    `UIMessage`s merge into the same `ModelRequest` and only one carries application fields.
+    """
+    if not is_str_dict(metadata):
+        return
+
+    raw_pydantic_metadata = metadata.get(PROVIDER_METADATA_KEY)
+    if application_metadata := {k: v for k, v in metadata.items() if k != PROVIDER_METADATA_KEY}:
+        message.metadata = application_metadata
+
+    if not is_str_dict(raw_pydantic_metadata):
+        return
+
+    try:
+        pydantic_metadata = _PydanticAIMessageMetadata.model_validate(raw_pydantic_metadata)
+    except ValidationError:
+        return
+
+    if pydantic_metadata.timestamp is not None:
+        message.timestamp = pydantic_metadata.timestamp
 
 
 # Data-carrying chunk types that have a direct UIMessagePart counterpart in the

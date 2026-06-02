@@ -134,6 +134,9 @@ def _check_python_version(min_version: str | None, max_version: str | None) -> N
     'ignore:`BuiltinToolResultEvent` is deprecated',
     # Docs intentionally keep the bare `'openai:'` prefix to surface the v2 default flip to readers.
     'ignore:.*will resolve to the OpenAI Responses API.*:pydantic_ai._warnings.PydanticAIDeprecationWarning',
+    # Legacy MCP class examples in `pydantic_ai.mcp` docstrings (kept until v2-cut).
+    r'ignore:`MCPServer\w+` is deprecated:DeprecationWarning',
+    'ignore:`FastMCPToolset` is deprecated:DeprecationWarning',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(
@@ -212,6 +215,9 @@ def test_docs_examples(
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
+    # Doc examples use placeholder Gateway API keys (`pylf_v...`) that don't encode a region;
+    # set an explicit base URL so they don't hit region inference.
+    env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')
@@ -384,6 +390,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='get_weather_forecast', args={'location': 'Paris'}, tool_call_id='0001'
     ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
+    'Summarize the latest deploy report': 'Initial deploy summary: 12 services updated, all green.',
+    'A new error was just reported — include it in the summary.': (
+        'Updated summary: 12 services updated, all green; one new error in the auth service was just reported.'
+    ),
     'Tell me a different joke.': 'No.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',

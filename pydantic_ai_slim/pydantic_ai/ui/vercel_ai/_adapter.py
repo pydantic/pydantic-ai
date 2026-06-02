@@ -22,6 +22,7 @@ from ...messages import (
     CompactionPart,
     DocumentUrl,
     FilePart,
+    ForceDownloadMode,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -47,6 +48,8 @@ from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
 from ._utils import (
+    apply_message_metadata,
+    dump_message_metadata,
     dump_provider_metadata,
     iter_metadata_chunks,
     iter_tool_approval_responses,
@@ -55,6 +58,9 @@ from ._utils import (
 )
 from .request_types import (
     DataUIPart,
+    DynamicToolOutputAvailablePart,
+    DynamicToolOutputDeniedPart,
+    DynamicToolOutputErrorPart,
     DynamicToolUIPart,
     FileUIPart,
     ProviderMetadata,
@@ -145,6 +151,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters."""
@@ -155,6 +162,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             server_message_id=server_message_id,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
+            allowed_file_url_force_download=allowed_file_url_force_download,
             **kwargs,
         )
 
@@ -183,6 +191,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         **kwargs: Any,
     ) -> Response:
         """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
@@ -208,13 +217,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             on_complete=on_complete,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
+            allowed_file_url_force_download=allowed_file_url_force_download,
             **kwargs,
         )
 
     def build_event_stream(self) -> UIEventStream[RequestData, BaseChunk, AgentDepsT, OutputDataT]:
         """Build a Vercel AI event stream transformer."""
         return VercelAIEventStream(
-            self.run_input, accept=self.accept, sdk_version=self.sdk_version, server_message_id=self.server_message_id
+            self.run_input,
+            accept=self.accept,
+            sdk_version=self.sdk_version,
+            server_message_id=self.server_message_id,
         )
 
     @cached_property
@@ -248,6 +261,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         builder = MessagesBuilder()
 
         for msg in messages:
+            checkpoint = builder.checkpoint()
+
             if msg.role == 'system':
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
@@ -316,7 +331,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             ThinkingPart(
                                 content=part.text,
                                 id=provider_meta.get('id'),
-                                signature=provider_meta.get('signature'),
+                                signature=None if part.state == 'streaming' else provider_meta.get('signature'),
                                 provider_name=provider_meta.get('provider_name'),
                                 provider_details=provider_meta.get('provider_details'),
                             )
@@ -341,7 +356,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
-                            builtin_tool = False
+                            builtin_tool = part.provider_executed
                         else:
                             tool_name = part.type.removeprefix('tool-')
                             builtin_tool = part.provider_executed
@@ -373,7 +388,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # So we extract and return them to the respective parts
                             call_meta = return_meta = {}
                             has_tool_output = isinstance(
-                                part, (ToolOutputAvailablePart, ToolOutputErrorPart, ToolOutputDeniedPart)
+                                part,
+                                (
+                                    ToolOutputAvailablePart,
+                                    ToolOutputErrorPart,
+                                    ToolOutputDeniedPart,
+                                    DynamicToolOutputAvailablePart,
+                                    DynamicToolOutputErrorPart,
+                                    DynamicToolOutputDeniedPart,
+                                ),
                             )
 
                             if has_tool_output:
@@ -391,14 +414,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
 
                             if has_tool_output:
-                                if isinstance(part, ToolOutputErrorPart):
+                                if isinstance(part, ToolOutputErrorPart | DynamicToolOutputErrorPart):
                                     output: Any = part.error_text
                                     outcome: Literal['success', 'failed', 'denied'] = 'failed'
-                                elif isinstance(part, ToolOutputDeniedPart):
+                                elif isinstance(part, ToolOutputDeniedPart | DynamicToolOutputDeniedPart):
                                     output = _denial_reason(part)
                                     outcome = 'denied'
                                 else:
-                                    raw_output = part.output if isinstance(part, ToolOutputAvailablePart) else None
+                                    raw_output = (
+                                        part.output
+                                        if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart)
+                                        else None
+                                    )
                                     output = _validate_tool_output(raw_output)
                                     outcome = 'success'
                                 builder.add(
@@ -465,6 +492,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         assert_never(part)
             else:
                 assert_never(msg.role)
+
+            # Apply metadata to the role-corresponding `ModelMessage`: assistant UIMessages
+            # may also append a synthetic `ModelRequest` carrying tool-return parts, which we
+            # skip via the type filter so metadata lands on the response, not the tool returns.
+            target_type = ModelResponse if msg.role == 'assistant' else ModelRequest
+            if (target := builder.last_modified(checkpoint, of_type=target_type)) is not None:
+                apply_message_metadata(target, msg.metadata)
 
         return builder.messages
 
@@ -800,15 +834,28 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
+                # Metadata only goes on the trailing UIMessage of a split request so reload
+                # applies it once to the merged ModelRequest.
+                request_metadata = dump_message_metadata(msg) or None
                 if system_ui_parts:
                     result.append(
-                        UIMessage(id=id_generator(msg, 'system', message_index), role='system', parts=system_ui_parts)
+                        UIMessage(
+                            id=id_generator(msg, 'system', message_index),
+                            role='system',
+                            metadata=None if user_ui_parts else request_metadata,
+                            parts=system_ui_parts,
+                        )
                     )
                     message_index += 1
 
                 if user_ui_parts:
                     result.append(
-                        UIMessage(id=id_generator(msg, 'user', message_index), role='user', parts=user_ui_parts)
+                        UIMessage(
+                            id=id_generator(msg, 'user', message_index),
+                            role='user',
+                            metadata=request_metadata,
+                            parts=user_ui_parts,
+                        )
                     )
                     message_index += 1
 
@@ -818,7 +865,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
                 if ui_parts:  # pragma: no branch
                     result.append(
-                        UIMessage(id=id_generator(msg, 'assistant', message_index), role='assistant', parts=ui_parts)
+                        UIMessage(
+                            id=id_generator(msg, 'assistant', message_index),
+                            role='assistant',
+                            metadata=dump_message_metadata(msg),
+                            parts=ui_parts,
+                        )
                     )
                     message_index += 1
             else:

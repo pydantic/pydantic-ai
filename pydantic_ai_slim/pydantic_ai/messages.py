@@ -126,7 +126,7 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
 - `'complete'`: the response has been fully received from the model.
 - `'incomplete'`: the response is still being streamed and may receive more parts.
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
-  [`StreamedRunResult.stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses]
+  [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
   while iteration is in flight.
 - `'interrupted'`: streaming was explicitly stopped via
   [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
@@ -1132,7 +1132,7 @@ tool_return_content_ta: pydantic.TypeAdapter[ToolReturnContent] = pydantic.TypeA
 typed as `Any` (e.g. Vercel's `ToolOutputAvailablePart.output`)."""
 
 
-ToolPartKind: TypeAlias = Literal['tool-search']
+ToolPartKind: TypeAlias = Literal['tool-search', 'capability-load']
 """Discriminator value for the typed call/return-part subclass associated with a tool.
 
 Set on [`BaseToolCallPart.tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind],
@@ -2019,6 +2019,13 @@ deserialized). Same population pattern.
 """
 
 
+# Typed subclasses live outside this module; import them here for discriminator
+# unions, narrower registration, and public re-exports from `pydantic_ai.messages`.
+from ._deferred_capabilities import (  # noqa: E402
+    LoadCapabilityCallPart as LoadCapabilityCallPart,
+    LoadCapabilityReturnPart as LoadCapabilityReturnPart,
+)
+
 # Typed subclasses + narrowers + cross-provider history translation live in their own
 # module to keep this file focused on the base part shapes. Imported here so the
 # discriminator unions below can reference them and so import-time registration of
@@ -2065,6 +2072,7 @@ ModelRequestPart = Annotated[
     Annotated[SystemPromptPart, pydantic.Tag('system-prompt')]
     | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
+    | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')],
     pydantic.Discriminator(_model_request_part_discriminator),
@@ -2102,6 +2110,7 @@ def _model_response_part_discriminator(v: Any) -> str | None:
 ModelResponsePart = Annotated[
     Annotated[TextPart, pydantic.Tag('text')]
     | Annotated[ToolSearchCallPart, pydantic.Tag('tool-search-call')]
+    | Annotated[LoadCapabilityCallPart, pydantic.Tag('capability-load-call')]
     | Annotated[ToolCallPart, pydantic.Tag('tool-call')]
     | Annotated[NativeToolSearchCallPart, pydantic.Tag('builtin-tool-search-call')]
     | Annotated[NativeToolCallPart, pydantic.Tag('builtin-tool-call')]
@@ -2399,6 +2408,7 @@ class ModelResponse:
 
 ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
 """Any message sent to or returned by a model."""
+
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')

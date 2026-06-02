@@ -251,7 +251,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
@@ -516,7 +516,7 @@ async def test_first_success_streaming() -> None:
     fallback_model = FallbackModel(success_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
@@ -557,7 +557,7 @@ async def test_first_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, success_model_stream)
     agent = Agent(model=fallback_model)
     async with agent.run_stream('input') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='hello ')],
@@ -599,7 +599,7 @@ async def test_all_failed_streaming() -> None:
     agent = Agent(model=fallback_model)
     with pytest.raises(ExceptionGroup) as exc_info:
         async with agent.run_stream('hello') as result:
-            [c async for c, _is_last in result.stream_responses(debounce_by=None)]  # pragma: lax no cover
+            [c async for c in result.stream_response(debounce_by=None)]  # pragma: lax no cover
     assert 'All models from FallbackModel failed' in exc_info.value.args[0]
     exceptions = exc_info.value.exceptions
     assert len(exceptions) == 2
@@ -734,6 +734,7 @@ async def test_fallback_model_structured_output():
                         },
                         description='The final response which ends this conversation',
                         kind='output',
+                        defer_loading=False,
                     )
                 ],
                 allow_text_output=False,

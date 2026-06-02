@@ -26,6 +26,7 @@ from ...messages import (
     CompactionPart,
     DocumentUrl,
     FilePart,
+    ForceDownloadMode,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -101,14 +102,14 @@ if TYPE_CHECKING:
 else:
     try:
         from ag_ui.core import ReasoningMessage
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ReasoningMessage:
             """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
 
     try:
         from ag_ui.core import AudioInputContent, DocumentInputContent, ImageInputContent, VideoInputContent
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ImageInputContent:
             """Stub for ag-ui-protocol < 0.1.15."""
@@ -289,6 +290,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -299,6 +301,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
+            allowed_file_url_force_download=allowed_file_url_force_download,
             **kwargs,
         )
 

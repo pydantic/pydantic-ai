@@ -19,7 +19,13 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import PrepareOutputTools, PrepareTools, ProcessEventStream
+from pydantic_ai.capabilities import (
+    NativeTool,
+    PrepareOutputTools,
+    PrepareTools,
+    ProcessEventStream,
+    ProcessHistory,
+)
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -116,6 +122,24 @@ async def test_prepare_tools_kwarg_warning_mentions_function_tools_only_rescopin
         Agent(_make_model(), prepare_tools=_noop_prep)  # pyright: ignore[reportCallIssue]
 
 
+async def test_prepare_tools_none_kwarg_matches_omitted_kwarg():
+    """`prepare_tools=None` is the outer "no callback" sentinel, not a callback returning `None`."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names = sorted(t.name for t in info.function_tools)
+        return ModelResponse(parts=[TextPart(content=f'tools: {tool_names}')])
+
+    def my_tool() -> str:
+        return 'result'  # pragma: no cover
+
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(prepare_tools=\.\.\.\)` is deprecated'):
+        agent = Agent(FunctionModel(model_function), tools=[my_tool], prepare_tools=None)  # pyright: ignore[reportCallIssue]
+
+    result = await agent.run('hello')
+
+    assert result.output == "tools: ['my_tool']"
+
+
 async def test_prepare_tools_kwarg_remaps_to_capability():
     """The kwarg auto-injects a `PrepareTools` capability into the agent's capability list,
     and the prepare callback fires once during a run."""
@@ -174,6 +198,27 @@ async def test_prepare_output_tools_kwarg_warning_points_at_capability():
         Agent(TestModel(), output_type=ToolOutput(str), prepare_output_tools=_noop_prep)  # pyright: ignore[reportCallIssue]
 
 
+async def test_prepare_output_tools_none_kwarg_matches_omitted_kwarg():
+    """`prepare_output_tools=None` is the outer "no callback" sentinel, not a callback returning `None`."""
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=f'output_tools: {len(info.output_tools)}')])
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`Agent\(prepare_output_tools=\.\.\.\)` is deprecated',
+    ):
+        agent = Agent(  # pyright: ignore[reportCallIssue]
+            FunctionModel(model_function),
+            output_type=[str, ToolOutput(str, name='final_result')],
+            prepare_output_tools=None,
+        )
+
+    result = await agent.run('hello')
+
+    assert result.output == 'output_tools: 1'
+
+
 async def test_prepare_output_tools_kwarg_remaps_to_capability():
     """The kwarg auto-injects a `PrepareOutputTools` capability into the agent's capability list,
     and the prepare callback fires once during a run."""
@@ -214,6 +259,34 @@ async def test_prepare_output_tools_kwarg_vs_capability_equivalence():
 
     assert kwarg_result.output == cap_result.output
     assert kwarg_calls == cap_calls
+
+
+# --- sibling `=None` consumers (builtin_tools / history_processors) ----------------------
+#
+# `consume_deprecated_*_as_capabilities` helpers in `_utils.py` build a capability list
+# from the legacy kwarg value. Passing the legacy kwarg as `None` (equivalent to omitting it)
+# previously crashed because the helpers tried to iterate `None`. Treat `None` as absent —
+# the deprecation warning still fires, but no capability is added.
+
+
+async def test_builtin_tools_none_kwarg_matches_omitted_kwarg():
+    """`builtin_tools=None` is the outer 'no native tools' sentinel, not a real value."""
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(builtin_tools=\.\.\.\)` is deprecated'):
+        agent = Agent(_make_model(), builtin_tools=None)  # pyright: ignore[reportCallIssue]
+
+    assert not any(isinstance(cap, NativeTool) for cap in agent._root_capability.capabilities)  # pyright: ignore[reportPrivateUsage]
+    await agent.run('hello')
+
+
+async def test_history_processors_none_kwarg_matches_omitted_kwarg():
+    """`history_processors=None` is the outer 'no processors' sentinel, not a real value."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match=r'`Agent\(history_processors=\[fn, \.\.\.\]\)` is deprecated'
+    ):
+        agent = Agent(_make_model(), history_processors=None)  # pyright: ignore[reportCallIssue]
+
+    assert not any(isinstance(cap, ProcessHistory) for cap in agent._root_capability.capabilities)  # pyright: ignore[reportPrivateUsage]
+    await agent.run('hello')
 
 
 # --- from_spec / from_file forwarders --------------------------------------------------------

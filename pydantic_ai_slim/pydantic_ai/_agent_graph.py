@@ -17,18 +17,21 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
-from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, now_utc
+from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
-from pydantic_graph import BaseNode, GraphRunContext
-from pydantic_graph.beta import Graph, GraphBuilder
-from pydantic_graph.nodes import End, NodeRunEndT
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
+from pydantic_graph import BaseNode, GraphBuilder, GraphRunContext
+from pydantic_graph.basenode import End, NodeRunEndT
+from pydantic_graph.graph_builder import Graph
 
-from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._deferred_capabilities import parse_loaded_capabilities
+from ._instructions import normalize_toolset_instructions
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
@@ -135,6 +138,9 @@ class GraphAgentState:
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
+    pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
+    """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
+    for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -194,6 +200,16 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     validation_context: Any | Callable[[RunContext[DepsT]], Any]
 
     root_capability: AbstractCapability[DepsT]
+
+    capabilities: dict[str, AbstractCapability[DepsT]]
+
+    # Invariant: these two sets are shared by reference into every `RunContext` this run (their
+    # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
+    # place — never reassigned. The per-step refresh and the `load_capability` tool body rely on
+    # that shared identity. Reassigning either (here, or by passing it to a `replace(ctx, ...=...)`)
+    # would silently break in-step capability loads / tool reveals.
+    loaded_capability_ids: set[str]
+    discovered_tool_names: set[str]
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -448,18 +464,7 @@ async def _get_instructions(
         parts.extend(base)
 
     toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
-    if toolset_result:
-        # The top-level toolset is always a CombinedToolset which returns a list,
-        # but the return type also allows a single str or InstructionPart for custom subclasses.
-        items = [toolset_result] if isinstance(toolset_result, (str, _messages.InstructionPart)) else toolset_result
-        for item in items:
-            if isinstance(item, _messages.InstructionPart):
-                if item.content.strip():
-                    parts.append(item)
-            else:
-                # Plain str from toolsets: treat as dynamic (external/changeable source)
-                if item.strip():
-                    parts.append(_messages.InstructionPart(content=item, dynamic=True))
+    parts.extend(normalize_toolset_instructions(toolset_result))
 
     return parts or None
 
@@ -489,10 +494,12 @@ async def _prepare_request_parameters(
 
     run_context = build_run_context(ctx)
 
+    raw_native_tools: list[AgentNativeTool[DepsT]] = list(ctx.deps.native_tools)
+
     # resolve dynamic native tools
     native_tools: list[AbstractNativeTool] = []
-    if ctx.deps.native_tools:
-        for tool in ctx.deps.native_tools:
+    if raw_native_tools:
+        for tool in raw_native_tools:
             if isinstance(tool, AbstractNativeTool):
                 native_tools.append(tool)
             else:
@@ -847,6 +854,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
+        _refresh_loaded_capability_ids(ctx)
+
+        _refresh_discovered_tool_names(ctx)
+
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,
@@ -896,14 +907,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not isinstance(messages[-1], _messages.ModelRequest):
             raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
-        # Ensure the last request has a timestamp (history processors may create new ModelRequest objects without one)
-        if messages[-1].timestamp is None:
-            messages[-1].timestamp = now_utc()
-
-        if messages and messages[-1].run_id is None:
-            messages[-1].run_id = ctx.state.run_id
-        if messages and messages[-1].conversation_id is None:
-            messages[-1].conversation_id = ctx.state.conversation_id
+        # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
+        fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         if self.is_resuming_without_prompt:
             ctx.deps.resumed_request = self.request
@@ -960,8 +965,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         response: _messages.ModelResponse,
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
-        response.run_id = response.run_id or ctx.state.run_id
-        response.conversation_id = response.conversation_id or ctx.state.conversation_id
+        fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         run_context = build_run_context(ctx)
         assert self.last_request_context is not None, 'last_request_context must be set before _finish_handling'
@@ -1013,8 +1017,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
     ) -> None:
         """Append a model response to history, updating usage tracking."""
-        response.run_id = response.run_id or ctx.state.run_id
-        response.conversation_id = response.conversation_id or ctx.state.conversation_id
+        fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.usage.incr(response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
@@ -1410,10 +1413,46 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         conversation_id=ctx.state.conversation_id,
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
+        capabilities=ctx.deps.capabilities,
+        loaded_capability_ids=ctx.deps.loaded_capability_ids,
+        discovered_tool_names=ctx.deps.discovered_tool_names,
+        pending_messages=ctx.state.pending_messages,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
+    # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the
+    # shared identity of `loaded_capability_ids`/`discovered_tool_names` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add either set here — forking the object would
+    # silently break in-step capability loads / tool reveals.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
+
+
+def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh the history-derived loaded capability ids from the current graph state."""
+    # The `load_capability` tool (and therefore any `LoadCapability*` history parts) only exists
+    # when a deferred capability is configured — the same condition that injects the loader. Without
+    # one, the set can never change during the run, so the seeded value stays in sync without rescanning.
+    # (`discovered_tool_names` has no equally-cheap guard: tool search is auto-injected and its trigger
+    # is "deferred tools exist", which isn't known without resolving toolsets, so its refresh stays
+    # unconditional.)
+    if not any(capability.defer_loading is True for capability in ctx.deps.capabilities.values()):
+        return
+
+    loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
+
+    # Mutate in place (not reassign): this set is shared by reference with the run's `RunContext`
+    # copies made via `replace(ctx, ...)`, so clear + update keeps them all in sync.
+    ctx.deps.loaded_capability_ids.clear()
+    ctx.deps.loaded_capability_ids.update(loaded_capability_ids)
+
+
+def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh the history-derived discovered tool names from the current graph state."""
+    discovered_tool_names = parse_discovered_tools(ctx.state.message_history)
+
+    # Mutate in place (not reassign), for the same shared-by-reference reason as the set above.
+    ctx.deps.discovered_tool_names.clear()
+    ctx.deps.discovered_tool_names.update(discovered_tool_names)
 
 
 def build_validation_context(
