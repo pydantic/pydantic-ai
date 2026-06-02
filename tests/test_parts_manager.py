@@ -15,6 +15,7 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturnPart,
     UnexpectedModelBehavior,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
@@ -717,8 +718,6 @@ def test_resolve_provider_name_tool_return_part():
     manager and, unlike the other members, has no `provider_name` attribute. The resolver must
     short-circuit on it rather than reading a missing attribute.
     """
-    from pydantic_ai.messages import ToolReturnPart
-
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     existing_part = ToolReturnPart(tool_name='tool1', content='result', tool_call_id='call1')
 

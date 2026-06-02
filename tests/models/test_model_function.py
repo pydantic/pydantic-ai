@@ -26,7 +26,6 @@ from pydantic_ai.models.function import (
     DeltaToolCall,
     DeltaToolCalls,
     FunctionModel,
-    _estimate_usage,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
@@ -575,23 +574,30 @@ async def test_return_empty():
             pass
 
 
-def test_estimate_usage_handles_tool_return_part_in_response():
-    """Regression for #5721: a `ToolReturnPart` stored on a `ModelResponse` must be handled.
+async def test_estimate_usage_handles_tool_return_part_in_response():
+    """Regression for #5721: a `ToolReturnPart` on a `ModelResponse` must be handled.
 
-    Adding the base `ToolReturnPart` to the `ModelResponsePart` union means every consumer
-    that iterates `ModelResponse.parts` (here the usage estimator) must handle the new
-    variant rather than falling through to `assert_never`. The framework stores these parts
-    on responses for user-defined output tools, so they appear in real message history.
+    A base `ToolReturnPart` can appear on a `ModelResponse` only via user-constructed or
+    deserialized message history (the framework itself always routes it into `ModelRequest.parts`).
+    Adding it to the `ModelResponsePart` union means every consumer iterating `ModelResponse.parts`
+    must handle it rather than fall through to `assert_never`. `FunctionModel` reaches that path
+    when it estimates usage of the request history, so running an agent over such a history
+    exercises the estimator through the public API.
     """
-    messages: list[ModelMessage] = [
-        ModelResponse(
-            parts=[
-                TextPart(content='hello'),
-                ToolReturnPart(tool_name='my_tool', content='tool result here', tool_call_id='call-1'),
-            ]
-        )
-    ]
-    estimated = _estimate_usage(messages)
-    # Text + the tool return content are both counted; the key assertion is that no
-    # `assert_never` is raised for the response-embedded `ToolReturnPart`.
-    assert estimated.output_tokens is not None and estimated.output_tokens > 0
+
+    def return_text(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_text))
+    result = await agent.run(
+        'hello',
+        message_history=[
+            ModelResponse(
+                parts=[
+                    TextPart(content='hello'),
+                    ToolReturnPart(tool_name='my_tool', content='tool result here', tool_call_id='call-1'),
+                ]
+            )
+        ],
+    )
+    assert result.usage == snapshot(RunUsage(input_tokens=51, output_tokens=5, requests=1))
