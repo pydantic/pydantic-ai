@@ -1988,6 +1988,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
 
+@dataclass(init=False)
 class AnthropicCompaction(AbstractCapability[AgentDepsT]):
     """Compaction capability for Anthropic models.
 
