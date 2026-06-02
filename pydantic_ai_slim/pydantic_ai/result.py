@@ -774,19 +774,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """Cancel the stream, stopping token generation and closing the underlying connection.
 
         The interrupted response state is recorded in the message history so that
-        `all_messages()` includes it. Recording happens even if the upstream cancel
-        raises (e.g. `NotImplementedError` on providers without `close_stream()`
-        support); the exception still propagates to the caller.
+        `all_messages()` includes it. If the upstream cancel raises (e.g.
+        `NotImplementedError` on providers without `close_stream()` support),
+        the exception propagates and the response is not marked complete.
         """
         if self._stream_response is not None:  # pragma: no branch
-            try:
-                await self._stream_response.cancel()
-            finally:
-                # _cancelled flips before close_stream runs, so state='interrupted'
-                # is reachable here even when close_stream raised.
-                if not self.is_complete:
-                    self.is_complete = True
-                    self._record_response(self.response)
+            await self._stream_response.cancel()
+            if not self.is_complete:
+                self.is_complete = True
+                self._record_response(self.response)
 
     async def _cancel_on_early_break(self) -> None:
         """Best-effort cancel called from `run_stream`'s `__aexit__`.
@@ -794,8 +790,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Swallows the documented cancel-side surface — `NotImplementedError` from
         providers without `close_stream()` plus the per-provider transport errors
         from `get_stream_cancel_errors()` — so teardown failures don't surface
-        from a clean `__aexit__`. The partial response is still recorded by
-        `cancel()`'s own finally.
+        from a clean `__aexit__`. If cancel fails, the response is left
+        incomplete rather than pretending the cancellation succeeded.
 
         Note: this only flips `is_complete` when the surrounding context exits;
         `is_complete` does not change synchronously when the user `break`s out of

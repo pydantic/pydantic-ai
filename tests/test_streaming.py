@@ -4239,7 +4239,7 @@ async def test_run_stream_early_break_when_provider_lacks_cancel_support(monkeyp
 
     Mirrors Gemini and Outlines, which inherit `StreamedResponse.close_stream()`'s
     `NotImplementedError`. The implicit cancel in `run_stream`'s `__aexit__` must swallow
-    that error, and the partial response must still be recorded in `all_messages()`.
+    that error, but it must not pretend that cancellation completed.
     """
 
     async def unsupported_close_stream(self: FunctionStreamedResponse) -> None:
@@ -4256,22 +4256,12 @@ async def test_run_stream_early_break_when_provider_lacks_cancel_support(monkeyp
         async for _ in result.stream_output(debounce_by=None):  # pragma: no branch
             break
 
-    assert result.is_complete
-    assert result.response.state == 'interrupted'
+    assert not result.is_complete
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='Hello')],
-                usage=RequestUsage(input_tokens=50, output_tokens=1),
-                model_name='function::sf',
-                timestamp=IsNow(tz=timezone.utc),
-                state='interrupted',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4302,8 +4292,17 @@ async def test_run_stream_early_break_swallows_transport_cancel_error(monkeypatc
         async for _ in result.stream_output(debounce_by=None):  # pragma: no branch
             break
 
-    assert result.is_complete
-    assert result.response.state == 'interrupted'
+    assert not result.is_complete
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
 
 
 @pytest.mark.vcr()
