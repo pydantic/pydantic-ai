@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -317,12 +318,30 @@ async def test_geval_default_hides_input(mocker: MockerFixture):
     assert mock.call_args.kwargs['inputs'] is None
 
 
+async def test_evaluation_name_customizes_report_name_without_warning():
+    """`evaluation_name` names the result for `GEval`/`GembaScore` without the deprecated-attribute warning."""
+    assert GEval(criteria='c', evaluation_steps=['s']).get_default_evaluation_name() == 'GEval'
+    assert GembaScore(source_lang='English', target_lang='French').get_default_evaluation_name() == 'GembaScore'
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')  # any deprecation warning becomes a test failure
+        assert (
+            GEval(criteria='c', evaluation_steps=['s'], evaluation_name='coherence').get_default_evaluation_name()
+            == 'coherence'
+        )
+        assert (
+            GembaScore(
+                source_lang='English', target_lang='French', evaluation_name='quality'
+            ).get_default_evaluation_name()
+            == 'quality'
+        )
+
+
 async def test_gemba_score_da(mocker: MockerFixture):
     mock = mocker.patch(
         'pydantic_evals.evaluators.quality.judge_gemba_da',
         return_value=GembaScoreOutput(reason='Accurate', score=92),
     )
-    mocker.patch('pydantic_evals.evaluators.quality.judge_gemba_sqm')
 
     ctx = _ctx_gemba('Hello world', 'Bonjour le monde', expected_output='Bonjour le monde')
     evaluator = GembaScore(source_lang='English', target_lang='French')
