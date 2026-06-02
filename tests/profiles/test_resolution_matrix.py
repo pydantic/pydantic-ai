@@ -140,6 +140,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     # GrokModelProfile subclass defaults
     'grok_supports_builtin_tools': False,
     'grok_supports_tool_choice_required': True,
+    'grok_reasoning_efforts': frozenset(),
     # GroqModelProfile subclass defaults
     'groq_always_has_web_search_builtin_tool': False,
     # BedrockModelProfile subclass defaults
@@ -365,6 +366,7 @@ def test_xai_grok_3_mini():
             'supports_json_object_output': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'grok_reasoning_efforts': frozenset({'low', 'high'}),
             'supported_native_tools': frozenset(),
         }
     )
@@ -957,6 +959,7 @@ def test_xai_provider_grok_3_mini():
             'supports_json_object_output': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'grok_reasoning_efforts': frozenset({'low', 'high'}),
             'supported_native_tools': frozenset(),
         }
     )
