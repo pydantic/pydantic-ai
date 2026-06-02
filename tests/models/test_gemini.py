@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
 from enum import IntEnum
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 import httpx
 import pytest
@@ -72,8 +72,27 @@ pytestmark = [
 ]
 
 
-def test_part_discriminator_defaults_to_text():
-    assert _part_discriminator({}) == 'text'
+@pytest.mark.parametrize(
+    'value,expected_tag',
+    [
+        ({'text': 'hello'}, 'text'),
+        ({'inlineData': {}}, 'inline_data'),
+        ({'inline_data': {}}, 'inline_data'),
+        ({'fileData': {}}, 'file_data'),
+        ({'file_data': {}}, 'file_data'),
+        ({'thought': True}, 'thought'),
+        ({'functionCall': {}}, 'function_call'),
+        ({'function_call': {}}, 'function_call'),
+        ({'functionResponse': {}}, 'function_response'),
+        ({'function_response': {}}, 'function_response'),
+        ({}, 'text'),
+        ('not a dict', 'text'),
+    ],
+)
+def test_part_discriminator(value: Any, expected_tag: str):
+    """Both Gemini's camelCase wire keys and the snake_case attribute names produced by
+    history replay (e.g. inline-snapshot reconstruction) route to the same part tag."""
+    assert _part_discriminator(value) == expected_tag
 
 
 async def test_model_simple(allow_model_requests: None):
