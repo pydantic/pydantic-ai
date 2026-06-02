@@ -40,18 +40,19 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 
 | Provider | `Thinking()` / `Thinking(effort=True)` | `Thinking(effort='high')` | Notes |
 |---|---|---|---|
-| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7 also supports `effort='xhigh'` |
+| Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7 and 4.8 also support `effort='xhigh'` |
 | Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
 | Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
-| OpenRouter | `reasoning.effort='medium'` | `reasoning.effort='high'` | Via `extra_body` |
+| OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `effort='none'`; always-on routes silently ignore; via `extra_body` |
 | Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
-| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'` |
+| xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False` |
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
-| Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
+| Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
+| Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 
 ## OpenAI
 
@@ -93,7 +94,7 @@ agent = Agent(model, model_settings=settings)
 To enable thinking, use the [`AnthropicModelSettings.anthropic_thinking`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_thinking] [model setting](agent.md#model-run-settings).
 
 !!! note
-    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7`+. For those models, use [adaptive thinking](#adaptive-thinking--effort) instead.
+    Extended thinking (`type: 'enabled'` with `budget_tokens`) is deprecated on `claude-opus-4-6` and removed on `claude-opus-4-7` and `claude-opus-4-8`. For those models, use [adaptive thinking](#adaptive-thinking--effort) instead.
 
 ```python {title="anthropic_thinking_part.py"}
 from pydantic_ai import Agent
@@ -126,13 +127,13 @@ agent = Agent(model, model_settings=settings)
 
 ### Adaptive Thinking & Effort
 
-Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7. Claude Opus 4.7 also adds the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
+Starting with `claude-opus-4-6`, Anthropic supports [adaptive thinking](https://docs.anthropic.com/en/docs/build-with-claude/adaptive-thinking), where the model dynamically decides when and how much to think based on the complexity of each request. This replaces extended thinking (`type: 'enabled'` with `budget_tokens`) which is deprecated on Opus 4.6 and removed on Opus 4.7 and 4.8. Claude Opus 4.7 and 4.8 also add the `xhigh` effort level. Adaptive thinking also automatically enables interleaved thinking.
 
 ```python {title="anthropic_adaptive_thinking.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 
-model = AnthropicModel('claude-opus-4-7')
+model = AnthropicModel('claude-opus-4-8')
 settings = AnthropicModelSettings(
     anthropic_thinking={'type': 'adaptive'},
     anthropic_effort='high',
@@ -172,7 +173,7 @@ xAI reasoning models (Grok) support native thinking. To preserve the thinking co
 from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel, XaiModelSettings
 
-model = XaiModel('grok-4-fast-reasoning')
+model = XaiModel('grok-4.3')
 settings = XaiModelSettings(xai_include_encrypted_content=True)
 agent = Agent(model, model_settings=settings)
 ...
@@ -276,6 +277,11 @@ settings = OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'})
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+!!! note "Wire format details"
+    Truthy [`thinking`][pydantic_ai.settings.ModelSettings.thinking] values send both `effort` and `enabled: True` on the wire. The explicit `enabled: True` is a no-op for reasoning-by-default models but load-bearing for reasoning-optional routes (parts of the `google/gemma-*` family, for example) that otherwise leave reasoning disabled despite `effort` being set.
+
+    [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] sends `reasoning={'effort': 'none'}` — the [documented OpenRouter disable signal](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) — on routes whose upstream can honor disable (e.g. `anthropic/claude-sonnet-4.5`, `z-ai/glm-4.6`). On routes whose upstream is always-on (e.g. `openai/o3`, `openai/gpt-5`, `mistralai/magistral-medium-*`, `deepseek/deepseek-r1`, `x-ai/grok-3-mini`), `thinking=False` is silently ignored at the model-profile gate, matching the same model's direct-route behavior. Set [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] directly when you want explicit per-route control.
 
 ## Mistral
 
