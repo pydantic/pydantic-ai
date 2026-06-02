@@ -69,3 +69,8 @@ async def test_cerebras_settings_transformation():
     settings_false = CerebrasModelSettings(cerebras_disable_reasoning=False)
     transformed_false = _cerebras_settings_to_openai_settings(settings_false, params)
     assert transformed_false.get('openai_reasoning_effort') == 'low'
+
+    # Test with disable_reasoning=False but openai_reasoning_effort already set → preserves existing value
+    settings_with_effort = CerebrasModelSettings(cerebras_disable_reasoning=False, openai_reasoning_effort='high')
+    transformed_with_effort = _cerebras_settings_to_openai_settings(settings_with_effort, params)
+    assert transformed_with_effort.get('openai_reasoning_effort') == 'high'
