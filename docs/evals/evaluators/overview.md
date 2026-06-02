@@ -53,7 +53,7 @@ dataset = Dataset(
 
 For recognisable names and sensible defaults aligned with common evaluation frameworks (Ragas,
 G-Eval, GEMBA), see the [Standard Quality Metrics](standard-quality-metrics.md) pack — each
-metric there is a thin wrapper over `LLMJudge` with a curated rubric. To plug in the *exact*
+metric there is a thin wrapper over [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] with a curated rubric. To plug in the *exact*
 upstream implementations of external frameworks, see [Third-Party Integrations](framework-integrations.md).
 
 **Advantages:**
@@ -474,7 +474,7 @@ dataset = Dataset(
 
 ## Next Steps
 
-- **[Built-in Evaluators](built-in.md)** - Complete reference of all provided evaluators
+- **[Native Evaluators](built-in.md)** - Complete reference of all provided evaluators
 - **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
 - **[Standard Quality Metrics](standard-quality-metrics.md)** - Curated LLM-backed metrics (Faithfulness, G-Eval, GEMBA, etc.)
 - **[Third-Party Integrations](framework-integrations.md)** - Wrap Ragas, DeepEval, and other metrics libraries

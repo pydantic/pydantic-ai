@@ -1,0 +1,100 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '737'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Tell me about Paris
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          allowedFunctionNames:
+          - final_result
+          mode: ANY
+      tools:
+      - functionDeclarations:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters_json_schema:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1710'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2064
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args:
+                city: Paris
+                summary: Paris is the capital and most populous city of France. It is renowned for its museums and architectural
+                  landmarks, including the Louvre Museum, Notre-Dame Cathedral, and the Eiffel Tower. The city is also famous
+                  for its fashion, cuisine, and romantic atmosphere, often referred to as the 'City of Love' or 'City of Lights.'
+              name: final_result
+            thoughtSignature: CoQFAXLI2nxnaoZtty8seEHD+Sh2LCbMyEUMMy149CtM9MXUjFjj7o/5CHxmvW6+xhHUZ5t60Mo/JqNx3MCy8nu+cjuyVWdjQcTlsTW6UwVhQxSST7Afoh9lbIn9uUWRiv6wQbrK7kiMFHR/vRWFlj4ct05peZfuxW/23VQTSHM9nq7IS2MGo1OYeBlud5jlBzRstM//sTAgyyEg6N61LlgTeVlzYZmXAvJrBUSdAz9EIIEV2TYjyNXkiRp4yDP1PPEjoYpAAt7Dvsnr4Y2lVbNzUp06mRUBsrtfm29fapsPz4IXO6nJM7FIIm8LSMIpsTLJzK9NPgOGvcSxDBWdXNhTuCHBW/RQAfO8ifMpXdeA5Gwnl8U2wKpAp3enwxBb8+LnL5CL/DUu0JEj2geRNZDbGv6+3wCwf+nxXCIh6oYhufD7Q2WVAEkii199e3VzUyHEHDBkudNHAepHNqCGqgDzkN1mi7VvxkC0fX6U4pqBBLz35OQRmY/J40GHwU1mt8OzMmtZ1oP5vM2yMoyLqPn6VEhJjm7cmojDzGLNyCBH0N3bmNRAfMypeqJVU4Czaqs3Qsyp4F+QZG2IrxI1ldydMBDBgCkgkb0bosTF5VNcrP8TywZgHzse5mLM7I2Qn8Uv+iCArZr54NNO5JzPZnRWGcHXLe8snngBoxMDUSDpehOCXo2Rs+YaMyeA7kAU6x0TnunnyKprO5OISNVyw8XQn/GCL05vbQm8ZJKhARKxD+LWk8FBJiZRDJ9Di2yUrTz1gIIGTiPDIoWwSsZhIsxgAFQLyFcU6eQooZSvw8B/3PaqLRGA8JDi6AdPYVytCz4tLhM3SlGWlZ3CoXbdm6udF6qVfgk=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: BsJ7adOMFba_qtsPh-z9kAI
+      usageMetadata:
+        candidatesTokenCount: 87
+        promptTokenCount: 95
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 95
+        thoughtsTokenCount: 139
+        totalTokenCount: 321
+    status:
+      code: 200
+      message: OK
+version: 1

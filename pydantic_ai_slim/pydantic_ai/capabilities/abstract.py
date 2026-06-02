@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
-from pydantic_ai.tools import AgentBuiltinTool, AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import (
+    AgentDepsT,
+    AgentNativeTool,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    SystemPromptFunc,
+    ToolDefinition,
+)
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 
 if TYPE_CHECKING:
@@ -18,6 +28,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -40,17 +51,26 @@ WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, An
 WrapModelRequestHandler: TypeAlias = 'Callable[[ModelRequestContext], Awaitable[ModelResponse]]'
 """Handler type for [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]."""
 
-RawToolArgs: TypeAlias = 'str | dict[str, Any]'
+RawToolArgs: TypeAlias = str | dict[str, Any]
 """Type alias for raw (pre-validation) tool arguments."""
 
-ValidatedToolArgs: TypeAlias = 'dict[str, Any]'
+ValidatedToolArgs: TypeAlias = dict[str, Any]
 """Type alias for validated tool arguments."""
 
-WrapToolValidateHandler: TypeAlias = 'Callable[[str | dict[str, Any]], Awaitable[dict[str, Any]]]'
+WrapToolValidateHandler: TypeAlias = Callable[[RawToolArgs], Awaitable[ValidatedToolArgs]]
 """Handler type for [`wrap_tool_validate`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_validate]."""
 
-WrapToolExecuteHandler: TypeAlias = 'Callable[[dict[str, Any]], Awaitable[Any]]'
+WrapToolExecuteHandler: TypeAlias = Callable[[ValidatedToolArgs], Awaitable[Any]]
 """Handler type for [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]."""
+
+RawOutput: TypeAlias = str | dict[str, Any]
+"""Type alias for raw output data (text or tool args)."""
+
+WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
+"""Handler type for wrap_output_validate."""
+
+WrapOutputProcessHandler: TypeAlias = Callable[[Any], Awaitable[Any]]
+"""Handler type for wrap_output_process."""
 
 
 CapabilityPosition = Literal['outermost', 'innermost']
@@ -65,6 +85,16 @@ CapabilityPosition = Literal['outermost', 'innermost']
 
 CapabilityRef: TypeAlias = 'type[AbstractCapability[Any]] | AbstractCapability[Any]'
 """Reference to a capability — either a type (matches all instances of that type) or a specific instance (matches by identity)."""
+
+
+CapabilityDescription = str | SystemPromptFunc[AgentDepsT]
+"""Capability description: a static string, or a function (sync/async, with or without
+[`RunContext`][pydantic_ai.tools.RunContext]) that returns one.
+
+For dynamic descriptions, return a callable from
+[`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description] rather than
+having the method itself take `RunContext`.
+"""
 
 
 @dataclass
@@ -112,7 +142,7 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
-@dataclass
+@dataclass(init=False)
 class AbstractCapability(ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
 
@@ -121,7 +151,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
     most `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, builtin tools). The exception is
+    settings, toolsets, native tools). The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
     which is called per-run during toolset assembly. Then, on each model request during a
     run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
@@ -132,18 +162,79 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
-    YAML/JSON specs (via [`Agent.from_spec`][pydantic_ai.Agent.from_spec]); they have
+    YAML/JSON specs (via `Agent.from_spec`); they have
     sensible defaults and typically don't need to be overridden.
     """
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """Optional identifier used to reference this capability within a run.
+
+    Must be unique within a run, not per instance: it identifies the capability across the
+    run — including the fresh instance a [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
+    override may return — rather than a specific object.
+
+    Required when `defer_loading=True`. If omitted for an always-available
+    capability, the run derives a local id from the class name.
+    """
+
+    description: str | None = None
+    """Description of the capability."""
+
+    defer_loading: bool = False
+    """If True, model-facing tools and instructions are hidden until the model explicitly
+    loads the capability via the `load_capability` tool.
+
+    Model settings and lifecycle hooks are registered during run setup, but only
+    apply or fire once the capability is loaded.
+
+    Requires a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id] so
+    message history can identify the capability. A
+    [`description`][pydantic_ai.capabilities.AbstractCapability.description] or
+    [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description]
+    override is optional and only adds routing context to the load catalog.
+    """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # If a subclass overrides only the deprecated `get_builtin_tools()` method (and not
+        # the new `get_native_tools()`), wire the legacy override through so the framework
+        # still picks up the user's declared tools — with a warning at class creation time.
+        own = cls.__dict__
+        if 'get_builtin_tools' in own and 'get_native_tools' not in own:
+            warnings.warn(
+                f'{cls.__name__} overrides `get_builtin_tools()`, which is deprecated — '
+                'override `get_native_tools()` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
+            # Promote the legacy override to be this class's `get_native_tools`, and replace
+            # its `get_builtin_tools` with a stub that warns and delegates to the modern
+            # method. This keeps the mixed-generation MRO case working: a further subclass
+            # overriding only `get_native_tools()` still wins on a legacy-name call, because
+            # `Sub.get_builtin_tools()` resolves to the delegating stub installed here,
+            # which routes to `self.get_native_tools()` (modern override on `Sub`).
+            cls.get_native_tools = own['get_builtin_tools']
+
+            def _get_builtin_tools_delegating(
+                self: AbstractCapability[Any],
+            ) -> Sequence[AgentNativeTool[Any]]:
+                warnings.warn(
+                    '`AbstractCapability.get_builtin_tools()` is deprecated, use `get_native_tools()` instead.',
+                    PydanticAIDeprecationWarning,
+                    stacklevel=2,
+                )
+                return self.get_native_tools()
+
+            cls.get_builtin_tools = _get_builtin_tools_delegating
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
 
         For a single capability, calls the visitor on itself.
         Overridden by [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability]
-        to recursively visit all child capabilities, and by
-        [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability]
-        to delegate to the wrapped capability.
+        to recursively visit all child capabilities.
         """
         visitor(self)
 
@@ -197,24 +288,43 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return instructions to include in the system prompt, or None.
 
-        This method is called once at agent construction time. To get dynamic
-        per-request behavior, return a callable that receives
+        Return static instruction text, a dynamic instruction callable, or a sequence
+        containing either. For dynamic per-request behavior, return a callable that receives
         [`RunContext`][pydantic_ai.tools.RunContext] or a
-        [`TemplateStr`][pydantic_ai.TemplateStr] — not a dynamic string.
+        `TemplateStr` — not a dynamic string.
+
+        When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
+        True, these instructions are resolved only after the model calls the
+        `load_capability` tool for this capability.
         """
         return None
+
+    def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
+        """Return a human-readable description of this capability, or None.
+
+        Surfaced to the model in the catalog shown with the `load_capability` tool when
+        [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is True.
+
+        Return a static description string or a callable that receives
+        [`RunContext`][pydantic_ai.tools.RunContext] (or no arguments) when the deferred
+        capability catalog is rendered. Default: return the static `description` field.
+        """
+        return self.description
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         """Return model settings to merge into the agent's defaults, or None.
 
-        This method is called once at agent construction time. Return a static
-        `ModelSettings` dict when the settings don't change between requests.
-        Return a callable that receives [`RunContext`][pydantic_ai.tools.RunContext]
+        Return a static `ModelSettings` dict when the settings don't change between
+        requests. Return a callable that receives [`RunContext`][pydantic_ai.tools.RunContext]
         when settings need to vary per step (e.g. based on `ctx.run_step` or `ctx.deps`).
 
         When the callable is invoked, `ctx.model_settings` contains the merged
         result of all layers resolved before this capability (model defaults and
         agent-level settings). The returned dict is merged on top of that.
+
+        When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
+        True, these settings are registered up front but merge as an empty dict until the
+        model calls the `load_capability` tool for this capability.
         """
         return None
 
@@ -222,19 +332,30 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return a toolset to register with the agent, or None."""
         return None
 
-    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        """Return builtin tools to register with the agent."""
+    def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        """Return native tools to register with the agent."""
         return []
+
+    def get_builtin_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        """Deprecated: use [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] instead."""
+        warnings.warn(
+            '`AbstractCapability.get_builtin_tools()` is deprecated, use `get_native_tools()` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_native_tools()
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.
 
-        Called per-run with the combined non-output toolset (after agent-level
-        [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] wrapping).
-        Output tools are added separately and are not included.
+        Called per-run with the combined non-output toolset (after the
+        [`prepare_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_tools] hook
+        has already wrapped it). Output tools are added separately and are not included.
 
-        Unlike the other `get_*` methods which are called once at agent construction,
-        this is called each run (after [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
+        Unlike value-contribution methods such as
+        [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions],
+        this receives the already assembled toolset and is called each run (after
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]).
         When multiple capabilities provide wrappers, they follow middleware semantics:
         the first capability in the list wraps outermost (matching `wrap_*` hooks).
 
@@ -245,19 +366,39 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    # --- Tool preparation hook ---
+    # --- Tool preparation hooks ---
 
     async def prepare_tools(
         self,
         ctx: RunContext[AgentDepsT],
         tool_defs: list[ToolDefinition],
     ) -> list[ToolDefinition]:
-        """Filter or modify tool definitions visible to the model for this step.
+        """Filter or modify function tool definitions for this step.
 
-        The list contains all tool kinds (function, output, unapproved) distinguished
-        by [`tool_def.kind`][pydantic_ai.tools.ToolDefinition.kind]. Return a filtered
-        or modified list. Called after the agent-level
-        [`prepare_tools`][pydantic_ai.tools.ToolsPrepareFunc] has already run.
+        Receives **function** tools only. For [output tools][pydantic_ai.output.ToolOutput],
+        override
+        [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools]
+        — it runs separately, with `ctx.retry`/`ctx.max_retries` reflecting the **output**
+        retry budget instead of the function-tool budget.
+
+        Return a filtered or modified list. The result flows into both the model's request
+        parameters and `ToolManager.tools`, so filtering also blocks tool execution.
+        """
+        return tool_defs
+
+    async def prepare_output_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        """Filter or modify output tool definitions for this step.
+
+        Receives only [output tools][pydantic_ai.output.ToolOutput]. `ctx.retry` and
+        `ctx.max_retries` reflect the **output** retry budget (agent-level
+        `max_output_retries`), matching the output hook lifecycle.
+
+        Return a filtered or modified list. The result flows into both the model's request
+        parameters and `ToolManager.tools`, so filtering also blocks tool execution.
         """
         return tool_defs
 
@@ -294,7 +435,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         is skipped and the returned result is used directly.
 
         Note: if the caller cancels the run (e.g. by breaking out of an
-        `iter()` loop), this method receives an :class:`asyncio.CancelledError`.
+        `iter()` loop), this method receives an `asyncio.CancelledError`.
         Implementations that hold resources should handle cleanup accordingly.
         """
         return await handler()
@@ -359,10 +500,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using [`agent.run()`][pydantic_ai.Agent.run],
-        [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and when manually driving
-        an [`agent.iter()`][pydantic_ai.Agent.iter] run with
-        [`next()`][pydantic_ai.result.AgentRun.next], but it does **not** fire when
+        Note: this hook fires when using `agent.run()`,
+        `agent.run_stream()`, and when manually driving
+        an `agent.iter()` run with `agent_run.next()`, but it does **not** fire when
         iterating over the run with bare `async for` (which yields stream events, not
         node results).
 
@@ -407,7 +547,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
         / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
-        [`agent.run()`][pydantic_ai.Agent.run] automatically enables streaming mode so this hook
+        `agent.run()` automatically enables streaming mode so this hook
         fires even without an explicit `event_stream_handler`.
         """
         async for event in stream:
@@ -434,7 +574,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
         ask the model to try again. The original response is still appended to message history
-        so the model can see what it said. Retries count against `max_result_retries`.
+        so the model can see what it said. Retries count against the output side of the agent's retry budget.
         """
         return response
 
@@ -533,7 +673,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         This is the error counterpart to
         [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate].
-        Fires for [`ValidationError`][pydantic.ValidationError] (schema mismatch) and
+        Fires for `ValidationError` (schema mismatch) and
         [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (custom validator rejection).
 
         **Raise** the original `error` (or a different exception) to propagate it.
@@ -617,6 +757,194 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         to intercept retries.
         """
         raise error
+
+    # --- Output validate lifecycle hooks ---
+
+    async def before_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+    ) -> RawOutput:
+        """Modify raw model output before validation/parsing.
+
+        The primary hook for pre-parse repair and normalization of model output.
+        Fires only for structured output that requires parsing: prompted, native,
+        tool, and union output. Does **not** fire for plain text or image output.
+
+        For structured text output, `output` is the raw text string from the model.
+        For tool output, `output` is the raw tool arguments (string or dict).
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
+        ask the model to try again with a custom message.
+
+        During streaming, this hook fires on every partial validation attempt as well as
+        the final result. Check `ctx.partial_output` to distinguish and avoid expensive
+        work on partial results.
+        """
+        return output
+
+    async def after_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        """Modify validated output after successful parsing. Called only on success.
+
+        `output` is the **semantic value** the model was asked to produce — e.g., a
+        `MyModel` instance for `output_type=MyModel`, or `42` for `output_type=int`, or
+        the input to a single-arg output function. For multi-arg output functions, this
+        is the `dict` of arguments (the genuine multi-value input).
+
+        Note: this differs from *tool* hooks (`after_tool_validate`), which always see
+        `dict[str, Any]` — tool args follow the schema contract. Output hooks see the
+        semantic output value, regardless of how it's internally represented during
+        validation.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated
+        output and ask the model to try again.
+        """
+        return output
+
+    async def wrap_output_validate(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        handler: WrapOutputValidateHandler,
+    ) -> Any:
+        """Wraps output validation. handler(output) performs the validation.
+
+        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from within the handler goes to
+        [`on_output_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_output_validate_error].
+        `ModelRetry` raised directly (not from the handler) bypasses the error hook.
+        """
+        return await handler(output)
+
+    async def on_output_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: RawOutput,
+        error: ValidationError | ModelRetry,
+    ) -> Any:
+        """Called when output validation fails.
+
+        This is the error counterpart to
+        [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate].
+
+        **Raise** the original `error` (or a different exception) to propagate it.
+        **Return** validated output to suppress the error and continue.
+        """
+        raise error
+
+    # --- Output process lifecycle hooks ---
+
+    async def before_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        """Modify validated output before processing (extraction, output function call).
+
+        `output` is the **semantic value** — e.g., a `MyModel` instance or `42`, matching
+        `after_output_validate`. For multi-arg output functions, it's the `dict` of args.
+        See [`after_output_validate`][pydantic_ai.capabilities.AbstractCapability.after_output_validate]
+        for a full explanation of the semantic-value contract.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip processing and
+        ask the model to try again.
+        """
+        return output
+
+    async def after_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+    ) -> Any:
+        """Modify result after output processing.
+
+        Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the result
+        and ask the model to try again.
+        """
+        return output
+
+    async def wrap_output_process(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        handler: WrapOutputProcessHandler,
+    ) -> Any:
+        """Wraps output processing. handler(output) runs extraction + output function call.
+
+        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] bypasses
+        [`on_output_process_error`][pydantic_ai.capabilities.AbstractCapability.on_output_process_error]
+        (treated as control flow, not an error).
+
+        During streaming, this fires only when partial validation succeeds, and on the
+        final result. Check `ctx.partial_output` to skip expensive work on partial results.
+        """
+        return await handler(output)
+
+    async def on_output_process_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        output_context: OutputContext,
+        output: Any,
+        error: Exception,
+    ) -> Any:
+        """Called when output processing fails with an exception.
+
+        This is the error counterpart to
+        [`after_output_process`][pydantic_ai.capabilities.AbstractCapability.after_output_process].
+
+        **Raise** the original `error` (or a different exception) to propagate it.
+        **Return** any value to suppress the error and use it as the output.
+
+        Not called for retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
+        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
+        """
+        raise error
+
+    # --- Deferred tool call hooks ---
+
+    async def handle_deferred_tool_calls(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        requests: DeferredToolRequests,
+    ) -> DeferredToolResults | None:
+        """Handle deferred tool calls (approval-required or externally-executed) inline during an agent run.
+
+        Called by `ToolManager` when:
+
+        - a tool raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+          [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] during execution, or
+        - the model calls a tool registered with `requires_approval=True` (see
+          [Human-in-the-Loop Tool Approval](../deferred-tools.md#human-in-the-loop-tool-approval))
+          or a tool backed by [external execution](../deferred-tools.md#external-tool-execution).
+
+        Uses accumulation dispatch: each capability in the chain receives remaining
+        unresolved requests and can resolve some or all of them. Results are merged
+        and unresolved calls are passed to the next capability.
+
+        **Return** a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] to resolve
+        some or all calls.
+        **Return** `None` to leave all calls unresolved.
+        """
+        return None
 
     # --- Convenience methods ---
 

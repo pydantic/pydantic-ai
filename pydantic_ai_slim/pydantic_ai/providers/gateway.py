@@ -4,11 +4,13 @@ from __future__ import annotations as _annotations
 
 import os
 import re
+import warnings
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -71,7 +73,7 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['gemini', 'google-vertex'],
+    upstream_provider: Literal['gemini', 'google-cloud', 'google-vertex'],
     /,
     *,
     route: str | None = None,
@@ -97,7 +99,7 @@ ModelProvider = Literal[
     'groq',
     'anthropic',
     'bedrock',
-    'google-vertex',
+    'google-cloud',
 ]
 
 
@@ -197,12 +199,10 @@ def gateway_provider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
         )
-    elif upstream_provider in ('google-vertex', 'gemini'):
-        from .google import GoogleProvider
+    elif upstream_provider in ('google-cloud', 'google-vertex', 'gemini'):
+        from .google_cloud import GoogleCloudProvider
 
-        return _with_http_client(
-            GoogleProvider(vertexai=True, api_key=api_key, base_url=base_url, http_client=http_client)
-        )
+        return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
@@ -246,29 +246,39 @@ def normalize_gateway_provider(provider: str) -> str:
     """
     provider = provider.removeprefix('gateway/')
 
+    if provider == 'google-vertex':
+        warnings.warn(
+            "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
+            "Use 'gateway/google-cloud:' instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+    elif provider == 'gemini':
+        warnings.warn(
+            "The 'gateway/gemini:' prefix is deprecated and will be removed in v2.0. "
+            "Use 'gateway/google-cloud:' instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+
     if provider in ('openai', 'openai-chat', 'chat'):
         return 'openai'
     elif provider in ('openai-responses', 'responses'):
         return 'openai-responses'
-    elif provider in ('gemini', 'google-vertex'):
+    elif provider in ('gemini', 'google-cloud', 'google-vertex'):
+        # The Gateway API still expects `google-vertex` as the upstream-provider wire value.
+        # When the Gateway team renames their side, flip this to `google-cloud`.
         return 'google-vertex'
     elif provider in ('bedrock', 'converse'):
         return 'bedrock'
     return provider
 
 
-# TODO(Marcelo): We should deprecate this, and remove it in v2.
-GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
-
 _PYDANTIC_TOKEN_PATTERN = re.compile(r'^pylf_v(?P<version>[0-9]+)_(?P<region>[a-z]+)_[a-zA-Z0-9-_]+$')
 
 
 def _infer_base_url(api_key: str) -> str:
-    """Infer the gateway base URL from the API key.
-
-    The region is extracted to determine the appropriate gateway URL.
-    Defaults to the old gateway base URL if the region is not found.
-    """
+    """Infer the Gateway base URL from the region encoded in the API key."""
     if match := _PYDANTIC_TOKEN_PATTERN.match(api_key):
         region = match.group('region')
         assert isinstance(region, str)
@@ -277,4 +287,8 @@ def _infer_base_url(api_key: str) -> str:
             return 'https://gateway.pydantic.info/proxy'
         return f'https://gateway-{region}.pydantic.dev/proxy'
 
-    return GATEWAY_BASE_URL
+    raise UserError(
+        'Could not infer the Pydantic AI Gateway base URL: the API key does not encode a region. '
+        'Generate a new key from the Pydantic AI Gateway, or set the `PYDANTIC_AI_GATEWAY_BASE_URL` '
+        'environment variable explicitly.'
+    )

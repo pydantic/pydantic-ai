@@ -11,7 +11,13 @@ If you're building Pydantic AI applications with a coding agent, you can install
 
 ### Claude Code
 
-Add the Pydantic marketplace and install the plugin:
+Install the [official Pydantic AI plugin](https://claude.com/plugins/pydantic-ai) from the Anthropic marketplace, which is available by default:
+
+```bash
+claude plugin install pydantic-ai@claude-plugins-official
+```
+
+As an alternative, you can install from the [`pydantic/skills`](https://github.com/pydantic/skills) marketplace, which bundles the Pydantic AI skill alongside other Pydantic-maintained skills:
 
 ```bash
 claude plugin marketplace add pydantic/skills
@@ -28,7 +34,20 @@ npx skills add pydantic/skills
 
 This works with 30+ agents via the [agentskills.io](https://agentskills.io) standard, including Claude Code, Codex, Cursor, and Gemini CLI.
 
+### Library Skills
+
+Pydantic AI also ships its skill bundled with the package, so you can install it directly from your project's dependencies via [library-skills.io](https://library-skills.io):
+
+```bash
+uvx library-skills --all
+```
+
+The `--all` flag is required because the skill is bundled in `pydantic-ai-slim`, which is a transitive dependency of the `pydantic-ai` meta-package. Without it, `library-skills` only scans direct dependencies and won't discover the skill.
+
+Add `--claude` to also install into `.claude/skills/` alongside the default `.agents/skills/` directory, since Claude Code doesn't read from `.agents/`.
+
 ## See Also
 
 - [`pydantic/skills`](https://github.com/pydantic/skills): source repository
 - [agentskills.io](https://agentskills.io): the open standard for agent skills
+- [library-skills.io](https://library-skills.io): install agent skills bundled with your project's dependencies

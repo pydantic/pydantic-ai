@@ -72,6 +72,43 @@ print(result.output)
 
 Both sync and async hook functions are accepted. Sync functions are automatically wrapped for async execution.
 
+### On-demand hooks
+
+[`Hooks`][pydantic_ai.capabilities.Hooks] is a capability, so it can be loaded on demand just like any other capability:
+
+```python {title="deferred_hooks_capability.py"}
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
+from pydantic_ai.messages import ToolCallPart
+
+approval_hooks = Hooks(
+    id='approval-hooks',
+    description='Use when a workflow needs approval before destructive actions.',
+    defer_loading=True,
+)
+
+
+@approval_hooks.on.before_tool_execute
+async def require_approval(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
+    # Runs only after the model loads `approval-hooks`.
+    return args
+
+
+agent = Agent('openai-responses:gpt-5.4', capabilities=[approval_hooks])
+```
+
+You do not need to guard hooks owned by a deferred `Hooks` instance with `ctx.capability_loaded`; Pydantic AI skips those hooks until the model calls the `load_capability` tool for that capability. Once the hook runs, `ctx.capability_loaded` is true for that hook's owning capability. To check a different capability, inspect `ctx.loaded_capability_ids` or `ctx.available_capability_ids`.
+
+If a hook must enforce a rule before a workflow is loaded, keep that hook in an always-available capability and inspect `ctx.loaded_capability_ids`; an on-demand hook cannot run before the model loads its own capability.
+
+The run-scoped hooks — `before_run` and `wrap_run` — are bound at the start of the run, so a capability the model loads mid-run won't get them for that run; they only fire when the capability is already loaded at the start (for example after resuming from message history). The capability's per-step hooks (node, model-request, tool, output) fire from the next step onwards once it has loaded, and `after_run` fires at the end of the run if it was loaded at any point during it.
+
 ## Hook types
 
 ### Run hooks
@@ -141,13 +178,75 @@ Execution hooks fire when the tool function runs. `args` is always the validated
 
 To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `tool_execute` (wrap).
 
+### Output validation hooks
+
+| `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
+|---|---|---|
+| `before_output_validate` | `before_output_validate=` | `before_output_validate` |
+| `after_output_validate` | `after_output_validate=` | `after_output_validate` |
+| `output_validate` | `output_validate=` | `wrap_output_validate` |
+| `output_validate_error` | `output_validate_error=` | `on_output_validate_error` |
+
+Output validation hooks fire when structured output is parsed against the output schema. They do **not** fire for plain text or image output. All output hooks receive an `output_context` ([`OutputContext`][pydantic_ai.capabilities.OutputContext]) parameter.
+
+!!! note
+    During streaming, output **validation** hooks fire on every partial validation attempt as well as the final result. Output **processing** hooks fire only when partial validation succeeds, and on the final result. Check `ctx.partial_output` in your hooks to distinguish partial from final results and avoid expensive work on partials.
+
+### Output processing hooks
+
+| `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
+|---|---|---|
+| `before_output_process` | `before_output_process=` | `before_output_process` |
+| `after_output_process` | `after_output_process=` | `after_output_process` |
+| `output_process` | `output_process=` | `wrap_output_process` |
+| `output_process_error` | `output_process_error=` | `on_output_process_error` |
+
+Output processing hooks fire when the output is processed — extracting values, calling output functions, and running output validators.
+
+See [Output hooks](capabilities.md#output-hooks) for the full lifecycle, signatures, and details on how output validators interact with processing hooks.
+
 ### Tool preparation
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
 | `prepare_tools` | `prepare_tools=` | `prepare_tools` |
+| `prepare_output_tools` | `prepare_output_tools=` | `prepare_output_tools` |
 
-Filters or modifies tool definitions the model sees on each step. Controls visibility, not execution.
+Filters or modifies tool definitions the model sees on each step.
+
+`prepare_tools` handles **function** tools; `prepare_output_tools` handles [output tools][pydantic_ai.output.ToolOutput] separately, with `ctx.max_retries` reflecting the **output** retry budget. Both run as `PreparedToolset` wrappers — the result flows into the model's request *and* `ToolManager.tools`, so filtering also blocks tool execution.
+
+### Deferred tool call hook
+
+| `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
+|---|---|---|
+| `deferred_tool_calls` | `deferred_tool_calls=` | `handle_deferred_tool_calls` |
+
+Resolves [deferred tool calls](deferred-tools.md) (approval-required or externally-executed) inline during a run. The hook receives a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] and returns a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] (or `None` to decline). Multiple registered hooks accumulate: each receives the still-unresolved requests and can resolve some or all of them.
+
+```python {title="hooks_deferred_tool_calls.py"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import Hooks
+
+hooks = Hooks()
+
+
+@hooks.on.deferred_tool_calls
+async def auto_approve(
+    ctx: RunContext[None], *, requests: DeferredToolRequests
+) -> DeferredToolResults:
+    return requests.build_results(approve_all=True)
+
+
+agent = Agent('test', capabilities=[hooks])
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    return f'File {path!r} deleted'
+```
+
+For pure application-level handler registration without other hooks, the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability is more concise — see [Resolving deferred calls with a handler](deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
 ### Event stream hooks
 
@@ -181,10 +280,8 @@ agent = Agent('test', capabilities=[hooks])
 Tool hooks (validation and execution) support a `tools` parameter to target specific tools by name:
 
 ```python {title="hooks_tool_filter.py"}
-from typing import Any
-
 from pydantic_ai import Agent, RunContext, ToolDefinition
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.messages import ToolCallPart
 
 hooks = Hooks()
@@ -197,8 +294,8 @@ async def audit_dangerous_tools(
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,
-    args: dict[str, Any],
-) -> dict[str, Any]:
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
     call_log.append(f'audit: {call.tool_name}')
     return args
 
@@ -286,7 +383,11 @@ When multiple hooks are registered for the same event (either on the same `Hooks
 * **`after_*`** hooks fire in reverse order
 * **`wrap_*`** hooks nest as middleware — the first registered hook is the outermost layer
 
-See [Composition](capabilities.md#composition) for details on how hooks from multiple capabilities interact.
+Hook timing also affects what is populated on [`RunContext`][pydantic_ai.tools.RunContext]. Early run and node hooks can fire before the current step's tool manager and model request parameters have been assembled. At that point `ctx.available_tool_names` can still include tool-search discoveries reconstructed from history, but `ctx.tools` and current request parameters may be empty or reflect the previous step. `before_model_request` and later model-request hooks see the request about to be sent, including the current function tools, native tools, and model settings. Tool and output hooks see the state for the call or output currently being processed.
+
+For on-demand capabilities, `ctx.loaded_capability_ids` updates as soon as the `load_capability` tool runs. Function tools, native tools, and model settings from the loaded capability appear on the next model request, while hooks owned by that capability can only run for hook points reached after the capability has loaded.
+
+See [Composition and middleware semantics](capabilities.md#composition-and-middleware-semantics) for details on how hooks from multiple capabilities interact.
 
 ## Error hooks
 
@@ -300,21 +401,27 @@ See [Error hooks](capabilities.md#error-hooks) for the full pattern and recovery
 
 ## Triggering retries with `ModelRetry`
 
-Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools.md#model-retry) and output validators.
+Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with a custom message — the same exception used in [tool functions](tools-advanced.md#tool-retries) and output validators.
 
 **Model request hooks** (`after_model_request`, `wrap_model_request`, `on_model_request_error`):
 
 - The retry message is sent back to the model as a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]
 - `after_model_request`: the original response is preserved in message history so the model can see what it said
 - `wrap_model_request`: the response is preserved only if the handler was called
-- Retries count against the agent's `output_retries` limit
+- Retries count against the output side of the agent's retry budget
 
 **Tool hooks** (`before/after_tool_validate`, `before/after_tool_execute`, `wrap_tool_execute`, `on_tool_execute_error`):
 
 - Converted to tool retry prompts, same as when a tool function raises `ModelRetry`
 - Retries count against the tool's `max_retries` limit
 
-`ModelRetry` from `wrap_model_request` and `wrap_tool_execute` is treated as control flow — it bypasses `on_model_request_error` and `on_tool_execute_error` respectively.
+**Output hooks** (`before/after_output_validate`, `before/after_output_process`, `wrap_output_process`, `on_output_process_error`):
+
+- Converted to retry prompts, same as when an output function raises `ModelRetry`
+- For tool output, retries count against the tool's `max_retries` limit
+- For text output, retries count against the output side of the agent's retry budget
+
+`ModelRetry` from `wrap_model_request`, `wrap_tool_execute`, and `wrap_output_process` is treated as control flow — it bypasses the corresponding `on_*_error` hook.
 
 ```python {title="hooks_model_retry.py"}
 from pydantic_ai import Agent, RunContext

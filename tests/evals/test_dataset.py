@@ -147,6 +147,44 @@ def test_dataset_name_deprecation_warning(
         Dataset(cases=example_cases)
 
 
+async def test_evaluate_positional_args_deprecation_warning(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """Passing positional args to `Dataset.evaluate` warns and still binds correctly ahead of v2 kw-only."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query)
+
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='positionally to `Dataset.evaluate`'):
+        report = await example_dataset.evaluate(task, 'custom_experiment_name')
+    assert report.name == 'custom_experiment_name'
+
+
+def test_evaluate_sync_positional_args_deprecation_warning(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """`Dataset.evaluate_sync` mirrors the same positional deprecation."""
+
+    def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query)
+
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='positionally to `Dataset.evaluate`'):
+        report = example_dataset.evaluate_sync(task, 'custom_experiment_name')
+    assert report.name == 'custom_experiment_name'
+
+
+async def test_evaluate_too_many_positional_args_raises(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """More positionals than legacy slots should still be a TypeError."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
+        raise AssertionError('task should not be called when evaluate() rejects bad positional args')
+
+    with pytest.raises(TypeError, match='takes at most'):
+        await example_dataset.evaluate(task, 'n', None, True, None, None, 'extra')
+
+
 def test_from_file_uses_filename_as_default_name(tmp_path: Path):
     """Test that from_file uses filename stem as name and does not emit a deprecation warning."""
     yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
@@ -260,6 +298,7 @@ async def test_evaluate_async(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -277,6 +316,7 @@ async def test_evaluate_async(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
             'span_id': _any_span_id,
@@ -314,6 +354,7 @@ async def test_evaluate_sync(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -331,6 +372,7 @@ async def test_evaluate_sync(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
             'span_id': _any_span_id,
@@ -396,6 +438,7 @@ async def test_evaluate_with_retried_task_and_evaluator(
                     'reason': None,
                     'source': {'name': 'RetryEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -413,6 +456,7 @@ async def test_evaluate_with_retried_task_and_evaluator(
                     'reason': None,
                     'source': {'name': 'RetryEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
             'span_id': _any_span_id,
@@ -450,6 +494,7 @@ async def test_evaluate_with_concurrency(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -467,6 +512,7 @@ async def test_evaluate_with_concurrency(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
             'span_id': _any_span_id,
@@ -572,6 +618,7 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
                         error_message='ValueError: Evaluator error',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -596,6 +643,7 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
                         error_message='ValueError: Evaluator error',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -865,6 +913,25 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
 
 
+async def test_serialization_to_yaml_preserves_unicode(tmp_path: Path):
+    dataset = Dataset[TaskInput, TaskOutput](
+        name='unicode',
+        cases=[
+            Case(
+                inputs=TaskInput(query='Привет'),
+                expected_output=TaskOutput(answer='Здравствуйте'),
+            )
+        ],
+    )
+    yaml_path = tmp_path / 'test_cases.yaml'
+
+    dataset.to_file(yaml_path)
+
+    content = yaml_path.read_text(encoding='utf-8')
+    assert 'Привет' in content
+    assert 'Здравствуйте' in content
+
+
 async def test_deserializing_without_name(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
 ):
@@ -1106,6 +1173,7 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                         'type: Ellipsis.',
                         error_stacktrace=IsStr(),
                         source=Python(expression='...').as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1134,6 +1202,7 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                         'type: Ellipsis.',
                         error_stacktrace=IsStr(),
                         source=Python(expression='...').as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1212,6 +1281,7 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
                         error_message='ValueError: Evaluator failed',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1236,6 +1306,7 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
                         error_message='ValueError: Evaluator failed',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1291,6 +1362,7 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                         'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().',
                         error_stacktrace=IsStr(),
                         source=InvalidEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1320,6 +1392,7 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                         'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().',
                         error_stacktrace=IsStr(),
                         source=InvalidEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1658,6 +1731,7 @@ async def test_evaluate_async_logfire(
                             'value': True,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'scores': {
@@ -1666,6 +1740,7 @@ async def test_evaluate_async_logfire(
                             'value': 1.0,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'labels': {},
@@ -1727,6 +1802,7 @@ async def test_evaluate_async_logfire(
                             'value': True,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'scores': {
@@ -1735,6 +1811,7 @@ async def test_evaluate_async_logfire(
                             'value': 1.0,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'labels': {},
@@ -1779,9 +1856,12 @@ async def test_evaluate_async_logfire(
                 'evaluator: {evaluator_name}',
                 {
                     'evaluator_name': 'SimpleEvaluator',
-                    'logfire.msg_template': 'evaluator: {evaluator_name}',
-                    'logfire.msg': 'evaluator: SimpleEvaluator',
-                    'logfire.json_schema': {'type': 'object', 'properties': {'evaluator_name': {}}},
+                    'logfire.msg_template': 'Calling evaluator: {evaluator_name}',
+                    'logfire.msg': 'Calling evaluator: SimpleEvaluator',
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {'evaluator_name': {}},
+                    },
                     'logfire.span_type': 'span',
                 },
             ),
@@ -1789,9 +1869,12 @@ async def test_evaluate_async_logfire(
                 'evaluator: {evaluator_name}',
                 {
                     'evaluator_name': 'SimpleEvaluator',
-                    'logfire.msg_template': 'evaluator: {evaluator_name}',
-                    'logfire.msg': 'evaluator: SimpleEvaluator',
-                    'logfire.json_schema': {'type': 'object', 'properties': {'evaluator_name': {}}},
+                    'logfire.msg_template': 'Calling evaluator: {evaluator_name}',
+                    'logfire.msg': 'Calling evaluator: SimpleEvaluator',
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {'evaluator_name': {}},
+                    },
                     'logfire.span_type': 'span',
                 },
             ),
@@ -2069,9 +2152,10 @@ async def test_lifecycle_setup_and_teardown(example_dataset: Dataset[TaskInput, 
         async def teardown(
             self,
             result: ReportCase[TaskInput, TaskOutput, TaskMetadata]
-            | ReportCaseFailure[TaskInput, TaskOutput, TaskMetadata],
+            | ReportCaseFailure[TaskInput, TaskOutput, TaskMetadata]
+            | None,
         ) -> None:
-            events.append(f'teardown:{self.case.name}:{type(result).__name__}')
+            events.append(f'teardown:{self.case.name}:{type(result).__name__ if result is not None else "NoneType"}')
 
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer='test')
@@ -2085,10 +2169,10 @@ async def test_lifecycle_teardown_on_task_failure():
     """Test that teardown runs even when the task fails, and receives ReportCaseFailure."""
     from pydantic_evals.lifecycle import CaseLifecycle
 
-    teardown_results: list[ReportCase | ReportCaseFailure] = []
+    teardown_results: list[ReportCase | ReportCaseFailure | None] = []
 
     class TeardownTracker(CaseLifecycle[str, str, None]):
-        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
             teardown_results.append(result)
 
     dataset = Dataset[str, str, None](
@@ -2203,7 +2287,7 @@ async def test_lifecycle_teardown_exception_propagates():
     from pydantic_evals.lifecycle import CaseLifecycle
 
     class BrokenTeardown(CaseLifecycle[str, str, None]):
-        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
             raise RuntimeError('teardown exploded')
 
     dataset = Dataset[str, str, None](name='teardown_exception', cases=[Case(name='case1', inputs='hello')])
@@ -2225,9 +2309,10 @@ async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown(
         async def setup(self) -> None:
             raise RuntimeError('setup failed')
 
-        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
             nonlocal teardown_called
             teardown_called = True
+            assert result is not None
             assert isinstance(result, ReportCaseFailure)
             assert 'setup failed' in result.error_message
 

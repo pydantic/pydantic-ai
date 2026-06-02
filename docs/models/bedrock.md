@@ -74,6 +74,20 @@ model = BedrockConverseModel(model_name='us.amazon.nova-pro-v1:0')
 agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
+## Service tier
+
+Bedrock supports controlling the [service tier](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) to manage throughput and cost.
+You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`bedrock_service_tier`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_service_tier] field. `bedrock_service_tier` takes precedence over the unified field when both are set.
+
+The unified field maps as follows for Bedrock:
+
+- `'auto'`: the `serviceTier` field is omitted from the request, so AWS applies its server-side default (Standard tier).
+- `'default'`: explicitly sent as `{'type': 'default'}` — opts out of any future server-side auto-promotion to premium tiers.
+- `'flex'`: sent as `{'type': 'flex'}`.
+- `'priority'`: sent as `{'type': 'priority'}`.
+
+To request Bedrock's `'reserved'` tier (which requires a pre-purchased capacity reservation), set [`bedrock_service_tier`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_service_tier] directly — it isn't reachable through the unified field.
+
 ## Prompt Caching
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests. Pydantic AI provides four ways to use prompt caching:
@@ -107,8 +121,8 @@ result1 = agent.run_sync('What is the capital of France?')
 
 # Subsequent calls with similar conversation benefit from cache
 result2 = agent.run_sync('What is the capital of Germany?')
-print(f'Cache write: {result1.usage().cache_write_tokens}')
-print(f'Cache read: {result2.usage().cache_read_tokens}')
+print(f'Cache write: {result1.usage.cache_write_tokens}')
+print(f'Cache read: {result2.usage.cache_read_tokens}')
 ```
 
 ### Example 2: Comprehensive Caching Strategy
@@ -180,7 +194,7 @@ async def main():
             'What changed since last time?',
         ]
     )
-    usage = result.usage()
+    usage = result.usage
     print(f'Cache writes: {usage.cache_write_tokens}')
     print(f'Cache reads: {usage.cache_read_tokens}')
 ```

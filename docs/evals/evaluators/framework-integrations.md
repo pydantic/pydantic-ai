@@ -9,11 +9,11 @@ the common ones.
 
 !!! tip "Prefer the native pack where you can"
     For most use cases the [curated quality metrics](standard-quality-metrics.md) pack is enough —
-    it has zero extra dependencies, reuses the same `LLMJudge` infrastructure you already
-    configure for other evaluators, and produces scores/assertions that slot into reports
-    cleanly. Reach for the integrations below when you specifically want the *exact* upstream
-    implementation (for reproducibility with published benchmarks, parity with an existing
-    evaluation suite, or features we don't expose natively). You can freely mix both in one
+    it has zero extra dependencies, reuses the same [`LLMJudge`][pydantic_evals.evaluators.LLMJudge]
+    infrastructure you already configure for other evaluators, and produces scores/assertions that
+    slot into reports cleanly. Reach for the integrations below when you specifically want the
+    *exact* upstream implementation (for reproducibility with published benchmarks, parity with an
+    existing evaluation suite, or features we don't expose natively). You can freely mix both in one
     dataset.
 
 ## Pattern
@@ -109,7 +109,7 @@ from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorCont
 class DeepEvalGEval(Evaluator):
     """Wrap `deepeval.metrics.GEval` as a Pydantic Evals evaluator."""
 
-    name: str
+    metric_name: str
     criteria: str
     threshold: float = 0.5
 
@@ -120,15 +120,15 @@ class DeepEvalGEval(Evaluator):
             expected_output=None if ctx.expected_output is None else str(ctx.expected_output),
         )
         metric = GEval(
-            name=self.name,
+            name=self.metric_name,
             criteria=self.criteria,
             evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
             threshold=self.threshold,
         )
         metric.measure(test_case)
         return {
-            f'{self.name}_score': EvaluationReason(value=float(metric.score), reason=metric.reason or ''),
-            f'{self.name}_pass': bool(metric.success),
+            f'{self.metric_name}_score': EvaluationReason(value=float(metric.score), reason=metric.reason or ''),
+            f'{self.metric_name}_pass': bool(metric.success),
         }
 ```
 

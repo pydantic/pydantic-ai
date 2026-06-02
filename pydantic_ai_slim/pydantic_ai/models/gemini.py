@@ -27,8 +27,6 @@ from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     CompactionPart,
     FilePart,
@@ -38,6 +36,8 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -112,12 +112,9 @@ class GeminiModel(Model[httpx.AsyncClient]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: httpx.AsyncClient = field(repr=False)
-
     _model_name: GeminiModelName = field(repr=False)
     _provider: Provider[httpx.AsyncClient] = field(repr=False)
     _auth: AuthProtocol | None = field(repr=False)
-    _url: str | None = field(repr=False)
 
     def __init__(
         self,
@@ -149,15 +146,16 @@ class GeminiModel(Model[httpx.AsyncClient]):
 
                 provider = GoogleVertexProvider()  # type: ignore[reportDeprecated]
         self._provider = provider
-        self.client = provider.client
-        self._url = str(self.client.base_url)
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
+    def client(self) -> httpx.AsyncClient:
+        return self._provider.client
+
+    @property
     def base_url(self) -> str:
-        assert self._url is not None, 'URL not initialized'
-        return self._url
+        return str(self.client.base_url)
 
     @property
     def model_name(self) -> GeminiModelName:
@@ -676,7 +674,7 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
-        elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+        elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
             # This is currently never returned from gemini
             pass
         elif isinstance(item, FilePart):  # pragma: no cover
