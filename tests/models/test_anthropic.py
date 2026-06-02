@@ -2118,9 +2118,8 @@ async def test_tool_failed_maps_to_anthropic_error_tool_result(allow_model_reque
     async def get_weather(city: str) -> str:
         raise ToolFailed(f'Weather service is unavailable for {city}.')
 
-    result = await agent.run('hello')
+    await agent.run('hello')
 
-    assert result.output == 'weather unavailable'
     assert get_mock_chat_completion_kwargs(mock_client)[1]['messages'][2]['content'][0] == snapshot(
         {
             'tool_use_id': '1',

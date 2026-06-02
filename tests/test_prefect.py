@@ -960,7 +960,7 @@ async def test_prefect_agent_with_model_retry(allow_model_requests: None) -> Non
     assert 'sunny' in result.output.lower() or 'mexico city' in result.output.lower()
 
 
-tool_failed_agent = Agent(TestModel(call_tools=['failing_tool'], custom_output_text='done'), name='tool_failed_agent')
+tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
 
 
 @tool_failed_agent.tool_plain

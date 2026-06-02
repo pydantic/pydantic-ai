@@ -9257,18 +9257,7 @@ class TestToolFailedFromHooks:
             'on_error': (_OnToolExecuteErrorFailedCap, 'failed while handling error', True),
         }[hook_name]
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            for msg in messages:
-                for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
-                        return make_text_response(f'got: {part.outcome}:{part.content}')
-            if info.function_tools:
-                return ModelResponse(
-                    parts=[ToolCallPart(tool_name=info.function_tools[0].name, args='{}', tool_call_id='call-1')]
-                )
-            return make_text_response('no tools')  # pragma: no cover
-
-        agent = Agent(FunctionModel(model_fn), capabilities=[cap_type()])
+        agent = Agent(FunctionModel(_tool_failed_roundtrip_model('{}')), capabilities=[cap_type()])
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9297,7 +9286,7 @@ class TestToolFailedFromHooks:
         @agent.tool_plain(requires_approval=True)
         def my_tool() -> str:
             nonlocal tool_call_count
-            tool_call_count += 1
+            tool_call_count += 1  # pragma: no cover
             return 'tool result'  # pragma: no cover
 
         result = await agent.run('call tool')
@@ -9322,6 +9311,7 @@ class TestToolFailedFromHooks:
     async def test_tool_validate_hook_tool_failed(
         self, capability: AbstractCapability[Any], tool_args: str, expected_message: str
     ):
+        """Non-deferred tool validation hooks can report a failed tool result instead of retrying."""
         tool_call_count = 0
 
         agent = Agent(
@@ -9333,7 +9323,7 @@ class TestToolFailedFromHooks:
         @agent.tool_plain
         def my_tool(x: int) -> str:
             nonlocal tool_call_count
-            tool_call_count += 1
+            tool_call_count += 1  # pragma: no cover
             return f'tool result: {x}'  # pragma: no cover
 
         result = await agent.run('call tool')
@@ -9356,7 +9346,7 @@ class TestToolFailedFromHooks:
         @agent.tool_plain(args_validator=validate_args)
         def my_tool() -> str:
             nonlocal tool_call_count
-            tool_call_count += 1
+            tool_call_count += 1  # pragma: no cover
             return 'tool result'  # pragma: no cover
 
         result = await agent.run('call tool')

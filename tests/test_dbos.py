@@ -1587,7 +1587,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
     )
 
 
-tool_failed_agent = Agent(TestModel(call_tools=['failing_tool'], custom_output_text='done'), name='tool_failed_agent')
+tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
 
 
 @tool_failed_agent.tool_plain
