@@ -378,7 +378,7 @@ class GEval(Evaluator[object, object, object]):
         return EvaluationReason(value=g_eval_output.score, reason=g_eval_output.reason)
 
     def get_default_evaluation_name(self) -> str:
-        return self.evaluation_name or self.get_serialization_name()
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
     def build_serialization_arguments(self):
         return serialize_model_as_string(super().build_serialization_arguments())
@@ -430,7 +430,7 @@ class GembaScore(Evaluator[str, str, object]):
         return EvaluationReason(value=gemba_output.score, reason=gemba_output.reason)
 
     def get_default_evaluation_name(self) -> str:
-        return self.evaluation_name or self.get_serialization_name()
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
     def build_serialization_arguments(self):
         return serialize_model_as_string(super().build_serialization_arguments())
