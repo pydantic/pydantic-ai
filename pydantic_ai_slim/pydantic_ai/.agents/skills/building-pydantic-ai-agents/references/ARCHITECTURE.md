@@ -10,6 +10,7 @@ Detailed decision trees, comparison tables, and architecture overview for Pydant
   - [Choosing an Output Mode](#choosing-an-output-mode)
   - [Choosing a Multi-Agent Pattern](#choosing-a-multi-agent-pattern)
   - [Choosing How to Extend Agent Behavior](#choosing-how-to-extend-agent-behavior)
+  - [Choosing What to Load Eagerly](#choosing-what-to-load-eagerly)
   - [Choosing a Capability](#choosing-a-capability)
   - [Choosing a Testing Approach](#choosing-a-testing-approach)
 - [Comparison Tables](#comparison-tables)
@@ -28,6 +29,7 @@ If the user already knows what they want to do, load the narrower task guide ins
 
 - [AGENTS-CORE.md](./AGENTS-CORE.md)
 - [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md)
+- [ON-DEMAND-CAPABILITIES.md](./ON-DEMAND-CAPABILITIES.md)
 - [TOOLS-CORE.md](./TOOLS-CORE.md)
 - [NATIVE-TOOLS.md](./NATIVE-TOOLS.md)
 - [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md)
@@ -85,7 +87,7 @@ Child agent returns result to parent?
 
 ```
 Need reusable behavior across agents (tools + hooks + instructions)?
-├── Yes → Build a custom capability (subclass AbstractCapability)
+├── Yes → Build a custom capability, then consider whether `defer_loading=True` should be the default
 └── No → Just intercepting lifecycle events?
     ├── Yes → Complex interception needing tools/instructions too?
     │   ├── Yes → Subclass AbstractCapability
@@ -96,6 +98,26 @@ Need reusable behavior across agents (tools + hooks + instructions)?
             ├── Yes → Use @agent.tool or Toolset
             └── Pass args directly to Agent constructor
 ```
+
+### Choosing What to Load Eagerly
+
+```
+Is this part of a capability?
+├── Yes → First consider `defer_loading=True`; would eager loading improve most turns or be required for hooks/settings?
+│   ├── Yes → Keep it eager in an always-on capability
+│   └── No → Use capabilities on demand with `defer_loading=True`
+└── No → Will this information/tool schema improve most model turns?
+    ├── Yes → Keep it eager in the base agent or hot-path toolset
+    └── No → Is it a named workflow with instructions plus tools?
+        ├── Yes → Use capabilities on demand with `defer_loading=True`
+        └── No → Is it one of many individually discoverable tools?
+            ├── Yes → Use tool-level `defer_loading=True` and ToolSearch
+            └── No → Can the caller fetch it outside the agent and pass only the relevant slice?
+                ├── Yes → Keep it out of the agent; inject the slice through deps, prompt, or retrieval
+                └── No → Reconsider whether the agent actually needs this context
+```
+
+Be opinionated here. Any capability should at least be evaluated for deferral; eager loading is a choice to justify, not the unexamined default. Pydantic AI agents should not carry large optional policy text, rarely used schemas, or specialist runbooks in the eager prompt just because they are available. Prefer progressive disclosure unless the information is genuinely universal.
 
 ### Choosing a Capability
 
