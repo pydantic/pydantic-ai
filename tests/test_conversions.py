@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -317,6 +318,168 @@ class TestChatMessagesToModelMessages:
                     ],
                     timestamp=IsDatetime(),
                 ),
+            ]
+        )
+
+    def test_v4_uri_parts_by_modality(self):
+        """v4+ OTEL `uri` parts map to the URL type implied by their modality."""
+        otel = [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'uri', 'modality': 'image', 'uri': 'https://example.com/a.png', 'mime_type': 'image/png'},
+                    {'type': 'uri', 'modality': 'audio', 'uri': 'https://example.com/a.mp3'},
+                    {'type': 'uri', 'modality': 'video', 'uri': 'https://example.com/a.mp4'},
+                    {'type': 'uri', 'uri': 'https://example.com/a.pdf'},
+                ],
+            },
+        ]
+        assert otel_messages_to_model_messages(otel) == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=[
+                                ImageUrl(url='https://example.com/a.png', media_type='image/png', identifier='b86daf'),
+                                AudioUrl(url='https://example.com/a.mp3'),
+                                VideoUrl(url='https://example.com/a.mp4', media_type='video/mp4', identifier='1228be'),
+                                DocumentUrl(
+                                    url='https://example.com/a.pdf', media_type='application/pdf', identifier='390e3c'
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                )
+            ]
+        )
+
+    def test_v4_uri_part_without_url_is_skipped(self):
+        """A `uri` part recorded with `include_content=False` (no `uri`) is dropped."""
+        otel = [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'See attached'},
+                    {'type': 'uri', 'modality': 'image', 'mime_type': 'image/png'},
+                ],
+            },
+        ]
+        assert otel_messages_to_model_messages(otel) == snapshot(
+            [ModelRequest(parts=[UserPromptPart(content='See attached', timestamp=IsDatetime())])]
+        )
+
+    def test_v4_blob_parts(self):
+        """v4+ OTEL `blob` parts map to `BinaryContent` in both user and assistant messages."""
+        b64 = base64.b64encode(b'blob bytes').decode()
+        otel = [
+            {
+                'role': 'user',
+                'parts': [{'type': 'blob', 'modality': 'image', 'mime_type': 'image/png', 'content': b64}],
+            },
+            {'role': 'assistant', 'parts': [{'type': 'blob', 'mime_type': 'image/png', 'content': b64}]},
+        ]
+        assert otel_messages_to_model_messages(otel) == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=[BinaryContent(data=b'blob bytes', media_type='image/png', identifier='2261db')],
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        FilePart(content=BinaryContent(data=b'blob bytes', media_type='image/png', identifier='2261db'))
+                    ],
+                    timestamp=IsDatetime(),
+                ),
+            ]
+        )
+
+    def test_v4_file_part_reconstructs_uploaded_file(self):
+        """A `file` part with `file_id` and `provider_name` round-trips to an `UploadedFile`."""
+        otel = [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'type': 'file',
+                        'modality': 'document',
+                        'file_id': 'file-abc',
+                        'mime_type': 'application/pdf',
+                        'provider_name': 'anthropic',
+                    }
+                ],
+            },
+        ]
+        assert otel_messages_to_model_messages(otel) == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=[
+                                UploadedFile(
+                                    file_id='file-abc', provider_name='anthropic', _media_type='application/pdf'
+                                )
+                            ],
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                )
+            ]
+        )
+
+    def test_v4_file_part_without_provider_falls_back_to_marker(self):
+        """Without `provider_name` (older traces / `include_content=False`) the file can't be rebuilt."""
+        otel = [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'file', 'modality': 'document', 'file_id': 'file-abc', 'mime_type': 'application/pdf'}
+                ],
+            },
+        ]
+        assert otel_messages_to_model_messages(otel) == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='[unavailable file (application/pdf): provider-hosted reference not captured in OTEL]',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                )
+            ]
+        )
+
+    def test_v4_file_part_with_unknown_provider_falls_back_to_marker(self):
+        """An unrecognized `provider_name` can't construct an `UploadedFile`, so a marker is used."""
+        otel = [
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'type': 'file',
+                        'modality': 'document',
+                        'file_id': 'file-abc',
+                        'mime_type': 'application/pdf',
+                        'provider_name': 'not-a-real-provider',
+                    }
+                ],
+            },
+        ]
+        assert otel_messages_to_model_messages(otel) == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='[unavailable file (application/pdf): provider-hosted reference not captured in OTEL]',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                )
             ]
         )
 

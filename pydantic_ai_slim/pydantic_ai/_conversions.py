@@ -13,6 +13,8 @@ import json
 from collections.abc import Sequence
 from typing import Any, cast
 
+from pydantic import ValidationError
+
 from . import _utils
 from .messages import (
     AudioUrl,
@@ -33,6 +35,7 @@ from .messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
@@ -53,6 +56,12 @@ def otel_messages_to_model_messages(
     - `gen_ai.input.messages` / `gen_ai.output.messages` attributes on model request spans
 
     Also supports the legacy v1 events format (with `event.name` keys).
+
+    Multi-modal content is handled across instrumentation versions: the v2/v3 media parts
+    (`image-url`/`audio-url`/`video-url`/`document-url`/`binary`) and the v4+ OTEL GenAI parts
+    (`uri`/`blob`/`file`). A `file` part is restored to an [`UploadedFile`][pydantic_ai.messages.UploadedFile]
+    when the trace carries its `provider_name`; without it (older traces, or `include_content=False`)
+    the provider-hosted reference can't be rebuilt, so it's replaced by a text marker noting the missing data.
 
     Note: this conversion is lossy. Some information (e.g. timestamps, `instructions`,
     provider details) is not preserved in the OTEL format and will use defaults.
@@ -201,6 +210,61 @@ def _convert_user_parts(parts: list[dict[str, Any]]) -> list[ModelRequestPart]:
     return result
 
 
+_MEDIA_URL_TYPES: dict[str, type[ImageUrl] | type[AudioUrl] | type[VideoUrl] | type[DocumentUrl]] = {
+    'image-url': ImageUrl,
+    'audio-url': AudioUrl,
+    'video-url': VideoUrl,
+    'document-url': DocumentUrl,
+}
+
+
+def _binary_from_otel(part: dict[str, Any]) -> BinaryContent:
+    """Build `BinaryContent` from a v2/v3 `binary` part or a v4+ `blob` part."""
+    media_type = part.get('media_type') or part.get('mime_type') or 'application/octet-stream'
+    b64_content = part.get('content', '')
+    data = base64.b64decode(b64_content) if b64_content else b''
+    return BinaryContent(data=data, media_type=media_type)
+
+
+def _uri_part_to_url(part: dict[str, Any]) -> ImageUrl | AudioUrl | VideoUrl | DocumentUrl | None:
+    """Convert a v4+ OTEL GenAI `uri` part to a media URL based on its modality.
+
+    Returns `None` when no URL is present (e.g. recorded with `include_content=False`).
+    """
+    url = part.get('uri', '')
+    if not url:
+        return None
+    media_type: str | None = part.get('mime_type')
+    modality = part.get('modality')
+    if modality == 'image':
+        return ImageUrl(url, media_type=media_type)
+    elif modality == 'audio':
+        return AudioUrl(url, media_type=media_type)
+    elif modality == 'video':
+        return VideoUrl(url, media_type=media_type)
+    # No modality is emitted for document URLs.
+    return DocumentUrl(url, media_type=media_type)
+
+
+def _file_part_to_content(part: dict[str, Any]) -> UserContent:
+    """Convert a v2+ OTEL GenAI `file` part back to an `UploadedFile`.
+
+    A provider-hosted file reference needs both its `file_id` and the hosting `provider_name`
+    (file IDs aren't portable across providers). Traces recorded with `include_content=False`,
+    or before pydantic-ai stored `provider_name`, omit these; rather than silently dropping the
+    file, fall back to a text marker that flags the missing data.
+    """
+    file_id = part.get('file_id')
+    provider_name = part.get('provider_name')
+    media_type = part.get('mime_type', 'application/octet-stream')
+    if file_id and provider_name:
+        try:
+            return UploadedFile(file_id=file_id, provider_name=provider_name, media_type=media_type)
+        except ValidationError:
+            pass  # unrecognized provider name — fall through to the marker
+    return f'[unavailable file ({media_type}): provider-hosted reference not captured in OTEL]'
+
+
 def _make_user_prompt_part(parts: list[dict[str, Any]]) -> UserPromptPart:
     """Create a UserPromptPart from a list of OTEL message parts."""
     if len(parts) == 1 and parts[0].get('type') == 'text':
@@ -211,27 +275,20 @@ def _make_user_prompt_part(parts: list[dict[str, Any]]) -> UserPromptPart:
         ptype = part.get('type', '')
         if ptype == 'text':
             content.append(part.get('content', ''))
-        elif ptype == 'image-url':
-            url = part.get('url', '')
-            if url:
-                content.append(ImageUrl(url))
-        elif ptype == 'audio-url':
-            url = part.get('url', '')
-            if url:
-                content.append(AudioUrl(url))
-        elif ptype == 'video-url':
-            url = part.get('url', '')
-            if url:
-                content.append(VideoUrl(url))
-        elif ptype == 'document-url':
-            url = part.get('url', '')
-            if url:
-                content.append(DocumentUrl(url))
-        elif ptype == 'binary':
-            media_type = part.get('media_type', 'application/octet-stream')
-            b64_content = part.get('content', '')
-            data = base64.b64decode(b64_content) if b64_content else b''
-            content.append(BinaryContent(data=data, media_type=media_type))
+        elif ptype in ('image-url', 'audio-url', 'video-url', 'document-url'):
+            # Legacy (v2/v3) media URL parts carry the URL directly under `url`.
+            if url := part.get('url', ''):
+                content.append(_MEDIA_URL_TYPES[ptype](url))
+        elif ptype == 'uri':
+            # v4+ OTEL GenAI `uri` part — the modality determines the URL type.
+            if (url_content := _uri_part_to_url(part)) is not None:
+                content.append(url_content)
+        elif ptype == 'file':
+            # Provider-hosted file reference (`UploadedFile`), emitted at all versions.
+            content.append(_file_part_to_content(part))
+        elif ptype in ('binary', 'blob'):
+            # `binary` is the v2/v3 inline-binary part; `blob` is its v4+ equivalent.
+            content.append(_binary_from_otel(part))
 
     if len(content) == 1 and isinstance(content[0], str):
         return UserPromptPart(content[0])
@@ -263,11 +320,9 @@ def _convert_assistant_parts(parts: list[dict[str, Any]]) -> list[ModelResponseP
                 tool_call_id = part.get('id', _utils.generate_tool_call_id())
                 content = part.get('result', part.get('response', ''))
                 result.append(NativeToolReturnPart(tool_name=tool_name, content=content, tool_call_id=tool_call_id))
-        elif ptype == 'binary':
-            media_type = part.get('media_type', 'application/octet-stream')
-            b64_content = part.get('content', '')
-            data = base64.b64decode(b64_content) if b64_content else b''
-            result.append(FilePart(content=BinaryContent(data=data, media_type=media_type)))
+        elif ptype in ('binary', 'blob'):
+            # `binary` is the v2/v3 inline-binary part; `blob` is its v4+ equivalent.
+            result.append(FilePart(content=_binary_from_otel(part)))
     return result
 
 

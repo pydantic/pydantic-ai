@@ -1061,6 +1061,8 @@ class UserPromptPart:
                 file_part = _otel_messages.FilePart(type='file', modality=modality, mime_type=part.media_type)
                 if settings.include_content:
                     file_part['file_id'] = part.file_id
+                    # Record the hosting provider so the reference can be reconstructed from the trace.
+                    file_part['provider_name'] = part.provider_name
                 parts.append(file_part)
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel

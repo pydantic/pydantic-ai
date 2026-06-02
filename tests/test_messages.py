@@ -929,7 +929,13 @@ def test_uploaded_file_in_otel_message_parts():
     assert otel_parts == snapshot(
         [
             {'type': 'text', 'content': 'text before'},
-            {'type': 'file', 'modality': 'document', 'file_id': 'file-abc123', 'mime_type': 'application/octet-stream'},
+            {
+                'type': 'file',
+                'modality': 'document',
+                'file_id': 'file-abc123',
+                'mime_type': 'application/octet-stream',
+                'provider_name': 'anthropic',
+            },
             {'type': 'text', 'content': 'text after'},
         ]
     )
@@ -953,6 +959,7 @@ def test_uploaded_file_in_otel_message_parts():
                 'modality': 'document',
                 'file_id': 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
                 'mime_type': 'application/octet-stream',
+                'provider_name': 'google',
             },
         ]
     )
@@ -973,6 +980,7 @@ def test_uploaded_file_in_otel_message_parts():
                 'modality': 'document',
                 'file_id': 's3://my-bucket/my-file.pdf',
                 'mime_type': 'application/pdf',
+                'provider_name': 'bedrock',
             },
         ]
     )
@@ -983,7 +991,15 @@ def test_uploaded_file_in_otel_message_parts():
     )
     otel_parts_image = part_image.otel_message_parts(settings)
     assert otel_parts_image == snapshot(
-        [{'type': 'file', 'modality': 'image', 'file_id': 'img-123', 'mime_type': 'image/png'}]
+        [
+            {
+                'type': 'file',
+                'modality': 'image',
+                'file_id': 'img-123',
+                'mime_type': 'image/png',
+                'provider_name': 'openai',
+            }
+        ]
     )
 
     # Test with audio media_type - should have audio modality
@@ -992,7 +1008,15 @@ def test_uploaded_file_in_otel_message_parts():
     )
     otel_parts_audio = part_audio.otel_message_parts(settings)
     assert otel_parts_audio == snapshot(
-        [{'type': 'file', 'modality': 'audio', 'file_id': 'audio-123', 'mime_type': 'audio/mp3'}]
+        [
+            {
+                'type': 'file',
+                'modality': 'audio',
+                'file_id': 'audio-123',
+                'mime_type': 'audio/mp3',
+                'provider_name': 'openai',
+            }
+        ]
     )
 
     # Test with video media_type - should have video modality
@@ -1001,7 +1025,15 @@ def test_uploaded_file_in_otel_message_parts():
     )
     otel_parts_video = part_video.otel_message_parts(settings)
     assert otel_parts_video == snapshot(
-        [{'type': 'file', 'modality': 'video', 'file_id': 'video-123', 'mime_type': 'video/mp4'}]
+        [
+            {
+                'type': 'file',
+                'modality': 'video',
+                'file_id': 'video-123',
+                'mime_type': 'video/mp4',
+                'provider_name': 'openai',
+            }
+        ]
     )
 
     # Test without include_content (should have type, modality, and mime_type but not file_id)
