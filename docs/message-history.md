@@ -397,19 +397,41 @@ If you store OTEL message attributes from Logfire (for example `pydantic_ai.all_
 `gen_ai.input.messages`/`gen_ai.output.messages` on model spans), you can convert them back into
 `ModelMessage` objects for reuse.
 
-```python {title="otel_messages_to_model_messages.py" test="skip" lint="skip"}
-from pydantic_ai import Agent, model_messages_to_openai_format, otel_messages_to_model_messages
+```python {title="otel_messages_to_model_messages.py"}
+from pydantic_ai import (
+    Agent,
+    model_messages_to_openai_format,
+    otel_messages_to_model_messages,
+)
 
 agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
-# OTEL attributes are JSON strings of chat messages
-otel_messages = span.attributes['gen_ai.input.messages']
+# OTEL message attributes from a Logfire span (e.g. `gen_ai.input.messages`) are
+# stored as JSON strings of chat messages.
+otel_messages = (
+    '[{"role": "user", "parts": [{"type": "text", "content": "Tell me a joke."}]}, '
+    '{"role": "assistant", "parts": [{"type": "text", "content": '
+    '"Did you hear about the toothpaste scandal? They called it Colgate."}]}]'
+)
 history = otel_messages_to_model_messages(otel_messages)
 
-result = agent.run_sync('Continue', message_history=history)
+# Reuse the converted history as `message_history` in a new run.
+result = agent.run_sync('Explain?', message_history=history)
+print(result.output)
+#> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 
-# Optionally convert to OpenAI chat completion format for display or interop
+# Optionally convert to OpenAI chat completion format for display or interop.
 openai_messages = model_messages_to_openai_format(history)
+print(openai_messages)
+"""
+[
+    {'role': 'user', 'content': 'Tell me a joke.'},
+    {
+        'role': 'assistant',
+        'content': 'Did you hear about the toothpaste scandal? They called it Colgate.',
+    },
+]
+"""
 ```
 
 Note: the OTEL → `ModelMessage` conversion is lossy — timestamps, `instructions`, provider details, and content

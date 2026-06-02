@@ -28,7 +28,6 @@ from .messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -50,21 +49,21 @@ def otel_messages_to_model_messages(
 
     Supports the ChatMessage format used by pydantic-ai's OTEL instrumentation:
 
-    - ``pydantic_ai.all_messages`` attribute on agent run spans
-    - ``gen_ai.input.messages`` / ``gen_ai.output.messages`` attributes on model request spans
+    - `pydantic_ai.all_messages` attribute on agent run spans
+    - `gen_ai.input.messages` / `gen_ai.output.messages` attributes on model request spans
 
-    Also supports the legacy v1 events format (with ``event.name`` keys).
+    Also supports the legacy v1 events format (with `event.name` keys).
 
-    Note: this conversion is lossy. Some information (e.g. timestamps, ``instructions``,
+    Note: this conversion is lossy. Some information (e.g. timestamps, `instructions`,
     provider details) is not preserved in the OTEL format and will use defaults.
-    Content excluded by ``include_content=False`` will be empty strings.
+    Content excluded by `include_content=False` will be empty strings.
 
     Args:
         otel_messages: A JSON string or a list of message dicts.
 
     Returns:
-        A list of ModelMessage objects that can be passed as ``message_history``
-        to :meth:`Agent.run <pydantic_ai.agent.AbstractAgent.run>`.
+        A list of `ModelMessage` objects that can be passed as `message_history`
+        to [`Agent.run`][pydantic_ai.agent.AbstractAgent.run].
     """
     parsed: list[dict[str, Any]]
     if isinstance(otel_messages, str):
@@ -89,15 +88,15 @@ def model_messages_to_openai_format(
     """Convert pydantic-ai ModelMessages to OpenAI chat completion format.
 
     Returns messages in the format expected by the
-    `OpenAI Chat Completions API <https://platform.openai.com/docs/api-reference/chat>`_.
+    [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat).
 
-    Each :class:`~pydantic_ai.messages.ModelRequest` is expanded into one or more messages
-    (system, user, tool), and each :class:`~pydantic_ai.messages.ModelResponse` becomes an
-    assistant message with optional ``tool_calls``.
+    Each [`ModelRequest`][pydantic_ai.messages.ModelRequest] is expanded into one or more messages
+    (system, user, tool), and each [`ModelResponse`][pydantic_ai.messages.ModelResponse] becomes an
+    assistant message with optional `tool_calls`.
 
-    Note: :class:`~pydantic_ai.messages.ThinkingPart`, :class:`~pydantic_ai.messages.FilePart`,
-    :class:`~pydantic_ai.messages.NativeToolCallPart`, and
-    :class:`~pydantic_ai.messages.NativeToolReturnPart` are not included in the output
+    Note: [`ThinkingPart`][pydantic_ai.messages.ThinkingPart], [`FilePart`][pydantic_ai.messages.FilePart],
+    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart], and
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] are not included in the output
     as they have no standard OpenAI representation. Assistant messages that only contain
     unsupported parts are omitted.
 
@@ -112,9 +111,8 @@ def model_messages_to_openai_format(
     for message in messages:
         if isinstance(message, ModelRequest):
             result.extend(_model_request_to_openai(message))
-        elif isinstance(message, ModelResponse):
-            if openai_message := _model_response_to_openai(message):
-                result.append(openai_message)
+        elif openai_message := _model_response_to_openai(message):
+            result.append(openai_message)
 
     return result
 
@@ -125,10 +123,10 @@ def model_messages_to_openai_format(
 def _chat_messages_to_model_messages(
     chat_messages: list[dict[str, Any]],
 ) -> list[ModelMessage]:
-    """Convert ChatMessage format (``{role, parts}``) to ModelMessages.
+    """Convert ChatMessage format (`{role, parts}`) to ModelMessages.
 
     Merges consecutive non-assistant messages into a single ModelRequest,
-    reversing the split performed by ``messages_to_otel_messages``.
+    reversing the split performed by `messages_to_otel_messages`.
     """
     result: list[ModelMessage] = []
     pending_request_parts: list[ModelRequestPart] = []
@@ -281,9 +279,9 @@ def _legacy_events_to_model_messages(
 ) -> list[ModelMessage]:
     """Convert legacy v1 OTEL events to ModelMessages.
 
-    Legacy events have ``event.name`` keys like ``gen_ai.system.message``,
-    ``gen_ai.user.message``, ``gen_ai.assistant.message``, ``gen_ai.tool.message``,
-    and ``gen_ai.choice``.
+    Legacy events have `event.name` keys like `gen_ai.system.message`,
+    `gen_ai.user.message`, `gen_ai.assistant.message`, `gen_ai.tool.message`,
+    and `gen_ai.choice`.
     """
     result: list[ModelMessage] = []
     pending_request_parts: list[ModelRequestPart] = []
@@ -313,14 +311,13 @@ def _legacy_events_to_model_messages(
 
 def _convert_legacy_response_events(event_name: str, event_list: list[dict[str, Any]]) -> ModelResponse | None:
     """Convert legacy assistant/choice events to a ModelResponse."""
-    response_parts: list[ModelResponsePart]
+    response_parts: list[ModelResponsePart] = []
     if event_name == 'gen_ai.choice':
         message_body = event_list[0].get('message', event_list[0])
-        response_parts = _convert_legacy_choice(message_body)
+        response_parts.extend(_convert_legacy_message_parts(message_body))
     else:
-        response_parts = []
         for event in event_list:
-            response_parts.extend(_convert_legacy_assistant_event(event))
+            response_parts.extend(_convert_legacy_message_parts(event))
     return ModelResponse(parts=response_parts) if response_parts else None
 
 
@@ -347,50 +344,33 @@ def _convert_legacy_request_events(event_name: str, event_list: list[dict[str, A
     return parts
 
 
-def _convert_legacy_choice(message_body: dict[str, Any]) -> list[ModelResponsePart]:
-    """Convert a ``gen_ai.choice`` event body to response parts."""
+def _convert_legacy_message_parts(body: dict[str, Any]) -> list[ModelResponsePart]:
+    """Convert a legacy assistant/choice message body to response parts.
+
+    Shared by `gen_ai.choice` and `gen_ai.assistant.message` events, which use the same
+    shape: `content` (a string or a list of `{kind, text}` items) plus optional
+    OpenAI-style `tool_calls`.
+    """
     parts: list[ModelResponsePart] = []
-    if 'content' in message_body:
-        content = message_body['content']
+    if 'content' in body:
+        content = body['content']
         if isinstance(content, str):
             parts.append(TextPart(content))
         elif isinstance(content, list):
             _extend_from_legacy_content_list(parts, cast(list[dict[str, Any]], content))
 
-    tool_calls: list[dict[str, Any]] = message_body.get('tool_calls', [])
+    tool_calls: list[dict[str, Any]] = body.get('tool_calls', [])
     for tool_call in tool_calls:
         tc_id: str = tool_call.get('id', _utils.generate_tool_call_id())
         func: dict[str, Any] = tool_call.get('function', {})
         tc_name: str = func.get('name', '')
         tc_args: str | dict[str, Any] | None = func.get('arguments')
         parts.append(ToolCallPart(tool_name=tc_name, args=tc_args, tool_call_id=tc_id))
-    return parts
-
-
-def _convert_legacy_assistant_event(event: dict[str, Any]) -> list[ModelResponsePart]:
-    """Convert a single legacy ``gen_ai.assistant.message`` event to response parts."""
-    parts: list[ModelResponsePart] = []
-
-    if 'content' in event:
-        content = event['content']
-        if isinstance(content, str):
-            parts.append(TextPart(content))
-        elif isinstance(content, list):
-            _extend_from_legacy_content_list(parts, cast(list[dict[str, Any]], content))
-
-    tool_calls: list[dict[str, Any]] = event.get('tool_calls', [])
-    for tool_call in tool_calls:
-        tc_id: str = tool_call.get('id', _utils.generate_tool_call_id())
-        func: dict[str, Any] = tool_call.get('function', {})
-        tc_name: str = func.get('name', '')
-        tc_args: str | dict[str, Any] | None = func.get('arguments')
-        parts.append(ToolCallPart(tool_name=tc_name, args=tc_args, tool_call_id=tc_id))
-
     return parts
 
 
 def _extend_from_legacy_content_list(parts: list[ModelResponsePart], content: list[dict[str, Any]]) -> None:
-    """Parse a legacy content list (``[{kind, text}, ...]``) and extend parts."""
+    """Parse a legacy content list (`[{kind, text}, ...]`) and extend parts."""
     for item in content:
         kind: str = item.get('kind', '')
         text: str = item.get('text', '')
@@ -420,7 +400,8 @@ def _model_request_to_openai(request: ModelRequest) -> list[dict[str, Any]]:
                     'content': part.model_response_str(),
                 }
             )
-        elif isinstance(part, RetryPromptPart):
+        else:
+            # The only remaining `ModelRequestPart` is a `RetryPromptPart`.
             if part.tool_name is not None:
                 result.append(
                     {
