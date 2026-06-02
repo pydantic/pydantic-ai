@@ -58,7 +58,19 @@ else:
         from yaml import Dumper, SafeLoader
 
 FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
-FILTERED_HEADERS = {'authorization', 'date', 'request-id', 'server', 'user-agent', 'via', 'set-cookie', 'api-key'}
+FILTERED_HEADERS = {
+    'authorization',
+    'cookie',
+    'date',
+    'openai-organization',
+    'openai-project',
+    'request-id',
+    'server',
+    'user-agent',
+    'via',
+    'set-cookie',
+    'api-key',
+}
 ALLOWED_HEADER_PREFIXES = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
     'x-xet-',

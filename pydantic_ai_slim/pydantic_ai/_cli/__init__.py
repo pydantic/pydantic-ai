@@ -1,25 +1,24 @@
 from __future__ import annotations as _annotations
 
 import argparse
-import asyncio
 import sys
-from asyncio import CancelledError
 from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
 from typing_inspection.introspection import get_literal_values
 
 from .. import __version__, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
-from ..builtin_tools import BUILTIN_TOOLS_REQUIRING_CONFIG, SUPPORTED_BUILTIN_TOOLS
 from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..models import KnownModelName, infer_model
+from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
 from ..settings import ModelSettings
 
@@ -57,7 +56,7 @@ This folder is used to store the prompt history and configuration.
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
 SUPPORTED_CLI_TOOL_IDS = sorted(
-    bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint not in BUILTIN_TOOLS_REQUIRING_CONFIG
+    bint.kind for bint in SUPPORTED_NATIVE_TOOLS if bint not in NATIVE_TOOLS_REQUIRING_CONFIG
 )
 
 
@@ -138,7 +137,9 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
+def cli(
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai-chat:gpt-5'
+) -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
@@ -318,13 +319,13 @@ def _run_chat_command(
 
     if args.prompt:
         try:
-            asyncio.run(ask_agent(agent, args.prompt, stream, console, code_theme))
+            anyio.run(ask_agent, agent, args.prompt, stream, console, code_theme)
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
+        return anyio.run(run_chat, stream, agent, console, code_theme, prog_name)
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
@@ -369,7 +370,7 @@ async def run_chat(
                 messages = await ask_agent(
                     agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
                 )
-            except CancelledError:  # pragma: no cover
+            except anyio.get_cancelled_exc_class():  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
                 cause = getattr(e, '__cause__', None)

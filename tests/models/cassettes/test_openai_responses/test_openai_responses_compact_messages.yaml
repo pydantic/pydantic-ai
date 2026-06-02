@@ -1,0 +1,413 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '170'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 2+2?
+        role: user
+      instructions: You are a helpful math assistant. Give short answers.
+      model: gpt-4o-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1316'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1115'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1775105406
+      created_at: 1775105405
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0da8c7d4a85372d10069cdf57de22081949b8f78a343dd9bb4
+      incomplete_details: null
+      instructions: You are a helpful math assistant. Give short answers.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-mini-2024-07-18
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 2 + 2 = 4.
+          type: output_text
+        id: msg_0da8c7d4a85372d10069cdf57ec1e08194ac47b4c6b75bae53
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 29
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 9
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 38
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '259'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=J5qzGTSwn7tBX_5V1VvYB6wdBXgYPL8e9Sk_49Zymmw-1775105405.49036-1.0.1.1-VOOwLKVkG93QNGi6H_Ndpb13Q6o9p3gGynC9uqFg8sILawghNvj4hKUjH3UproLwKdtfyL96ef2jD9Su80kmnVgX.obBaXvQbu36MKN2dr_C3JP25xCt2mCDJyVtWE83
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 2+2?
+        role: user
+      - content: 2 + 2 = 4.
+        role: assistant
+      - content: And 3+3?
+        role: user
+      instructions: You are a helpful math assistant. Give short answers.
+      model: gpt-4o-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1316'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '642'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1775105407
+      created_at: 1775105407
+      error: null
+      frequency_penalty: 0.0
+      id: resp_044c08d18b020f220069cdf57f20e88193b13d4134c451dc69
+      incomplete_details: null
+      instructions: You are a helpful math assistant. Give short answers.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-mini-2024-07-18
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 3 + 3 = 6.
+          type: output_text
+        id: msg_044c08d18b020f220069cdf57f8528819396d75ad7dffaf26f
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 51
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 9
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 60
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '290'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=J5qzGTSwn7tBX_5V1VvYB6wdBXgYPL8e9Sk_49Zymmw-1775105405.49036-1.0.1.1-VOOwLKVkG93QNGi6H_Ndpb13Q6o9p3gGynC9uqFg8sILawghNvj4hKUjH3UproLwKdtfyL96ef2jD9Su80kmnVgX.obBaXvQbu36MKN2dr_C3JP25xCt2mCDJyVtWE83
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 2+2?
+        role: user
+      - content: 2 + 2 = 4.
+        role: assistant
+      - content: And 3+3?
+        role: user
+      - content: 3 + 3 = 6.
+        role: assistant
+      instructions: You are a helpful math assistant. Give short answers.
+      model: gpt-4o-mini
+    uri: https://api.openai.com/v1/responses/compact
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3594'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '4577'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1775105412
+      id: resp_0fe74db124a77f9a0169cdf58037d48194b164c5044ded5c5f
+      object: response.compaction
+      output:
+      - content:
+        - text: What is 2+2?
+          type: input_text
+        id: msg_0fe74db124a77f9a0169cdf5803c748194bdf5b4eca162ba92
+        role: user
+        status: completed
+        type: message
+      - content:
+        - text: And 3+3?
+          type: input_text
+        id: msg_0fe74db124a77f9a0169cdf5803cbc8194bdf61e6f2d19f69b
+        role: user
+        status: completed
+        type: message
+      - encrypted_content: gAAAAABpzfWE_k5OtOa3sTEbupueyuGGrezu8qQwIs0tBzhGnuGHf4CETdD8c1lm0sAkbJey8wy5XgwDOJhNoDcyGcXkfl5p7bG4ymtzAr7JRl8ChuTJ2HuFNNmyPUQpgGvH6qo1CiPFXW1pG4h6b4OKeQ9rycCPr0VBz81u6onO7QjuCtz1zOAQG4zZZjn9Dx-FubDMWDvtfQOhyfZAUZYPADmc2LFrYrdkJi54PFnvYQ3kZhqd1yZrSKrOJ7lmWl_HtWS57lvjR9_cdzGnqbhdSx1ezkcKB5wZBhcqdygk5nVB293KcS_3e3xKHwQOsL1Z4-ZBk4Dz972yNwzyj3gm3bHzijURPR0lIncDxeokVO-CsRDL-11ohNXIQVX_rc5dgRJNtvkltNq05yABDqXvuRmR2ZjEeOG9JtgHgq067NDx631f2eyb3b9maCO5dUATie5Qm3ncb7dLCE48DUnf5HnmzdiMzxgLXu2wuW5BAqf3FyFcL78T4Kkyv9BmBhxIsqEq0aKutS2cnSAg8UCAV_oUeTUqC-IHpWvww7HpUMIhdgta-CL9qdcHSYPT_V8XI14nzZ8DaIZ0qWXayjwZroaN2yusJgMPQAZ1HGIfHKUjMIUe0C9tb4RrBDSzhfbxT4H9Tg9a9sajYJTo0ODsLhdp1bWXhrXqTdup0dnI6EPEkisSWJvsQjGOXhaLf7kclL4-i8-odZujYVDAkUNFBSDoR1tg3CkMe7y7Wlch1RsMejnS-t1e36O43iLI6JK4aK0NUNhLdImPbbJwOJM-98qcnAl0zCvEOVlx9kUHd9igPEPOHV522n5bQrawSgSZ58hte0f5ESqPQxGEEOy4jUzlyGkivEV9QWuI3b4CzlFr5RZF2lgvH34mzWouxKzmFFRKgdFNa_EfJ-a6XoniOOzghE08WA0R2exMNIu_FJnsr5_hK_zwNRHQp7RAJ1BQVhPElVk8ARV9dtv9O4UEp7nc4zvY1TNirKpTLqkGHk-newpCg-Q-TjIp0P2K_dmo0ANyIxJfwD6S52c8Dm30j0STqOGYsGNTFUUexPdZzzsGLys1KNNtL5Yxfgook7NVdd68tEIzkjWamnbYkd3LOKsBO9uuIy33sbLUn8V0cW-vOVniW2psqqWEd0xIqIZG7w0a63BNCJ33DDEoBc-N7wJsgvo_E7RFtT1OYeXrC57p4Dxla1XLgO-cw34stxEX6xucvQ8z-6Rs753kRCiNOgmu6O-K6YhdB_hL5M46OfOwmrCtTkd1qrkUKZb4orgeacpSaKn11aiuFKas0y6pT9VmzSVbPykMnpziIbb9nLW8K4G2VWkenTaHAK2eJND53YROX38qtbtmxDVKFFgC6x7EyeX2Yko-3ITLoWOzyb7ree4wgs7gFUhJ-nWeJgn8HQRbYi_KFoEMn-8R8u1-RXANAK94NMfMijKR05HOihJkmXxIJND1rU2M21nqysnlfBQE2gKTWes_xrp4MwmP_LrEn1DqZlKo0x4elhF_XWnxbthuAK0yxr2MeWNCuofwbaSkGKHpnhOGhpygOEuK0Hrhyv2Qw-GOUdpys35nBDYWJ_VDNI20Yu9uScUCD3Enu6Rp6qLjpayr0bx4WZGJr4Vvr514IcPrpyNOmzJ8-iW8jTJbxATySu3_oMaGBZ65a28-0qA_jnepKMv6m8Mmtnfc_745aTTlx7CiUY8ckIplTRihzoHGdtGf-Zia0zNIv65XrL_7mwMiLSfXC2nmvh_oZjzskyYBS9ga1C8MAmF3fZyNkr47wfDWw-46Sk1K2CdVoRXfgSoY0--zWEbJUD1JLIs26fVJ_ZUsA4cTvt0kelhc60WrPU6KQe9Zi1mujZqLS8f2gQtoohbryQ5tjDI0hVn7MiZfEzhiB0FM4GS-hWrVV95S2WA78-nQyrou-hCQieX28DfhiZ_M2wy-gUzGVP5UhjMMJr8P8jZcTWUF97wJEVk-GOxzixfXsA-w6adTjkJab9w2CQqpwGU5rvwB1MzHUEzaBGb9wIKdRH-14HOklks_Xox8UDiaN04su94CShEOyT0ldbU7kMqfx6ty5N-7gcTw_rTMWunWhYT8DnDljlLXKT7hwHsz0MyzkTS0sIqqBPO_WClfbxP0bItJxLP5loT64HCH7CFD_h3IOMEXIKY290_x6XNOSpNo9k97pnySmwAsvnpXBueJ76NVlEBgXws-Fy7ifDW_OXBfnFsw9E1egVm3lVgq3Sy1L4OvesKy0LanY74OTDFrT6SV23BQLFFq63zSBdzSdGrSP-aS89ovQnBsEgnheVbOtZXMqmJ31fzDVCDM16FqsuglrH3Ih57-WWTHpooYMI3Vjuy0TTHdbM7AZlccTcoZYDWJ4CXudqKi4UuV1cW4Fbk4mSjSFWKVnuus3RqAnLK7W3gr7QB2YtrSq76SgtNDDV8fQBn37SMdJAbDSjPBj4FLqNUqDnGOylI7pZaYNEBY20PbOBznMUoWNb77Lxb-igtKupLrBkAfcHkWqx3VuHs_XTO3LnLOwspnwnu5mduEpBNSHLPaq991z_WuDjyFNX_uEeSeq6YKt7x8dB16n49nsgUhGSWRFCs6ZRHBcK9A5QR7saKFAHktfbhwMeaDlw-iLy4jKp5ZR1TVlOaV_Qy80tpeGb-kUQ__yqh8J_ifQ7SLkXCQA82j1XUUV3baX9p4I-ACrXZMQQFEtxrCfS50DWhogtQYwiszESAEiPj87JuO3lEa-5hzmC_Xb2Q5tuBWV-pa7Y9z_Jj4hGApqW8Pn4xfHtpfyOqmtcMrIsaZKc5zhh4=
+        id: cmp_0fe74db124a77f9a0169cdf581740c819490de6e615d95448d
+        type: compaction
+      usage:
+        input_tokens: 156
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 190
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 346
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '3087'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=J5qzGTSwn7tBX_5V1VvYB6wdBXgYPL8e9Sk_49Zymmw-1775105405.49036-1.0.1.1-VOOwLKVkG93QNGi6H_Ndpb13Q6o9p3gGynC9uqFg8sILawghNvj4hKUjH3UproLwKdtfyL96ef2jD9Su80kmnVgX.obBaXvQbu36MKN2dr_C3JP25xCt2mCDJyVtWE83
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - encrypted_content: gAAAAABpzfWE_k5OtOa3sTEbupueyuGGrezu8qQwIs0tBzhGnuGHf4CETdD8c1lm0sAkbJey8wy5XgwDOJhNoDcyGcXkfl5p7bG4ymtzAr7JRl8ChuTJ2HuFNNmyPUQpgGvH6qo1CiPFXW1pG4h6b4OKeQ9rycCPr0VBz81u6onO7QjuCtz1zOAQG4zZZjn9Dx-FubDMWDvtfQOhyfZAUZYPADmc2LFrYrdkJi54PFnvYQ3kZhqd1yZrSKrOJ7lmWl_HtWS57lvjR9_cdzGnqbhdSx1ezkcKB5wZBhcqdygk5nVB293KcS_3e3xKHwQOsL1Z4-ZBk4Dz972yNwzyj3gm3bHzijURPR0lIncDxeokVO-CsRDL-11ohNXIQVX_rc5dgRJNtvkltNq05yABDqXvuRmR2ZjEeOG9JtgHgq067NDx631f2eyb3b9maCO5dUATie5Qm3ncb7dLCE48DUnf5HnmzdiMzxgLXu2wuW5BAqf3FyFcL78T4Kkyv9BmBhxIsqEq0aKutS2cnSAg8UCAV_oUeTUqC-IHpWvww7HpUMIhdgta-CL9qdcHSYPT_V8XI14nzZ8DaIZ0qWXayjwZroaN2yusJgMPQAZ1HGIfHKUjMIUe0C9tb4RrBDSzhfbxT4H9Tg9a9sajYJTo0ODsLhdp1bWXhrXqTdup0dnI6EPEkisSWJvsQjGOXhaLf7kclL4-i8-odZujYVDAkUNFBSDoR1tg3CkMe7y7Wlch1RsMejnS-t1e36O43iLI6JK4aK0NUNhLdImPbbJwOJM-98qcnAl0zCvEOVlx9kUHd9igPEPOHV522n5bQrawSgSZ58hte0f5ESqPQxGEEOy4jUzlyGkivEV9QWuI3b4CzlFr5RZF2lgvH34mzWouxKzmFFRKgdFNa_EfJ-a6XoniOOzghE08WA0R2exMNIu_FJnsr5_hK_zwNRHQp7RAJ1BQVhPElVk8ARV9dtv9O4UEp7nc4zvY1TNirKpTLqkGHk-newpCg-Q-TjIp0P2K_dmo0ANyIxJfwD6S52c8Dm30j0STqOGYsGNTFUUexPdZzzsGLys1KNNtL5Yxfgook7NVdd68tEIzkjWamnbYkd3LOKsBO9uuIy33sbLUn8V0cW-vOVniW2psqqWEd0xIqIZG7w0a63BNCJ33DDEoBc-N7wJsgvo_E7RFtT1OYeXrC57p4Dxla1XLgO-cw34stxEX6xucvQ8z-6Rs753kRCiNOgmu6O-K6YhdB_hL5M46OfOwmrCtTkd1qrkUKZb4orgeacpSaKn11aiuFKas0y6pT9VmzSVbPykMnpziIbb9nLW8K4G2VWkenTaHAK2eJND53YROX38qtbtmxDVKFFgC6x7EyeX2Yko-3ITLoWOzyb7ree4wgs7gFUhJ-nWeJgn8HQRbYi_KFoEMn-8R8u1-RXANAK94NMfMijKR05HOihJkmXxIJND1rU2M21nqysnlfBQE2gKTWes_xrp4MwmP_LrEn1DqZlKo0x4elhF_XWnxbthuAK0yxr2MeWNCuofwbaSkGKHpnhOGhpygOEuK0Hrhyv2Qw-GOUdpys35nBDYWJ_VDNI20Yu9uScUCD3Enu6Rp6qLjpayr0bx4WZGJr4Vvr514IcPrpyNOmzJ8-iW8jTJbxATySu3_oMaGBZ65a28-0qA_jnepKMv6m8Mmtnfc_745aTTlx7CiUY8ckIplTRihzoHGdtGf-Zia0zNIv65XrL_7mwMiLSfXC2nmvh_oZjzskyYBS9ga1C8MAmF3fZyNkr47wfDWw-46Sk1K2CdVoRXfgSoY0--zWEbJUD1JLIs26fVJ_ZUsA4cTvt0kelhc60WrPU6KQe9Zi1mujZqLS8f2gQtoohbryQ5tjDI0hVn7MiZfEzhiB0FM4GS-hWrVV95S2WA78-nQyrou-hCQieX28DfhiZ_M2wy-gUzGVP5UhjMMJr8P8jZcTWUF97wJEVk-GOxzixfXsA-w6adTjkJab9w2CQqpwGU5rvwB1MzHUEzaBGb9wIKdRH-14HOklks_Xox8UDiaN04su94CShEOyT0ldbU7kMqfx6ty5N-7gcTw_rTMWunWhYT8DnDljlLXKT7hwHsz0MyzkTS0sIqqBPO_WClfbxP0bItJxLP5loT64HCH7CFD_h3IOMEXIKY290_x6XNOSpNo9k97pnySmwAsvnpXBueJ76NVlEBgXws-Fy7ifDW_OXBfnFsw9E1egVm3lVgq3Sy1L4OvesKy0LanY74OTDFrT6SV23BQLFFq63zSBdzSdGrSP-aS89ovQnBsEgnheVbOtZXMqmJ31fzDVCDM16FqsuglrH3Ih57-WWTHpooYMI3Vjuy0TTHdbM7AZlccTcoZYDWJ4CXudqKi4UuV1cW4Fbk4mSjSFWKVnuus3RqAnLK7W3gr7QB2YtrSq76SgtNDDV8fQBn37SMdJAbDSjPBj4FLqNUqDnGOylI7pZaYNEBY20PbOBznMUoWNb77Lxb-igtKupLrBkAfcHkWqx3VuHs_XTO3LnLOwspnwnu5mduEpBNSHLPaq991z_WuDjyFNX_uEeSeq6YKt7x8dB16n49nsgUhGSWRFCs6ZRHBcK9A5QR7saKFAHktfbhwMeaDlw-iLy4jKp5ZR1TVlOaV_Qy80tpeGb-kUQ__yqh8J_ifQ7SLkXCQA82j1XUUV3baX9p4I-ACrXZMQQFEtxrCfS50DWhogtQYwiszESAEiPj87JuO3lEa-5hzmC_Xb2Q5tuBWV-pa7Y9z_Jj4hGApqW8Pn4xfHtpfyOqmtcMrIsaZKc5zhh4=
+        id: cmp_0fe74db124a77f9a0169cdf581740c819490de6e615d95448d
+        type: compaction
+      - content: And 5+5?
+        role: user
+      instructions: You are a helpful math assistant. Give short answers.
+      model: gpt-4o-mini
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1318'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '898'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1775105414
+      created_at: 1775105413
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0fe74db124a77f9a0069cdf58540648194ae801d1733255346
+      incomplete_details: null
+      instructions: You are a helpful math assistant. Give short answers.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-mini-2024-07-18
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 5 + 5 = 10
+          type: output_text
+        id: msg_0fe74db124a77f9a0069cdf585e8b8819496d7a4140116347f
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 298
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 8
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 306
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

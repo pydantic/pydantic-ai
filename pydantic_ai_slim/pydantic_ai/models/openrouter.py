@@ -7,13 +7,14 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, assert_never, override
 
-from ..builtin_tools import AbstractBuiltinTool, WebSearchTool
 from ..exceptions import ModelHTTPError
 from ..messages import BinaryContent, FinishReason, ModelResponseStreamEvent, ThinkingPart, VideoUrl
+from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel
+from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
 
 try:
@@ -44,6 +45,17 @@ _CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_f
     'tool_calls': 'tool_call',
     'content_filter': 'content_filter',
     'error': 'error',
+}
+
+# https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'none']] = {
+    True: 'medium',
+    False: 'none',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'high',
 }
 
 
@@ -558,26 +570,18 @@ def _openrouter_settings_to_openai_settings(
     # Fall back to unified thinking when openrouter_reasoning is not set
     if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
         thinking = model_request_parameters.thinking
+        openrouter_reasoning: OpenRouterReasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
         if thinking is not False:
-            unified_reasoning: OpenRouterReasoning = {}
-            # OpenRouter only supports low/medium/high; map others to closest
-            effort_map: dict[ThinkingLevel, str] = {
-                True: 'medium',
-                'minimal': 'low',
-                'low': 'low',
-                'medium': 'medium',
-                'high': 'high',
-                'xhigh': 'high',
-            }
-            unified_reasoning['effort'] = effort_map[thinking]  # type: ignore[typeddict-item]
-            model_settings['openrouter_reasoning'] = unified_reasoning
+            # Some reasoning-optional routes require explicit `enabled` even when `effort` is set.
+            openrouter_reasoning['enabled'] = True
+        model_settings['openrouter_reasoning'] = openrouter_reasoning
 
     if reasoning := model_settings.pop('openrouter_reasoning', None):
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage
 
-    for builtin_tool in model_request_parameters.builtin_tools:
+    for builtin_tool in model_request_parameters.native_tools:
         if isinstance(builtin_tool, WebSearchTool):
             extra_body.setdefault('plugins', []).append({'id': 'web'})
             extra_body['web_search_options'] = {'search_context_size': builtin_tool.search_context_size}
@@ -610,7 +614,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @classmethod
     @override
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle.
 
         OpenRouter supports web search via its plugins system.
@@ -704,9 +708,11 @@ class OpenRouterModel(OpenAIChatModel):
     class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
         reasoning_details: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
-        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam:
+        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam | None:
             message_param = super()._into_message_param()
             if self.reasoning_details:
+                if message_param is None:
+                    message_param = chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
                 message_param['reasoning_details'] = self.reasoning_details  # type: ignore[reportGeneralTypeIssues]
             return message_param
 
@@ -755,6 +761,19 @@ class OpenRouterModel(OpenAIChatModel):
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
     ) -> FinishReason | None:
         return _CHAT_FINISH_REASON_MAP.get(key)
+
+    @override
+    def _map_tool_definition(self, f: ToolDefinition, model_settings: ModelSettings) -> chat.ChatCompletionToolParam:
+        """Map a tool definition, forwarding downstream-provider tool flags through OpenRouter.
+
+        For example, when routing to an Anthropic model with `anthropic_eager_input_streaming`
+        set, the `eager_input_streaming` flag is added to the tool param so OpenRouter forwards
+        it to Anthropic.
+        """
+        tool_def = super()._map_tool_definition(f, model_settings)
+        if self.model_name.startswith('anthropic/') and model_settings.get('anthropic_eager_input_streaming'):
+            tool_def['eager_input_streaming'] = True  # type: ignore[typeddict-item]
+        return tool_def
 
 
 class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):

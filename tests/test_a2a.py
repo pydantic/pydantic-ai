@@ -28,6 +28,7 @@ from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from fasta2a.client import A2AClient
+    from fasta2a.pydantic_ai import agent_to_a2a
     from fasta2a.schema import DataPart, FilePart, Message, TextPart
     from fasta2a.storage import InMemoryStorage
 
@@ -67,7 +68,7 @@ pydantic_model = FunctionModel(return_pydantic_model)
 async def test_a2a_pydantic_model_output():
     """Test that Pydantic model outputs have correct metadata including JSON schema."""
     agent = Agent(model=pydantic_model, output_type=UserProfile)
-    app = agent.to_a2a()
+    app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
@@ -138,7 +139,7 @@ async def test_a2a_pydantic_model_output():
 
 async def test_a2a_runtime_error_without_lifespan():
     agent = Agent(model=model, output_type=tuple[str, str])
-    app = agent.to_a2a()
+    app = agent_to_a2a(agent)
 
     transport = httpx.ASGITransport(app)
     async with httpx.AsyncClient(transport=transport) as http_client:
@@ -157,7 +158,7 @@ async def test_a2a_runtime_error_without_lifespan():
 
 async def test_a2a_simple():
     agent = Agent(model=model, output_type=tuple[str, str])
-    app = agent.to_a2a()
+    app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
@@ -240,7 +241,7 @@ async def test_a2a_simple():
 
 async def test_a2a_file_message_with_file():
     agent = Agent(model=model, output_type=tuple[str, str])
-    app = agent.to_a2a()
+    app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
@@ -337,7 +338,7 @@ async def test_a2a_file_message_with_file():
 
 async def test_a2a_file_message_with_file_content(image_content: BinaryContent):
     agent = Agent(model=model, output_type=tuple[str, str])
-    app = agent.to_a2a()
+    app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
@@ -429,7 +430,7 @@ async def test_a2a_file_message_with_file_content(image_content: BinaryContent):
 
 async def test_a2a_file_message_with_data():
     agent = Agent(model=model, output_type=tuple[str, str])
-    app = agent.to_a2a()
+    app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
@@ -504,7 +505,7 @@ async def test_a2a_error_handling():
 
     error_model = FunctionModel(raise_error)
     agent = Agent(model=error_model, output_type=str)
-    app = agent.to_a2a()
+    app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
@@ -554,7 +555,7 @@ async def test_a2a_multiple_tasks_same_context():
 
     tracking_model = FunctionModel(track_messages)
     agent = Agent(model=tracking_model, output_type=tuple[str, str])
-    app = agent.to_a2a()
+    app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
@@ -592,6 +593,7 @@ async def test_a2a_multiple_tasks_same_context():
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
                         timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     )
                 ]
             )
@@ -632,6 +634,7 @@ async def test_a2a_multiple_tasks_same_context():
                         parts=[UserPromptPart(content='First message', timestamp=IsDatetime())],
                         timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                     ModelResponse(
                         parts=[
@@ -643,6 +646,7 @@ async def test_a2a_multiple_tasks_same_context():
                         model_name='function:track_messages:',
                         timestamp=IsDatetime(),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                     ModelRequest(
                         parts=[
@@ -656,6 +660,7 @@ async def test_a2a_multiple_tasks_same_context():
                         ],
                         timestamp=IsNow(tz=timezone.utc),
                         run_id=IsStr(),
+                        conversation_id=IsStr(),
                     ),
                 ]
             )
@@ -676,7 +681,7 @@ async def test_a2a_thinking_response():
 
     thinking_model = FunctionModel(return_thinking_response)
     agent = Agent(model=thinking_model, output_type=str)
-    app = agent.to_a2a()
+    app = agent_to_a2a(agent)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
@@ -749,7 +754,7 @@ async def test_a2a_thinking_response():
 async def test_a2a_multiple_messages():
     agent = Agent(model=model, output_type=tuple[str, str])
     storage = InMemoryStorage()
-    app = agent.to_a2a(storage=storage)
+    app = agent_to_a2a(agent, storage=storage)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
@@ -883,7 +888,7 @@ async def test_a2a_multiple_messages():
 async def test_a2a_multiple_send_task_messages():
     agent = Agent(model=model, output_type=tuple[str, str])
     storage = InMemoryStorage()
-    app = agent.to_a2a(storage=storage)
+    app = agent_to_a2a(agent, storage=storage)
 
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)

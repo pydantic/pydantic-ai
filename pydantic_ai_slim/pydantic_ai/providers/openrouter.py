@@ -10,7 +10,7 @@ from openai import AsyncOpenAI
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -132,13 +132,15 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             profile = provider_to_profile[provider](model_name)
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # OpenRouter accepts `reasoning` universally, so the gate should always forward `thinking`.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
             openai_chat_supports_file_urls=True,
             openai_chat_supports_web_search=True,
+            supports_thinking=True,
         ).update(profile)
 
     @overload
@@ -186,7 +188,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `OPENROUTER_API_KEY` environment variable or pass it via `OpenRouterProvider(api_key=...)`'
-                'to use the OpenRouter provider.'
+                ' to use the OpenRouter provider.'
             )
 
         attribution_headers: dict[str, str] = {}
@@ -202,7 +204,12 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
             )
         else:
-            http_client = cached_async_http_client(provider='openrouter')
+            http_client = create_async_http_client()
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_http_client
             self._client = AsyncOpenAI(
                 base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
             )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

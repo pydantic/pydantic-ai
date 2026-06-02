@@ -40,7 +40,7 @@ def test_huggingface_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `HF_TOKEN` environment variable or pass it via `HuggingFaceProvider(api_key=...)`'
-            'to use the HuggingFace provider.'
+            ' to use the HuggingFace provider.'
         ),
     ):
         HuggingFaceProvider()
@@ -195,12 +195,15 @@ def test_huggingface_provider_model_profile(mocker: MockerFixture):
 
     mistral_profile = provider.model_profile('mistralai/Devstral-Small-2505')
     mistral_model_profile_mock.assert_called_with('devstral-small-2505')
-    assert mistral_profile is None
+    assert mistral_profile is not None
+    assert mistral_profile.supports_inline_system_prompts is True
 
     google_profile = provider.model_profile('google/gemma-3-27b-it')
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
     assert google_profile is not None
     assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.supports_inline_system_prompts is True
 
     unknown_profile = provider.model_profile('unknown/model')
-    assert unknown_profile is None
+    assert unknown_profile is not None
+    assert unknown_profile.supports_inline_system_prompts is True
