@@ -26,7 +26,7 @@ from typing import Literal, Protocol
 from pydantic_ai import models
 from pydantic_ai.settings import ModelSettings
 
-from .common import OutputConfig
+from .common import OutputConfig, serialize_model_as_string, update_combined_output
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
 from .llm_as_a_judge import (
@@ -87,20 +87,6 @@ def _default_assertion_config() -> OutputConfig:
     return OutputConfig(include_reason=True)
 
 
-def _write_result(
-    output: dict[str, EvaluationScalar | EvaluationReason],
-    value: EvaluationScalar,
-    reason: str | None,
-    config: OutputConfig,
-    default_name: str,
-) -> None:
-    name = config.get('evaluation_name') or default_name
-    if config.get('include_reason') and reason is not None:
-        output[name] = EvaluationReason(value=value, reason=reason)
-    else:
-        output[name] = value
-
-
 def _emit(
     evaluation_name: str,
     grading_output: GradingOutput,
@@ -117,11 +103,11 @@ def _emit(
 
     if score_config is not False:
         default_name = f'{evaluation_name}_score' if include_both else evaluation_name
-        _write_result(output, grading_output.score, grading_output.reason, score_config, default_name)
+        update_combined_output(output, grading_output.score, grading_output.reason, score_config, default_name)
 
     if assertion_config is not False:
         default_name = f'{evaluation_name}_pass' if include_both else evaluation_name
-        _write_result(output, grading_output.pass_, grading_output.reason, assertion_config, default_name)
+        update_combined_output(output, grading_output.pass_, grading_output.reason, assertion_config, default_name)
 
     return output
 
@@ -165,6 +151,9 @@ class Faithfulness(Evaluator[QuestionWithContext, object, object]):
         )
         return _emit(self.get_default_evaluation_name(), grading_output, self.score, self.assertion)
 
+    def build_serialization_arguments(self):
+        return serialize_model_as_string(super().build_serialization_arguments())
+
 
 _ANSWER_RELEVANCE_RUBRIC = dedent(
     """\
@@ -202,6 +191,9 @@ class AnswerRelevance(Evaluator[HasQuestion, object, object]):
             judge_inputs, ctx.output, _ANSWER_RELEVANCE_RUBRIC, self.model, self.model_settings
         )
         return _emit(self.get_default_evaluation_name(), grading_output, self.score, self.assertion)
+
+    def build_serialization_arguments(self):
+        return serialize_model_as_string(super().build_serialization_arguments())
 
 
 _CONTEXT_PRECISION_RUBRIC = dedent(
@@ -242,15 +234,19 @@ class ContextPrecision(Evaluator[QuestionWithContext, object, object]):
         )
         return _emit(self.get_default_evaluation_name(), grading_output, self.score, self.assertion)
 
+    def build_serialization_arguments(self):
+        return serialize_model_as_string(super().build_serialization_arguments())
+
 
 _CONTEXT_RECALL_RUBRIC = dedent(
     """\
     The Input is a JSON object with fields `question` (the user question) and `context`
     (the retrieved context passages). The ExpectedOutput contains the ground-truth answer.
 
-    Determine whether `context` contains enough information to produce the ground-truth answer.
-    A high-recall retrieval leaves no gaps: every claim in the ground-truth answer should be
-    supported by `context`.
+    This metric judges the retrieved `context` only. Ignore the Output entirely — it is not part
+    of the assessment. Determine whether `context` contains enough information to produce the
+    ground-truth answer in ExpectedOutput. A high-recall retrieval leaves no gaps: every claim in
+    the ground-truth answer should be supported by `context`.
 
     The score should be the fraction of the ground-truth answer that is supported by `context`
     (0.0 = none of it is covered, 1.0 = all of it is covered). Pass when `context` is sufficient
@@ -287,6 +283,9 @@ class ContextRecall(Evaluator[QuestionWithContext, object, object]):
             self.model_settings,
         )
         return _emit(self.get_default_evaluation_name(), grading_output, self.score, self.assertion)
+
+    def build_serialization_arguments(self):
+        return serialize_model_as_string(super().build_serialization_arguments())
 
 
 _HALLUCINATION_RUBRIC = dedent(
@@ -338,6 +337,9 @@ class Hallucination(Evaluator[QuestionWithContext, object, object]):
         )
         return _emit(self.get_default_evaluation_name(), grading_output, self.score, self.assertion)
 
+    def build_serialization_arguments(self):
+        return serialize_model_as_string(super().build_serialization_arguments())
+
 
 @dataclass(repr=False)
 class GEval(Evaluator[object, object, object]):
@@ -374,6 +376,9 @@ class GEval(Evaluator[object, object, object]):
             model_settings=self.model_settings,
         )
         return EvaluationReason(value=g_eval_output.score, reason=g_eval_output.reason)
+
+    def build_serialization_arguments(self):
+        return serialize_model_as_string(super().build_serialization_arguments())
 
 
 @dataclass(repr=False)
@@ -420,3 +425,6 @@ class GembaScore(Evaluator[str, str, object]):
                 model_settings=self.model_settings,
             )
         return EvaluationReason(value=gemba_output.score, reason=gemba_output.reason)
+
+    def build_serialization_arguments(self):
+        return serialize_model_as_string(super().build_serialization_arguments())

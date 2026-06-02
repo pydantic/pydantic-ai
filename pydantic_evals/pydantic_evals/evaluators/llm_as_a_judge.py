@@ -334,16 +334,16 @@ async def judge_g_eval(
         raise ValueError(f'`score_range` must satisfy min < max, got {score_range!r}')
 
     numbered_steps = '\n'.join(f'{i}. {step}' for i, step in enumerate(evaluation_steps, start=1))
-    rubric = dedent(
-        f"""\
-        Evaluation criteria: {criteria}
-
-        Evaluation steps (apply each step in order):
-        {numbered_steps}
-
-        Produce a single integer score between {score_range[0]} and {score_range[1]} inclusive,
-        where {score_range[0]} is the worst and {score_range[1]} is the best according to the criteria.
-        """
+    rubric = '\n'.join(
+        [
+            f'Evaluation criteria: {criteria}',
+            '',
+            'Evaluation steps (apply each step in order):',
+            numbered_steps,
+            '',
+            f'Produce a single integer score between {score_range[0]} and {score_range[1]} inclusive,',
+            f'where {score_range[0]} is the worst and {score_range[1]} is the best according to the criteria.',
+        ]
     )
     user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
     return (
@@ -388,19 +388,18 @@ def _gemba_da_prompt(
     target_lang: str,
     reference: str | None,
 ) -> str:
-    reference_block = f'{target_lang} human reference: "{reference}"\n' if reference is not None else ''
-    return dedent(
-        f"""\
-        Score the following translation from {source_lang} to {target_lang} on a continuous scale
-        from 0 to 100, where a score of zero means "no meaning preserved" and a score of one hundred
-        means "perfect meaning and grammar".
-
-        {source_lang} source: "{source_text}"
-        {reference_block}{target_lang} translation: "{target_text}"
-
-        Return an integer score between 0 and 100 inclusive.
-        """
-    )
+    lines = [
+        f'Score the following translation from {source_lang} to {target_lang} on a continuous scale',
+        'from 0 to 100, where a score of zero means "no meaning preserved" and a score of one hundred',
+        'means "perfect meaning and grammar".',
+        '',
+        f'{source_lang} source: "{source_text}"',
+    ]
+    if reference is not None:
+        lines.append(f'{target_lang} human reference: "{reference}"')
+    lines.append(f'{target_lang} translation: "{target_text}"')
+    lines += ['', 'Return an integer score between 0 and 100 inclusive.']
+    return '\n'.join(lines)
 
 
 def _gemba_sqm_prompt(
@@ -410,22 +409,21 @@ def _gemba_sqm_prompt(
     target_lang: str,
     reference: str | None,
 ) -> str:
-    reference_block = f'{target_lang} human reference: "{reference}"\n' if reference is not None else ''
-    return dedent(
-        f"""\
-        Score the following translation from {source_lang} to {target_lang} using the Scalar Quality Metrics (SQM) rubric on an integer scale from 0 to 6:
-
-        0 = Nonsense/No meaning preserved
-        2 = Some meaning preserved
-        4 = Most meaning preserved with few grammar mistakes
-        6 = Perfect meaning and grammar
-
-        {source_lang} source: "{source_text}"
-        {reference_block}{target_lang} translation: "{target_text}"
-
-        Return an integer score between 0 and 6 inclusive.
-        """
-    )
+    lines = [
+        f'Score the following translation from {source_lang} to {target_lang} using the Scalar Quality Metrics (SQM) rubric on an integer scale from 0 to 6:',
+        '',
+        '0 = Nonsense/No meaning preserved',
+        '2 = Some meaning preserved',
+        '4 = Most meaning preserved with few grammar mistakes',
+        '6 = Perfect meaning and grammar',
+        '',
+        f'{source_lang} source: "{source_text}"',
+    ]
+    if reference is not None:
+        lines.append(f'{target_lang} human reference: "{reference}"')
+    lines.append(f'{target_lang} translation: "{target_text}"')
+    lines += ['', 'Return an integer score between 0 and 6 inclusive.']
+    return '\n'.join(lines)
 
 
 async def judge_gemba_da(

@@ -7,6 +7,7 @@ import pytest
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
@@ -362,6 +363,25 @@ async def test_quality_evaluators_registered_in_defaults():
     }.issubset(names)
 
 
+async def test_model_instance_serialized_as_string():
+    """Every quality evaluator serializes a `Model` instance as its `model_id`, matching `LLMJudge`."""
+    model = TestModel()
+    evaluators = [
+        Faithfulness(model=model),
+        AnswerRelevance(model=model),
+        ContextPrecision(model=model),
+        ContextRecall(model=model),
+        Hallucination(model=model),
+        GEval(criteria='coherence', evaluation_steps=['step'], model=model),
+        GembaScore(source_lang='English', target_lang='French', model=model),
+    ]
+    for evaluator in evaluators:
+        assert evaluator.build_serialization_arguments()['model'] == model.model_id
+
+    # A string model name is already serializable and passes through unchanged.
+    assert AnswerRelevance(model='openai:gpt-5.2').build_serialization_arguments()['model'] == 'openai:gpt-5.2'
+
+
 async def test_score_and_assertion_configuration(mocker: MockerFixture):
     """The `score` / `assertion` output configs mirror `LLMJudge`."""
     _patch_judge(mocker, 'pydantic_evals.evaluators.quality.judge_input_output')
@@ -418,10 +438,14 @@ async def test_judge_g_eval_prompt_shape(mocker: MockerFixture):
     assert result == GEvalOutput(reason='good', score=4)
 
     prompt = mock_run.call_args[0][0]
-    assert '1. Step A.' in prompt
-    assert '2. Step B.' in prompt
     assert 'coherence' in prompt
     assert 'between 1 and 5' in prompt
+    # The numbered steps must be consistently un-indented; a naive `dedent()` of an interpolated
+    # multi-line block leaves step 2+ at column 0 while the rest keeps its indent.
+    assert (
+        'Evaluation steps (apply each step in order):\n1. Step A.\n2. Step B.\n\nProduce a single integer score'
+        in prompt
+    )
 
 
 async def test_judge_g_eval_validates_score_range():
@@ -443,10 +467,10 @@ async def test_judge_gemba_da_prompt_shape(mocker: MockerFixture):
     )
     prompt = mock_run.call_args[0][0]
     assert 'from English to French' in prompt
-    assert '"Hello"' in prompt
-    assert '"Bonjour"' in prompt
-    assert 'French human reference: "Salut"' in prompt
     assert '0 to 100' in prompt
+    # Source, reference, and translation lines must share consistent (zero) indentation; the
+    # reference line previously broke `dedent()` and pushed the translation line to column 0.
+    assert 'English source: "Hello"\nFrench human reference: "Salut"\nFrench translation: "Bonjour"' in prompt
 
 
 async def test_judge_gemba_sqm_prompt_shape(mocker: MockerFixture):
@@ -465,3 +489,26 @@ async def test_judge_gemba_sqm_prompt_shape(mocker: MockerFixture):
     assert '0 to 6' in prompt
     # No reference block when `reference` is None:
     assert 'human reference' not in prompt
+    # Source and translation lines are consecutive and un-indented when no reference is present.
+    assert 'English source: "Hello"\nSpanish translation: "Hola"' in prompt
+
+
+async def test_judge_gemba_da_prompt_no_reference(mocker: MockerFixture):
+    mock_result = mocker.MagicMock()
+    mock_result.output = GembaScoreOutput(reason='ok', score=80)
+    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+
+    await judge_gemba_da('Hello', 'Bonjour', source_lang='English', target_lang='French')
+    prompt = mock_run.call_args[0][0]
+    assert 'human reference' not in prompt
+    assert 'English source: "Hello"\nFrench translation: "Bonjour"' in prompt
+
+
+async def test_judge_gemba_sqm_prompt_with_reference(mocker: MockerFixture):
+    mock_result = mocker.MagicMock()
+    mock_result.output = GembaScoreOutput(reason='ok', score=5)
+    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+
+    await judge_gemba_sqm('Hello', 'Hola', source_lang='English', target_lang='Spanish', reference='Buenos días')
+    prompt = mock_run.call_args[0][0]
+    assert 'English source: "Hello"\nSpanish human reference: "Buenos días"\nSpanish translation: "Hola"' in prompt

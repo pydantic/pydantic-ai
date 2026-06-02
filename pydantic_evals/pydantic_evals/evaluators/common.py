@@ -198,7 +198,7 @@ class OutputConfig(TypedDict, total=False):
     include_reason: bool
 
 
-def _update_combined_output(
+def update_combined_output(
     combined_output: dict[str, EvaluationScalar | EvaluationReason],
     value: EvaluationScalar,
     reason: str | None,
@@ -210,6 +210,22 @@ def _update_combined_output(
         combined_output[name] = EvaluationReason(value=value, reason=reason)
     else:
         combined_output[name] = value
+
+
+def serialize_model_as_string(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Replace a `model` argument's [`Model`][pydantic_ai.models.Model] instance with its `model_id` string.
+
+    Shared by [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] and the quality-pack evaluators, which all
+    accept `model: Model | KnownModelName | str | None` but should serialize the model as a plain string so
+    the spec round-trips cleanly.
+
+    Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model. I expect
+    that is rare enough to be worth not solving yet, but common enough that we probably will want to solve it
+    eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
+    """
+    if (model := arguments.get('model')) and isinstance(model, models.Model):
+        arguments['model'] = model.model_id
+    return arguments
 
 
 @dataclass(repr=False)
@@ -263,24 +279,16 @@ class LLMJudge(Evaluator[object, object, object]):
 
         if self.score is not False:
             default_name = f'{evaluation_name}_score' if include_both else evaluation_name
-            _update_combined_output(output, grading_output.score, grading_output.reason, self.score, default_name)
+            update_combined_output(output, grading_output.score, grading_output.reason, self.score, default_name)
 
         if self.assertion is not False:
             default_name = f'{evaluation_name}_pass' if include_both else evaluation_name
-            _update_combined_output(output, grading_output.pass_, grading_output.reason, self.assertion, default_name)
+            update_combined_output(output, grading_output.pass_, grading_output.reason, self.assertion, default_name)
 
         return output
 
     def build_serialization_arguments(self):
-        result = super().build_serialization_arguments()
-        # always serialize the model as a string when present; use its name if it's a KnownModelName
-        if (model := result.get('model')) and isinstance(model, models.Model):  # pragma: no branch
-            result['model'] = model.model_id
-
-        # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
-        # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
-        # solve it eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
-        return result
+        return serialize_model_as_string(super().build_serialization_arguments())
 
 
 @dataclass(repr=False)

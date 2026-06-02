@@ -6,9 +6,9 @@ G-Eval (Liu et al., 2023) and GEMBA (Kocmi & Federmann, 2023).
 
 These evaluators are thin wrappers over [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] and the
 [`judge_*`][pydantic_evals.evaluators.llm_as_a_judge] helpers. You can always write your own rubric
-against `LLMJudge` — the point of this pack is to provide recognisable names and sensible defaults
+against [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] — the point of this pack is to provide recognisable names and sensible defaults
 for the quality dimensions users most often reach for. Each evaluator takes the same `model`,
-`model_settings`, `score` and `assertion` arguments as `LLMJudge`, so they drop into existing
+`model_settings`, `score` and `assertion` arguments as [`LLMJudge`][pydantic_evals.evaluators.LLMJudge], so they drop into existing
 evaluation suites without ceremony.
 
 ## Dataset shape
@@ -38,7 +38,7 @@ class RagInputs:
 
 ## If these evaluators don't fit your use case
 
-These are **curated presets**, not a rigid API: a thin, opinionated layer over `LLMJudge` with a
+These are **curated presets**, not a rigid API: a thin, opinionated layer over [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] with a
 fixed schema and rubric per metric. If your dataset is shaped differently (e.g. the question
 field is called `prompt`, the context is a structured object rather than a list of passages), or
 you want to tweak the rubric for your domain, the intended escape hatch is to **vendor the
