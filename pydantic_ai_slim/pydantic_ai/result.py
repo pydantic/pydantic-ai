@@ -541,6 +541,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         [partial mode](https://docs.pydantic.dev/dev/concepts/experimental/#partial-validation)
         on each iteration.
 
+        !!! note
+            Breaking out of this iterator early doesn't flip `is_complete` right away; it becomes
+            `True` once the surrounding `async with agent.run_stream(...)` block exits, where the
+            partial response is recorded with `state='interrupted'`. To flip it synchronously while
+            still inside the block, `await result.cancel()` after breaking.
+
         Args:
             debounce_by: by how much (if at all) to debounce/group the output chunks by. `None` means no debouncing.
                 Debouncing is particularly important for long structured outputs to reduce the overhead of
@@ -564,6 +570,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
         !!! note
             Result validators will NOT be called on the text result if `delta=True`.
+
+        !!! note
+            Breaking out of this iterator early doesn't flip `is_complete` right away; it becomes
+            `True` once the surrounding `async with agent.run_stream(...)` block exits, where the
+            partial response is recorded with `state='interrupted'`. To flip it synchronously while
+            still inside the block, `await result.cancel()` after breaking.
 
         Args:
             delta: if `True`, yield each chunk of text as it is received, if `False` (default), yield the full text
@@ -600,6 +612,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
         `'incomplete'` while streaming is in flight and `'complete'` (or `'interrupted'` if
         [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] was called) on the final yield.
+
+        !!! note
+            Breaking out of this iterator early doesn't flip `is_complete` right away; it becomes
+            `True` once the surrounding `async with agent.run_stream(...)` block exits, where the
+            partial response is recorded with `state='interrupted'`. To flip it synchronously while
+            still inside the block, `await result.cancel()` after breaking.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -782,9 +800,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Note: this only flips `is_complete` when the surrounding context exits;
         `is_complete` does not change synchronously when the user `break`s out of
         a `stream_*` method, because Python defers async-generator `aclose()`
-        until GC or event-loop cleanup. Making `break` flip the flag would need
-        either user-side `contextlib.aclosing()` wrapping or an API change where
-        `stream_*` returns an async-context-manager iterator. Tracked in #5615.
+        until GC or event-loop cleanup. A `contextlib.aclosing()` wrap doesn't
+        help either: `stream_*` has no `try/finally`, so the `GeneratorExit` from
+        `aclose()` skips the completion path. A caller who needs a synchronous
+        flip can `await result.cancel()` after breaking; making `break` itself
+        flip the flag would need an API change to async-context-manager iterators.
+        Tracked in #5756.
         """
         if self.is_complete or self._stream_response is None:
             return
