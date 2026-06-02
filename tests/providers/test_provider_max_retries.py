@@ -43,6 +43,7 @@ def _params() -> list[Any]:
     # Each entry: (provider factory, kwargs required to construct it without hitting the network).
     providers: dict[str, tuple[Callable[..., Any], dict[str, Any]]] = {
         'openai': (OpenAIProvider, {'api_key': 'api-key'}),
+        # The dated `api-version` endpoint builds an `AsyncAzureOpenAI` client...
         'azure': (
             AzureProvider,
             {
@@ -50,6 +51,12 @@ def _params() -> list[Any]:
                 'api_version': '2024-12-01-preview',
                 'api_key': 'api-key',
             },
+        ),
+        # ...while a `/v1` (or `*.models.ai.azure.com`) endpoint builds a plain `AsyncOpenAI` client,
+        # which is a separate `max_retries` pass-through to cover.
+        'azure_v1': (
+            AzureProvider,
+            {'azure_endpoint': 'https://example.openai.azure.com/openai/v1/', 'api_key': 'api-key'},
         ),
         'deepseek': (DeepSeekProvider, {'api_key': 'api-key'}),
         'alibaba': (AlibabaProvider, {'api_key': 'api-key'}),
