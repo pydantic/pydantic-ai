@@ -7,9 +7,10 @@ state for the pending message queue, not part of the wire-serializable message h
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
+from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
     ModelMessage,
@@ -106,6 +107,17 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
     return messages
 
 
+@dataclass(frozen=True)
+class PendingMessageDelivery:
+    """Internal record of enqueued messages delivered into a run."""
+
+    enqueue_id: str
+    """Unique identifier for the enqueue call."""
+
+    messages: tuple[ModelMessage, ...]
+    """Messages expected to be present in the final run history."""
+
+
 @dataclass
 class PendingMessage:
     """One or more [`ModelMessage`][pydantic_ai.messages.ModelMessage]s queued for injection into the agent conversation.
@@ -119,6 +131,9 @@ class PendingMessage:
     messages: list[ModelMessage]
     """The message(s) to inject, in order. Always ends in a
     [`ModelRequest`][pydantic_ai.messages.ModelRequest]."""
+
+    enqueue_id: str = field(default_factory=lambda: str(uuid7()))
+    """Unique identifier for this enqueue call."""
 
     priority: PendingMessagePriority = 'asap'
     """When to deliver these messages:

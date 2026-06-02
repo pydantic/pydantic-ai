@@ -13,7 +13,7 @@ from typing_extensions import TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessageDelivery, PendingMessagePriority
 from .exceptions import UserError
 
 if TYPE_CHECKING:
@@ -109,6 +109,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
     Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages — don't append directly.
     """
+    event_stream_buffer: list[_messages.AgentStreamEvent] | None = field(default=None, repr=False)
+    """Internal: run event buffer emitted before model response stream events."""
+    pending_message_deliveries: list[PendingMessageDelivery] | None = field(default=None, repr=False)
+    """Internal: enqueue delivery records waiting for final history indices."""
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
     """The tool manager for the current run step.
@@ -126,11 +130,20 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
 
+    def emit_event(self, event: _messages.AgentStreamEvent) -> None:
+        """Emit an event into the current run's event stream."""
+        if self.event_stream_buffer is None:
+            raise UserError(
+                '`emit_event` is only available during an agent run (from tools, capability hooks, or '
+                '`AgentRun.emit_event`). This `RunContext` has no run event buffer.'
+            )
+        self.event_stream_buffer.append(event)
+
     def enqueue(
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
-    ) -> None:
+    ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
         Safe to call from anywhere a `RunContext` is available — async tools,
@@ -168,8 +181,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
             )
         pending = PendingMessage.from_content(*content, priority=priority)
         if pending is None:
-            return
+            return None
         self.pending_messages.append(pending)
+        return pending.enqueue_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

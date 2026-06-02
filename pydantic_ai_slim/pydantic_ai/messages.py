@@ -2785,6 +2785,25 @@ ModelResponseStreamEvent = Annotated[
 """An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
 
 
+@dataclass(repr=False, kw_only=True)
+class EnqueuedMessagesEvent:
+    """An event indicating queued messages were delivered into the run history."""
+
+    enqueue_id: str
+    """The ID of the enqueue call that produced these messages."""
+
+    messages: tuple[ModelMessage, ...]
+    """The messages delivered into the run history."""
+
+    message_indices: tuple[int, ...]
+    """Indices of the delivered messages in the run message history."""
+
+    event_kind: Literal['enqueued_messages'] = 'enqueued_messages'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class ToolCallEvent:
     """Base class for events emitted when a tool call is about to be invoked.
@@ -2945,8 +2964,10 @@ HandleResponseEvent = Annotated[
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
-"""An event in the agent stream: model response stream events and response-handling events."""
+AgentStreamEvent = Annotated[
+    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')
+]
+"""An event in the agent stream: model response stream events, request-side delivery events, and response-handling events."""
 
 
 _RENAMED_PART_CLASSES: dict[str, str] = {

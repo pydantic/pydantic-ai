@@ -71,6 +71,21 @@ DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
 
+async def _with_event_stream_buffer(
+    stream: AsyncIterator[_messages.AgentStreamEvent],
+    event_stream_buffer: list[_messages.AgentStreamEvent],
+) -> AsyncIterator[_messages.AgentStreamEvent]:
+    """Yield buffered run events before each event from a node stream."""
+    while event_stream_buffer:
+        yield event_stream_buffer.pop(0)
+    async for event in stream:
+        while event_stream_buffer:
+            yield event_stream_buffer.pop(0)
+        yield event
+    while event_stream_buffer:
+        yield event_stream_buffer.pop(0)
+
+
 async def _cancel_task(task: Task[Any]) -> None:
     if not task.done():
         task.cancel()
@@ -138,6 +153,14 @@ class GraphAgentState:
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
+    event_stream_buffer: list[_messages.AgentStreamEvent] = dataclasses.field(
+        default_factory=list[_messages.AgentStreamEvent]
+    )
+    """Internal: buffered run events emitted before model response stream events."""
+    pending_message_deliveries: list[_enqueue.PendingMessageDelivery] = dataclasses.field(
+        default_factory=list[_enqueue.PendingMessageDelivery]
+    )
+    """Internal: enqueue delivery records awaiting final history indices."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -578,6 +601,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     request: _messages.ModelRequest
     is_resuming_without_prompt: bool = False
+    _pending_message_deliveries: list[_enqueue.PendingMessageDelivery] = field(
+        default_factory=list[_enqueue.PendingMessageDelivery], repr=False
+    )
 
     _result: CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT] | None = field(
         repr=False, init=False, default=None
@@ -768,6 +794,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _tool_manager=ctx.deps.tool_manager,
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
+            _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
         )
 
     async def _make_request(
@@ -847,6 +874,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             self.request.run_id = self.request.run_id or ctx.state.run_id
             self.request.conversation_id = self.request.conversation_id or ctx.state.conversation_id
         ctx.state.message_history.append(self.request)
+        if self._pending_message_deliveries:
+            ctx.state.pending_message_deliveries.extend(self._pending_message_deliveries)
+            self._pending_message_deliveries.clear()
 
         ctx.state.run_step += 1
 
@@ -906,6 +936,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.resumed_request = self.request
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
+        _queue_pending_message_delivery_events(ctx, messages)
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
             messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
@@ -1072,9 +1103,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     @asynccontextmanager
     async def stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[AsyncIterator[_messages.HandleResponseEvent]]:
+    ) -> AsyncIterator[AsyncIterator[_messages.AgentStreamEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
-        stream = self._run_stream(ctx)
+        stream = _with_event_stream_buffer(self._run_stream(ctx), ctx.state.event_stream_buffer)
         yield stream
 
         # Run the stream to completion if it was not finished:
@@ -1384,6 +1415,48 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         return End(self.final_result)
 
 
+def _queue_pending_message_delivery_events(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]], messages: list[_messages.ModelMessage]
+) -> None:
+    """Queue delivery events once delivered messages have stable final history indices."""
+    if not ctx.state.pending_message_deliveries:
+        return
+
+    for delivery in ctx.state.pending_message_deliveries:
+        matched = _find_pending_message_delivery(delivery, messages)
+        if matched is None:
+            continue
+        delivered_messages, message_indices = matched
+        ctx.state.event_stream_buffer.append(
+            _messages.EnqueuedMessagesEvent(
+                enqueue_id=delivery.enqueue_id,
+                messages=delivered_messages,
+                message_indices=message_indices,
+            )
+        )
+    ctx.state.pending_message_deliveries.clear()
+
+
+def _find_pending_message_delivery(
+    delivery: _enqueue.PendingMessageDelivery, messages: list[_messages.ModelMessage]
+) -> tuple[tuple[_messages.ModelMessage, ...], tuple[int, ...]] | None:
+    """Find delivered messages in final history by identity or ordered structural equality."""
+    delivered_messages: list[_messages.ModelMessage] = []
+    message_indices: list[int] = []
+    search_from = 0
+    for delivered_message in delivery.messages:
+        for index in range(search_from, len(messages)):
+            message = messages[index]
+            if message is delivered_message or message == delivered_message:
+                delivered_messages.append(message)
+                message_indices.append(index)
+                search_from = index + 1
+                break
+        else:
+            return None
+    return tuple(delivered_messages), tuple(message_indices)
+
+
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
     """Build a `RunContext` object from the current agent graph run context."""
     run_context = RunContext[DepsT](
@@ -1406,6 +1479,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
         pending_messages=ctx.state.pending_messages,
+        event_stream_buffer=ctx.state.event_stream_buffer,
+        pending_message_deliveries=ctx.state.pending_message_deliveries,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     run_context = replace(run_context, validation_context=validation_context)
