@@ -45,6 +45,10 @@ temporal = [
 dbos = [
     'pydantic-ai-slim[dbos]',
 ]
+logfire = [
+    'logfire>=4.31.0',
+    'pydantic-ai-slim[spec]>=1.95.1',
+]
 
 [project.urls]
 Homepage = 'https://github.com/pydantic/pydantic-ai-harness'
@@ -63,8 +67,9 @@ dev = [
     'pytest-anyio',
     'coverage>=7.10.7',
     'logfire[httpx]>=4.31.0',
-    "dirty-equals>=0.9.0",
-    "inline-snapshot>=0.32.5",
+    'dirty-equals>=0.9.0',
+    'inline-snapshot>=0.32.5',
+    'pydantic-ai-slim[spec]>=1.95.1',
     "pytest-examples>=0.0.18",
 ]
 lint = [
@@ -113,8 +118,10 @@ quote-style = 'single'
 pythonVersion = '3.10'
 typeCheckingMode = 'strict'
 exclude = ['template', '.venv', 'mutants']
+# `reportUnusedFunction` is disabled for tests because fixtures and `@agent.tool_plain`
+# helpers are registered via decorators and never referenced by name (matches pydantic-ai).
 executionEnvironments = [
-    { root = 'tests', reportPrivateUsage = false },
+    { root = 'tests', reportPrivateUsage = false, reportUnusedFunction = false },
 ]
 
 [tool.pytest.ini_options]
