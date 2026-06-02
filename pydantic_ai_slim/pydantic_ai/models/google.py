@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, cast, get_args, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
@@ -176,10 +176,10 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
-_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
+_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = get_args(_GOOGLE_IMAGE_SIZE)
 
 _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
-_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
+_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
 # Accept both the current name (`google-cloud` / `google`) and the pre-v2 names
@@ -1547,7 +1547,7 @@ def _decode_inline_thought_signature(
     if not item.provider_details:
         return None
     if m.provider_name not in accepted_provider_names and item.provider_name not in accepted_provider_names:
-        return None  # pragma: no cover
+        return None
     raw = item.provider_details.get('thought_signature')
     if not raw:
         return None  # pragma: no cover

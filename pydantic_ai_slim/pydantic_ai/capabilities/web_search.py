@@ -57,7 +57,13 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         blocked_domains: list[str] | None = None,
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
+        id: str | None = None,
+        defer_loading: bool = False,
+        description: str | None = None,
     ) -> None:
+        self.id = id
+        self.description = description
+        self.defer_loading = defer_loading
         self.native = native
         self.local = local
         self.search_context_size = search_context_size

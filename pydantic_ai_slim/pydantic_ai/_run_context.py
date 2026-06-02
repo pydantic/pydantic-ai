@@ -18,9 +18,11 @@ from .exceptions import UserError
 
 if TYPE_CHECKING:
     from .agent import Agent
+    from .capabilities.abstract import AbstractCapability
     from .models import Model
     from .settings import ModelSettings
     from .tool_manager import ToolManager
+    from .tools import ToolDefinition
     from .usage import RunUsage
 
 AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
@@ -120,10 +122,106 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
+    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
+    """All capabilities registered for the current run, including deferred ones."""
+
+    loaded_capability_ids: set[str] = field(default_factory=set[str])
+    """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
+
+    The capability-side mirror of `discovered_tool_names`: the runtime-revealed subset.
+    Seeded during run preparation from message history (`parse_loaded_capabilities`); the
+    `load_capability` tool body adds to it for in-step loads. Use `available_capability_ids`
+    for the full set of currently-active capabilities (auto/always-on plus these).
+    """
+
+    capability_loaded: bool | None = None
+    """Whether the capability whose hook or callback is currently running is loaded.
+
+    This is `None` outside capability dispatch, where there is no current capability.
+    """
+
+    discovered_tool_names: set[str] = field(default_factory=set[str])
+    """Names of deferred tools revealed via tool-search return parts in the message history.
+
+    The tool-side mirror of `loaded_capability_ids`: the runtime-revealed subset that
+    `ToolSearchToolset.get_tools` reads to decide which deferred tools to make visible this
+    turn. Populated during run preparation from message history. Use `available_tool_names`
+    for the full set of currently-callable tools (always-visible plus these).
+    """
+
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    @property
+    def available_capability_ids(self) -> set[str]:
+        """IDs of the capabilities whose contributions are live to the model right now.
+
+        The capability-side mirror of `available_tool_names`: `available = auto/always ∪
+        runtime-revealed`. Here that's the non-deferred capabilities (`defer_loading` not
+        `True`) plus the deferred ones the model has loaded (`loaded_capability_ids`), so
+        `available_capability_ids - loaded_capability_ids` is the auto/always-on subset.
+
+        Distinct from `capabilities`, the full registry (including deferred ones not yet
+        loaded). See `loaded_capability_ids` for the runtime-revealed subset.
+
+        Reliable from `before_run` onwards: the `capabilities` registry is seeded once at
+        run start, and `loaded_capability_ids` is refreshed from history before each model
+        request, so the loaded subset grows across steps as the model loads capabilities.
+        Because it grows step by step, where you read it in the
+        [hook order](../hooks.md#hook-ordering) determines what you see — e.g. a capability
+        loaded during one step is not reflected until the next step's hooks.
+        """
+        return {
+            id for id, cap in self.capabilities.items() if cap.defer_loading is not True
+        } | self.loaded_capability_ids
+
+    @property
+    def available_tool_names(self) -> set[str]:
+        """Names of function tools the model can call on the current turn.
+
+        The visible subset of [`tools`][pydantic_ai.tools.RunContext.tools]: always-visible
+        tools, tools revealed via [tool search](../tools-advanced.md#tool-search), and tools
+        owned by loaded deferred capabilities.
+
+        Only fully populated once the turn's tools have been resolved during model-request
+        preparation, so it is reliable in model-request hooks (`before_model_request`,
+        `wrap_model_request`, `after_model_request`) and tool hooks. In earlier hooks like
+        `before_run` it falls back to `discovered_tool_names` (reconstructed from history).
+        See [hook ordering](../hooks.md#hook-ordering) for how timing affects what you see.
+        """
+        if self.tool_manager is None or self.tool_manager.tools is None:
+            return set[str]() | self.discovered_tool_names
+        # Local import avoids a module-level cycle: `native_tools._tool_search` imports
+        # `RunContext` for tool-search strategy callables.
+        from .native_tools._tool_search import ToolSearchTool
+
+        tools = self.tools
+        # "Always available" = not search-managed AND not deferred. We deliberately keep the
+        # `not defer_loading` check rather than relying on `with_native is None` alone: depending
+        # on hook timing, a deferred tool can be read here before the tool-search toolset has
+        # stamped `with_native='tool-search'` on it, so `with_native is None` by itself would leak
+        # a still-hidden tool. Gating on `defer_loading` keeps it hidden until it's genuinely revealed.
+        always_available = {
+            name
+            for name, tool_def in tools.items()
+            if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading
+        }
+        runtime_revealed = self.discovered_tool_names & set(tools)
+        loaded_capability_tools = {
+            name
+            for name, tool_def in tools.items()
+            if tool_def.capability_id is not None and tool_def.capability_id in self.loaded_capability_ids
+        }
+        return always_available | runtime_revealed | loaded_capability_tools
+
+    @property
+    def tools(self) -> dict[str, ToolDefinition]:
+        """All tool definitions present this turn, keyed by name (includes still-deferred ones). Index `available_tool_names` into this for the callable subset."""
+        if self.tool_manager is None or self.tool_manager.tools is None:
+            return {}
+        return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
 
     def enqueue(
         self,

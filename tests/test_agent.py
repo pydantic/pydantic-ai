@@ -1254,6 +1254,7 @@ def test_response_tuple():
                 },
                 outer_typed_dict_key='response',
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1328,6 +1329,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1405,6 +1407,7 @@ class Bar(BaseModel):
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
             ToolDefinition(
                 name='final_result_Bar',
@@ -1416,6 +1419,7 @@ class Bar(BaseModel):
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
         ]
     )
@@ -1466,6 +1470,7 @@ def test_output_type_with_two_descriptions():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1512,6 +1517,7 @@ def test_output_type_tool_output_union():
                 outer_typed_dict_key='response',
                 strict=False,
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1551,6 +1557,7 @@ def test_output_type_function():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1591,6 +1598,7 @@ def test_output_type_function_with_run_context():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1632,6 +1640,7 @@ def test_output_type_bound_instance_method():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1674,6 +1683,7 @@ def test_output_type_bound_instance_method_with_run_context():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1894,6 +1904,7 @@ def test_output_type_async_function():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1933,6 +1944,7 @@ def test_output_type_function_with_custom_tool_name():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1972,6 +1984,7 @@ def test_output_type_function_or_model():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
             ToolDefinition(
                 name='final_result_Weather',
@@ -1983,6 +1996,7 @@ def test_output_type_function_or_model():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
         ]
     )
@@ -2181,6 +2195,7 @@ def test_output_type_multiple_custom_tools():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
             ToolDefinition(
                 name='return_weather',
@@ -2192,6 +2207,7 @@ def test_output_type_multiple_custom_tools():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
         ]
     )
@@ -2254,6 +2270,7 @@ def test_output_type_structured_dict():
                 },
                 description='A person',
                 kind='output',
+                defer_loading=False,
             ),
             ToolDefinition(
                 name='final_result_Animal',
@@ -2265,6 +2282,7 @@ def test_output_type_structured_dict():
                 },
                 description='An animal',
                 kind='output',
+                defer_loading=False,
             ),
         ]
     )
@@ -2405,6 +2423,7 @@ def test_default_structured_output_mode():
                 },
                 description='The final response which ends this conversation',
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -8262,10 +8281,12 @@ def test_override_toolsets():
         return 'Hello from foo'
 
     available_tools: list[list[str]] = []
+    available_tools_property: list[set[str]] = []
 
     async def prepare_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal available_tools
         available_tools.append([tool_def.name for tool_def in tool_defs])
+        available_tools_property.append(ctx.available_tool_names)
         return tool_defs
 
     agent = Agent('test', toolsets=[foo_toolset], capabilities=[PrepareTools(prepare_tools)])
@@ -8276,6 +8297,7 @@ def test_override_toolsets():
 
     result = agent.run_sync('Hello')
     assert available_tools[-1] == snapshot(['baz', 'foo'])
+    assert available_tools_property[-1] == {'baz', 'foo'}
     assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo"}')
 
     bar_toolset = FunctionToolset()

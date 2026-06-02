@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, cast, get_args, overload
 
 from httpx import Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -226,6 +226,8 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 )
 """Models that are deprecated or don't exist but are still present in the OpenAI SDK's type definitions."""
 
+_DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
+
 OpenAIModelName = str | AllModels
 """
 Possible OpenAI model names.
@@ -269,7 +271,7 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
 }
 
 _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
-_OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
+_OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
 class _ChatCompletion(chat.ChatCompletion):
@@ -2432,10 +2434,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # OpenAI's strict JSON schema mode is opt-in for client tool search — the
                     # `additionalProperties: False` is what it prefers for closed-world schemas.
                     parameters.setdefault('additionalProperties', False)
+                    # OpenAI's generated schema marks this optional, but the live Responses API
+                    # rejects client-executed `tool_search` without a non-null description.
+                    description = (
+                        search_tool_def.description
+                        if search_tool_def and search_tool_def.description
+                        else _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION
+                    )
                     tool_search_param: ToolSearchToolParam = {
                         'type': 'tool_search',
                         'execution': 'client',
-                        'description': (search_tool_def.description if search_tool_def else None),
+                        'description': description,
                         'parameters': parameters,
                     }
                     tools.append(tool_search_param)
@@ -2616,9 +2625,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # replayed as `tool_search_call` / `tool_search_output` items so the provider can
         # pair them with the builtin and unlock the discovered tools. The current
         # request's builtin configuration is the source of truth: a `ToolCallPart` for
-        # `search_tools` originating from this provider (`provider_name == self.system`)
-        # belongs in the client-execution flow whenever a custom-callable tool search is
-        # active.
+        # `search_tools` belongs in the native replay flow whenever tool search is active.
         client_tool_search_active = _has_tool_search(model_request_parameters)
         client_replay_call_ids: set[str] = set()
 
@@ -2757,6 +2764,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 and (ns := item.provider_details.get('namespace'))
                             ):
                                 param['namespace'] = ns
+                            elif synthesized_ns := _tool_search_namespace_for_synthesis(
+                                item.tool_name, model_request_parameters
+                            ):
+                                # Cross-provider replay: prior turn ran on a non-OpenAI
+                                # provider, so no namespace was captured. See helper for the
+                                # evidence behind synthesizing `namespace = tool_name`.
+                                param['namespace'] = synthesized_ns
                             openai_messages.append(param)
                     elif isinstance(item, NativeToolCallPart):
                         if should_send_item_id:  # pragma: no branch
@@ -3813,6 +3827,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+@dataclass(init=False)
 class OpenAICompaction(AbstractCapability[AgentDepsT]):
     """Compaction capability for OpenAI Responses API.
 
@@ -4182,6 +4197,28 @@ def _map_code_interpreter_tool_call(
         ),
         file_parts,
     )
+
+
+def _tool_search_namespace_for_synthesis(
+    tool_name: str, model_request_parameters: ModelRequestParameters
+) -> str | None:
+    """Return the synthetic OpenAI namespace for a cross-provider replay, or `None`.
+
+    OpenAI-origin calls round-trip `provider_details['namespace']`. Non-OpenAI history
+    lacks that field, but OpenAI rejects replayed tool-search-discovered function calls
+    without a namespace (even when tool_search ran client-side). For the flat deferred
+    function tools this adapter emits, OpenAI-generated calls use `namespace == tool_name`
+    — verified by live probe against a capability owning multiple deferred tools. Scoped
+    to the tool-search corpus (any function tool with `with_native='tool_search'`) so
+    unrelated functions and any future `NamespaceTool` wrapper stay out of this fallback —
+    gating on `with_native` rather than a capability-only marker because plain
+    `defer_loading=True` tools without a capability owner also flow through tool-search
+    and need the same namespace round-trip on cross-provider replay.
+    """
+    for tool in model_request_parameters.function_tools:
+        if tool.name == tool_name and tool.with_native == ToolSearchTool.kind:
+            return tool_name
+    return None
 
 
 def _has_tool_search(model_request_parameters: ModelRequestParameters) -> bool:

@@ -16,11 +16,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
+from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
+from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 
 from .. import (
     _agent_graph,
@@ -42,6 +44,7 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
+from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
@@ -79,6 +82,7 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
+from ..toolsets._tool_search import parse_discovered_tools
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -417,6 +421,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         _inject_auto_capabilities(capabilities)
 
         self._root_capability = CombinedCapability(capabilities)
+
+        # Validate the statically-provided capabilities eagerly so misconfiguration (a deferred
+        # capability without an `id`, or duplicate ids) fails fast here in `Agent(...)` instead of
+        # on the first run. Capabilities supplied per-run or resolved by `for_run` (e.g. capability
+        # functions) can only be checked at run time, in `_build_run_capabilities`.
+        static_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self._root_capability.apply(static_capabilities.append)
+        _validate_capability_ids(static_capabilities)
 
         self.model_settings = model_settings
 
@@ -1245,6 +1257,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
+        capabilities_dict = _build_run_capabilities(run_capability)
+        # Inject the loader only if a deferred capability is present AND `for_run` didn't already
+        # return one, mirroring the `has_capability_type` guard used for instrumentation above.
+        # Without it, a `for_run` result that already carries a loader would get double-wrapped
+        # (cf. #5047) — a second loader toolset then errors on the reserved `load_capability` name.
+        if any(
+            capability.defer_loading is True for capability in capabilities_dict.values()
+        ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
+            run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
+            capabilities_dict = _build_run_capabilities(run_capability)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:
@@ -1335,6 +1357,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             return parts or None
 
+        # The deferred capabilities the model has already loaded in prior steps; the graph
+        # refreshes this from history before each model request, so the seed only matters
+        # for pre-first-step access. Non-deferred capabilities are folded in by the
+        # `RunContext.available_capability_ids` property.
+        loaded_capability_ids = parse_loaded_capabilities(message_history) if message_history else set[str]()
+        discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1350,6 +1379,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             validation_context=self._validation_context,
             root_capability=run_capability,
+            capabilities=capabilities_dict,
+            loaded_capability_ids=loaded_capability_ids,
+            discovered_tool_names=discovered_tool_names,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -2719,6 +2751,55 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
     for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:
         if not has_capability_type(capabilities, cap_type):
             capabilities.append(cap_type())
+
+
+def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:
+    """Validate capability `id`s and return the set of explicit ones.
+
+    Rejects deferred capabilities that lack an explicit `id` and explicit ids used by more than
+    one capability. Shared by two call sites: construction-time validation over the
+    statically-provided capabilities (so misconfiguration fails fast in `Agent(...)` rather than
+    on the first run), and run-time assembly in `_build_run_capabilities`, which also covers
+    capabilities supplied per-run or returned by `for_run` and so can't be checked at construction.
+    """
+    explicit_ids: set[str] = set()
+    for cap in capabilities:
+        if cap.defer_loading is True and cap.id is None:
+            raise exceptions.UserError(
+                'Deferred capabilities must use stable explicit `id` values. '
+                'Pass `id=...` when using `defer_loading=True`.'
+            )
+        if cap.id is None:
+            continue
+        if cap.id in explicit_ids:
+            raise exceptions.UserError(
+                f'Capability id {cap.id!r} is used by multiple capabilities. '
+                'Capability ids must be unique within a run.'
+            )
+        explicit_ids.add(cap.id)
+    return explicit_ids
+
+
+def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
+    capabilities: list[AbstractCapability[AgentDepsT]] = []
+    capability.apply(capabilities.append)
+
+    explicit_ids = _validate_capability_ids(capabilities)
+
+    by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
+    for cap in capabilities:
+        capability_id = cap.id
+        if capability_id is None:
+            base_id = to_snake(type(cap).__name__)
+            capability_id = base_id
+            suffix = 2
+            while capability_id in by_id or capability_id in explicit_ids:
+                capability_id = f'{base_id}_{suffix}'
+                suffix += 1
+
+        by_id[capability_id] = cap
+
+    return by_id
 
 
 def _validate_spec(

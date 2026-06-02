@@ -91,12 +91,18 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         enable_image_understanding: bool | None = None,
         enable_video_understanding: bool | None = None,
         include_output: bool | None = None,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> None:
         if fallback_model is not None and local is not None:
             raise UserError(
                 'XSearch: cannot specify both `fallback_model` and `local` — '
                 'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
             )
+        self.id = id
+        self.description = description
+        self.defer_loading = defer_loading
         self.native = native
         self.local = local
         self.fallback_model = fallback_model

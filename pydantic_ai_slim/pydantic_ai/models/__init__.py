@@ -21,7 +21,7 @@ from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 import httpx
 from typing_extensions import Self, TypeAliasType, TypedDict
 
-from .. import _utils
+from .. import _deferred_capabilities, _utils
 from .._json_schema import JsonSchemaTransformer
 from .._output import OutputObjectDefinition, StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -941,11 +941,21 @@ class Model(ABC, Generic[InterfaceClient]):
                 f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
             )
 
+        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(
+            supported_natives, params.function_tools
+        )
+        supported_natives = tool_search_resolution.native_tools
+        tool_search_kept_local = tool_search_resolution.keep_search_tools_local
+
         function_tools: list[ToolDefinition] = []
         for t in params.function_tools:
-            # Rule 1: drop local fallback when the native tool is supported.
+            # Rule 1: drop local fallback when the native tool is supported — except for
+            # `search_tools` when tool search was kept local for capability visibility,
+            # where the local function tool is the callback the client-executed native
+            # surface dispatches to.
             if t.unless_native and t.unless_native in supported_ids:
-                continue
+                if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
+                    continue
             # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
             if t.with_native and t.with_native not in supported_ids and t.defer_loading:
                 continue
@@ -1653,6 +1663,62 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
         json_schema=json_schema,
         strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+@dataclass
+class _ToolSearchNativeResolution:
+    native_tools: list[AbstractNativeTool]
+    keep_search_tools_local: bool
+
+
+def _resolve_tool_search_native_for_capability_owned_corpus(
+    supported_natives: Sequence[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
+) -> _ToolSearchNativeResolution:
+    """Resolve tool search's native mode when a deferred capability owns a corpus tool.
+
+    Provider-side tool search (Anthropic `bm25`/`regex`, OpenAI server-managed `tool_search`)
+    is a black box: it indexes whatever we send and returns matches. It can't honor "this tool
+    is only visible after its owning capability has been loaded." Our local search loop in
+    `ToolSearchToolset._search_tools` *can* — it filters the corpus by
+    `ctx.available_capability_ids`. So whenever a capability-owned tool sits in the corpus,
+    search must run client-side or hidden tools will leak.
+
+    Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
+    the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
+    OpenAI `execution='client'`) which dispatches into our local `search_tools` callback;
+    (2) the caller keeps `search_tools` in the request parameters — that callback is what
+    the client-executed surface invokes. Adapters may still render that callback as a
+    native client-executed tool-search item rather than as a regular function tool on the
+    provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
+    equivalent, so we raise rather than silently substitute a different algorithm.
+    """
+    capability_owns_corpus = any(
+        t.with_native == ToolSearchTool.kind
+        and (t.metadata or {}).get(_deferred_capabilities.DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
+        for t in function_tools
+    )
+    if not capability_owns_corpus:
+        return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
+
+    resolved_natives: list[AbstractNativeTool] = []
+    keep_search_tools_local = False
+    for t in supported_natives:
+        if not isinstance(t, ToolSearchTool):
+            resolved_natives.append(t)
+            continue
+        if t.strategy not in (None, 'custom'):
+            raise UserError(
+                f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
+                "capabilities. Server-side strategies can't "
+                "honor capability gating and would reveal tools whose owning capability hasn't "
+                'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
+                "deferred capability is present), `strategy='keywords'`, or a custom callable."
+            )
+        keep_search_tools_local = True
+        if t.strategy is None:
+            t = replace(t, strategy='custom')
+        resolved_natives.append(t)
+    return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
 
 
 def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
