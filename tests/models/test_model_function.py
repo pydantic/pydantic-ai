@@ -6,7 +6,6 @@ from datetime import timezone
 
 import pydantic_core
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -27,6 +26,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
@@ -70,6 +70,7 @@ def test_simple():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
@@ -77,6 +78,7 @@ def test_simple():
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -89,6 +91,7 @@ def test_simple():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content="content='Hello' part_kind='user-prompt' message_count=1")],
@@ -96,11 +99,13 @@ def test_simple():
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content="content='World' part_kind='user-prompt' message_count=3")],
@@ -108,6 +113,7 @@ def test_simple():
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -172,6 +178,7 @@ def test_weather():
                 parts=[UserPromptPart(content='London', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -183,6 +190,7 @@ def test_weather():
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -195,6 +203,7 @@ def test_weather():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_weather', args='{"lat": 51, "lng": 0}', tool_call_id=IsStr())],
@@ -202,6 +211,7 @@ def test_weather():
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -214,6 +224,7 @@ def test_weather():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Raining in London')],
@@ -221,6 +232,7 @@ def test_weather():
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -260,8 +272,10 @@ def test_var_args():
             'tool_name': 'get_var_args',
             'content': '{"args": [1, 2, 3]}',
             'tool_call_id': IsStr(),
+            'tool_kind': None,
             'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=timezone.utc),  # type: ignore[reportUnknownMemberType]
+            'outcome': 'success',
             'part_kind': 'tool-return',
         }
     )
@@ -379,6 +393,7 @@ def test_call_all():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -392,6 +407,7 @@ def test_call_all():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -413,6 +429,7 @@ def test_call_all():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foo":"1","bar":"2","baz":"3","qux":"4","quz":"a"}')],
@@ -420,6 +437,7 @@ def test_call_all():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -487,6 +505,7 @@ async def test_stream_text():
                     parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='hello world')],
@@ -494,10 +513,11 @@ async def test_stream_text():
                     model_name='function::stream_text_function',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
 
 
 class Foo(BaseModel):
@@ -519,7 +539,7 @@ async def test_stream_structure():
     agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=Foo)
     async with agent.run_stream('') as result:
         assert await result.get_output() == snapshot(Foo(x=1))
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=1,
                 input_tokens=50,

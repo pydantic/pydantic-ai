@@ -1,0 +1,243 @@
+interactions:
+- request:
+    body: assertion=scrubbed&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '809'
+      content-type:
+      - application/x-www-form-urlencoded
+    method: POST
+    uri: https://oauth2.googleapis.com/token
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '72'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      access_token: scrubbed
+      expires_in: 3599
+      token_type: Bearer
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '164'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is 2+2?
+        role: user
+      generationConfig:
+        logprobs: 5
+        responseLogprobs: true
+        responseModalities:
+        - TEXT
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '3554'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -1.0858495576041085
+        content:
+          parts:
+          - text: 2 + 2 = 4
+          role: model
+        finishReason: STOP
+        logprobsResult:
+          chosenCandidates:
+          - logProbability: -0.01972555
+            token: '2'
+            tokenId: 236778
+          - logProbability: -0.006128676
+            token: ' +'
+            tokenId: 900
+          - logProbability: -2.3844768e-07
+            token: ' '
+            tokenId: 236743
+          - logProbability: -2.3844768e-07
+            token: '2'
+            tokenId: 236778
+          - logProbability: -0.018705286
+            token: ' ='
+            tokenId: 578
+          - logProbability: -0.024863577
+            token: ' '
+            tokenId: 236743
+          - logProbability: -4.649037e-06
+            token: '4'
+            tokenId: 236812
+          topCandidates:
+          - candidates:
+            - logProbability: -0.01972555
+              token: '2'
+              tokenId: 236778
+            - logProbability: -4.1320033
+              token: '4'
+              tokenId: 236812
+            - logProbability: -6.808355
+              token: Four
+              tokenId: 26391
+            - logProbability: -6.889938
+              token: $
+              tokenId: 236795
+            - logProbability: -7.830156
+              token: '**'
+              tokenId: 1018
+          - candidates:
+            - logProbability: -0.006128676
+              token: ' +'
+              tokenId: 900
+            - logProbability: -5.1196923
+              token: +
+              tokenId: 236862
+            - logProbability: -9.429066
+              token: ' plus'
+              tokenId: 2915
+            - logProbability: -12.47383
+              token: ' increased'
+              tokenId: 4869
+            - logProbability: -12.602639
+              token: ' add'
+              tokenId: 1138
+          - candidates:
+            - logProbability: -2.3844768e-07
+              token: ' '
+              tokenId: 236743
+            - logProbability: -18.285292
+              token: '2'
+              tokenId: 236778
+            - logProbability: -18.646221
+              token: ' ​​'
+              tokenId: 21297
+            - logProbability: -18.94063
+              token: ' N'
+              tokenId: 646
+            - logProbability: -19.028633
+              token: ' an'
+              tokenId: 614
+          - candidates:
+            - logProbability: -2.3844768e-07
+              token: '2'
+              tokenId: 236778
+            - logProbability: -16.029083
+              token: '3'
+              tokenId: 236800
+            - logProbability: -16.497353
+              token: '4'
+              tokenId: 236812
+            - logProbability: -18.473116
+              token: '1'
+              tokenId: 236770
+            - logProbability: -18.963243
+              token: |2+
+
+              tokenId: 107
+          - candidates:
+            - logProbability: -0.018705286
+              token: ' ='
+              tokenId: 578
+            - logProbability: -4.2170067
+              token: ' equals'
+              tokenId: 14339
+            - logProbability: -5.669649
+              token: ' is'
+              tokenId: 563
+            - logProbability: -8.487247
+              token: ' equal'
+              tokenId: 4745
+            - logProbability: -10.404134
+              token: ' равно'
+              tokenId: 59213
+          - candidates:
+            - logProbability: -0.024863577
+              token: ' '
+              tokenId: 236743
+            - logProbability: -3.70766
+              token: ' **'
+              tokenId: 5213
+            - logProbability: -14.454006
+              token: '**'
+              tokenId: 1018
+            - logProbability: -14.490942
+              token: ' ‫'
+              tokenId: 67184
+            - logProbability: -14.820812
+              token: ' chemical'
+              tokenId: 7395
+          - candidates:
+            - logProbability: -4.649037e-06
+              token: '4'
+              tokenId: 236812
+            - logProbability: -13.0294285
+              token: '**'
+              tokenId: 1018
+            - logProbability: -13.835171
+              token: |2+
+
+              tokenId: 107
+            - logProbability: -17.38563
+              token: けます
+              tokenId: 141784
+            - logProbability: -17.863365
+              token: ' **'
+              tokenId: 5213
+      createTime: '2026-02-15T07:50:37.854117Z'
+      modelVersion: gemini-2.5-flash
+      responseId: TcySaeWQMIT-mLAPyZqPoAU
+      usageMetadata:
+        candidatesTokenCount: 7
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        promptTokenCount: 7
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        thoughtsTokenCount: 73
+        totalTokenCount: 87
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1
+...

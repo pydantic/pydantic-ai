@@ -1,121 +1,82 @@
 interactions:
 - request:
-    body: null
     headers:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-    method: GET
-    uri: https://huggingface.co/api/models/Qwen/Qwen2.5-72B-Instruct?expand=inferenceProviderMapping
-  response:
-    headers:
-      access-control-allow-origin:
-      - https://huggingface.co
-      access-control-expose-headers:
-      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '703'
+      - '138'
       content-type:
-      - application/json; charset=utf-8
-      cross-origin-opener-policy:
-      - same-origin
-      etag:
-      - W/"2bf-bkSLwumMG89/DZCsDWwBvtIEsEs"
-      referrer-policy:
-      - strict-origin-when-cross-origin
-      vary:
-      - Origin
-    parsed_body:
-      _id: 66e81cefd1b1391042d0e47e
-      id: Qwen/Qwen2.5-72B-Instruct
-      inferenceProviderMapping:
-        featherless-ai:
-          providerId: Qwen/Qwen2.5-72B-Instruct
-          status: live
-          task: conversational
-        fireworks-ai:
-          providerId: accounts/fireworks/models/qwen2p5-72b-instruct
-          status: live
-          task: conversational
-        hyperbolic:
-          providerId: Qwen/Qwen2.5-72B-Instruct
-          status: error
-          task: conversational
-        nebius:
-          providerId: Qwen/Qwen2.5-72B-Instruct-fast
-          status: live
-          task: conversational
-        novita:
-          providerId: qwen/qwen-2.5-72b-instruct
-          status: error
-          task: conversational
-        together:
-          providerId: Qwen/Qwen2.5-72B-Instruct-Turbo
-          status: live
-          task: conversational
-    status:
-      code: 200
-      message: OK
-- request:
-    body: null
-    headers: {}
+      - application/json
+      host:
+      - router.huggingface.co
     method: POST
-    uri: https://router.huggingface.co/nebius/v1/chat/completions
+    parsed_body:
+      messages:
+      - content: Hello
+        name: null
+        role: user
+        tool_calls: null
+      model: deepseek-ai/DeepSeek-R1
+      stream: false
+      tools: []
+    uri: https://router.huggingface.co/together/v1/chat/completions
   response:
     headers:
-      access-control-allow-credentials:
-      - 'true'
       access-control-allow-origin:
       - '*'
       access-control-expose-headers:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
       connection:
       - keep-alive
-      content-length:
-      - '712'
       content-type:
-      - application/json
+      - application/json; charset=utf-8
       cross-origin-opener-policy:
       - same-origin
+      etag:
+      - W/"676-3i++T2qolV0vkBqQTC8yQUklmQA"
       referrer-policy:
       - strict-origin-when-cross-origin
+      retry-after:
+      - '30'
       strict-transport-security:
-      - max-age=31536000; includeSubDomains
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
       vary:
-      - Origin
+      - Accept-Encoding
     parsed_body:
       choices:
       - finish_reason: stop
         index: 0
         logprobs: null
         message:
-          audio: null
-          content: Hello! It's great to meet you. How can I assist you today? Whether you have any questions, need some advice,
-            or just want to chat, feel free to let me know!
-          function_call: null
-          reasoning_content: null
-          refusal: null
+          content: "<think>\nOkay, the user just said \"Hello\". Hmm, such a simple greeting but it's the start of every conversation.
+            \n\nFirst thought: this could be anyone - a first-time user testing the waters, or someone who's used AI assistants
+            before. The tone feels neutral, maybe even cautious. No emojis or exclamation marks, so probably not overly excited.
+            \n\nI should keep my response warm but professional. Since they didn't specify anything, I'll leave multiple options
+            open - casual chat, practical help, or deeper topics. The smiley in my reply makes it friendly without being pushy.
+            \n\nNoting that they didn't use a name - either they don't know they can set one, or prefer anonymity. I'll avoid
+            assuming familiarity. The \"how can I help\" phrasing puts the ball in their court gently. \n\n...Wait, is this
+            one of those test messages to check response time? If so, the simplicity makes sense. Either way, best to treat
+            it as genuine.\n</think>\nHello! \U0001F60A  \nHow can I help you today? Whether you have a question, need advice,
+            want to learn something new, or just feel like chatting--I'm here for it!  \n\nWhat's on your mind? \U0001F4AC"
           role: assistant
           tool_calls: []
-        stop_reason: null
-      created: 1751982062
-      id: chatcmpl-f366f315c05040fd9c4a505b516bce4b
-      model: Qwen/Qwen2.5-72B-Instruct-fast
+        seed: 10583536942961263000
+      created: 1769546587
+      id: oV1moV9-zqrih-9c4b149d4b66d67b
+      model: deepseek-ai/DeepSeek-R1
       object: chat.completion
-      prompt_logprobs: null
-      service_tier: null
-      system_fingerprint: null
+      prompt: []
       usage:
-        completion_tokens: 40
-        completion_tokens_details: null
-        prompt_tokens: 30
-        prompt_tokens_details: null
-        total_tokens: 70
+        cached_tokens: 0
+        completion_tokens: 258
+        prompt_tokens: 4
+        total_tokens: 262
     status:
       code: 200
       message: OK

@@ -1,11 +1,12 @@
 import os
 
 import pytest
-from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
+from pydantic_ai import BinaryContent, DocumentUrl
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -13,10 +14,11 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncAzureOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.azure import AzureProvider
@@ -62,6 +64,20 @@ def test_azure_provider_with_azure_openai_client():
     )
     provider = AzureProvider(openai_client=client)
     assert isinstance(provider.client, AsyncAzureOpenAI)
+
+
+def test_azure_provider_with_http_client():
+    import httpx
+
+    http_client = httpx.AsyncClient()
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='1234567890',
+        api_version='2024-12-01-preview',
+        http_client=http_client,
+    )
+    assert isinstance(provider.client, AsyncAzureOpenAI)
+    assert provider._own_http_client is None  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_azure_provider_call(allow_model_requests: None):
@@ -139,3 +155,82 @@ def test_azure_provider_model_profile(mocker: MockerFixture):
     openai_model_profile_mock.assert_called_with('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+
+async def test_azure_document_input_not_supported(allow_model_requests: None):
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+    )
+    model = OpenAIChatModel(model_name='gpt-4o', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(
+        UserError,
+        match="Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
+    ):
+        await agent.run(
+            [
+                'Summarize this document',
+                BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf'),
+            ]
+        )
+
+
+async def test_azure_document_url_input_not_supported(allow_model_requests: None):
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+    )
+    model = OpenAIChatModel(model_name='gpt-4o', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(
+        UserError,
+        match="Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
+    ):
+        await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
+
+
+def test_azure_provider_foundry_serverless_endpoint():
+    provider = AzureProvider(
+        azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+        api_key='test-key-123',
+    )
+    assert provider.name == 'azure'
+    # Serverless model endpoints reject the `api-version` query parameter, so we
+    # must use plain AsyncOpenAI rather than AsyncAzureOpenAI.
+    assert type(provider.client) is AsyncOpenAI
+    assert provider.base_url == 'https://gpt-oss-120b.eastus2.models.ai.azure.com/v1/'
+
+
+def test_azure_provider_v1_endpoint_rejects_api_version():
+    with pytest.raises(UserError, match='`api_version` must not be set'):
+        AzureProvider(
+            azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+            api_version='2024-12-01-preview',
+            api_key='test-key-123',
+        )
+
+
+def test_azure_provider_openai_v1_ga_endpoint():
+    # https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/openai/v1/',
+        api_key='test-key-123',
+    )
+    assert type(provider.client) is AsyncOpenAI
+    assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
+
+
+def test_azure_provider_foundry_serverless_with_openai_model():
+    model = OpenAIChatModel(
+        model_name='gpt-oss-120b',
+        provider=AzureProvider(
+            azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+            api_key='test-key-123',
+        ),
+    )
+    assert type(model.client) is AsyncOpenAI

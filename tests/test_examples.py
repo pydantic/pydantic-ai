@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 import pytest
@@ -23,12 +23,14 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     AbstractToolset,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -52,6 +54,7 @@ with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
     import pydantic_ai_examples  # pyright: ignore[reportUnusedImport] # noqa: F401
 
+    from pydantic_evals.online import OnlineEvalConfig
     from pydantic_evals.reporting import EvaluationReport
 
 
@@ -81,6 +84,8 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     os.chdir(root_dir)
 
     for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
+        if '.agents' in ex.path.parts:
+            continue
         if ex.path.name != '_utils.py':
             try:
                 path = ex.path.relative_to(root_dir)
@@ -112,9 +117,26 @@ def tmp_path_cwd(tmp_path: Path):
         sys.path.remove(str(tmp_path))
 
 
+def _check_python_version(min_version: str | None, max_version: str | None) -> None:
+    if min_version:
+        min_info = tuple(int(v) for v in min_version.split('.'))
+        if sys.version_info < min_info:
+            pytest.skip(f'Python version {min_version} required')  # pragma: lax no cover
+    if max_version:
+        max_info = tuple(int(v) for v in max_version.split('.'))
+        if sys.version_info[:2] > max_info:
+            pytest.skip(f'Python version <= {max_version} required')  # pragma: lax no cover
+
+
 @pytest.mark.xdist_group(name='doc_tests')
 @pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
-    'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
+    'ignore:`BuiltinToolCallEvent` is deprecated',
+    'ignore:`BuiltinToolResultEvent` is deprecated',
+    # Docs intentionally keep the bare `'openai:'` prefix to surface the v2 default flip to readers.
+    'ignore:.*will resolve to the OpenAI Responses API.*:pydantic_ai._warnings.PydanticAIDeprecationWarning',
+    # Legacy MCP class examples in `pydantic_ai.mcp` docstrings (kept until v2-cut).
+    r'ignore:`MCPServer\w+` is deprecated:DeprecationWarning',
+    'ignore:`FastMCPToolset` is deprecated:DeprecationWarning',
 )
 @pytest.mark.parametrize('example', find_filter_examples())
 def test_docs_examples(
@@ -150,10 +172,17 @@ def test_docs_examples(
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
+    # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
+    mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
+
     mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
     mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
     mocker.patch('pydantic_ai.toolsets.fastmcp.FastMCPToolset', return_value=MockMCPServer())
     mocker.patch('mcp.server.fastmcp.FastMCP')
+    try:
+        mocker.patch('sentence_transformers.SentenceTransformer')
+    except ModuleNotFoundError:
+        pass
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -186,23 +215,27 @@ def test_docs_examples(
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'testing')
+    # Doc examples use placeholder Gateway API keys (`pylf_v...`) that don't encode a region;
+    # set an explicit base URL so they don't hit region inference.
+    env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    env.set('TAVILY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
     opt_lint = prefix_settings.get('lint', '')
     noqa = prefix_settings.get('noqa', '')
     python_version = prefix_settings.get('py')
+    max_python_version = prefix_settings.get('max_py')
     dunder_name = prefix_settings.get('dunder_name', '__main__')
     requires = prefix_settings.get('requires')
+
+    _check_python_version(python_version, max_python_version)
 
     ruff_target_version: str = 'py310'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
-        if sys.version_info < python_version_info:
-            pytest.skip(f'Python version {python_version} required')  # pragma: lax no cover
-
         ruff_target_version = f'py{python_version_info[0]}{python_version_info[1]}'
 
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
@@ -269,6 +302,7 @@ def print_callback(s: str) -> str:
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
+    s = re.sub(r"conversation_id='.+?'", "conversation_id='...'", s)
     return s
 
 
@@ -315,8 +349,7 @@ class MockMCPServer(AbstractToolset[Any]):
     def id(self) -> str | None:
         return None  # pragma: no cover
 
-    @property
-    def instructions(self) -> str | None:
+    async def get_instructions(self, ctx: RunContext[Any]) -> str | None:
         return None
 
     async def __aenter__(self) -> MockMCPServer:
@@ -335,6 +368,13 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    'hello': 'Hello! How can I help you today?',
+    'What time is it?': 'The current time is 3:45 PM.',
+    "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
+    'Say hi!': "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
+    'first run': 'Response to first run.',
+    'second run': 'Response to second run.',
+    'Summarize https://ai.pydantic.dev': 'Pydantic AI is a Python agent framework for building production-grade LLM applications.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
@@ -350,6 +390,10 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='get_weather_forecast', args={'location': 'Paris'}, tool_call_id='0001'
     ),
     'Tell me a joke.': 'Did you hear about the toothpaste scandal? They called it Colgate.',
+    'Summarize the latest deploy report': 'Initial deploy summary: 12 services updated, all green.',
+    'A new error was just reported — include it in the summary.': (
+        'Updated summary: 12 services updated, all green; one new error in the auth service was just reported.'
+    ),
     'Tell me a different joke.': 'No.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
@@ -558,6 +602,25 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'Find recent papers about transformer architectures': (
+        'Here are some recent papers about transformer architectures from arxiv.org:\n'
+        '\n'
+        '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
+        '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'
+    ),
+    'What was the mass of the largest meteorite found this year?': (
+        'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
+    ),
+    'Write a long essay about Python': (
+        'Python is a versatile, high-level programming language known for its readability and simplicity. '
+        'Created by Guido van Rossum and first released in 1991, Python has grown to become one of the most '
+        'popular programming languages in the world, used in web development, data science, artificial intelligence, '
+        'automation, and countless other domains.'
+    ),
+    'Tell me about Python': 'Python is a versatile programming language.',
+    'Continue from where you left off': 'Python is a versatile programming language.',
+    'What are people saying about AI on X today?': "There's a lot of excitement about new AI models being released...",
+    'What have AI companies been posting about?': 'OpenAI announced their latest model updates, while Anthropic shared research on AI safety...',
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -572,14 +635,49 @@ async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
-    if isinstance(m, UserPromptPart):
-        if isinstance(m.content, list) and m.content[0] == 'This is file d9a13f:':
-            return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
-        elif isinstance(m.content, list) and m.content[0] == 'This is file c6720d:':
-            return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
-
+    # Handle multimodal tool returns (content directly in ToolReturnPart)
+    if (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'get_company_logo'
+        and any(isinstance(f, ImageUrl) for f in m.files)
+    ):
+        return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
+    elif (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'get_document'
+        and any(isinstance(f, DocumentUrl) for f in m.files)
+    ):
+        return ModelResponse(parts=[TextPart('The document contains just the text "Dummy PDF file."')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name in ('_add', 'add'):
+        return ModelResponse(parts=[TextPart(f'The answer is {m.content}')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'mark_task_done':
+        return ModelResponse(parts=[])
+    elif isinstance(m, UserPromptPart):
+        if isinstance(m.content, list) and m.content[0] == 'Summarize this document':
+            return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
         assert isinstance(m.content, str)
-        if m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
+        if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
+            t.name == 'mark_task_done' for t in info.function_tools
+        ):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='mark_task_done', args={'task_id': 1}, tool_call_id='pyd_ai_tool_call_id')
+                ]
+            )
+        elif m.content == 'What is 2 + 3?' and any(t.name in ('_add', 'add') for t in info.function_tools):
+            add_name = next(t.name for t in info.function_tools if t.name in ('_add', 'add'))
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=add_name, args={'a': 2, 'b': 3}, tool_call_id='pyd_ai_tool_call_id')]
+            )
+        elif m.content == 'What is the latest news in AI?':
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Here are the latest developments in AI: AI continues to advance rapidly with new breakthroughs in large language models and multimodal systems.'
+                    )
+                ]
+            )
+        elif m.content == 'Tell me a joke.' and any(t.name == 'joke_factory' for t in info.function_tools):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='joke_factory', args={'count': 5}, tool_call_id='pyd_ai_tool_call_id')]
             )
@@ -617,7 +715,7 @@ async def model_logic(  # noqa: C901
         elif m.content.startswith('Question '):
             # Handle concurrency example prompts like "Question 0", "Question 1", etc.
             return ModelResponse(parts=[TextPart(f'Answer to {m.content}')])
-        elif m.content == 'What time is it?':
+        elif m.content == 'What time is it?' and any(t.name == 'get_current_time' for t in info.function_tools):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='get_current_time', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
@@ -735,25 +833,25 @@ async def model_logic(  # noqa: C901
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='code_execution',
-                        args={
-                            'code': 'import math\n\n# Calculate factorial of 15\nresult = math.factorial(15)\nprint(f"15! = {result}")\n\n# Let\'s also show it in a more readable format with commas\nprint(f"15! = {result:,}")'
-                        },
+                        args={'command': 'python3 -c "import math; print(math.factorial(15))"'},
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='code_execution',
                         content={
                             'content': [],
                             'return_code': 0,
                             'stderr': '',
-                            'stdout': '15! = 1307674368000\n15! = 1,307,674,368,000',
-                            'type': 'code_execution_result',
+                            'stdout': '1307674368000\n',
+                            'type': 'bash_code_execution_result',
                         },
                         tool_call_id='srvtoolu_017qRH1J3XrhnpjP2XtzPCmJ',
                         provider_name='anthropic',
+                        provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
                     TextPart(content='The factorial of 15 is **1,307,674,368,000**.'),
                 ]
@@ -768,8 +866,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id')]
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name':
-        m.content = cast(str, m.content)
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_player_name' and isinstance(m.content, str):
         if 'Anne' in m.content:
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
@@ -829,8 +926,8 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[TextPart('The current time is 10:45 PM on April 17, 2025.')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_user':
         return ModelResponse(parts=[TextPart("The user's name is John.")])
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast':
-        return ModelResponse(parts=[TextPart(cast(str, m.content))])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_weather_forecast' and isinstance(m.content, str):
+        return ModelResponse(parts=[TextPart(m.content)])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_company_logo':
         return ModelResponse(parts=[TextPart('The company name in the logo is "Pydantic."')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_document':
@@ -930,7 +1027,12 @@ async def model_logic(  # noqa: C901
                 )
             ],
         )
-    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file' and 'README.md.bak' in cast(str, m.content):
+    elif (
+        isinstance(m, ToolReturnPart)
+        and m.tool_name == 'update_file'
+        and isinstance(m.content, str)
+        and 'README.md.bak' in m.content
+    ):
         return ModelResponse(
             parts=[
                 TextPart(
@@ -1025,7 +1127,9 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'embed-v4.0': 1024,
         'voyage-3.5': 1024,
         'all-MiniLM-L6-v2': 384,
+        'lightonai/DenseOn': 768,
         'gemini-embedding-001': 3072,
+        'gemini-embedding-2-preview': 3072,
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)

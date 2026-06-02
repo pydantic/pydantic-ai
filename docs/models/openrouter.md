@@ -73,3 +73,42 @@ model = OpenRouterModel('openai/gpt-5.2')
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+### Eager Input Streaming
+
+For Anthropic models via OpenRouter, you can enable eager input streaming to reduce latency for tool calls with large inputs.
+Set [`anthropic_eager_input_streaming`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_eager_input_streaming] in [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+from pydantic_ai.models.openrouter import OpenRouterModel
+
+model = OpenRouterModel('anthropic/claude-sonnet-4-5')
+settings = AnthropicModelSettings(anthropic_eager_input_streaming=True)
+agent = Agent(model, model_settings=settings)
+...
+```
+
+## Web Search
+
+OpenRouter supports web search via its [plugins](https://openrouter.ai/docs/guides/features/plugins/web-search). You can enable it using the [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
+
+### Web Search Parameters
+
+You can customize the web search behavior using the `search_context_size` parameter on [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.native_tools import WebSearchTool
+
+tool = WebSearchTool(search_context_size='high')
+model = OpenRouterModel('openai/gpt-4.1')
+agent = Agent(
+    model,
+    capabilities=[NativeTool(tool)],
+)
+result = agent.run_sync('What is the latest news in AI?')
+```

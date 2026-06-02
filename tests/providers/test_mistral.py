@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import UserError
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
-    from mistralai import Mistral
+    from mistralai.client import Mistral
 
     from pydantic_ai.providers.mistral import MistralProvider
 
@@ -32,7 +32,7 @@ def test_mistral_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
-            'to use the Mistral provider.'
+            ' to use the Mistral provider.'
         ),
     ):
         MistralProvider()
@@ -56,3 +56,13 @@ def test_mistral_provider_with_base_url() -> None:
         mistral_client=Mistral(api_key='test-api-key', server_url='https://custom.mistral.com/v1'),
     )
     assert provider.base_url == 'https://custom.mistral.com/v1'
+
+
+def test_mistral_provider_model_profile_sets_inline_flag():
+    profile = MistralProvider.model_profile('mistral-large-latest')
+    assert profile.supports_inline_system_prompts is True
+    assert profile.supports_thinking is False
+
+    magistral_profile = MistralProvider.model_profile('magistral-medium-2509')
+    assert magistral_profile.supports_inline_system_prompts is True
+    assert magistral_profile.supports_thinking is True

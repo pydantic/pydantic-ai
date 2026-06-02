@@ -2,10 +2,19 @@ from __future__ import annotations as _annotations
 
 from typing import Any
 
+from typing_extensions import deprecated
+
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 
 
+@deprecated(
+    '`OutlinesProvider` is deprecated and will be removed in v2. '
+    'If you would like to keep using Outlines with Pydantic AI, please file an issue at '
+    'https://github.com/dottxt-ai/outlines/issues.',
+    category=PydanticAIDeprecationWarning,
+)
 class OutlinesProvider(Provider[Any]):
     """Provider for Outlines API."""
 
@@ -30,7 +39,8 @@ class OutlinesProvider(Provider[Any]):
             + 'with a set of different underlying models.'
         )
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
         return ModelProfile(
             supports_tools=False,
@@ -38,4 +48,5 @@ class OutlinesProvider(Provider[Any]):
             supports_json_object_output=True,
             default_structured_output_mode='native',
             native_output_requires_schema_in_instructions=True,
+            supports_inline_system_prompts=True,
         )

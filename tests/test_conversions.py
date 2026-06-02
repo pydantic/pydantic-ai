@@ -9,13 +9,13 @@ from inline_snapshot import snapshot
 from pydantic_ai._conversions import model_messages_to_openai_format, otel_messages_to_model_messages
 from pydantic_ai.messages import (
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FilePart,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -165,9 +165,9 @@ class TestChatMessagesToModelMessages:
         result = otel_messages_to_model_messages(otel)
         assert isinstance(result[1], ModelResponse)
         parts = result[1].parts
-        assert isinstance(parts[0], BuiltinToolCallPart)
+        assert isinstance(parts[0], NativeToolCallPart)
         assert parts[0].tool_name == 'web_search'
-        assert isinstance(parts[1], BuiltinToolReturnPart)
+        assert isinstance(parts[1], NativeToolReturnPart)
         assert parts[1].content == 'Cats are great'
         assert isinstance(parts[2], TextPart)
 

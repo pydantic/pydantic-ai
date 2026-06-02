@@ -1,0 +1,206 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '409'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
+        role: user
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2673'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '1838'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1770662580
+      created_at: 1770662578
+      error: null
+      frequency_penalty: 0.0
+      id: resp_086d88ab1ff8c0ba00698a2ab29da881a09e2f83dc50c70102
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpiiq0ovDYUHe8sJ6G0m50YbjnKNCQYPJXC2hnXO-SMlOPbrCoWsziPcBmmrIuD0gMWy3qIPIFgQpr6P-ZjqO1NX66wixM_V3wEEkDLjwO_krG3k8LEXg2NdE4eVW4eBY0Zq9ZNgzJ7FWVmdXZoyqiPyjW4x07CT2JqudaRSCUIfV2aSDnpwa_0Wrn_OT9dlrGWEDT5xu9EqjEkpdZK3vztakcOzFiKEBYaZx-1bwyOUE2n5f6YuFcQ5IMKh7rkMb4-V2x76kuo9DtxvV1UXDzsgbue4aH2Qu3P2_wyzd1GB0jeiNEtjgkybR1TKZAsGRrXCJUYF8WchC1vsGm2MA3yQ8hw8kCw3vpchyExAU4JMfvEBpSE9bokliYr7eOP5TNRUhP8CLF-y1Q461IuI0G2xuXJ7k1e6OOCBw8x0yOikpbOEf-1oRk8Uu3mxuXXA4kUFuo-bLMNhW9Qqh9YIToUs0Z6p_wUTt_4ANjbVRqsNhVlWjdx9qGawgoFVV38X0rZ-JijDx5fDSAumkw6j1i3Gx4Rwci4Mcp1HBaOZySC6dYJqnOF4lAyvHmo7q8bZKhJiI2nRpsUKVytpJrs9UTrPXpccyfMN_PdDN6lAFQqmBBPnakGexpAozHR7jsXK5cT7AH6KQya1OHLJuFH57WJpHHFQuO8OLaCEJIdoGcvsxfbQZKbEDSzrtafIzNvR8Dr3TJEmhlfz6dDzCB5U89XV9kjJ5UGkSjrllR0SDU090j3CZsmTLyrsX-CESh3Vi5SygseBKu_VZanGXNxCISHghiHBxmJKBBYFVifnea-mIc7sDINP2lyCHuLsEY7FcXsb75xv2BzsVgzPdmauy2aF6yEsW0ScN0fnx-Bryg735psKgQRezEAfod1mbdYb5o1-9I26iajcQOJbeZfmV2XW0-Xz233koatQJbtj13qtdPqzL8BWpoNOzAteXbsMf6jIwxXJr8Z4UGtNbv2P-AFJ7ZNnkWfMm3pv1CfmjSff4jqOTmZC7uQTK3xa0Q__BguXZGbgGXeuNkRoazchVhKKPL1kbF_8BBgH-nK922NSfIPC-lYWklLsixtdmMFQgp-tzap89tp7_L14kfJiWzBjYr7VbPjSQ5R5ZDAPw16a1JV_g=
+        id: rs_086d88ab1ff8c0ba00698a2ab2ea3881a084a296bdb50b9625
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_gFG8Zu1R4MRxNk3cCbTbucuT
+        id: fc_086d88ab1ff8c0ba00698a2ab4370481a0adcfea16ae8c3c2c
+        name: get_file
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 47
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 66
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 113
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '2030'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=4Vb.OMX8Gs2gg6SQfOcC2i_GpPlLP6TBSkWkQYcqCT4-1770662578.553957-1.0.1.1-703E_Bv7kW3m4jh8JWxfEq5FEYdtCQxJUm9pM7OD1LLSUBAmz43X7g1O7uL0DIosOke6o_5PCDpESnG_j.1JzLCocQAolvgzhbm5qvRcYMMf0p0l35ReoRmD1z.Ru1Rx
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
+        role: user
+      - encrypted_content: gAAAAABpiiq0ovDYUHe8sJ6G0m50YbjnKNCQYPJXC2hnXO-SMlOPbrCoWsziPcBmmrIuD0gMWy3qIPIFgQpr6P-ZjqO1NX66wixM_V3wEEkDLjwO_krG3k8LEXg2NdE4eVW4eBY0Zq9ZNgzJ7FWVmdXZoyqiPyjW4x07CT2JqudaRSCUIfV2aSDnpwa_0Wrn_OT9dlrGWEDT5xu9EqjEkpdZK3vztakcOzFiKEBYaZx-1bwyOUE2n5f6YuFcQ5IMKh7rkMb4-V2x76kuo9DtxvV1UXDzsgbue4aH2Qu3P2_wyzd1GB0jeiNEtjgkybR1TKZAsGRrXCJUYF8WchC1vsGm2MA3yQ8hw8kCw3vpchyExAU4JMfvEBpSE9bokliYr7eOP5TNRUhP8CLF-y1Q461IuI0G2xuXJ7k1e6OOCBw8x0yOikpbOEf-1oRk8Uu3mxuXXA4kUFuo-bLMNhW9Qqh9YIToUs0Z6p_wUTt_4ANjbVRqsNhVlWjdx9qGawgoFVV38X0rZ-JijDx5fDSAumkw6j1i3Gx4Rwci4Mcp1HBaOZySC6dYJqnOF4lAyvHmo7q8bZKhJiI2nRpsUKVytpJrs9UTrPXpccyfMN_PdDN6lAFQqmBBPnakGexpAozHR7jsXK5cT7AH6KQya1OHLJuFH57WJpHHFQuO8OLaCEJIdoGcvsxfbQZKbEDSzrtafIzNvR8Dr3TJEmhlfz6dDzCB5U89XV9kjJ5UGkSjrllR0SDU090j3CZsmTLyrsX-CESh3Vi5SygseBKu_VZanGXNxCISHghiHBxmJKBBYFVifnea-mIc7sDINP2lyCHuLsEY7FcXsb75xv2BzsVgzPdmauy2aF6yEsW0ScN0fnx-Bryg735psKgQRezEAfod1mbdYb5o1-9I26iajcQOJbeZfmV2XW0-Xz233koatQJbtj13qtdPqzL8BWpoNOzAteXbsMf6jIwxXJr8Z4UGtNbv2P-AFJ7ZNnkWfMm3pv1CfmjSff4jqOTmZC7uQTK3xa0Q__BguXZGbgGXeuNkRoazchVhKKPL1kbF_8BBgH-nK922NSfIPC-lYWklLsixtdmMFQgp-tzap89tp7_L14kfJiWzBjYr7VbPjSQ5R5ZDAPw16a1JV_g=
+        id: rs_086d88ab1ff8c0ba00698a2ab2ea3881a084a296bdb50b9625
+        summary: []
+        type: reasoning
+      - arguments: '{}'
+        call_id: call_gFG8Zu1R4MRxNk3cCbTbucuT
+        id: fc_086d88ab1ff8c0ba00698a2ab4370481a0adcfea16ae8c3c2c
+        name: get_file
+        type: function_call
+      - call_id: call_gFG8Zu1R4MRxNk3cCbTbucuT
+        output:
+        - file_url: https://download.samplelib.com/mp3/sample-3s.mp3
+          type: input_file
+        type: function_call_output
+      model: gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '177'
+      content-type:
+      - application/json
+      openai-organization:
+      - user-grnwlxd1653lxdzp921aoihz
+      openai-processing-ms:
+      - '560'
+      openai-project:
+      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: unsupported_file
+        message: The file type you uploaded is not supported. Please try again with a pdf
+        param: input
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+version: 1

@@ -90,7 +90,7 @@ class VoyageAIEmbeddingModel(EmbeddingModel):
     retrieval, with specialized models for code, finance, and legal domains.
 
     Example:
-    ```python
+    ```python {max_py="3.13"}
     from pydantic_ai.embeddings.voyageai import VoyageAIEmbeddingModel
 
     model = VoyageAIEmbeddingModel('voyage-3.5')

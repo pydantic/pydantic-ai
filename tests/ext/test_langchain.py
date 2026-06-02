@@ -2,11 +2,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import Agent
 from pydantic_ai.ext.langchain import LangChainToolset, tool_from_langchain
+
+from .._inline_snapshot import snapshot
 
 
 @dataclass
@@ -71,14 +72,14 @@ langchain_tool = SimulatedLangChainTool(
 def test_langchain_tool_conversion():
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
 
 
 def test_langchain_toolset():
     toolset = LangChainToolset([langchain_tool])
-    agent = Agent('test', toolsets=[toolset], retries=7)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
 
@@ -104,7 +105,7 @@ def test_langchain_tool_no_additional_properties():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
 
@@ -128,7 +129,7 @@ def test_langchain_tool_conversion_no_defaults():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': 'a', 'pattern': 'a'}\"}")
 
@@ -154,7 +155,7 @@ def test_langchain_tool_conversion_no_required():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=7)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': '*'}\"}")
 

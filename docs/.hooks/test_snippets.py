@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from inline_snapshot import snapshot
 from snippets import (
     REPO_ROOT,
     LineRange,
@@ -18,6 +17,8 @@ from snippets import (
     parse_file_sections,
     parse_snippet_directive,
 )
+
+from tests._inline_snapshot import snapshot
 
 
 @contextmanager

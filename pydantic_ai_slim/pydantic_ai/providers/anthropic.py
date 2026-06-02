@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import warnings
 from dataclasses import dataclass
 from typing import TypeAlias, overload
 
@@ -8,14 +9,21 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.providers import Provider
+from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 
 try:
-    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
+    from anthropic import (
+        AsyncAnthropic,
+        AsyncAnthropicBedrock,
+        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicFoundry,
+        AsyncAnthropicVertex,
+    )
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `anthropic` package to use the Anthropic provider, '
@@ -23,7 +31,9 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-AsyncAnthropicClient: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
+AsyncAnthropicClient: TypeAlias = (
+    AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicFoundry | AsyncAnthropicVertex
+)
 
 
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
@@ -41,9 +51,18 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
     def client(self) -> AsyncAnthropicClient:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
+        # When the underlying client is `AsyncAnthropicBedrock`/`AsyncAnthropicBedrockMantle`, the model
+        # name carries a Bedrock `anthropic.` provider segment (and, on the legacy InvokeModel API, a
+        # `-v<n>(:<m>)?` version suffix and optional cross-region geo prefix), e.g.
+        # `us.anthropic.claude-haiku-4-5-20251001-v1:0`. Strip it so `anthropic_model_profile`'s
+        # `claude-...` prefix checks match; the full model name still goes on the wire via `AnthropicModel._model_name`.
+        bedrock_provider, base_model_name = split_bedrock_model_id(model_name)
+        if bedrock_provider == 'anthropic':
+            model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        return ModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
+        return AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
@@ -69,7 +88,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             base_url: The base URL to use for the Anthropic API.
             anthropic_client: An existing Anthropic client to use. Accepts
                 [`AsyncAnthropic`](https://github.com/anthropics/anthropic-sdk-python),
-                [`AsyncAnthropicBedrock`](https://docs.anthropic.com/en/api/claude-on-amazon-bedrock),
+                [`AsyncAnthropicBedrock`](https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy),
+                [`AsyncAnthropicBedrockMantle`](https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock),
                 [`AsyncAnthropicFoundry`](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry), or
                 [`AsyncAnthropicVertex`](https://docs.anthropic.com/en/api/claude-on-vertex-ai).
                 If provided, the `api_key` and `http_client` arguments will be ignored.
@@ -84,13 +104,18 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             if not api_key:
                 raise UserError(
                     'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider(api_key=...)`'
-                    'to use the Anthropic provider.'
+                    ' to use the Anthropic provider.'
                 )
             if http_client is not None:
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
             else:
-                http_client = cached_async_http_client(provider='anthropic')
+                http_client = create_async_http_client()
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_http_client
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass(init=False)
@@ -107,7 +132,7 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
         ```python
         from pydantic_ai import Agent
 
-        agent = Agent('anthropic:claude-sonnet-4-5')
+        agent = Agent('anthropic:claude-sonnet-4-6')
 
         @agent.tool_plain  # -> defaults to strict=False
         def my_tool(x: str) -> dict[str, int]:
@@ -138,6 +163,23 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
             return transform_schema(schema)
         else:
             return schema
+
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        schema = super()._handle_object(schema)
+        if self.strict is True:
+            additional_properties = schema.get('additionalProperties')
+            if isinstance(additional_properties, dict) or additional_properties is True:
+                warnings.warn(
+                    '`dict` fields are not supported by Anthropic in strict mode '
+                    '(including `NativeOutput`, which is automatically selected when thinking is enabled). '
+                    "Anthropic's schema transformation sets `additionalProperties` to `false`, "
+                    'which forces the model to return `{}`. '
+                    'Use a `list` of `tuple[str, str]`, or a `TypedDict` or `dataclass` '
+                    'with explicit `key` and `value` fields, '
+                    'or set `output_type=PromptedOutput(...)`.',
+                    UserWarning,
+                )
+        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)

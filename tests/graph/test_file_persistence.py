@@ -6,18 +6,13 @@ from pathlib import Path
 from typing import Union
 
 import pytest
-from inline_snapshot import snapshot
 
-from pydantic_graph import (
-    BaseNode,
-    End,
-    EndSnapshot,
-    Graph,
-    GraphRunContext,
-    NodeSnapshot,
-)
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.graph import Graph
+from pydantic_graph.persistence import EndSnapshot, NodeSnapshot
 from pydantic_graph.persistence.file import FileStatePersistence
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsFloat, IsNow
 
 pytestmark = pytest.mark.anyio

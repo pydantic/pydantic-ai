@@ -1,8 +1,9 @@
+import uuid
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
@@ -12,14 +13,21 @@ from pydantic_ai import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
     capture_run_messages,
+)
+from pydantic_ai.capabilities import (
+    HistoryProcessor,  # pyright: ignore[reportDeprecated]
+    ProcessHistory,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsStr
 
 pytestmark = [pytest.mark.anyio]
@@ -50,7 +58,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
     def no_op_history_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
         return messages
 
-    agent = Agent(function_model, history_processors=[no_op_history_processor])
+    agent = Agent(function_model, capabilities=[ProcessHistory(no_op_history_processor)])
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Previous question')]),
@@ -68,6 +76,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -80,6 +89,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -87,6 +97,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -102,7 +113,7 @@ async def test_history_processor_run_replaces_message_history(
         # Keep the last message (last question) and add a new system prompt
         return messages[-1:] + [ModelRequest(parts=[SystemPromptPart(content='Processed answer')])]
 
-    agent = Agent(function_model, history_processors=[process_previous_answers])
+    agent = Agent(function_model, capabilities=[ProcessHistory(process_previous_answers)])
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Question 1')]),
@@ -138,10 +149,13 @@ async def test_history_processor_run_replaces_message_history(
                 parts=[UserPromptPart(content='Question 3', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -149,10 +163,11 @@ async def test_history_processor_run_replaces_message_history(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()
 
 
 async def test_history_processor_streaming_replaces_message_history(
@@ -164,7 +179,7 @@ async def test_history_processor_streaming_replaces_message_history(
         # Keep the last message (last question) and add a new system prompt
         return messages[-1:] + [ModelRequest(parts=[SystemPromptPart(content='Processed answer')])]
 
-    agent = Agent(function_model, history_processors=[process_previous_answers])
+    agent = Agent(function_model, capabilities=[ProcessHistory(process_previous_answers)])
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Question 1')]),
@@ -202,10 +217,13 @@ async def test_history_processor_streaming_replaces_message_history(
                 parts=[UserPromptPart(content='Question 3', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
@@ -213,10 +231,11 @@ async def test_history_processor_streaming_replaces_message_history(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
-    assert result.new_messages() == result.all_messages()[-2:]
+    assert result.new_messages() == result.all_messages()
 
 
 async def test_history_processor_messages_sent_to_provider(
@@ -228,7 +247,7 @@ async def test_history_processor_messages_sent_to_provider(
         # Filter out ModelResponse messages
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
-    agent = Agent(function_model, history_processors=[capture_messages_processor])
+    agent = Agent(function_model, capabilities=[ProcessHistory(capture_messages_processor)])
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Previous question')]),
@@ -263,6 +282,7 @@ async def test_history_processor_messages_sent_to_provider(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -270,6 +290,7 @@ async def test_history_processor_messages_sent_to_provider(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -307,7 +328,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                 processed.append(msg)
         return processed
 
-    agent = Agent(function_model, history_processors=[first_processor, second_processor])
+    agent = Agent(function_model, capabilities=[ProcessHistory(first_processor), ProcessHistory(second_processor)])
 
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Question')]),
@@ -323,6 +344,8 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
             ModelRequest(
                 parts=[UserPromptPart(content='[SECOND] [FIRST] New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -349,6 +372,8 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -356,6 +381,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -368,7 +394,7 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
     async def async_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
-    agent = Agent(function_model, history_processors=[async_processor])
+    agent = Agent(function_model, capabilities=[ProcessHistory(async_processor)])
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Question 1')]),
@@ -414,6 +440,7 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -421,6 +448,7 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -438,13 +466,13 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
         ModelResponse(parts=[TextPart(content='Answer 1')]),
     ]
 
-    agent = Agent(function_model, history_processors=[async_processor])
+    agent = Agent(function_model, capabilities=[ProcessHistory(async_processor)])
     with capture_run_messages() as captured_messages:
         async with agent.iter('Question 2', message_history=message_history) as run:
             async for node in run:
                 if agent.is_model_request_node(node):
                     async with node.stream(run.ctx) as stream:
-                        async for _ in stream.stream_responses(debounce_by=None):
+                        async for _ in stream.stream_response(debounce_by=None):
                             ...
 
     result = run.result
@@ -486,6 +514,7 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
@@ -493,6 +522,7 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -519,7 +549,7 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                 processed.append(msg)  # pragma: no cover
         return processed
 
-    agent = Agent(function_model, history_processors=[context_processor], deps_type=str)
+    agent = Agent(function_model, capabilities=[ProcessHistory(context_processor)], deps_type=str)
     with capture_run_messages() as captured_messages:
         result = await agent.run('test', deps='PREFIX')
 
@@ -533,6 +563,8 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         ]
     )
@@ -547,6 +579,8 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -554,6 +588,7 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -575,7 +610,7 @@ async def test_history_processor_with_context_async(
         ModelResponse(parts=[TextPart(content='Answer 2')]),
     ]
 
-    agent = Agent(function_model, history_processors=[async_context_processor])
+    agent = Agent(function_model, capabilities=[ProcessHistory(async_context_processor)])
     with capture_run_messages() as captured_messages:
         result = await agent.run('Question 3', message_history=message_history)
 
@@ -590,6 +625,7 @@ async def test_history_processor_with_context_async(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         ]
     )
@@ -605,6 +641,7 @@ async def test_history_processor_with_context_async(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -612,6 +649,7 @@ async def test_history_processor_with_context_async(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -651,7 +689,11 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
     class Deps:
         prefix = 'TEST'
 
-    agent = Agent(function_model, history_processors=[simple_processor, context_processor], deps_type=Deps)
+    agent = Agent(
+        function_model,
+        capabilities=[ProcessHistory(simple_processor), ProcessHistory(context_processor)],
+        deps_type=Deps,
+    )
     with capture_run_messages() as captured_messages:
         result = await agent.run('Question 2', message_history=message_history, deps=Deps())
 
@@ -692,6 +734,8 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -699,6 +743,7 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -717,7 +762,7 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
             ModelRequest(parts=[UserPromptPart(content='Modified message')]),
         ]
 
-    agent = Agent(function_model, history_processors=[return_new_history])
+    agent = Agent(function_model, capabilities=[ProcessHistory(return_new_history)])
 
     with capture_run_messages() as captured_messages:
         result = await agent.run('foobar', message_history=history)
@@ -732,6 +777,8 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             )
         ]
     )
@@ -746,6 +793,8 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                     )
                 ],
                 timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -753,6 +802,7 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -763,7 +813,7 @@ async def test_history_processor_empty_history(function_model: FunctionModel, re
     def return_new_history(messages: list[ModelMessage]) -> list[ModelMessage]:
         return []
 
-    agent = Agent(function_model, history_processors=[return_new_history])
+    agent = Agent(function_model, capabilities=[ProcessHistory(return_new_history)])
 
     with pytest.raises(UserError, match='Processed history cannot be empty.'):
         await agent.run('foobar')
@@ -775,7 +825,7 @@ async def test_history_processor_history_ending_in_response(
     def return_new_history(messages: list[ModelMessage]) -> list[ModelMessage]:
         return [ModelResponse(parts=[TextPart(content='Provider response')])]
 
-    agent = Agent(function_model, history_processors=[return_new_history])
+    agent = Agent(function_model, capabilities=[ProcessHistory(return_new_history)])
 
     with pytest.raises(UserError, match='Processed history must end with a `ModelRequest`.'):
         await agent.run('foobar')
@@ -788,7 +838,7 @@ async def test_callable_class_history_processor_no_op(
         def __call__(self, messages: list[ModelMessage]) -> list[ModelMessage]:
             return messages
 
-    agent = Agent(function_model, history_processors=[NoOpHistoryProcessor()])
+    agent = Agent(function_model, capabilities=[ProcessHistory(NoOpHistoryProcessor())])
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Previous question')]),
@@ -806,6 +856,7 @@ async def test_callable_class_history_processor_no_op(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -818,6 +869,7 @@ async def test_callable_class_history_processor_no_op(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -825,6 +877,7 @@ async def test_callable_class_history_processor_no_op(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -838,7 +891,7 @@ async def test_callable_class_history_processor_with_ctx_no_op(
         def __call__(self, _: RunContext, messages: list[ModelMessage]) -> list[ModelMessage]:
             return messages
 
-    agent = Agent(function_model, history_processors=[NoOpHistoryProcessorWithCtx()])
+    agent = Agent(function_model, capabilities=[ProcessHistory(NoOpHistoryProcessorWithCtx())])
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Previous question')]),
@@ -856,6 +909,7 @@ async def test_callable_class_history_processor_with_ctx_no_op(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -868,6 +922,7 @@ async def test_callable_class_history_processor_with_ctx_no_op(
                 parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
@@ -875,7 +930,856 @@ async def test_callable_class_history_processor_with_ctx_no_op(
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
     assert result.new_messages() == result.all_messages()[-2:]
+
+
+async def test_new_messages_index_during_iter_with_pruning():
+    """
+    When a pruning history processor removes the initial user prompt during
+    a multi-step tool calling run, new_messages() should still return all
+    messages generated in this run.
+    """
+
+    def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[-2:] if len(messages) > 2 else messages
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
+            )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(model=FunctionModel(model_function, model_name='test'), capabilities=[ProcessHistory(keep_last_2)])
+
+    @agent.tool
+    async def my_tool(ctx: RunContext[None]) -> str:
+        return 'tool executed'
+
+    with capture_run_messages() as captured_messages:
+        async with agent.iter('start') as run:
+            async for _ in run:
+                pass
+
+    result = run.result
+    assert result is not None
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='tool executed',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=52, output_tokens=3),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()
+
+
+async def test_new_messages_index_during_iter_with_pruning_and_history():
+    """
+    When running with prior message_history and a pruning history processor
+    that progressively removes older messages during a multi-step tool calling
+    run, new_messages() should return only the messages from the current run,
+    excluding the pruned history.
+    """
+
+    def keep_last_2(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[-2:] if len(messages) > 2 else messages
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
+            )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(model=FunctionModel(model_function, model_name='test'), capabilities=[ProcessHistory(keep_last_2)])
+
+    @agent.tool
+    async def my_tool(ctx: RunContext[None]) -> str:
+        return 'tool executed'
+
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Old message 1')]),
+        ModelResponse(parts=[TextPart(content='Old response 1')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        async with agent.iter('start', message_history=history) as run:
+            async for _ in run:
+                pass
+
+    result = run.result
+    assert result is not None
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='tool executed',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=52, output_tokens=3),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()
+
+
+async def test_history_processor_reorder_old_new(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    """
+    When a history processor reorders old and new messages, the old history
+    message receives the current run_id, so new_messages() treats it as
+    part of the current run and includes it in the result.
+    """
+
+    def swap_last_two(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[:-2] + messages[-2:][::-1]
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(swap_last_two)])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Old question')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('New question', message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                    UserPromptPart(content='Old question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Old question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert result.new_messages() == result.all_messages()
+
+
+async def test_history_processor_injects_into_new_stream(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When a history processor injects a new message tagged with the current
+    run_id into the message list, new_messages() should include the injected
+    message alongside the other messages from this run.
+    """
+
+    def inject_middle(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+        return (
+            messages[:-1]
+            + [ModelRequest(parts=[UserPromptPart(content='Inserted')], run_id=ctx.run_id)]
+            + messages[-1:]
+        )
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(inject_middle)])
+
+    message_history = [ModelRequest(parts=[UserPromptPart(content='Old')])]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('New question', message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Old', timestamp=IsDatetime()),
+                    UserPromptPart(content='Inserted', timestamp=IsDatetime()),
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Old', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Inserted', timestamp=IsDatetime()),
+                ],
+                run_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    new_msgs = result.new_messages()
+    assert new_msgs == result.all_messages()[1:]
+
+
+async def test_history_processor_injects_without_run_id_before_current_run(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When a history processor injects a message without a run_id before the
+    current run, new_messages() should exclude the injected message and only
+    return messages that belong to the current run.
+    """
+
+    def inject_middle_without_run_id(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[:-1] + [ModelRequest(parts=[UserPromptPart(content='Inserted')])] + messages[-1:]
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(inject_middle_without_run_id)])
+
+    message_history = [ModelRequest(parts=[UserPromptPart(content='Old')])]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('New question', message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Old', timestamp=IsDatetime()),
+                    UserPromptPart(content='Inserted', timestamp=IsDatetime()),
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Old', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Inserted', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()[2:]
+
+
+async def test_history_processor_overrides_run_id_uses_response_as_new_messages(function_model: FunctionModel):
+    """
+    When a history processor overwrites the run_id on all messages,
+    new_messages() should fall back to returning only the model response
+    appended after processing.
+    """
+
+    def override_run_id(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+        override = f'{ctx.run_id}-override'
+        for message in messages:
+            message.run_id = override
+        return messages
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(override_run_id)])
+
+    message_history = [ModelRequest(parts=[UserPromptPart(content='Old')])]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('New question', message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Old', timestamp=IsDatetime()),
+                ],
+                run_id=IsStr(regex='.+-override'),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='New question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(regex='.+-override'),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=53, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_history_processor_resuming_without_prompt(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When running without a user prompt (resuming from history), new_messages()
+    should exclude the request supplied via message_history even when that
+    request gets the current run_id.
+    """
+
+    def prepend_summary(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [ModelRequest(parts=[SystemPromptPart(content='History summary')]), *messages]
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(prepend_summary)])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='History summary',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Original prompt',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='History summary',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Original prompt',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request():
+    """
+    When resuming without a user prompt and the model enters a tool-call loop,
+    new_messages() should exclude the resumed history request even though it
+    gets the current run_id.
+    """
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
+            )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(model=FunctionModel(model_function, model_name='test'))
+
+    @agent.tool
+    async def my_tool(_ctx: RunContext[None]) -> str:
+        return 'tool executed'
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Original prompt')])])
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Original prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content='tool executed',
+                        tool_call_id='tool_call_1',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=54, output_tokens=3),
+                model_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert result.new_messages() == result.all_messages()[1:]
+
+
+async def test_resuming_without_prompt_excludes_request_with_different_run_id(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When running without a user prompt and the resumed request already has a
+    run_id from a *previous* run, new_messages() should exclude it — only
+    messages stamped with the current run_id should be returned.
+    """
+    previous_run_id = str(uuid.uuid4())
+
+    agent = Agent(function_model)
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier question')]),
+        ModelResponse(parts=[TextPart(content='Earlier answer')]),
+        ModelRequest(
+            parts=[UserPromptPart(content='Previous run prompt')],
+            run_id=previous_run_id,
+        ),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Earlier question', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Earlier answer')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous run prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=previous_run_id,
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Earlier question', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Earlier answer')], timestamp=IsDatetime()),
+            ModelRequest(
+                parts=[UserPromptPart(content='Previous run prompt', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=previous_run_id,
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=55, output_tokens=4),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # The resumed request has a run_id from a different run: excluded from new_messages().
+    assert result.new_messages() == result.all_messages()[-1:]
+    assert result.new_messages()[0].run_id != previous_run_id
+
+
+async def test_history_processor_deepcopy_resuming_without_prompt(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When a history processor deep-copies messages (breaking object identity),
+    new_messages() should still exclude the resumed request supplied via
+    message_history.
+    """
+
+    def deepcopy_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return deepcopy(messages)
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(deepcopy_processor)])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Original prompt',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_history_processor_rebuild_resuming_without_prompt(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When a history processor rebuilds `ModelRequest` instances with equivalent
+    values, new_messages() should still exclude the resumed request supplied
+    via message_history.
+    """
+
+    def rebuild_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+        rebuilt_messages: list[ModelMessage] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                rebuilt_messages.append(
+                    ModelRequest(
+                        parts=list(message.parts),
+                        timestamp=message.timestamp,
+                        instructions=message.instructions,
+                        run_id=message.run_id,
+                        metadata=message.metadata.copy() if message.metadata is not None else None,
+                    )
+                )
+            else:
+                rebuilt_messages.append(message)
+        return rebuilt_messages
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(rebuild_processor)])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Old question')]),
+        ModelResponse(parts=[TextPart(content='Old answer')]),
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Old question',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Old answer')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Original prompt',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_history_processor_replace_resumed_request_falls_through(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When a history processor replaces the resumed request with completely
+    different content, new_messages() falls back to run_id-based detection
+    to determine which messages belong to the current run.
+    """
+
+    def replace_all_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
+        rebuilt: list[ModelMessage] = []
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                rebuilt.append(
+                    ModelRequest(
+                        parts=[UserPromptPart(content='Replaced content')],
+                        timestamp=msg.timestamp,
+                        run_id=msg.run_id,
+                    )
+                )
+            else:
+                rebuilt.append(msg)
+        return rebuilt
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(replace_all_requests)])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Old question')]),
+        ModelResponse(parts=[TextPart(content='Old answer')]),
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Replaced content',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Old answer')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Replaced content',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Falls back to run_id-based detection: the replaced request got run_id from
+    # the framework, so new_messages includes both it and the model response
+    assert result.new_messages() == result.all_messages()[-2:]
+
+
+def test_takes_ctx_returns_false_for_untyped_processor():
+    """takes_run_context returns False when the processor's first param has no type annotation."""
+    from pydantic_ai._utils import takes_run_context
+
+    def untyped_processor(messages) -> list[ModelMessage]:  # pyright: ignore[reportUnknownParameterType,reportMissingParameterType]
+        return messages  # pyright: ignore[reportUnknownVariableType] # pragma: no cover
+
+    # When first param has no type annotation, takes_run_context returns False
+    assert takes_run_context(untyped_processor) is False  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def test_history_processor_deprecated_alias(function_model: FunctionModel, received_messages: list[ModelMessage]):
+    def drop_first(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[1:]
+
+    with pytest.warns(DeprecationWarning, match='`HistoryProcessor` is deprecated'):
+        capability = HistoryProcessor(drop_first)  # pyright: ignore[reportDeprecated]
+
+    assert isinstance(capability, ProcessHistory)
+
+    agent = Agent(function_model, capabilities=[capability])
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='First')]),
+        ModelResponse(parts=[TextPart(content='Answer')]),
+    ]
+    await agent.run('Second', message_history=message_history)
+
+    # First message dropped by the processor before the provider sees it.
+    assert [part for msg in received_messages for part in msg.parts if isinstance(part, UserPromptPart)] == snapshot(
+        [UserPromptPart(content='Second', timestamp=IsDatetime())]
+    )

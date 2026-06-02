@@ -4,19 +4,55 @@
 
 ## Documentation
 
-- Document all providers that support a feature with examples — ensures complete coverage and discoverability for users — Users may miss provider support if docs only show partial examples, leading to incorrect assumptions about feature availability
-- Link to provider docs for model lists and features — prevents stale info when providers update their offerings — External provider catalogs change frequently; linking to authoritative sources keeps docs accurate without maintenance burden
-- Link to existing docs/API refs instead of re-explaining concepts — reduces duplication and keeps info in sync — Prevents documentation drift and outdated explanations by maintaining a single source of truth for each concept
-- Keep feature docs provider-agnostic; put provider-specific details in dedicated provider sections — Prevents duplication and makes docs easier to maintain when shared parameters change across providers
-- Link to canonical docs rather than duplicating content — prevents drift and maintenance burden — Consolidating documentation into existing files with cross-references keeps information consistent and reduces the effort needed to update multiple locations when changes occur.
-- Document only public APIs and user-facing behavior — exclude internals, framework abstractions, and implementation plumbing — Users need actionable documentation on what they can use, not confusing details about internal mechanics they can't control
-- Explain before showing — place explanatory text before code examples, not after — Users need context to understand code examples; "explain then show" improves comprehension and reduces confusion
-- Use 'Pydantic AI' (with space) in prose — ensures consistent brand identity — Maintains professional brand consistency across all documentation and prevents confusion with variations like 'Pydantic-AI', 'PydanticAI', or 'pAI'
-- Create dedicated pages for substantial features — ensures discoverability and comprehensive coverage vs. fragmented mentions — Prevents users from missing features when they approach from different contexts (CLI vs. API) and allows features to be documented holistically rather than buried in subsections.
-- Avoid `# ruff: noqa` or `# type: ignore` in doc examples — ensures examples stay correct and runnable — Skip directives hide bugs and type errors in documentation code that users will copy, leading to broken examples in the wild
-- Explicitly mark parameters/features as 'optional' in docs, even when types show it — reduces cognitive load for readers — Users shouldn't need to parse type signatures to understand optionality; explicit labels make documentation scannable and accessible to all skill levels
-- Remove documentation sections explaining standard behavior that "just works" — keeps docs focused on actionable, non-obvious information — Users don't need explanations of things that work automatically; documentation should focus on configuration requirements, edge cases, and non-obvious behaviors that affect usage decisions
-- Strip boilerplate from docs examples — show only the feature being demonstrated — Reduces cognitive load and helps readers focus on the specific API or pattern being taught without distraction from scaffolding code.
-- Always include provider prefixes in model name examples (e.g., `openai:gpt-5.2`, `anthropic:claude-opus-4-5`) — Teaches users the correct format and prevents runtime errors from missing provider context
+<!-- rule:232 -->
+- Link all concepts, features, and API elements to their docs/reference pages using anchor fragments (`#section-name`) for specific sections — Improves discoverability and reduces user friction by providing direct navigation to relevant documentation context
+<!-- rule:66 -->
+- Use reference-style links for API elements: `[ElementName][module.path.ElementName]` — enables hover docs and navigation in mkdocs — Provides interactive documentation features like tooltips and jump-to-definition that plain backticks cannot support
+<!-- rule:714 -->
+- Omit deprecated features from user-facing docs — document only current approaches — Prevents users from learning outdated patterns and reduces confusion about the recommended way forward
+<!-- rule:82 -->
+- Write project name as `Pydantic AI` (two words) in docs — not `Pydantic-AI`, `PydanticAI`, or `pAI` — Maintains consistent brand identity and prevents confusion across documentation
+<!-- rule:359 -->
+- Structure code examples as: context/intro → code block → caveats/details (never code before context) — Ensures readers understand purpose and usage before seeing code, making docs more learnable and preventing confusion
+<!-- rule:93 -->
+- Hide implementation details from user docs unless they affect user decisions — focus on what users can control, not how it works internally — Keeps documentation clean and maintainable by separating user-facing APIs from implementation that may change
+<!-- rule:52 -->
+- Structure docs with progressive disclosure: concept → capabilities → examples (standalone first) → config → edge cases — Helps readers build mental models incrementally, reducing cognitive load and making features easier to adopt
+<!-- rule:152 -->
+- In docs, show the **recommended approach first**, then introduce alternatives with explicit relational language ("In addition to...", "As an alternative to...") using specific feature names — Prevents users from adopting legacy or suboptimal patterns by ensuring they encounter the best practice first
+<!-- rule:109 -->
+- Remove docs content describing features "working as expected" — focus only on integration-specific concerns, limitations, or deviations — Reduces cognitive load and maintenance burden by eliminating noise; prevents documentation staleness from trivial statements
+<!-- rule:67 -->
+- Keep provider-specific config/features in `docs/models/{provider}.md` and `docs/api/models/{provider}.md`; general docs stay provider-agnostic with one minimal example + links — Prevents duplication, keeps general feature docs clean and maintainable, ensures users find provider-specific details in one canonical location rather than scattered across multiple pages
+<!-- rule:941 -->
+- Avoid `test="skip"` in code examples unless unavoidable (external services, credentials, non-deterministic behavior) — use mocks or fixtures instead — Testable documentation examples prove the code works and prevent docs from drifting out of sync with actual behavior
+<!-- rule:727 -->
+- Link to canonical sources rather than duplicating lists or summaries maintained elsewhere — Prevents docs from becoming outdated when the source of truth changes
+<!-- rule:808 -->
+- Focus docs on user tasks and public APIs, defer implementation details to docstrings — Task-oriented guides help users accomplish goals faster, while keeping advanced/internal details in API reference prevents overwhelming users with complexity when sensible defaults exist
+<!-- rule:301 -->
+- In docs, consolidate examples showing parameter variations into one block with notes — split only for mutually exclusive params or distinct use cases — Reduces cognitive load and makes docs more scannable by avoiding repetitive boilerplate for simple parameter alternatives
+<!-- rule:58 -->
+- In docs examples, demonstrate realistic use cases that show *why* the feature matters — prevents misleading users with toy scenarios or debugging code that obscure actual value — Well-crafted examples help users understand when to apply features and avoid implementing unnecessary patterns for problems solvable with simpler approaches
+<!-- rule:54 -->
+- Use fence-level `{test="skip" lint="skip"}` instead of inline suppressions in doc examples — keeps code clean and reader-focused — Documentation code should model best practices; fence-level skip directives separate tooling concerns from the example itself, while inline `# noqa` or `# type: ignore` pollutes pedagogical code with implementation details
+<!-- rule:151 -->
+- Cross-reference alternatives and explain trade-offs when documenting overlapping features — Prevents users from missing better-suited options or implementing duplicate functionality when multiple approaches exist (e.g., `UsageLimits` vs rate-limiting, provider-specific implementations)
+<!-- rule:1112 -->
+- Document default behavior and use cases for all configurable features — helps users decide when to override defaults — Users can't make informed configuration choices without knowing what happens by default and when alternatives are appropriate
+<!-- rule:135 -->
+- Use actual, currently available model names in documentation examples — prevents user confusion and copy-paste errors with non-existent models — Ensures users can run documentation examples without modification and avoids frustration from referencing models that don't exist yet or are hypothetical
+<!-- rule:508 -->
+- Verify all doc links with `make docs-serve` before committing — catches broken internal/external references early — Prevents documentation drift and broken links from reaching users, especially after code refactoring
+<!-- rule:283 -->
+- Use MkDocs admonitions (`!!! note`, `!!! warning`) for callouts, not blockquotes (`>`) or GitHub alerts (`> [!NOTE]`) — Ensures consistent rendering in MkDocs and prevents callouts from cluttering the table of contents
+<!-- rule:618 -->
+- Nest subtopics, examples, and config details within parent sections — improves discoverability and reduces redundant context — Hierarchical organization makes documentation easier to navigate and understand by grouping related content together rather than scattering it across top-level sections or separate files.
+<!-- rule:298 -->
+- In provider feature support tables, use a `Notes` or `Provider Support Notes` column for variations, limitations, and special values — keeps table structure clean and constraints discoverable — Centralizes provider-specific exceptions in one scannable location instead of scattering them across config examples or inline parentheticals, making cross-provider differences easier to find
+<!-- rule:634 -->
+- In provider feature tables, use standard labels (`Full feature support`, `Limited parameter support`) and move unsupported variants to `Unsupported` column, not inline exceptions — Ensures consistent, scannable documentation structure where users can quickly identify exact support boundaries across providers
+<!-- rule:168 -->
+- When documenting alternative approaches, explain tradeoffs (limitations, requirements, benefits, use-cases) and warn about conflicts when combining them — Helps users make informed decisions and avoid subtle bugs from conflicting configurations
 
 <!-- /braindump -->

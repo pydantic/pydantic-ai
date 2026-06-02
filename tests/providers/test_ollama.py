@@ -12,7 +12,7 @@ from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_mode
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -43,7 +43,7 @@ def test_ollama_provider_need_base_url(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `OLLAMA_BASE_URL` environment variable or pass it via `OllamaProvider(base_url=...)`'
-            'to use the Ollama provider.'
+            ' to use the Ollama provider.'
         ),
     ):
         OllamaProvider()
@@ -105,6 +105,23 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.supports_json_schema_output is True
+
+    qwen_profile = provider.model_profile('qwen3.5')
+    qwen_model_profile_mock.assert_called_with('qwen3.5')
+    assert qwen_profile is not None
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.supports_json_schema_output is True
+    assert qwen_profile.supports_json_object_output is True
+
+    qwen_profile = provider.model_profile('qwen3.5:35b')
+    qwen_model_profile_mock.assert_called_with('qwen3.5:35b')
+    assert qwen_profile is not None
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.supports_json_schema_output is True
+    assert qwen_profile.supports_json_object_output is True
 
     qwen_profile = provider.model_profile('qwq')
     qwen_model_profile_mock.assert_called_with('qwq')
@@ -126,3 +143,12 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+
+    # Ollama does not support strict mode in tool definitions (issue #4116)
+    for model in ('llama3.2', 'qwen3', 'unknown-model'):
+        profile = provider.model_profile(model)
+        assert profile is not None
+        openai_profile = OpenAIModelProfile.from_profile(profile)
+        assert openai_profile.openai_supports_strict_tool_definition is False
+    assert unknown_profile.supports_json_schema_output is True
+    assert unknown_profile.supports_json_object_output is True

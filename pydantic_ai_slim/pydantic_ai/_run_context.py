@@ -13,10 +13,15 @@ from typing_extensions import TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from .exceptions import UserError
 
 if TYPE_CHECKING:
+    from .agent import Agent
     from .models import Model
-    from .result import RunUsage
+    from .settings import ModelSettings
+    from .tool_manager import ToolManager
+    from .usage import RunUsage
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
@@ -36,6 +41,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """The model used in this run."""
     usage: RunUsage
     """LLM usage associated with the run."""
+    agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
+    """The agent running this context, or `None` if not set."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list[_messages.ModelMessage])
@@ -76,13 +83,93 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """Whether the output passed to an output validator is partial."""
     run_id: str | None = None
     """"Unique identifier for the agent run."""
+    conversation_id: str | None = None
+    """Unique identifier for the conversation this run belongs to.
+
+    A conversation spans potentially multiple agent runs that share message history.
+    Resolved at the start of `Agent.run` (etc.) from the explicit `conversation_id`
+    argument, the most recent `conversation_id` on `message_history`, or a fresh UUID7.
+    """
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
+    model_settings: ModelSettings | None = None
+    """The resolved model settings for the current run step.
+
+    Populated before each model request, after all model settings layers
+    (model defaults, agent-level, capability, and run-level) have been merged.
+    Available in model request hooks (`before_model_request`, `wrap_model_request`,
+    `after_model_request`). Currently `None` in tool hooks, output validators,
+    and during agent construction.
+    """
+    pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
+    """Internal: queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+
+    Set to the run's live queue during an agent run; `None` in synthetic contexts that aren't
+    backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
+    [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
+    Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages — don't append directly.
+    """
+
+    tool_manager: ToolManager[RunContextAgentDepsT] | None = None
+    """The tool manager for the current run step.
+
+    Provides access to tool validation and execution, including tracing and
+    capability hooks. Useful for toolsets that need to dispatch tool calls
+    programmatically (e.g. code execution sandboxes).
+
+    Not available in `TemporalRunContext` — it is not serializable across
+    Temporal activity boundaries.
+    """
 
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    def enqueue(
+        self,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+    ) -> None:
+        """Enqueue content to be injected into the conversation.
+
+        Safe to call from anywhere a `RunContext` is available — async tools,
+        sync tools (auto-wrapped in a thread executor by Pydantic AI), and
+        capability hooks. The drain only iterates the queue between graph nodes
+        (in `before_model_request` and `after_node_run`), never concurrently
+        with the tool body, so `list.append` from a worker thread doesn't race
+        the drain.
+
+        Args:
+            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+                Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
+                content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
+                [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each
+                [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
+                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is coalesced with adjacent
+                part-style items into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; a complete
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] or
+                [`ModelResponse`][pydantic_ai.messages.ModelResponse] is kept as its own message. The
+                assembled sequence must end in a request. Calling with no positional args is a no-op.
+            priority: When to deliver:
+                `'asap'` (default) — at the earliest opportunity (next model request,
+                    or a redirect if the agent would otherwise end).
+                `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent's queue (e.g. the
+                synthetic context from `Agent.system_prompt_parts`), since there'd be nowhere
+                to deliver the message.
+        """
+        if self.pending_messages is None:
+            raise UserError(
+                '`enqueue` is only available during an agent run (from tools, capability hooks, or '
+                '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
+            )
+        pending = PendingMessage.from_content(*content, priority=priority)
+        if pending is None:
+            return
+        self.pending_messages.append(pending)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

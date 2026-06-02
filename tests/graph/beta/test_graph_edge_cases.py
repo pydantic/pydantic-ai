@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 import pytest
-from inline_snapshot import snapshot
 
-from pydantic_graph.beta import GraphBuilder, StepContext
-from pydantic_graph.beta.join import ReduceFirstValue, ReducerContext, reduce_sum
+from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.join import ReduceFirstValue, ReducerContext, reduce_sum
+
+from ..._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
 
@@ -40,7 +41,7 @@ async def test_graph_repr():
     normalized_graph_repr = re.sub(hex(id(graph)), '0xGraphObjectId', graph_repr)
 
     assert normalized_graph_repr == snapshot("""\
-<pydantic_graph.beta.graph.Graph object at 0xGraphObjectId
+<pydantic_graph.graph_builder.Graph object at 0xGraphObjectId
 stateDiagram-v2
   simple_step
 
@@ -79,7 +80,7 @@ stateDiagram-v2
 
 async def test_get_parent_fork_missing():
     """Test that get_parent_fork raises RuntimeError when join has no parent fork."""
-    from pydantic_graph.beta.id_types import JoinID, NodeID
+    from pydantic_graph.id_types import JoinID, NodeID
 
     g = GraphBuilder(state_type=MyState, output_type=int)
 
@@ -337,7 +338,7 @@ async def test_literal_branch_matching():
     async def handle_c(ctx: StepContext[MyState, None, object]) -> str:
         return 'Chose C'  # pragma: no cover
 
-    from pydantic_graph.beta import TypeExpression
+    from pydantic_graph import TypeExpression
 
     g.add(
         g.edge_from(g.start_node).to(choose_option),

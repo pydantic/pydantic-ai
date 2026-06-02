@@ -4,18 +4,13 @@ from dataclasses import dataclass
 from datetime import timezone
 
 import pytest
-from inline_snapshot import snapshot
 
-from pydantic_graph import (
-    BaseNode,
-    End,
-    EndSnapshot,
-    FullStatePersistence,
-    Graph,
-    GraphRunContext,
-    NodeSnapshot,
-)
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.graph import Graph
+from pydantic_graph.persistence import EndSnapshot, NodeSnapshot
+from pydantic_graph.persistence.in_mem import FullStatePersistence
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsFloat, IsNow
 
 pytestmark = pytest.mark.anyio

@@ -3,7 +3,6 @@ import os
 from dataclasses import dataclass
 
 import pytest
-from inline_snapshot import Is, snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai import (
@@ -20,6 +19,7 @@ from pydantic_ai import (
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import Is, snapshot
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -142,6 +142,7 @@ async def test_url_input(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
@@ -153,6 +154,7 @@ async def test_url_input(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -186,6 +188,7 @@ async def test_url_input_force_download(
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
@@ -197,6 +200,7 @@ async def test_url_input_force_download(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

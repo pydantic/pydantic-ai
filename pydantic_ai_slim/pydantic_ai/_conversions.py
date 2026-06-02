@@ -17,8 +17,6 @@ from . import _utils
 from .messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FilePart,
@@ -28,6 +26,8 @@ from .messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -96,8 +96,8 @@ def model_messages_to_openai_format(
     assistant message with optional ``tool_calls``.
 
     Note: :class:`~pydantic_ai.messages.ThinkingPart`, :class:`~pydantic_ai.messages.FilePart`,
-    :class:`~pydantic_ai.messages.BuiltinToolCallPart`, and
-    :class:`~pydantic_ai.messages.BuiltinToolReturnPart` are not included in the output
+    :class:`~pydantic_ai.messages.NativeToolCallPart`, and
+    :class:`~pydantic_ai.messages.NativeToolReturnPart` are not included in the output
     as they have no standard OpenAI representation. Assistant messages that only contain
     unsupported parts are omitted.
 
@@ -254,17 +254,17 @@ def _convert_assistant_parts(parts: list[dict[str, Any]]) -> list[ModelResponseP
             tool_call_id = part.get('id', _utils.generate_tool_call_id())
             args = part.get('arguments')
             if builtin:
-                result.append(BuiltinToolCallPart(tool_name=tool_name, args=args, tool_call_id=tool_call_id))
+                result.append(NativeToolCallPart(tool_name=tool_name, args=args, tool_call_id=tool_call_id))
             else:
                 result.append(ToolCallPart(tool_name=tool_name, args=args, tool_call_id=tool_call_id))
         elif ptype == 'tool_call_response':
-            # Builtin tool returns can appear in assistant messages
+            # Native tool returns can appear in assistant messages
             builtin = part.get('builtin', False)
             if builtin:
                 tool_name = part.get('name', '')
                 tool_call_id = part.get('id', _utils.generate_tool_call_id())
                 content = part.get('result', part.get('response', ''))
-                result.append(BuiltinToolReturnPart(tool_name=tool_name, content=content, tool_call_id=tool_call_id))
+                result.append(NativeToolReturnPart(tool_name=tool_name, content=content, tool_call_id=tool_call_id))
         elif ptype == 'binary':
             media_type = part.get('media_type', 'application/octet-stream')
             b64_content = part.get('content', '')

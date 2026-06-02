@@ -3,7 +3,7 @@ from __future__ import annotations
 from rich.console import Console
 
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import BUILTIN_TOOL_TYPES, AbstractBuiltinTool
+from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool
 from pydantic_ai.ui._web import create_web_app
 
 from . import SUPPORTED_CLI_TOOL_IDS, load_agent
@@ -16,7 +16,7 @@ def run_web_command(
     models: list[str] = [],
     tools: list[str] = [],
     instructions: str | None = None,
-    default_model: str = 'openai:gpt-5',
+    default_model: str = 'openai-chat:gpt-5',
     html_source: str | None = None,
 ) -> int:
     """Run the web command to serve an agent via web UI.
@@ -28,7 +28,7 @@ def run_web_command(
         agent_path: Agent path in 'module:variable' format. If None, creates generic agent.
         host: Host to bind the server to.
         port: Port to bind the server to.
-        models: List of model strings (e.g., ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']).
+        models: List of model strings (e.g., ['openai:gpt-5', 'anthropic:claude-sonnet-4-6']).
         tools: List of builtin tool IDs (e.g., ['web_search', 'code_execution']).
         instructions: System instructions passed as extra instructions to each agent run.
         default_model: Default model to use when no agent or models are specified.
@@ -48,9 +48,9 @@ def run_web_command(
     if agent.model is None and not models:
         models = [default_model]
 
-    tool_instances: list[AbstractBuiltinTool] = []
+    tool_instances: list[AbstractNativeTool] = []
     for tool_id in tools:
-        tool_cls = BUILTIN_TOOL_TYPES.get(tool_id)
+        tool_cls = NATIVE_TOOL_TYPES.get(tool_id)
         if tool_cls is None:
             console.print(f'[yellow]Warning: Unknown tool "{tool_id}", skipping[/yellow]')
             continue
@@ -64,7 +64,7 @@ def run_web_command(
     app = create_web_app(
         agent,
         models=models or None,
-        builtin_tools=tool_instances,
+        native_tools=tool_instances,
         instructions=instructions,
         html_source=html_source,
     )
