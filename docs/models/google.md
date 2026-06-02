@@ -406,6 +406,49 @@ avg_logprobs = result.response.provider_details.get('avg_logprobs')
 
 See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.
 
+### Context caching (`google_cached_content`)
+
+When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+
+model_settings = GoogleModelSettings(
+    google_cached_content='projects/p/locations/global/cachedContents/your-cache-id',
+)
+
+agent = Agent(GoogleModel('gemini-2.5-pro'), model_settings=model_settings)
+...
+```
+
+!!! warning "Cached fields are owned by the cache resource"
+    The cache resource owns `system_instruction`, `tools`, and `tool_config` — Pydantic AI strips them from outgoing requests when `google_cached_content` is set, so agent instructions and registered tools are ignored on cached requests. A `UserWarning` is emitted whenever stripping drops a field, so the mismatch is discoverable.
+
+??? example "Create a cached content resource"
+    Pydantic AI doesn't wrap the cache-management API — create the resource with the underlying [google-genai](https://googleapis.github.io/python-genai/) SDK, then pass its name through `google_cached_content`:
+
+    ```python {test="skip"}
+    from google.genai.types import Content, CreateCachedContentConfig, Part
+
+    from pydantic_ai.providers.google import GoogleProvider
+
+    provider = GoogleProvider(api_key='your-api-key')
+
+    cache = provider.client.caches.create(
+        model='gemini-2.5-flash',
+        config=CreateCachedContentConfig(
+            system_instruction='You are a geography expert. Be concise.',
+            contents=[Content(role='user', parts=[Part(text='...long context to cache...')])],
+            ttl='3600s',
+        ),
+    )
+    print(cache.name)
+    #> cachedContents/abc123...
+    ```
+
+    Caches have a minimum size (≈1024 tokens for `gemini-2.5-flash`, ≈4096 for `gemini-2.5-pro`) and a TTL — see the [Gemini caching docs](https://ai.google.dev/gemini-api/docs/caching) for the current thresholds, pricing, and `list` / `update` / `delete` operations.
+
 ## Streaming cancellation
 
 !!! warning "Cancellation limitations"

@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import re
+import warnings
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -247,6 +248,16 @@ class GoogleModelSettings(ModelSettings, total=False):
     google_cached_content: str
     """The name of the cached content to use for the model.
 
+    When set, `system_instruction`, `tools`, and `tool_config` are omitted from
+    the outgoing request — the cached content resource owns those fields, and
+    both the Gemini API and Vertex AI reject requests that supply them
+    alongside `cached_content` (`400 INVALID_ARGUMENT`: "Tool config, tools and
+    system instruction should not be set in the request when using cached
+    content."). Any tools registered on the agent and any system prompt are
+    therefore ignored on requests that go through the cache; a `UserWarning`
+    is emitted whenever stripping actually drops a field so the mismatch is
+    discoverable.
+
     See <https://ai.google.dev/gemini-api/docs/caching> for more information.
     """
 
@@ -279,6 +290,31 @@ class GoogleModelSettings(ModelSettings, total=False):
     See [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier] for all values,
     headers sent, and links to Google docs.
     """
+
+
+def _warn_on_cached_content_strips(
+    cached_content: str | None,
+    system_instruction: ContentDict | None,
+    tools: list[ToolDict] | None,
+) -> None:
+    """Emit a `UserWarning` when `google_cached_content` would strip a field that the caller populated."""
+    if not cached_content:
+        return
+    dropped: list[str] = []
+    if system_instruction is not None:
+        dropped.append('system_instruction')
+    if tools is not None:
+        dropped.extend(('tools', 'tool_config'))
+    if dropped:
+        names = ', '.join(f'`{n}`' for n in dropped)
+        warnings.warn(
+            f'`google_cached_content` is set; the cached content resource owns '
+            f'{names}, so these fields are stripped from the outgoing request '
+            f'and any agent instructions or registered tools are ignored. '
+            f'See https://ai.google.dev/gemini-api/docs/caching.',
+            UserWarning,
+            stacklevel=3,
+        )
 
 
 _GlaServiceTier = Literal['standard', 'flex', 'priority']
@@ -775,6 +811,12 @@ class GoogleModel(Model[Client]):
         if model_request_parameters.function_tools and not self.profile.get('supports_tools', True):
             raise UserError('Tools are not supported by this model.')
 
+        # `google_cached_content` will strip `tools` (and `tool_config` / `system_instruction`)
+        # below — resolve it up front so `prompted` output-mode sees the post-strip tool set
+        # and still enables JSON mode when the cache effectively leaves the request tool-less.
+        cached_content = model_settings.get('google_cached_content')
+        effective_tools = None if cached_content else tools
+
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
@@ -788,7 +830,7 @@ class GoogleModel(Model[Client]):
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
-        elif model_request_parameters.output_mode == 'prompted' and not tools:
+        elif model_request_parameters.output_mode == 'prompted' and not effective_tools:
             if not self.profile.get('supports_json_object_output', False):
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
@@ -817,9 +859,12 @@ class GoogleModel(Model[Client]):
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
+        # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
+        _warn_on_cached_content_strips(cached_content, system_instruction, tools)
+
         config = GenerateContentConfigDict(
             http_options=http_options,
-            system_instruction=system_instruction,
+            system_instruction=None if cached_content else system_instruction,
             temperature=model_settings.get('temperature'),
             top_p=model_settings.get('top_p'),
             top_k=model_settings.get('top_k'),
@@ -832,9 +877,9 @@ class GoogleModel(Model[Client]):
             thinking_config=self._translate_thinking(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
-            cached_content=model_settings.get('google_cached_content'),
-            tools=cast(ToolListUnionDict, tools),
-            tool_config=tool_config,
+            cached_content=cached_content,
+            tools=cast(ToolListUnionDict, effective_tools) if effective_tools is not None else None,
+            tool_config=None if cached_content else tool_config,
             response_mime_type=response_mime_type,
             response_json_schema=response_schema,
             response_modalities=modalities,

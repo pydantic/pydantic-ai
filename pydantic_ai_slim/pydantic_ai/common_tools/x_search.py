@@ -88,7 +88,7 @@ def x_search_tool(
 
     Args:
         model: The model to use for X search. Must be an xAI model that natively
-            supports the `XSearchTool` native tool, e.g. `'xai:grok-4-1-fast-non-reasoning'`.
+            supports the `XSearchTool` native tool, e.g. `'xai:grok-4.3'`.
             Can also be a callable taking `RunContext` that returns such a model.
         native_tool: The X search tool configuration to pass to the subagent.
         instructions: Instructions for the subagent that performs the X search.

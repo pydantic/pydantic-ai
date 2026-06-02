@@ -601,7 +601,7 @@ agent = Agent(
         # Native when supported; subagent fallback via `fallback_model`
         ImageGeneration(fallback_model='openai-responses:gpt-5.4'),
         # Native on xAI; on other models, explicitly delegate to an xAI model
-        XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning'),
+        XSearch(fallback_model='xai:grok-4.3'),
         # Runs the MCP server locally by default; pass `native=True` to also advertise native MCP
         MCP('https://mcp.example.com/api'),
     ],
