@@ -16,12 +16,9 @@ To use [MiniMax](https://www.minimax.io/) through their API, go to [platform.min
 
 | Model | Description |
 |-------|-------------|
-| `MiniMax-M2.7` | Latest flagship model with enhanced reasoning and coding |
+| `MiniMax-M3` | Latest flagship model with 512K context, up to 128K output, and image input support (default) |
+| `MiniMax-M2.7` | Previous flagship model with enhanced reasoning and coding |
 | `MiniMax-M2.7-highspeed` | High-speed version of M2.7 for low-latency scenarios |
-| `MiniMax-M2.5` | Previous flagship model — peak performance, ultimate value |
-| `MiniMax-M2.5-highspeed` | Same performance, faster and more agile |
-
-All models support a 204,800 token context window.
 
 ## Environment variable
 
@@ -36,7 +33,7 @@ You can then use MiniMax models by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('minimax:MiniMax-M2.7')
+agent = Agent('minimax:MiniMax-M3')
 ...
 ```
 
@@ -46,7 +43,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 
-model = OpenAIChatModel('MiniMax-M2.7', provider='minimax')
+model = OpenAIChatModel('MiniMax-M3', provider='minimax')
 agent = Agent(model)
 ...
 ```
@@ -61,7 +58,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.minimax import MiniMaxProvider
 
 model = OpenAIChatModel(
-    'MiniMax-M2.7', provider=MiniMaxProvider(api_key='your-api-key')
+    'MiniMax-M3', provider=MiniMaxProvider(api_key='your-api-key')
 )
 agent = Agent(model)
 ...
@@ -78,7 +75,7 @@ from pydantic_ai.providers.minimax import MiniMaxProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = OpenAIChatModel(
-    'MiniMax-M2.7',
+    'MiniMax-M3',
     provider=MiniMaxProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)
