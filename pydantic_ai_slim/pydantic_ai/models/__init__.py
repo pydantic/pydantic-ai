@@ -44,6 +44,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseState,
     ModelResponseStreamEvent,
+    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -1227,6 +1228,7 @@ class StreamedResponse(ABC):
                 iterator: AsyncIterator[ModelResponseStreamEvent],
             ) -> AsyncIterator[ModelResponseStreamEvent]:
                 last_start_event: PartStartEvent | None = None
+                ended_indices: set[int] = set()
 
                 def part_end_event(next_part: ModelResponsePart | None = None) -> PartEndEvent | None:
                     if not last_start_event:
@@ -1249,10 +1251,18 @@ class StreamedResponse(ABC):
                         if last_start_event:
                             end_event = part_end_event(event.part)
                             if end_event:
+                                ended_indices.add(end_event.index)
                                 yield end_event
 
                             event.previous_part_kind = last_start_event.part.part_kind
+                        # A `PartStartEvent` for an already-ended index restarts that part
+                        # (see `PartStartEvent` replace semantics), so its later deltas are valid again.
+                        ended_indices.discard(event.index)
                         last_start_event = event
+                    elif isinstance(event, PartDeltaEvent) and event.index in ended_indices:
+                        # Some non-standard endpoints emit a delta after the part's `PartEndEvent`;
+                        # dropping it keeps downstream consumers (e.g. the AG-UI adapter) protocol-compliant.
+                        continue
 
                     yield event
 

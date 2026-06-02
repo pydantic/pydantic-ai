@@ -8,7 +8,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any
 from unittest.mock import MagicMock
@@ -42,6 +42,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UserError,
@@ -4837,3 +4838,83 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
 
 
 # endregion
+
+
+@dataclass
+class _StrayDeltaStreamedResponse(models.StreamedResponse):
+    """Replays a tool call whose final argument delta arrives after the part has ended.
+
+    Non-standard OpenAI Responses-compatible endpoints can emit an argument delta for a tool
+    call after the item is done (see #4733). `iterator_with_part_end` injects the `PartEndEvent`
+    for the first tool call when the second one starts, so the late delta would otherwise surface
+    as a `PartDeltaEvent` after its `PartEndEvent` and crash protocol-strict consumers like AG-UI.
+    """
+
+    async def _get_event_iterator(self) -> AsyncIterator[models.ModelResponseStreamEvent]:
+        # Yield lazily so the parts manager processes each delta only as it's pulled,
+        # matching how a real stream interleaves event production with consumption. The
+        # stray ` STRAY` delta reuses `vendor_part_id='a'` after the second tool call has
+        # started, so the manager emits it for the already-ended index 0.
+        manager = self._parts_manager
+        if (
+            event := manager.handle_tool_call_delta(
+                vendor_part_id='a', tool_name='get_weather', args='{"city":', tool_call_id='call_a'
+            )
+        ) is not None:
+            yield event
+        if (event := manager.handle_tool_call_delta(vendor_part_id='a', args='"Paris"}')) is not None:
+            yield event
+        if (
+            event := manager.handle_tool_call_delta(
+                vendor_part_id='b', tool_name='get_time', args='{}', tool_call_id='call_b'
+            )
+        ) is not None:
+            yield event
+        if (event := manager.handle_tool_call_delta(vendor_part_id='a', args=' STRAY')) is not None:
+            yield event
+
+    @property
+    def model_name(self) -> str:
+        return 'stray-delta-model'
+
+    @property
+    def provider_name(self) -> str | None:
+        return 'test'
+
+    @property
+    def provider_url(self) -> str | None:
+        return None
+
+    @property
+    def timestamp(self) -> datetime.datetime:
+        return datetime.datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+
+async def test_stray_delta_after_part_end_is_dropped():
+    response = _StrayDeltaStreamedResponse(model_request_parameters=models.ModelRequestParameters())
+
+    events = [event async for event in response]
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='get_weather', args='{"city":', tool_call_id='call_a'),
+            ),
+            PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='"Paris"}', tool_call_id='call_a')),
+            PartEndEvent(
+                index=0,
+                part=ToolCallPart(tool_name='get_weather', args='{"city":"Paris"}', tool_call_id='call_a'),
+                next_part_kind='tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=ToolCallPart(tool_name='get_time', args='{}', tool_call_id='call_b'),
+                previous_part_kind='tool-call',
+            ),
+            PartEndEvent(
+                index=1,
+                part=ToolCallPart(tool_name='get_time', args='{}', tool_call_id='call_b'),
+            ),
+        ]
+    )
