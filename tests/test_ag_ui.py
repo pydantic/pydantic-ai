@@ -3088,6 +3088,45 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_stray_tool_call_delta_after_end_is_dropped():
+    """A tool call args delta arriving after the call's `PartEndEvent` must not emit `TOOL_CALL_ARGS`.
+
+    Non-standard OpenAI Responses-compatible endpoints can emit such a stray delta (#4733). The AG-UI
+    protocol forbids `TOOL_CALL_ARGS` after `TOOL_CALL_END`, which crashes `@ag-ui/client`.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(
+            index=0,
+            part=ToolCallPart(tool_name='tool_call_1', args='', tool_call_id='tool_call_1'),
+        )
+        yield PartDeltaEvent(
+            index=0, delta=ToolCallPartDelta(args_delta='{"query": "Hello"}', tool_call_id='tool_call_1')
+        )
+        yield PartEndEvent(
+            index=0,
+            part=ToolCallPart(tool_name='tool_call_1', args='{"query": "Hello"}', tool_call_id='tool_call_1'),
+        )
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta=' STRAY', tool_call_id='tool_call_1'))
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    event_types = [event['type'] for event in events]
+    assert event_types == snapshot(
+        ['RUN_STARTED', 'TOOL_CALL_START', 'TOOL_CALL_ARGS', 'TOOL_CALL_END', 'RUN_FINISHED']
+    )
+
+
 async def test_event_stream_multiple_responses_with_tool_calls():
     async def event_generator():
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
