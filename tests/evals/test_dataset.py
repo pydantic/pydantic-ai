@@ -1077,10 +1077,10 @@ async def test_from_text_failure():
                 '2 error(s) loading evaluators from registry',
                 [
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'Faithfulness', 'AnswerRelevance', 'ContextPrecision', 'ContextRecall', 'Hallucination', 'GEval', 'GembaScore']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ragas.Faithfulness', 'ragas.AnswerRelevance', 'ragas.ContextPrecision', 'ragas.ContextRecall', 'GEval', 'GembaScore']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
                     ),
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'Faithfulness', 'AnswerRelevance', 'ContextPrecision', 'ContextRecall', 'Hallucination', 'GEval', 'GembaScore']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ragas.Faithfulness', 'ragas.AnswerRelevance', 'ragas.ContextPrecision', 'ragas.ContextRecall', 'GEval', 'GembaScore']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
                     ),
                 ],
             )

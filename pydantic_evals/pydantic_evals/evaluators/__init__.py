@@ -1,3 +1,4 @@
+from . import ragas
 from .common import (
     Contains,
     Equals,
@@ -11,15 +12,8 @@ from .common import (
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput, EvaluatorSpec
 from .quality import (
-    AnswerRelevance,
-    ContextPrecision,
-    ContextRecall,
-    Faithfulness,
     GembaScore,
     GEval,
-    Hallucination,
-    HasQuestion,
-    QuestionWithContext,
 )
 from .report_common import (
     ConfusionMatrixEvaluator,
@@ -48,16 +42,11 @@ __all__ = (
     'EvaluatorOutput',
     'EvaluatorSpec',
     'EvaluationResult',
-    # quality (curated LLM-backed metrics)
-    'AnswerRelevance',
-    'ContextPrecision',
-    'ContextRecall',
-    'Faithfulness',
+    # quality (LLM-backed metrics named after their methods)
     'GEval',
     'GembaScore',
-    'Hallucination',
-    'HasQuestion',
-    'QuestionWithContext',
+    # ragas (rubric presets modeled on Ragas RAG metrics; see the `ragas` submodule)
+    'ragas',
     # report evaluators
     'ReportEvaluator',
     'ReportEvaluatorContext',

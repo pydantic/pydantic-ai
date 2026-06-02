@@ -1,39 +1,23 @@
 from __future__ import annotations as _annotations
 
 import warnings
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
-from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals.evaluators import (
-        AnswerRelevance,
-        ContextPrecision,
-        ContextRecall,
-        EvaluationReason,
-        EvaluatorContext,
-        Faithfulness,
-        GembaScore,
-        GEval,
-        Hallucination,
-        HasQuestion,
-        OutputConfig,
-        QuestionWithContext,
-    )
+    from pydantic_evals.evaluators import EvaluationReason, GembaScore, GEval
     from pydantic_evals.evaluators.common import DEFAULT_EVALUATORS
+    from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GembaScoreOutput,
         GEvalOutput,
-        GradingOutput,
         judge_g_eval,
         judge_gemba_da,
         judge_gemba_sqm,
@@ -44,58 +28,6 @@ pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-eval
 
 
 if TYPE_CHECKING or imports_successful():
-
-    @dataclass
-    class QInputs:
-        """Dataset input shape matching `HasQuestion`."""
-
-        question: str
-
-    @dataclass
-    class RagInputs:
-        """Dataset input shape matching `QuestionWithContext`."""
-
-        question: str
-        context: list[str]
-
-    def _ctx_qc(
-        question: str,
-        context: list[str],
-        *,
-        output: object = 'some answer',
-        expected_output: object = None,
-        metadata: object = None,
-    ) -> EvaluatorContext[QuestionWithContext, object, object]:
-        return EvaluatorContext[QuestionWithContext, object, object](
-            name='test',
-            inputs=RagInputs(question=question, context=context),
-            metadata=metadata,
-            expected_output=expected_output,
-            output=output,
-            duration=0.0,
-            _span_tree=SpanTreeRecordingError('spans were not recorded'),
-            attributes={},
-            metrics={},
-        )
-
-    def _ctx_q(
-        question: str,
-        *,
-        output: object = 'some answer',
-        expected_output: object = None,
-        metadata: object = None,
-    ) -> EvaluatorContext[HasQuestion, object, object]:
-        return EvaluatorContext[HasQuestion, object, object](
-            name='test',
-            inputs=QInputs(question=question),
-            metadata=metadata,
-            expected_output=expected_output,
-            output=output,
-            duration=0.0,
-            _span_tree=SpanTreeRecordingError('spans were not recorded'),
-            attributes={},
-            metrics={},
-        )
 
     def _ctx_geval(
         inputs: object,
@@ -132,152 +64,6 @@ if TYPE_CHECKING or imports_successful():
             attributes={},
             metrics={},
         )
-
-    def _patch_judge(
-        mocker: MockerFixture,
-        target: str,
-        *,
-        reason: str = 'ok',
-        pass_: bool = True,
-        score: float = 0.9,
-    ):
-        grading_output = GradingOutput(reason=reason, pass_=pass_, score=score)
-        return mocker.patch(target, return_value=grading_output)
-
-
-async def test_faithfulness(mocker: MockerFixture):
-    """`Faithfulness` routes through `judge_input_output` with a context-aware rubric."""
-    mock = _patch_judge(
-        mocker,
-        'pydantic_evals.evaluators.quality.judge_input_output',
-        reason='All supported',
-        pass_=True,
-        score=1.0,
-    )
-
-    ctx = _ctx_qc(
-        'Where is Paris?',
-        ['Paris is the capital of France.'],
-        output='Paris is in France.',
-    )
-    evaluator = Faithfulness()
-    result = await evaluator.evaluate(ctx)
-
-    assert to_jsonable_python(result) == snapshot(
-        {
-            'Faithfulness_score': {'value': 1.0, 'reason': 'All supported'},
-            'Faithfulness_pass': {'value': True, 'reason': 'All supported'},
-        }
-    )
-    assert mock.call_count == 1
-    call_args, _ = mock.call_args
-    inputs_payload, output_arg, rubric_arg, model_arg, settings_arg = call_args
-    assert inputs_payload == {
-        'question': 'Where is Paris?',
-        'context': ['Paris is the capital of France.'],
-    }
-    assert output_arg == 'Paris is in France.'
-    assert 'fraction of factual claims' in rubric_arg
-    assert model_arg is None
-    assert settings_arg is None
-
-
-async def test_answer_relevance(mocker: MockerFixture):
-    """`AnswerRelevance` pulls `question` directly from `ctx.inputs`."""
-    mock = _patch_judge(mocker, 'pydantic_evals.evaluators.quality.judge_input_output')
-
-    ctx = _ctx_q('What is 2+2?', output='4')
-    evaluator = AnswerRelevance()
-    await evaluator.evaluate(ctx)
-
-    inputs_arg, output_arg, rubric_arg, *_ = mock.call_args[0]
-    assert inputs_arg == {'question': 'What is 2+2?'}
-    assert output_arg == '4'
-    assert 'directly answer' in rubric_arg
-
-
-async def test_context_precision(mocker: MockerFixture):
-    """`ContextPrecision` shows the context as both the input's context field and as the output."""
-    mock = _patch_judge(mocker, 'pydantic_evals.evaluators.quality.judge_input_output')
-
-    passages = [
-        'Paris is the capital of France.',
-        'The Seine flows through Paris.',
-        'Lyon is a city in France.',
-    ]
-    ctx = _ctx_qc('What is the capital of France?', passages, output='unused')
-    evaluator = ContextPrecision()
-    await evaluator.evaluate(ctx)
-
-    inputs_arg, output_arg, rubric_arg, *_ = mock.call_args[0]
-    assert inputs_arg == {
-        'question': 'What is the capital of France?',
-        'context': passages,
-    }
-    assert output_arg == passages
-    assert 'fraction of the context that is relevant' in rubric_arg
-
-
-async def test_context_recall_with_expected(mocker: MockerFixture):
-    mock = _patch_judge(mocker, 'pydantic_evals.evaluators.quality.judge_input_output_expected')
-
-    ctx = _ctx_qc(
-        'What is the capital of France?',
-        ['France is a country in Western Europe.'],
-        output='Paris',
-        expected_output='Paris is the capital of France',
-    )
-    evaluator = ContextRecall()
-    await evaluator.evaluate(ctx)
-
-    inputs_arg, output_arg, expected_arg, rubric_arg, *_ = mock.call_args[0]
-    assert inputs_arg == {
-        'question': 'What is the capital of France?',
-        'context': ['France is a country in Western Europe.'],
-    }
-    assert output_arg == 'Paris'
-    assert expected_arg == 'Paris is the capital of France'
-    assert 'ground-truth answer' in rubric_arg
-
-
-async def test_context_recall_skips_when_no_expected(mocker: MockerFixture):
-    """When no ground truth is available, the evaluator skips rather than fabricating one."""
-    mock = _patch_judge(mocker, 'pydantic_evals.evaluators.quality.judge_input_output_expected')
-
-    ctx = _ctx_qc('q', ['some context'], output='a', expected_output=None)
-    evaluator = ContextRecall()
-    result = await evaluator.evaluate(ctx)
-
-    assert result == {}
-    assert mock.call_count == 0
-
-
-async def test_hallucination_detector_semantics(mocker: MockerFixture):
-    """`Hallucination` fires the assertion when the judge says claims are unsupported."""
-    mock = _patch_judge(
-        mocker,
-        'pydantic_evals.evaluators.quality.judge_input_output',
-        reason='Contains unsupported claim about Lyon',
-        pass_=True,
-        score=0.4,
-    )
-
-    ctx = _ctx_qc(
-        'What is the capital of France?',
-        ['Paris is the capital of France.'],
-        output='Paris, and Lyon is the capital of Germany.',
-    )
-    evaluator = Hallucination()
-    result = await evaluator.evaluate(ctx)
-
-    assert to_jsonable_python(result) == snapshot(
-        {
-            'Hallucination_score': {'value': 0.4, 'reason': 'Contains unsupported claim about Lyon'},
-            'Hallucination_pass': {'value': True, 'reason': 'Contains unsupported claim about Lyon'},
-        }
-    )
-    rubric_arg = mock.call_args[0][2]
-    assert 'pass=true ONLY if one or more' in rubric_arg
 
 
 async def test_geval_delegates_to_judge_g_eval(mocker: MockerFixture):
@@ -369,28 +155,15 @@ async def test_gemba_score_sqm_no_reference(mocker: MockerFixture):
 
 
 async def test_quality_evaluators_registered_in_defaults():
-    """Quality-pack evaluators deserialize from YAML configs via `DEFAULT_EVALUATORS`."""
-    names = {cls.__name__ for cls in DEFAULT_EVALUATORS}
-    assert {
-        'Faithfulness',
-        'AnswerRelevance',
-        'ContextPrecision',
-        'ContextRecall',
-        'Hallucination',
-        'GEval',
-        'GembaScore',
-    }.issubset(names)
+    """`GEval` and `GembaScore` deserialize from YAML configs via `DEFAULT_EVALUATORS`."""
+    names = {cls.get_serialization_name() for cls in DEFAULT_EVALUATORS}
+    assert {'GEval', 'GembaScore'}.issubset(names)
 
 
 async def test_model_instance_serialized_as_string():
-    """Every quality evaluator serializes a `Model` instance as its `model_id`, matching `LLMJudge`."""
+    """`GEval`/`GembaScore` serialize a `Model` instance as its `model_id`, matching `LLMJudge`."""
     model = TestModel()
     evaluators = [
-        Faithfulness(model=model),
-        AnswerRelevance(model=model),
-        ContextPrecision(model=model),
-        ContextRecall(model=model),
-        Hallucination(model=model),
         GEval(criteria='coherence', evaluation_steps=['step'], model=model),
         GembaScore(source_lang='English', target_lang='French', model=model),
     ]
@@ -398,50 +171,10 @@ async def test_model_instance_serialized_as_string():
         assert evaluator.build_serialization_arguments()['model'] == model.model_id
 
     # A string model name is already serializable and passes through unchanged.
-    assert AnswerRelevance(model='openai:gpt-5.2').build_serialization_arguments()['model'] == 'openai:gpt-5.2'
+    geval = GEval(criteria='coherence', evaluation_steps=['step'], model='openai:gpt-5.2')
+    assert geval.build_serialization_arguments()['model'] == 'openai:gpt-5.2'
 
 
-async def test_score_and_assertion_configuration(mocker: MockerFixture):
-    """The `score` / `assertion` output configs mirror `LLMJudge`."""
-    _patch_judge(mocker, 'pydantic_evals.evaluators.quality.judge_input_output')
-
-    ctx = _ctx_qc('q', ['c'], output='a')
-    evaluator = Faithfulness(
-        score=OutputConfig(evaluation_name='my_score', include_reason=False),
-        assertion=False,
-    )
-    result = await evaluator.evaluate(ctx)
-    assert to_jsonable_python(result) == snapshot({'my_score': 0.9})
-
-
-async def test_assertion_only_disables_score(mocker: MockerFixture):
-    """Passing `score=False` suppresses the score output while keeping the assertion."""
-    _patch_judge(
-        mocker,
-        'pydantic_evals.evaluators.quality.judge_input_output',
-        reason='looks fine',
-        pass_=True,
-        score=0.5,
-    )
-
-    ctx = _ctx_qc('q', ['c'], output='a')
-    evaluator = Faithfulness(score=False)
-    result = await evaluator.evaluate(ctx)
-    assert to_jsonable_python(result) == snapshot({'Faithfulness': {'value': True, 'reason': 'looks fine'}})
-
-
-async def test_model_and_settings_are_plumbed_through(mocker: MockerFixture):
-    mock = _patch_judge(mocker, 'pydantic_evals.evaluators.quality.judge_input_output')
-    settings = ModelSettings(temperature=0.0)
-
-    evaluator = AnswerRelevance(model='openai:gpt-5.2', model_settings=settings)
-    await evaluator.evaluate(_ctx_q('What is 2+2?'))
-
-    assert mock.call_args.args[3] == 'openai:gpt-5.2'
-    assert mock.call_args.args[4] == settings
-
-
-@pytest.mark.anyio
 async def test_judge_g_eval_prompt_shape(mocker: MockerFixture):
     """`judge_g_eval` builds a numbered-steps prompt and returns a `GEvalOutput`."""
     mock_result = mocker.MagicMock()

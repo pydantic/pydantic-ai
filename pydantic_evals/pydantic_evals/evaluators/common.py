@@ -321,15 +321,14 @@ _COMMON_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
 
 def __getattr__(name: str):
     if name == 'DEFAULT_EVALUATORS':
-        # Import quality lazily to avoid a circular import (quality imports helpers from this module).
-        from . import quality
+        # Import lazily to avoid a circular import (these modules import helpers from this one).
+        from . import quality, ragas
 
         return _COMMON_EVALUATORS + (
-            quality.Faithfulness,
-            quality.AnswerRelevance,
-            quality.ContextPrecision,
-            quality.ContextRecall,
-            quality.Hallucination,
+            ragas.Faithfulness,
+            ragas.AnswerRelevance,
+            ragas.ContextPrecision,
+            ragas.ContextRecall,
             quality.GEval,
             quality.GembaScore,
         )

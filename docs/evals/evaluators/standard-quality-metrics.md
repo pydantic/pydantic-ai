@@ -1,69 +1,63 @@
 # Standard Quality Metrics
 
-Pydantic Evals ships a small curated pack of LLM-backed evaluators whose names and rubrics
-track widely-used evaluation frameworks — [Ragas](https://github.com/explodinggradients/ragas),
-G-Eval (Liu et al., 2023) and GEMBA (Kocmi & Federmann, 2023).
+Pydantic Evals ships a small set of LLM-backed evaluators whose names and rubrics track widely-used
+evaluation methods:
 
-These evaluators are thin wrappers over [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] and the
-[`judge_*`][pydantic_evals.evaluators.llm_as_a_judge] helpers. You can always write your own rubric
-against [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] — the point of this pack is to provide recognisable names and sensible defaults
-for the quality dimensions users most often reach for. Each evaluator takes the same `model`,
-`model_settings`, `score` and `assertion` arguments as [`LLMJudge`][pydantic_evals.evaluators.LLMJudge], so they drop into existing
-evaluation suites without ceremony.
+- [Ragas](https://github.com/explodinggradients/ragas)-style RAG metrics, under the
+  [`ragas`][pydantic_evals.evaluators.ragas] namespace.
+- [`GEval`][pydantic_evals.evaluators.GEval] — G-Eval chain-of-thought scoring (Liu et al., 2023).
+- [`GembaScore`][pydantic_evals.evaluators.GembaScore] — GEMBA translation quality (Kocmi & Federmann, 2023).
 
-## Dataset shape
+Each one is a thin wrapper over [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] and the
+[`judge_*`][pydantic_evals.evaluators.llm_as_a_judge] helpers — a *preset* with a recognisable name
+and a sensible default rubric, not a new evaluation mechanism. They take the same `model`,
+`model_settings`, `score` and `assertion` arguments as [`LLMJudge`][pydantic_evals.evaluators.LLMJudge],
+so they drop into existing evaluation suites without ceremony. You can always write your own rubric
+against [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] directly.
 
-The Ragas-style evaluators (`Faithfulness`, `AnswerRelevance`, `ContextPrecision`,
-`ContextRecall`, `Hallucination`) enforce the shape of each case's `inputs` at the type level via
-two [`Protocol`][typing.Protocol]s:
+!!! note "Presets, not the upstream implementation"
+    The Ragas-style evaluators approximate each metric with a single LLM-judge rubric; they do not
+    reproduce Ragas's exact algorithm (for example, Ragas's `answer_relevancy` generates questions
+    from the answer and compares embeddings). They are namespaced under `ragas` precisely so the
+    bare metric names stay free for first-party, general-purpose alternatives we may add later. If
+    you need parity with published Ragas numbers, wrap the real library as shown in
+    [Third-Party Integrations](framework-integrations.md).
 
-- [`HasQuestion`][pydantic_evals.evaluators.HasQuestion] — `question: str`. Required by
-  [`AnswerRelevance`][pydantic_evals.evaluators.AnswerRelevance].
-- [`QuestionWithContext`][pydantic_evals.evaluators.QuestionWithContext] — `question: str` plus
-  `context: Sequence[str]`. Required by the retrieval-oriented evaluators.
+## Ragas-style RAG metrics
+
+These live under the [`ragas`][pydantic_evals.evaluators.ragas] namespace and serialize as
+`ragas.Faithfulness`, `ragas.AnswerRelevance`, and so on.
+
+### Dataset shape
+
+The Ragas-style evaluators enforce the shape of each case's `inputs` at the type level via two
+[`Protocol`][typing.Protocol]s:
+
+- [`HasQuestion`][pydantic_evals.evaluators.ragas.HasQuestion] — `question: str`. Required by
+  [`AnswerRelevance`][pydantic_evals.evaluators.ragas.AnswerRelevance].
+- [`QuestionWithContext`][pydantic_evals.evaluators.ragas.QuestionWithContext] — `question: str`
+  plus `context: Sequence[str]`. Required by the retrieval-oriented evaluators.
 
 Any dataclass, `TypedDict`, Pydantic model, or plain class that structurally exposes those
-attributes will satisfy the corresponding protocol — no inheritance required. Here is the shape
-most of the examples on this page use:
+attributes will satisfy the corresponding protocol — no inheritance required.
 
-```python
-from dataclasses import dataclass
+!!! info "Context comes from your inputs"
+    These evaluators grade against the `context` you attach to each case's `inputs` — i.e. a
+    *supplied* context. They do not inspect what an agent retrieved at runtime (which would live in
+    the span tree). Use them to evaluate generation/retrieval quality against a known context; if
+    you need to grade against runtime retrievals, capture them into your case inputs first.
 
+### Faithfulness
 
-@dataclass
-class RagInputs:
-    question: str
-    context: list[str]
-```
-
-## If these evaluators don't fit your use case
-
-These are **curated presets**, not a rigid API: a thin, opinionated layer over [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] with a
-fixed schema and rubric per metric. If your dataset is shaped differently (e.g. the question
-field is called `prompt`, the context is a structured object rather than a list of passages), or
-you want to tweak the rubric for your domain, the intended escape hatch is to **vendor the
-evaluator's source** into your own project and modify it to fit. Each class is short and
-deliberately readable so this remains a small patch.
-
-For teams that would rather wrap an off-the-shelf library like Ragas or DeepEval directly, see
-the [Third-Party Integrations](framework-integrations.md) page.
-
-!!! tip "Mix and match"
-    Nothing stops you from combining these curated evaluators with a custom
-    [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] or your own domain-specific evaluator in the
-    same dataset. Many users end up with one or two curated metrics plus case-specific rubrics.
-
-## Faithfulness (Ragas)
-
-Faithfulness checks that every factual claim in the output is grounded in a provided retrieval
-context. Unsupported, contradicted, or fabricated claims cause the assertion to fail; the score
-is the fraction of claims that are supported.
+[`Faithfulness`][pydantic_evals.evaluators.ragas.Faithfulness] checks that every factual claim in
+the output is grounded in the provided context. Unsupported, contradicted, or fabricated claims
+cause the assertion to fail; the score is the fraction of claims that are supported.
 
 ```python
 from dataclasses import dataclass
 
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Faithfulness
+from pydantic_evals.evaluators import ragas
 
 
 @dataclass
@@ -82,21 +76,21 @@ dataset = Dataset[RagInputs, str, object](
             ),
         ),
     ],
-    evaluators=[Faithfulness()],
+    evaluators=[ragas.Faithfulness()],
 )
 ```
 
-## Answer Relevance (Ragas)
+### Answer Relevance
 
-[`AnswerRelevance`][pydantic_evals.evaluators.AnswerRelevance] judges whether the output directly
-addresses the question in the input, without padding or tangents. It only needs a `question`
-field on the inputs.
+[`AnswerRelevance`][pydantic_evals.evaluators.ragas.AnswerRelevance] judges whether the output
+directly addresses the question in the input, without padding or tangents. It only needs a
+`question` field on the inputs.
 
 ```python
 from dataclasses import dataclass
 
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import AnswerRelevance
+from pydantic_evals.evaluators import ragas
 
 
 @dataclass
@@ -107,21 +101,21 @@ class QInputs:
 dataset = Dataset[QInputs, str, object](
     name='answer_relevance_demo',
     cases=[Case(inputs=QInputs(question='What is the speed of light?'))],
-    evaluators=[AnswerRelevance()],
+    evaluators=[ragas.AnswerRelevance()],
 )
 ```
 
-## Context Precision (Ragas)
+### Context Precision
 
-[`ContextPrecision`][pydantic_evals.evaluators.ContextPrecision] estimates how much of a retrieved
-context is actually relevant to the question — a low score flags retrievers that drown the
-downstream model in noise.
+[`ContextPrecision`][pydantic_evals.evaluators.ragas.ContextPrecision] estimates how much of a
+retrieved context is actually relevant to the question — a low score flags retrievers that drown
+the downstream model in noise.
 
 ```python
 from dataclasses import dataclass
 
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import ContextPrecision
+from pydantic_evals.evaluators import ragas
 
 
 @dataclass
@@ -145,22 +139,22 @@ dataset = Dataset[RagInputs, str, object](
             ),
         ),
     ],
-    evaluators=[ContextPrecision()],
+    evaluators=[ragas.ContextPrecision()],
 )
 ```
 
-## Context Recall (Ragas)
+### Context Recall
 
-[`ContextRecall`][pydantic_evals.evaluators.ContextRecall] checks whether the retrieved context
-contains enough information to produce the ground-truth answer. It reads the ground-truth answer
-from each case's `expected_output`; if no `expected_output` is set the evaluator returns an empty
-result rather than fabricating one.
+[`ContextRecall`][pydantic_evals.evaluators.ragas.ContextRecall] checks whether the retrieved
+context contains enough information to produce the ground-truth answer. It reads the ground-truth
+answer from each case's `expected_output`; if no `expected_output` is set the evaluator returns an
+empty result rather than fabricating one.
 
 ```python
 from dataclasses import dataclass
 
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import ContextRecall
+from pydantic_evals.evaluators import ragas
 
 
 @dataclass
@@ -180,50 +174,21 @@ dataset = Dataset[RagInputs, str, object](
             expected_output='Jane Austen wrote Pride and Prejudice in 1813.',
         ),
     ],
-    evaluators=[ContextRecall()],
+    evaluators=[ragas.ContextRecall()],
 )
 ```
 
-## Hallucination
+### If these evaluators don't fit your use case
 
-[`Hallucination`][pydantic_evals.evaluators.Hallucination] is the sibling of `Faithfulness`,
-framed as a detector:
+These are **presets**, not a rigid API: a thin, opinionated layer over
+[`LLMJudge`][pydantic_evals.evaluators.LLMJudge] with a fixed schema and rubric per metric. If your
+dataset is shaped differently (e.g. the question field is called `prompt`, the context is a
+structured object rather than a list of passages), or you want to tweak the rubric for your domain,
+the intended escape hatch is to **vendor the evaluator's source** into your own project and modify
+it to fit. Each class is short and deliberately readable so this remains a small patch.
 
-- `score` is a groundedness score — **higher is better** (1.0 = fully grounded, 0.0 = fully
-  hallucinated).
-- The assertion fires (`pass=True`) when the detector **does** find hallucinated claims. This is
-  the opposite of most assertions, and deliberate: CI can gate on `pass=False` to mean "no
-  hallucination detected".
-
-If you prefer the conventional direction where `pass=True` means "the output meets the criterion",
-use [`Faithfulness`][pydantic_evals.evaluators.Faithfulness] instead.
-
-```python
-from dataclasses import dataclass
-
-from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Hallucination
-
-
-@dataclass
-class RagInputs:
-    question: str
-    context: list[str]
-
-
-dataset = Dataset[RagInputs, str, object](
-    name='hallucination_demo',
-    cases=[
-        Case(
-            inputs=RagInputs(
-                question='Summarise the article.',
-                context=['The article discusses Mars exploration...'],
-            ),
-        ),
-    ],
-    evaluators=[Hallucination()],
-)
-```
+For teams that would rather wrap an off-the-shelf library like Ragas or DeepEval directly, see the
+[Third-Party Integrations](framework-integrations.md) page.
 
 ## G-Eval (Liu et al., 2023)
 
@@ -294,11 +259,10 @@ Quality".
 
 | Need | Use |
 | --- | --- |
-| Is the output supported by my retrieved context? | [`Faithfulness`][pydantic_evals.evaluators.Faithfulness] |
-| Did the model hallucinate anything? (gate on `pass=False`) | [`Hallucination`][pydantic_evals.evaluators.Hallucination] |
-| Does the answer actually address the question? | [`AnswerRelevance`][pydantic_evals.evaluators.AnswerRelevance] |
-| Is my retriever surfacing relevant passages? | [`ContextPrecision`][pydantic_evals.evaluators.ContextPrecision] |
-| Is my retriever returning enough information? | [`ContextRecall`][pydantic_evals.evaluators.ContextRecall] |
+| Is the output supported by my retrieved context? | [`ragas.Faithfulness`][pydantic_evals.evaluators.ragas.Faithfulness] |
+| Does the answer actually address the question? | [`ragas.AnswerRelevance`][pydantic_evals.evaluators.ragas.AnswerRelevance] |
+| Is my retriever surfacing relevant passages? | [`ragas.ContextPrecision`][pydantic_evals.evaluators.ragas.ContextPrecision] |
+| Is my retriever returning enough information? | [`ragas.ContextRecall`][pydantic_evals.evaluators.ragas.ContextRecall] |
 | Score a quality dimension on an integer scale with explicit CoT steps | [`GEval`][pydantic_evals.evaluators.GEval] |
 | Score a translation against a source (and optional reference) | [`GembaScore`][pydantic_evals.evaluators.GembaScore] |
 | Something bespoke | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] with a custom rubric |
