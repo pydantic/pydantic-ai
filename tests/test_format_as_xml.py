@@ -8,12 +8,13 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, computed_field
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import Self
 
 from pydantic_ai import format_as_xml
+
+from ._inline_snapshot import snapshot
 
 
 @dataclass
@@ -56,6 +57,7 @@ class ExamplePydanticFields(BaseModel):
         pytest.param('a string', snapshot('<examples>a string</examples>'), id='string'),
         pytest.param(42, snapshot('<examples>42</examples>'), id='int'),
         pytest.param(None, snapshot('<examples>null</examples>'), id='null'),
+        # regression test for https://github.com/pydantic/pydantic-ai/pull/4131
         pytest.param(ExampleEnum.FOO, snapshot('<examples>ExampleEnum.FOO</examples>'), id='enum'),
         pytest.param(ExampleStrEnum.FOO, snapshot('<examples>foo</examples>'), id='str enum'),
         pytest.param(

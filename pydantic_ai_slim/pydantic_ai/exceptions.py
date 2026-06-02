@@ -14,13 +14,17 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import RetryPromptPart
+    from .messages import ModelResponse, RetryPromptPart
 
 __all__ = (
     'ModelRetry',
     'CallDeferred',
     'ApprovalRequired',
+    'SkipModelRequest',
+    'SkipToolValidation',
+    'SkipToolExecution',
     'UserError',
+    'UndrainedPendingMessagesError',
     'AgentRunError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
@@ -34,9 +38,11 @@ __all__ = (
 
 
 class ModelRetry(Exception):
-    """Exception to raise when a tool function should be retried.
+    """Exception to raise to request a model retry.
 
-    The agent will return the message to the model and ask it to try calling the function/tool again.
+    Can be raised from tool functions, output validators, and capability hooks
+    (such as `after_model_request`, `after_tool_execute`, etc.) to send
+    a retry prompt back to the model asking it to try again.
     """
 
     message: str
@@ -85,6 +91,9 @@ class CallDeferred(Exception):
         self.metadata = metadata
         super().__init__()
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.metadata,)
+
 
 class ApprovalRequired(Exception):
     """Exception to raise when a tool call requires human-in-the-loop approval.
@@ -100,6 +109,52 @@ class ApprovalRequired(Exception):
         self.metadata = metadata
         super().__init__()
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.metadata,)
+
+
+class SkipModelRequest(Exception):
+    """Exception to raise in before/wrap model request hooks to skip the model call.
+
+    The provided response will be used instead of calling the model.
+
+    Note: when raised in `before_model_request`, any message history modifications
+    made by earlier capabilities in that hook will not be persisted to the agent's
+    message history, since the request preparation is aborted.
+    """
+
+    response: ModelResponse
+
+    def __init__(self, response: ModelResponse):
+        self.response = response
+        super().__init__()
+
+
+class SkipToolValidation(Exception):
+    """Exception to raise in before/wrap tool validate hooks to skip validation.
+
+    The provided args will be used as the validated arguments.
+    """
+
+    validated_args: dict[str, Any]
+
+    def __init__(self, validated_args: dict[str, Any]):
+        self.validated_args = validated_args
+        super().__init__()
+
+
+class SkipToolExecution(Exception):
+    """Exception to raise in before/wrap tool execute hooks to skip execution.
+
+    The provided result will be used as the tool result.
+    """
+
+    result: Any
+
+    def __init__(self, result: Any):
+        self.result = result
+        super().__init__()
+
 
 class UserError(RuntimeError):
     """Error caused by a usage mistake by the application developer — You!"""
@@ -110,6 +165,17 @@ class UserError(RuntimeError):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+
+class UndrainedPendingMessagesError(UserError):
+    """Error raised when an agent run ends with messages still queued via `enqueue`.
+
+    A bare `async for node in agent_run` loop only drains `'asap'` messages (in
+    `before_model_request`); `'when_idle'` messages and end-of-run redirects drain in
+    `after_node_run`, which bare iteration skips. Reaching the run's `End` with a non-empty
+    queue means those messages were stranded — drive the run with `agent.run()` or
+    `AgentRun.next()` instead.
+    """
 
 
 class AgentRunError(RuntimeError):
@@ -153,6 +219,9 @@ class UnexpectedModelBehavior(AgentRunError):
                 self.body = body
         super().__init__(message)
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.message, self.body)
+
     def __str__(self) -> str:
         if self.body:
             return f'{self.message}, body:\n{self.body}'
@@ -174,9 +243,12 @@ class ModelAPIError(AgentRunError):
         self.model_name = model_name
         super().__init__(message)
 
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.message)
+
 
 class ModelHTTPError(ModelAPIError):
-    """Raised when an model provider response has a status code of 4xx or 5xx."""
+    """Raised when a model provider response has a status code of 4xx or 5xx."""
 
     status_code: int
     """The HTTP status code returned by the API."""
@@ -189,6 +261,9 @@ class ModelHTTPError(ModelAPIError):
         self.body = body
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         super().__init__(model_name=model_name, message=message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.status_code, self.model_name, self.body)
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):
@@ -206,6 +281,9 @@ class ToolRetryError(Exception):
             else self._format_error_details(tool_retry.content, tool_retry.tool_name)
         )
         super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.tool_retry,)
 
     @staticmethod
     def _format_error_details(errors: list[pydantic_core.ErrorDetails], tool_name: str | None) -> str:

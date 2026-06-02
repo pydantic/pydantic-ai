@@ -10,7 +10,6 @@ from openai import AsyncOpenAI
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -106,7 +105,8 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'google': _openrouter_google_model_profile,
             'openai': openai_model_profile,
@@ -126,15 +126,20 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
+            if provider == 'anthropic':
+                model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # OpenRouter accepts `reasoning` universally, so the gate should always forward `thinking`.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
             openai_chat_supports_file_urls=True,
+            openai_chat_supports_web_search=True,
+            supports_thinking=True,
         ).update(profile)
 
     @overload
@@ -149,6 +154,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         app_title: str | None = None,
         openai_client: None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = ...,
     ) -> None: ...
 
     def __init__(
@@ -159,30 +165,33 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = 2,
     ) -> None:
         """Configure the provider with either an API key or prebuilt client.
 
         Args:
-            api_key: OpenRouter API key. Falls back to ``OPENROUTER_API_KEY``
-                when omitted and required unless ``openai_client`` is provided.
+            api_key: OpenRouter API key. Falls back to `OPENROUTER_API_KEY`
+                when omitted and required unless `openai_client` is provided.
             app_url: Optional url for app attribution. Falls back to
-                ``OPENROUTER_APP_URL`` when omitted.
+                `OPENROUTER_APP_URL` when omitted.
             app_title: Optional title for app attribution. Falls back to
-                ``OPENROUTER_APP_TITLE`` when omitted.
-            openai_client: Existing ``AsyncOpenAI`` client to reuse instead of
-                creating one internally.
-            http_client: Custom ``httpx.AsyncClient`` to pass into the
-                ``AsyncOpenAI`` constructor when building a client.
+                `OPENROUTER_APP_TITLE` when omitted.
+            openai_client: Existing `AsyncOpenAI` client to reuse instead of
+                creating one internally. If provided, `max_retries` is ignored.
+            http_client: Custom `httpx.AsyncClient` to pass into the
+                `AsyncOpenAI` constructor when building a client.
+            max_retries: Maximum number of retries for API requests. Set to `0` to disable retries.
+                Defaults to `2`, matching the OpenAI SDK default.
 
         Raises:
-            UserError: If no API key is available and no ``openai_client`` is
+            UserError: If no API key is available and no `openai_client` is
                 provided.
         """
         api_key = api_key or os.getenv('OPENROUTER_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `OPENROUTER_API_KEY` environment variable or pass it via `OpenRouterProvider(api_key=...)`'
-                'to use the OpenRouter provider.'
+                ' to use the OpenRouter provider.'
             )
 
         attribution_headers: dict[str, str] = {}
@@ -193,12 +202,16 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
-            )
         else:
-            http_client = cached_async_http_client(provider='openrouter')
+            if http_client is None:
+                http_client = self._owned_http_client()
             self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
+                base_url=self.base_url,
+                api_key=api_key,
+                http_client=http_client,
+                default_headers=attribution_headers,
+                max_retries=max_retries,
             )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

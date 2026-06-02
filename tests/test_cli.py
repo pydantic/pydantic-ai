@@ -1,22 +1,23 @@
 import sys
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from io import StringIO
 from typing import Any
 
 import pytest
-from dirty_equals import IsInstance, IsStr
-from inline_snapshot import snapshot
+import sniffio
 from pytest import CaptureFixture
 from pytest_mock import MockerFixture
 from rich.console import Console
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
-from .conftest import TestEnv, try_import
+from ._inline_snapshot import snapshot
+from .conftest import IsInstance, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
     from openai import OpenAIError
@@ -29,6 +30,17 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
+
+
+@pytest.fixture(autouse=True)
+def reset_sniffio_cvar() -> Iterator[None]:
+    # The anyio pytest plugin sets `current_async_library_cvar` to 'asyncio' at session
+    # start and the value leaks into sync tests, causing `anyio.run` to refuse to start.
+    token = sniffio.current_async_library_cvar.set(None)
+    try:
+        yield
+    finally:
+        sniffio.current_async_library_cvar.reset(token)
 
 
 def test_cli_version(capfd: CaptureFixture[str]):
@@ -109,8 +121,10 @@ def test_agent_flag_set_model(
 
     mocker.patch('pydantic_ai._cli.ask_agent')
 
-    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai:gpt-4o', 'hello']) == 0
+    assert cli(['--agent', 'test_module:custom_agent', '--model', 'openai-chat:gpt-4o', 'hello']) == 0
 
+    # CLI banner shows `model.model_id` which is `{system}:{model_name}` — `OpenAIChatModel.system`
+    # is `'openai'`, so the banner prints `'openai:gpt-4o'` even when the user passed `'openai-chat:'`.
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
     assert isinstance(custom_agent.model, OpenAIChatModel)
@@ -150,8 +164,8 @@ def test_list_models(capfd: CaptureFixture[str]):
         'anthropic',
         'bedrock',
         'cerebras',
-        'google-vertex',
-        'google-gla',
+        'google',
+        'google-cloud',
         'groq',
         'mistral',
         'cohere',
@@ -409,7 +423,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=['web_search'],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai-chat:gpt-5',
         html_source=None,
     )
 
@@ -431,7 +445,7 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         models=[],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai-chat:gpt-5',
         html_source=None,
     )
 
@@ -454,7 +468,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
                 '-m',
                 'openai:gpt-5',
                 '-m',
-                'anthropic:claude-sonnet-4-5',
+                'anthropic:claude-sonnet-4-6',
             ],
             prog_name='clai',
         )
@@ -465,10 +479,10 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         agent_path='test_module:custom_agent',
         host='127.0.0.1',
         port=7932,
-        models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5'],
+        models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai-chat:gpt-5',
         html_source=None,
     )
 
@@ -496,7 +510,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         models=[],
         tools=['web_search', 'code_execution'],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai-chat:gpt-5',
         html_source=None,
     )
 
@@ -516,7 +530,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         models=['openai:gpt-5'],
         tools=[],
         instructions='You are a helpful coding assistant',
-        default_model='openai:gpt-5',
+        default_model='openai-chat:gpt-5',
         html_source=None,
     )
 
@@ -542,7 +556,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         models=[],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai-chat:gpt-5',
         html_source=None,
     )
 
@@ -575,7 +589,7 @@ def test_run_web_command_generic_agent_no_model(mocker: MockerFixture, capfd: Ca
     mock_uvicorn_run.assert_called_once()
     # Verify default model was passed
     call_kwargs = mock_create_app.call_args.kwargs
-    assert call_kwargs['models'] == ['openai:gpt-5']
+    assert call_kwargs['models'] == ['openai-chat:gpt-5']
 
 
 def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, capfd: CaptureFixture[str]):
@@ -653,17 +667,17 @@ def test_run_web_command_memory_tool(mocker: MockerFixture, capfd: CaptureFixtur
     assert '"memory" requires configuration and cannot be enabled via CLI' in output
 
 
-def test_run_web_command_agent_builtin_tools_not_duplicated(
+def test_run_web_command_agent_native_tools_not_duplicated(
     mocker: MockerFixture, create_test_module: Callable[..., None], capfd: CaptureFixture[str]
 ):
-    """Test run_web_command only passes CLI-provided tools, not agent's builtin tools."""
-    from pydantic_ai.builtin_tools import WebSearchTool
+    """Test run_web_command only passes CLI-provided tools, not agent's native tools."""
+    from pydantic_ai.native_tools import WebSearchTool
 
     mock_uvicorn_run = mocker.patch('uvicorn.run')
     mock_create_app = mocker.patch('pydantic_ai._cli.web.create_web_app')
 
     # Create agent with web_search tool already configured
-    test_agent = Agent(TestModel(custom_output_text='test'), builtin_tools=[WebSearchTool()])
+    test_agent = Agent(TestModel(custom_output_text='test'), capabilities=[NativeTool(WebSearchTool())])
     create_test_module(custom_agent=test_agent)
 
     # Add code_execution via CLI
@@ -674,8 +688,8 @@ def test_run_web_command_agent_builtin_tools_not_duplicated(
 
     # Verify only CLI-provided tools are passed (agent's tools are handled by create_web_app)
     call_kwargs = mock_create_app.call_args.kwargs
-    builtin_tools = call_kwargs.get('builtin_tools', [])
-    tool_kinds = {t.kind for t in builtin_tools}
+    native_tools = call_kwargs.get('native_tools', [])
+    tool_kinds = {t.kind for t in native_tools}
     # web_search is on the agent, so it's NOT passed here (it's handled internally)
     assert 'web_search' not in tool_kinds
     # code_execution was provided via CLI, so it IS passed
@@ -693,7 +707,7 @@ def test_run_web_command_cli_models_passed_to_create_web_app(
     create_test_module(custom_agent=test_agent)
 
     result = run_web_command(
-        agent_path='test_module:custom_agent', models=['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+        agent_path='test_module:custom_agent', models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6']
     )
 
     assert result == 0
@@ -701,7 +715,7 @@ def test_run_web_command_cli_models_passed_to_create_web_app(
 
     call_kwargs = mock_create_app.call_args.kwargs
     # CLI models passed as list; agent model merging/deduplication happens in create_web_app
-    assert call_kwargs.get('models') == ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']
+    assert call_kwargs.get('models') == ['openai:gpt-5', 'anthropic:claude-sonnet-4-6']
 
 
 def test_agent_to_cli_sync_with_args(mocker: MockerFixture, env: TestEnv):
@@ -764,6 +778,6 @@ def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai-chat:gpt-5',
         html_source=custom_url,
     )

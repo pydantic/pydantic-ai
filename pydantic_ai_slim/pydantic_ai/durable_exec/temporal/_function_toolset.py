@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
@@ -11,7 +11,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, deserialize_run_context
+
+if TYPE_CHECKING:
+    from pydantic_ai.agent.abstract import AbstractAgent
 from ._toolset import (
     CallToolParams,
     CallToolResult,
@@ -29,15 +32,19 @@ class TemporalFunctionToolset(TemporalWrapperToolset[AgentDepsT]):
         tool_activity_config: dict[str, ActivityConfig | Literal[False]],
         deps_type: type[AgentDepsT],
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        agent: AbstractAgent[AgentDepsT, Any] | None = None,
     ):
         super().__init__(toolset)
+        self._agent = agent
         self.activity_config = activity_config
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
         async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
             name = params.name
-            ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+            ctx = deserialize_run_context(
+                self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+            )
             try:
                 tool = (await toolset.get_tools(ctx))[name]
             except KeyError as e:  # pragma: no cover

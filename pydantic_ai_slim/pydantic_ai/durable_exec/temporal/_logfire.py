@@ -15,7 +15,7 @@ def _default_setup_logfire() -> Logfire:
     import logfire
 
     instance = logfire.configure()
-    logfire.instrument_pydantic_ai()
+    instance.instrument_pydantic_ai()
     return instance
 
 
@@ -38,7 +38,7 @@ class LogfirePlugin(SimplePlugin):
 
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='LogfirePlugin',
-            client_interceptors=[TracingInterceptor(get_tracer('temporalio'))],
+            interceptors=[TracingInterceptor(get_tracer('temporalio'))],
         )
 
     async def connect_service_client(

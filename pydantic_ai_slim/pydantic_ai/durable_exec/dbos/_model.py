@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
 from typing import Any
 
 from dbos import DBOS
@@ -10,49 +9,14 @@ from dbos import DBOS
 from pydantic_ai import (
     ModelMessage,
     ModelResponse,
-    ModelResponseStreamEvent,
 )
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RequestUsage
 
 from ._utils import StepConfig
-
-
-class DBOSStreamedResponse(StreamedResponse):
-    def __init__(self, model_request_parameters: ModelRequestParameters, response: ModelResponse):
-        super().__init__(model_request_parameters)
-        self.response = response
-
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        return
-        # noinspection PyUnreachableCode
-        yield
-
-    def get(self) -> ModelResponse:
-        return self.response
-
-    def usage(self) -> RequestUsage:
-        return self.response.usage  # pragma: no cover
-
-    @property
-    def model_name(self) -> str:
-        return self.response.model_name or ''  # pragma: no cover
-
-    @property
-    def provider_name(self) -> str:
-        return self.response.provider_name or ''  # pragma: no cover
-
-    @property
-    def provider_url(self) -> str | None:
-        return self.response.provider_url  # pragma: no cover
-
-    @property
-    def timestamp(self) -> datetime:
-        return self.response.timestamp  # pragma: no cover
 
 
 class DBOSModel(WrapperModel):
@@ -138,4 +102,4 @@ class DBOSModel(WrapperModel):
         response = await self._dbos_wrapped_request_stream_step(
             messages, model_settings, model_request_parameters, run_context
         )
-        yield DBOSStreamedResponse(model_request_parameters, response)
+        yield CompletedStreamedResponse(model_request_parameters, response)

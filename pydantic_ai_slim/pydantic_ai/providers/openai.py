@@ -6,7 +6,6 @@ from typing import overload
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers import Provider
 
@@ -34,7 +33,8 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         return openai_model_profile(model_name)
 
     @overload
@@ -67,7 +67,8 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
                 will be used if available.
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
-                client to use. If provided, `base_url`, `api_key`, `http_client`, and `max_retries` must be `None`.
+                client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`, and
+                `max_retries` is ignored.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             max_retries: Maximum number of retries for API requests. Set to `0` to disable retries.
                 Defaults to `2`, matching the OpenAI SDK default.
@@ -82,12 +83,12 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=base_url, api_key=api_key, http_client=http_client, max_retries=max_retries
-            )
         else:
-            http_client = cached_async_http_client(provider='openai')
+            if http_client is None:
+                http_client = self._owned_http_client()
             self._client = AsyncOpenAI(
                 base_url=base_url, api_key=api_key, http_client=http_client, max_retries=max_retries
             )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

@@ -1,0 +1,182 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '399'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '603'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll retrieve the file for you now.
+        type: text
+      - id: toolu_01VRoTuqwSBnQVbu8S9unCcK
+        input: {}
+        name: get_file
+        type: tool_use
+      id: msg_01XTvDZL8dUrS8t8SxWTv7f6
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 558
+        output_tokens: 46
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '871'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a document file, then describe what you received.
+          type: text
+        role: user
+      - content:
+        - text: I'll retrieve the file for you now.
+          type: text
+        - id: toolu_01VRoTuqwSBnQVbu8S9unCcK
+          input: {}
+          name: get_file
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: File attached
+            type: text
+          is_error: false
+          tool_use_id: toolu_01VRoTuqwSBnQVbu8S9unCcK
+          type: tool_result
+        - source:
+            type: url
+            url: https://pdfobject.com/pdf/sample.pdf
+          type: document
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1438'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          I received a **PDF document** with the following characteristics:
+
+          ## Document Details:
+          - **Title:** "Sample PDF"
+          - **Subtitle:** "This is a simple PDF file. Fun fun fun."
+          - **Format:** Single-page PDF document
+          - **Content Type:** Sample/demonstration document
+
+          ## Content Description:
+          The PDF contains several paragraphs of **Lorem Ipsum** placeholder text - the classic dummy text commonly used in publishing and design to demonstrate the visual layout of documents without relying on meaningful content.
+
+          The document appears to be a simple test or sample PDF, likely used for demonstration purposes, testing PDF readers, or as a template. The Lorem Ipsum text is well-formatted in multiple paragraphs and flows naturally across the page, making it suitable for testing document rendering, printing, or PDF processing functions.
+
+          The layout is clean and straightforward with a clear title at the top followed by body text in a readable format.
+        type: text
+      id: msg_013LrngNDKE8mgWfGF9UbeV3
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 3289
+        output_tokens: 201
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

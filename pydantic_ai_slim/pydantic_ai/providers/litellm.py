@@ -6,7 +6,6 @@ from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -45,7 +44,8 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         # Map provider prefixes to their profile functions
         provider_to_profile = {
             'anthropic': anthropic_model_profile,
@@ -87,6 +87,7 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         api_base: str | None = None,
+        max_retries: int = ...,
     ) -> None: ...
 
     @overload
@@ -96,6 +97,7 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         api_base: str | None = None,
         http_client: AsyncHTTPClient,
+        max_retries: int = ...,
     ) -> None: ...
 
     @overload
@@ -108,14 +110,17 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         api_base: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
+        max_retries: int = 2,
     ) -> None:
         """Initialize a LiteLLM provider.
 
         Args:
             api_key: API key for the model provider. If None, LiteLLM will try to get it from environment variables.
             api_base: Base URL for the model provider. Use this for custom endpoints or self-hosted models.
-            openai_client: Pre-configured OpenAI client. If provided, other parameters are ignored.
+            openai_client: Pre-configured OpenAI client. If provided, other parameters are ignored, and `max_retries` is ignored.
             http_client: Custom HTTP client to use.
+            max_retries: Maximum number of retries for API requests. Set to `0` to disable retries.
+                Defaults to `2`, matching the OpenAI SDK default.
         """
         if openai_client is not None:
             self._client = openai_client
@@ -123,12 +128,14 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
 
         # Create OpenAI client that will be used with LiteLLM's completion function
         # The actual API calls will be intercepted and routed through LiteLLM
-        if http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
-            )
-        else:
-            http_client = cached_async_http_client(provider='litellm')
-            self._client = AsyncOpenAI(
-                base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
-            )
+        if http_client is None:
+            http_client = self._owned_http_client()
+        self._client = AsyncOpenAI(
+            base_url=api_base,
+            api_key=api_key or 'litellm-placeholder',
+            http_client=http_client,
+            max_retries=max_retries,
+        )
+
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

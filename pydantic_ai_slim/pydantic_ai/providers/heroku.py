@@ -8,7 +8,6 @@ from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.providers import Provider
 
@@ -36,18 +35,19 @@ class HerokuProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         # As the Heroku API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer.
         return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, max_retries: int = ...) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, max_retries: int = ...) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient, max_retries: int = ...) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -59,6 +59,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = 2,
     ) -> None:
         if openai_client is not None:
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
@@ -69,14 +70,17 @@ class HerokuProvider(Provider[AsyncOpenAI]):
             if not api_key:
                 raise UserError(
                     'Set the `HEROKU_INFERENCE_KEY` environment variable or pass it via `HerokuProvider(api_key=...)`'
-                    'to use the Heroku provider.'
+                    ' to use the Heroku provider.'
                 )
 
             base_url = base_url or os.getenv('HEROKU_INFERENCE_URL', 'https://us.inference.heroku.com')
             base_url = base_url.rstrip('/') + '/v1'
 
-            if http_client is not None:
-                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)
-            else:
-                http_client = cached_async_http_client(provider='heroku')
-                self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)
+            if http_client is None:
+                http_client = self._owned_http_client()
+            self._client = AsyncOpenAI(
+                api_key=api_key, http_client=http_client, base_url=base_url, max_retries=max_retries
+            )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

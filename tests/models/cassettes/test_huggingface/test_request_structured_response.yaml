@@ -1,0 +1,94 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '475'
+      content-type:
+      - application/json
+      host:
+      - router.huggingface.co
+    method: POST
+    parsed_body:
+      messages:
+      - content: What are the first three prime numbers? Return them as a list of integers.
+        name: null
+        role: user
+        tool_calls: null
+      model: deepseek-ai/DeepSeek-R1
+      stream: false
+      tool_choice: required
+      tools:
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              response:
+                items:
+                  type: integer
+                type: array
+            required:
+            - response
+            type: object
+        type: function
+    uri: https://router.huggingface.co/together/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"31d-KpmJ0cA6hPrRiPrfPVjrjEZ5a/g"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      retry-after:
+      - '15'
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          content: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"response":[2,3,5]}'
+              name: final_result
+            id: call_7qxjvbuxpm6017n3jcq1uqwt
+            index: 0
+            type: function
+        seed: 10176929106694746000
+      created: 1769546595
+      id: oV1mqo1-28Eivz-9c4b14ce2f14c9b7
+      model: deepseek-ai/DeepSeek-R1
+      object: chat.completion
+      prompt: []
+      usage:
+        cached_tokens: 0
+        completion_tokens: 29
+        prompt_tokens: 19
+        total_tokens: 48
+    status:
+      code: 200
+      message: OK
+version: 1

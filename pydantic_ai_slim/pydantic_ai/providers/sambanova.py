@@ -7,7 +7,6 @@ from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -47,7 +46,8 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
         """Return the AsyncOpenAI client."""
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         """Get model profile for SambaNova models.
 
         SambaNova serves models from multiple families including Meta Llama,
@@ -80,14 +80,17 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = 2,
     ) -> None:
         """Initialize SambaNova provider.
 
         Args:
             api_key: SambaNova API key. If not provided, reads from SAMBANOVA_API_KEY env var.
             base_url: Custom API base URL. Defaults to https://api.sambanova.ai/v1
-            openai_client: Optional pre-configured OpenAI client
+            openai_client: Optional pre-configured OpenAI client. If provided, `max_retries` is ignored.
             http_client: Optional custom httpx.AsyncClient for making HTTP requests
+            max_retries: Maximum number of retries for API requests. Set to `0` to disable retries.
+                Defaults to `2`, matching the OpenAI SDK default.
 
         Raises:
             UserError: If API key is not provided and SAMBANOVA_API_KEY env var is not set
@@ -107,6 +110,11 @@ class SambaNovaProvider(Provider[AsyncOpenAI]):
             # Set base URL (default to SambaNova API endpoint)
             self._base_url = base_url or os.getenv('SAMBANOVA_BASE_URL', 'https://api.sambanova.ai/v1')
 
-            # Create http client and AsyncOpenAI client
-            http_client = http_client or cached_async_http_client(provider='sambanova')
-            self._client = AsyncOpenAI(base_url=self._base_url, api_key=api_key, http_client=http_client)
+            if http_client is None:
+                http_client = self._owned_http_client()
+            self._client = AsyncOpenAI(
+                base_url=self._base_url, api_key=api_key, http_client=http_client, max_retries=max_retries
+            )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

@@ -59,10 +59,17 @@ async def run_evaluator(
 
         evaluate = tenacity_retry(**retry)(evaluate)
 
+    evaluator_version = evaluator.get_evaluator_version()
+    evaluator_name = evaluator.get_default_evaluation_name()
+    source = evaluator.as_spec()
+
     try:
+        # Keep `_span_name='evaluator: {evaluator_name}'` stable: existing logfire
+        # queries filter on the span name, so only the user-facing msg_template changes.
         with logfire_span(
-            'evaluator: {evaluator_name}',
-            evaluator_name=evaluator.get_default_evaluation_name(),
+            'Calling evaluator: {evaluator_name}',
+            evaluator_name=evaluator_name,
+            _span_name='evaluator: {evaluator_name}',
         ):
             raw_results = await evaluate(ctx)
 
@@ -70,22 +77,30 @@ async def run_evaluator(
                 results = _EVALUATOR_OUTPUT_ADAPTER.validate_python(raw_results)
             except ValidationError as e:
                 raise ValueError(f'{evaluator!r}.evaluate returned a value of an invalid type: {raw_results!r}.') from e
+
+            results = _convert_to_mapping(results, scalar_name=evaluator_name)
+
+            details: list[EvaluationResult] = []
+            for name, result in results.items():
+                if not isinstance(result, EvaluationReason):
+                    result = EvaluationReason(value=result)
+                details.append(
+                    EvaluationResult(
+                        name=name,
+                        value=result.value,
+                        reason=result.reason,
+                        source=source,
+                        evaluator_version=evaluator_version,
+                    )
+                )
     except Exception as e:
         return EvaluatorFailure(
-            name=evaluator.get_default_evaluation_name(),
+            name=evaluator_name,
             error_message=f'{type(e).__name__}: {e}',
             error_stacktrace=traceback.format_exc(),
-            source=evaluator.as_spec(),
-        )
-
-    results = _convert_to_mapping(results, scalar_name=evaluator.get_default_evaluation_name())
-
-    details: list[EvaluationResult] = []
-    for name, result in results.items():
-        if not isinstance(result, EvaluationReason):
-            result = EvaluationReason(value=result)
-        details.append(
-            EvaluationResult(name=name, value=result.value, reason=result.reason, source=evaluator.as_spec())
+            source=source,
+            error_type=type(e).__name__,
+            evaluator_version=evaluator_version,
         )
 
     return details

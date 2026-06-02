@@ -7,7 +7,6 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -42,7 +41,8 @@ class VercelProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'anthropic': anthropic_model_profile,
             'bedrock': amazon_model_profile,
@@ -56,11 +56,10 @@ class VercelProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        try:
-            provider, model_name = model_name.split('/', 1)
-        except ValueError:
-            raise UserError(f"Model name must be in 'provider/model' format, got: {model_name!r}")
+        if '/' not in model_name:
+            return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
 
+        provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
             profile = provider_to_profile[provider](model_name)
 
@@ -71,13 +70,13 @@ class VercelProvider(Provider[AsyncOpenAI]):
         ).update(profile)
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, max_retries: int = ...) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, max_retries: int = ...) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient, max_retries: int = ...) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -88,6 +87,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = 2,
     ) -> None:
         # Support Vercel AI Gateway's standard environment variables
         api_key = api_key or os.getenv('VERCEL_AI_GATEWAY_API_KEY') or os.getenv('VERCEL_OIDC_TOKEN')
@@ -102,12 +102,16 @@ class VercelProvider(Provider[AsyncOpenAI]):
 
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
-            )
         else:
-            http_client = cached_async_http_client(provider='vercel')
+            if http_client is None:
+                http_client = self._owned_http_client()
             self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
+                base_url=self.base_url,
+                api_key=api_key,
+                http_client=http_client,
+                default_headers=default_headers,
+                max_retries=max_retries,
             )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

@@ -9,13 +9,14 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
-from typing import Final
+from uuid import uuid4
 
 from ..._utils import now_utc
 from ...messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FunctionToolResultEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolResultEvent,
     RetryPromptPart,
     TextPart,
     TextPartDelta,
@@ -28,6 +29,8 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
+from .._event_stream import describe_file
+from ._utils import BUILTIN_TOOL_CALL_ID_PREFIX, DEFAULT_AG_UI_VERSION, REASONING_VERSION, parse_ag_ui_version
 
 try:
     from ag_ui.core import (
@@ -40,11 +43,6 @@ try:
         TextMessageContentEvent,
         TextMessageEndEvent,
         TextMessageStartEvent,
-        ThinkingEndEvent,
-        ThinkingStartEvent,
-        ThinkingTextMessageContentEvent,
-        ThinkingTextMessageEndEvent,
-        ThinkingTextMessageStartEvent,
         ToolCallArgsEvent,
         ToolCallEndEvent,
         ToolCallResultEvent,
@@ -60,21 +58,28 @@ except ImportError as e:  # pragma: no cover
 
 __all__ = [
     'AGUIEventStream',
+    'DEFAULT_AG_UI_VERSION',
     'RunAgentInput',
     'RunStartedEvent',
     'RunFinishedEvent',
 ]
-
-BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 
 @dataclass
 class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
 
-    _thinking_text: bool = False
+    ag_ui_version: str = DEFAULT_AG_UI_VERSION
+
+    _use_reasoning: bool = field(default=False, init=False)
+    _reasoning_message_id: str | None = None
+    _reasoning_started: bool = False
+    _reasoning_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
     _error: bool = False
+
+    def __post_init__(self) -> None:
+        self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -145,38 +150,47 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
-        if not follows_thinking:
-            yield ThinkingStartEvent(type=EventType.THINKING_START)
+        self._reasoning_message_id = str(uuid4())
+        self._reasoning_started = False
 
-        if part.content:
-            yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
-            yield ThinkingTextMessageContentEvent(type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=part.content)
-            self._thinking_text = True
+        if self._use_reasoning:
+            from ._thinking_0_13 import handle_thinking_start as _impl
+        else:
+            from ._thinking_0_10 import handle_thinking_start as _impl
+        async for event in _impl(self, part):
+            yield event
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
         if not delta.content_delta:
             return  # pragma: no cover
 
-        if not self._thinking_text:
-            yield ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START)
-            self._thinking_text = True
+        assert self._reasoning_message_id is not None, (
+            'handle_thinking_start must be called before handle_thinking_delta'
+        )
 
-        yield ThinkingTextMessageContentEvent(type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=delta.content_delta)
+        if self._use_reasoning:
+            from ._thinking_0_13 import handle_thinking_delta as _impl
+        else:
+            from ._thinking_0_10 import handle_thinking_delta as _impl
+        async for event in _impl(self, delta):
+            yield event
 
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[BaseEvent]:
-        if self._thinking_text:
-            yield ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END)
-            self._thinking_text = False
+        assert self._reasoning_message_id is not None, 'handle_thinking_start must be called before handle_thinking_end'
 
-        if not followed_by_thinking:
-            yield ThinkingEndEvent(type=EventType.THINKING_END)
+        if self._use_reasoning:
+            from ._thinking_0_13 import handle_thinking_end as _impl
+        else:
+            from ._thinking_0_10 import handle_thinking_end as _impl
+        async for event in _impl(self, part):
+            yield event
 
-    def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    def handle_tool_call_start(self, part: ToolCallPart | NativeToolCallPart) -> AsyncIterator[BaseEvent]:
         return self._handle_tool_call_start(part)
 
-    def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = part.tool_call_id
         builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
         self._builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
@@ -185,7 +199,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         return self._handle_tool_call_start(part, tool_call_id)
 
     async def _handle_tool_call_start(
-        self, part: ToolCallPart | BuiltinToolCallPart, tool_call_id: str | None = None
+        self, part: ToolCallPart | NativeToolCallPart, tool_call_id: str | None = None
     ) -> AsyncIterator[BaseEvent]:
         tool_call_id = tool_call_id or part.tool_call_id
         parent_message_id = self.message_id
@@ -209,22 +223,36 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
         yield ToolCallEndEvent(tool_call_id=part.tool_call_id)
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
-        yield ToolCallEndEvent(tool_call_id=self._builtin_tool_call_ids[part.tool_call_id])
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[BaseEvent]:
+        builtin_id = self._builtin_tool_call_ids[part.tool_call_id]
+        yield ToolCallEndEvent(tool_call_id=builtin_id)
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
+        # Use a one-off message ID instead of `self.new_message_id()` to avoid
+        # mutating `self.message_id`, which is used as `parent_message_id` for
+        # subsequent tool calls in the same response.
         yield ToolCallResultEvent(
-            message_id=self.new_message_id(),
+            message_id=str(uuid4()),
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=tool_call_id,
-            content=part.model_response_str(),
+            content=_tool_return_content(part),
         )
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
-        result = event.result
-        output = result.model_response() if isinstance(result, RetryPromptPart) else result.model_response_str()
+        async for e in self._handle_tool_result(event.part):
+            yield e
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
+        async for e in self._handle_tool_result(event.part):
+            yield e
+
+    async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
+        if isinstance(result, RetryPromptPart):
+            output = result.model_response()
+        else:
+            output = _tool_return_content(result)
 
         yield ToolCallResultEvent(
             message_id=self.new_message_id(),
@@ -248,3 +276,15 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 for item in possible_event:  # type: ignore[reportUnknownMemberType]
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         yield item
+
+
+def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:
+    """Return tool output string with file descriptions if present."""
+    output = part.model_response_str()
+    if file_descriptions := [describe_file(f) for f in part.files]:
+        if output:
+            return output + '\n' + '\n'.join(file_descriptions)
+        else:
+            return '\n'.join(file_descriptions)
+    else:
+        return output

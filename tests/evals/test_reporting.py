@@ -3,9 +3,9 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 
 import pytest
-from inline_snapshot import snapshot
 from pydantic import BaseModel
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 from .utils import render_table
 

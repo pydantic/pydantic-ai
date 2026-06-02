@@ -7,7 +7,6 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -44,7 +43,8 @@ class GitHubProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'xai': grok_model_profile,
             'meta': meta_model_profile,
@@ -70,13 +70,13 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, max_retries: int = ...) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, max_retries: int = ...) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient, max_retries: int = ...) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -87,14 +87,18 @@ class GitHubProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = 2,
     ) -> None:
         """Create a new GitHub Models provider.
 
         Args:
             api_key: The GitHub token to use for authentication. If not provided, the `GITHUB_API_KEY`
                 environment variable will be used if available.
-            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
+            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be
+                `None`, and `max_retries` is ignored.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            max_retries: Maximum number of retries for API requests. Set to `0` to disable retries.
+                Defaults to `2`, matching the OpenAI SDK default.
         """
         api_key = api_key or os.getenv('GITHUB_API_KEY')
         if not api_key and openai_client is None:
@@ -105,8 +109,12 @@ class GitHubProvider(Provider[AsyncOpenAI]):
 
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='github')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            if http_client is None:
+                http_client = self._owned_http_client()
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, max_retries=max_retries
+            )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

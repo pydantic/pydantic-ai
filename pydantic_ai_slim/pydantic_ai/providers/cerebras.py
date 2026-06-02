@@ -7,7 +7,6 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
@@ -39,13 +38,17 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         prefix_to_profile = {
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
             'gpt-oss': harmony_model_profile,
             'zai': zai_model_profile,
         }
+
+        # Reasoning models that support the cerebras_disable_reasoning setting
+        reasoning_prefixes = ('zai', 'gpt-oss')
 
         profile = None
         model_name_lower = model_name.lower()
@@ -63,23 +66,26 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'presence_penalty',
             'parallel_tool_calls',
             'service_tier',
+            'openai_service_tier',
         )
+        is_reasoning = model_name_lower.startswith(reasoning_prefixes)
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_unsupported_model_settings=unsupported_model_settings,
+            supports_thinking=is_reasoning,
         ).update(profile)
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, max_retries: int = ...) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, max_retries: int = ...) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient, max_retries: int = ...) -> None: ...
 
     @overload
-    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, http_client: httpx.AsyncClient, max_retries: int = ...) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -90,14 +96,18 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
+        max_retries: int = 2,
     ) -> None:
         """Create a new Cerebras provider.
 
         Args:
             api_key: The API key to use for authentication, if not provided, the `CEREBRAS_API_KEY` environment variable
                 will be used if available.
-            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
+            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be
+                `None`, and `max_retries` is ignored.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            max_retries: Maximum number of retries for API requests. Set to `0` to disable retries.
+                Defaults to `2`, matching the OpenAI SDK default.
         """
         api_key = api_key or os.getenv('CEREBRAS_API_KEY')
         if not api_key and openai_client is None:
@@ -110,12 +120,16 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
 
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
-            )
         else:
-            http_client = cached_async_http_client(provider='cerebras')
+            if http_client is None:
+                http_client = self._owned_http_client()
             self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
+                base_url=self.base_url,
+                api_key=api_key,
+                http_client=http_client,
+                default_headers=default_headers,
+                max_retries=max_retries,
             )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

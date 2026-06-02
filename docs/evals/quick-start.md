@@ -37,6 +37,7 @@ from pydantic_evals.evaluators import Contains, EqualsExpected
 
 # Create a dataset with test cases
 dataset = Dataset(
+    name='uppercase_tests',
     cases=[
         Case(
             name='uppercase_basic',
@@ -117,6 +118,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Contains, IsInstance
 
 dataset = Dataset(
+    name='dict_validation',
     cases=[
         Case(inputs={'data': 'required_key present'}, expected_output={'result': 'success'}),
     ],
@@ -136,6 +138,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 
 dataset = Dataset(
+    name='llm_judge_test',
     cases=[
         Case(inputs='What is the capital of France?', expected_output='Paris'),
     ],
@@ -143,7 +146,7 @@ dataset = Dataset(
         LLMJudge(
             rubric='Response is accurate and helpful',
             include_input=True,
-            model='anthropic:claude-sonnet-4-5',
+            model='anthropic:claude-sonnet-4-6',
         )
     ],
 )
@@ -158,6 +161,7 @@ from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import MaxDuration
 
 dataset = Dataset(
+    name='performance_test',
     cases=[
         Case(inputs='test input', expected_output='test output'),
     ],
@@ -172,7 +176,7 @@ dataset = Dataset(
 Explore the documentation to learn more:
 
 - **[Core Concepts](core-concepts.md)** - Understand the data model and evaluation flow
-- **[Built-in Evaluators](evaluators/built-in.md)** - Learn about all available evaluators
+- **[Native Evaluators](evaluators/built-in.md)** - Learn about all available evaluators
 - **[Custom Evaluators](evaluators/custom.md)** - Write your own evaluation logic
 - **[Dataset Management](how-to/dataset-management.md)** - Save, load, and generate datasets
 - **[Examples](examples/simple-validation.md)** - Practical examples for common scenarios

@@ -1,0 +1,173 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '396'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a audio file, then describe what you received.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '569'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll retrieve the file for you now.
+        type: text
+      - id: toolu_01QJnDU1c7DruxaFvBhidxaW
+        input: {}
+        name: get_file
+        type: tool_use
+      id: msg_019dcudKyAqegPjTRxgYC5H3
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 558
+        output_tokens: 46
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '841'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the get_file tool now to retrieve a audio file, then describe what you received.
+          type: text
+        role: user
+      - content:
+        - text: I'll retrieve the file for you now.
+          type: text
+        - id: toolu_01QJnDU1c7DruxaFvBhidxaW
+          input: {}
+          name: get_file
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: File attached
+            type: text
+          is_error: false
+          tool_use_id: toolu_01QJnDU1c7DruxaFvBhidxaW
+          type: tool_result
+        - text: '[audio/mpeg not supported by Anthropic]'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: get_file
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1168'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |-
+          I received an audio file in MP3 format (audio/mpeg). However, I'm currently unable to process or analyze audio files directly. The file appears to be an MPEG audio file, which is a common compressed audio format typically used for music, podcasts, voice recordings, and other sound content.
+
+          While I can confirm that an audio file was successfully retrieved, I cannot:
+          - Listen to or transcribe the audio content
+          - Describe what sounds, speech, or music it contains
+          - Determine its duration or other audio properties
+          - Provide details about what's being said or played in the recording
+
+          To work with this audio file, you would need to use audio processing tools or services that support audio analysis and transcription.
+        type: text
+      id: msg_01Wx6gD4WXxvWkpoxx6gtPTU
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 635
+        output_tokens: 158
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
