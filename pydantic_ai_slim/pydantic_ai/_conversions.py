@@ -416,6 +416,14 @@ def _model_request_to_openai(request: ModelRequest) -> list[dict[str, Any]]:
     return result
 
 
+def _openai_image_url(url: str, vendor_metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Build an OpenAI `image_url` dict, preserving the `detail` fidelity hint if present."""
+    image_url: dict[str, Any] = {'url': url}
+    if vendor_metadata and (detail := vendor_metadata.get('detail')):
+        image_url['detail'] = detail
+    return image_url
+
+
 def _user_content_to_openai(content: str | Sequence[UserContent]) -> str | list[dict[str, Any]]:
     """Convert UserPromptPart content to OpenAI multimodal content format."""
     if isinstance(content, str):
@@ -426,10 +434,10 @@ def _user_content_to_openai(content: str | Sequence[UserContent]) -> str | list[
         if isinstance(item, str):
             parts.append({'type': 'text', 'text': item})
         elif isinstance(item, ImageUrl):
-            parts.append({'type': 'image_url', 'image_url': {'url': item.url}})
+            parts.append({'type': 'image_url', 'image_url': _openai_image_url(item.url, item.vendor_metadata)})
         elif isinstance(item, BinaryContent):
             if item.is_image:
-                parts.append({'type': 'image_url', 'image_url': {'url': item.data_uri}})
+                parts.append({'type': 'image_url', 'image_url': _openai_image_url(item.data_uri, item.vendor_metadata)})
             elif item.is_audio:
                 try:
                     audio_format = item.format
@@ -437,7 +445,13 @@ def _user_content_to_openai(content: str | Sequence[UserContent]) -> str | list[
                     # Fall back to a text marker for unknown audio formats.
                     parts.append({'type': 'text', 'text': f'[Audio: {item.media_type}]'})
                 else:
-                    parts.append({'type': 'input_audio', 'input_audio': {'data': item.base64, 'format': audio_format}})
+                    if audio_format in ('wav', 'mp3'):
+                        parts.append(
+                            {'type': 'input_audio', 'input_audio': {'data': item.base64, 'format': audio_format}}
+                        )
+                    else:
+                        # OpenAI Chat Completions only accepts wav/mp3 audio; fall back to a text marker.
+                        parts.append({'type': 'text', 'text': f'[Audio: {item.media_type}]'})
             else:
                 # No standard OpenAI representation for non-image/audio binary
                 parts.append({'type': 'text', 'text': f'[Binary: {item.media_type}]'})

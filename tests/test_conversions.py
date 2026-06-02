@@ -875,6 +875,27 @@ class TestModelMessagesToOpenaiFormat:
             ]
         )
 
+    def test_image_url_detail_metadata_preserved(self):
+        """`vendor_metadata['detail']` is carried over to the OpenAI `image_url` fidelity hint."""
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart([ImageUrl('https://example.com/cat.png', vendor_metadata={'detail': 'high'})]),
+                ]
+            ),
+        ]
+        result = model_messages_to_openai_format(messages)
+        assert result == snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'type': 'image_url', 'image_url': {'url': 'https://example.com/cat.png', 'detail': 'high'}}
+                    ],
+                }
+            ]
+        )
+
     def test_binary_image_and_audio_in_user_content(self):
         """Image binary becomes a data URI; audio binary becomes input_audio."""
         png = base64.b64encode(b'png-bytes').decode()
@@ -1002,6 +1023,14 @@ Fix the errors and try again.\
                 {'role': 'user', 'content': '[Audio: audio/webm]'},
             ]
         )
+
+    def test_non_openai_audio_format_falls_back_to_text(self):
+        """Audio formats OpenAI doesn't accept (e.g. flac) fall back to a text marker."""
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart([BinaryContent(data=b'abc', media_type='audio/flac')])]),
+        ]
+        result = model_messages_to_openai_format(messages)
+        assert result == snapshot([{'role': 'user', 'content': '[Audio: audio/flac]'}])
 
 
 # ── Round-trip tests ─────────────────────────────────────────────────
