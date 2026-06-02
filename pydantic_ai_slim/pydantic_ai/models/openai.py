@@ -3410,6 +3410,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
+            _done_function_call_item_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -3447,6 +3448,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._usage += self._map_usage(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
+                    if chunk.item_id in _done_function_call_item_ids:
+                        continue
+
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=chunk.item_id,
                         args=chunk.delta,
@@ -3455,7 +3459,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield maybe_event
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                    pass  # there's nothing we need to do here
+                    _done_function_call_item_ids.add(chunk.item_id)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                     self._usage += self._map_usage(chunk.response)
@@ -3591,6 +3595,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                                 provider_name=self.provider_name,
                             ):
                                 yield event
+                    elif isinstance(chunk.item, responses.ResponseFunctionToolCall):
+                        if chunk.item.id is not None:  # pragma: no branch
+                            _done_function_call_item_ids.add(chunk.item.id)
                     elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                         _, return_part, file_parts = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
                         for i, file_part in enumerate(file_parts):

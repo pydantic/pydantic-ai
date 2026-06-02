@@ -11874,6 +11874,169 @@ async def test_openai_responses_phase_streamed(allow_model_requests: None):
     assert text_parts[0].provider_details == snapshot({'phase': 'final_answer'})
 
 
+async def test_openai_responses_ignores_post_done_function_call_delta(allow_model_requests: None):
+    """Malformed Responses-compatible streams can send an arguments delta after the item is done."""
+    from openai.types import responses as resp
+
+    base_response = resp.Response(
+        id='resp_tool',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    tool_call = resp.ResponseFunctionToolCall(
+        id='fc_001',
+        call_id='call_001',
+        name='add',
+        arguments='{"a":1,"b":2}',
+        status='completed',
+        type='function_call',
+    )
+    tool_stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=resp.ResponseFunctionToolCall(
+                id='fc_001',
+                call_id='call_001',
+                name='add',
+                arguments='',
+                status='in_progress',
+                type='function_call',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseFunctionCallArgumentsDeltaEvent(
+            delta='{"a":1,"b":2}',
+            item_id='fc_001',
+            output_index=0,
+            type='response.function_call_arguments.delta',
+            sequence_number=2,
+        ),
+        resp.ResponseFunctionCallArgumentsDoneEvent(
+            arguments='{"a":1,"b":2}',
+            item_id='fc_001',
+            name='add',
+            output_index=0,
+            type='response.function_call_arguments.done',
+            sequence_number=3,
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=tool_call,
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=4,
+        ),
+        resp.ResponseFunctionCallArgumentsDeltaEvent(
+            delta='}',
+            item_id='fc_001',
+            output_index=0,
+            type='response.function_call_arguments.delta',
+            sequence_number=5,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed', 'output': [tool_call]}),
+            type='response.completed',
+            sequence_number=6,
+        ),
+    ]
+
+    final_response = resp.Response(
+        id='resp_final',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067201,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    final_stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=final_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseContentPartAddedEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            part=resp.ResponseOutputText(text='', type='output_text', annotations=[]),
+            type='response.content_part.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='3',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=3,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='3',
+            type='response.output_text.done',
+            sequence_number=4,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage(
+                id='msg_001',
+                content=cast(list[Content], [ResponseOutputText(text='3', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=5,
+        ),
+        resp.ResponseCompletedEvent(
+            response=final_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=6,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream([tool_stream, final_stream])
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    @agent.tool_plain
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    async with agent.run_stream('Add 1 and 2') as result:
+        output = await result.get_output()
+
+    assert output == snapshot('3')
+    tool_call_parts = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert tool_call_parts[0].args == '{"a":1,"b":2}'
+
+
 async def test_openai_responses_phase_round_trip(allow_model_requests: None):
     """When the profile supports phase, it's sent back on the assistant ResponseOutputMessageParam."""
     mock_client = MockOpenAIResponses.create_mock(
