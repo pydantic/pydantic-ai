@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from tenacity.stop import StopBaseT
     from tenacity.wait import WaitBaseT
 
-__all__ = ['RetryConfig', 'TenacityTransport', 'AsyncTenacityTransport', 'retry', 'wait_retry_after']
+__all__ = ['RetryConfig', 'TenacityTransport', 'AsyncTenacityTransport', 'wait_retry_after']
 
 
 class RetryConfig(TypedDict, total=False):
