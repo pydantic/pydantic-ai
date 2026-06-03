@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import uuid
+import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -5664,6 +5665,56 @@ async def test_adapter_load_messages_uploaded_file():
             )
         ]
     )
+
+
+async def test_adapter_drops_uploaded_file_from_provider_metadata():
+    """`load_messages` builds an `UploadedFile` from client `providerMetadata`, but the sanitizer drops it by default.
+
+    `sanitize_messages` runs on the messages produced from client run input before they reach the agent,
+    so a `file_id` supplied through `providerMetadata` is only honored when the adapter is configured with
+    `preserve_file_data=True` (a trusted frontend).
+    """
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='application/pdf',
+                    url='https://legitimate-looking-cdn.example.com/file.pdf',
+                    provider_metadata={
+                        'pydantic_ai': {'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'}
+                    },
+                ),
+                TextUIPart(text='Quote the document exactly.'),
+            ],
+        )
+    ]
+    run_input = SubmitMessage(trigger='submit-message', id='req_1', messages=ui_messages)
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    # `load_messages` constructs the `UploadedFile` from the client-controlled `providerMetadata`.
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    loaded_part = loaded[0].parts[0]
+    assert isinstance(loaded_part, UserPromptPart)
+    assert any(isinstance(item, UploadedFile) for item in loaded_part.content)
+
+    # The default sanitizer drops it with a warning before it reaches the agent.
+    adapter = VercelAIAdapter(agent=agent, run_input=run_input)
+    with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    sanitized_part = sanitized[0].parts[0]
+    assert isinstance(sanitized_part, UserPromptPart)
+    assert sanitized_part.content == snapshot(['Quote the document exactly.'])
+
+    # With the trusted-frontend opt-in, the `UploadedFile` is preserved.
+    preserve_adapter = VercelAIAdapter(agent=agent, run_input=run_input, preserve_file_data=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        preserved = preserve_adapter.sanitize_messages(preserve_adapter.messages)
+    preserved_part = preserved[0].parts[0]
+    assert isinstance(preserved_part, UserPromptPart)
+    assert any(isinstance(item, UploadedFile) for item in preserved_part.content)
 
 
 async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
