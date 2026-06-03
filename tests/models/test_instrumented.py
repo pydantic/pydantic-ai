@@ -37,7 +37,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai._instrumentation import event_to_dict
+from pydantic_ai._instrumentation import event_to_dict, serialize_any
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1038,6 +1038,14 @@ def test_messages_to_otel_events_serialization_errors():
             },
         ]
     )
+
+
+def test_serialize_any_preserves_binary_data():
+    assert serialize_any(b'\xff') == '/w=='
+    assert serialize_any({'image_data': b'\x89PNG\r\n\x1a\nbinary content'}) == {
+        'image_data': 'iVBORw0KGgpiaW5hcnkgY29udGVudA=='
+    }
+    assert serialize_any((b'\xff', [b'\x00'])) == ['/w==', ['AA==']]
 
 
 def test_messages_to_otel_events_instructions():
