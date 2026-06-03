@@ -453,6 +453,82 @@ print(result.output)
 #> success (no tool calls)
 ```
 
+By default, any exception other than `ModelRetry` or `ToolFailed` raised inside a tool escapes the
+tool boundary and aborts the entire run. A tool-execution hook lets you intercept these in one
+place — without editing every tool — and choose how each surfaces to the model. The distinction is
+the semantic one between [requesting a retry](tools-advanced.md#tool-retries) and
+[reporting a failure](tools-advanced.md#tool-failed):
+
+- raise `ModelRetry` for **transient** errors, where the same call might succeed if tried again;
+- raise `ToolFailed` for **definitive** failures, where retrying won't help and the model should
+  see the result and adapt (choose another approach, tell the user, etc.).
+
+The hook below makes that call based on an upstream status code — the per-error analogue of the
+MCP [`tool_error_behavior`](mcp/client.md#tool-errors) setting:
+
+```python {title="hooks_convert_tool_errors.py"}
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolCallPart, ToolDefinition, ToolReturnPart
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.exceptions import ModelRetry, ToolFailed
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+class UpstreamError(Exception):
+    """Stand-in for an HTTP client error that carries the response status code."""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+hooks = Hooks()
+
+
+@hooks.on.tool_execute_error
+async def convert_upstream_errors(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: dict[str, Any],
+    error: Exception,
+) -> Any:
+    if isinstance(error, UpstreamError):
+        if error.status_code >= 500 or error.status_code == 429:
+            # Transient: the same call might succeed, so ask the model to try again.
+            raise ModelRetry(f'Upstream returned {error.status_code}, please try again.')
+        # Definitive (e.g. 404, 403): retrying won't help — report it so the model can adapt.
+        raise ToolFailed(f'Upstream returned {error.status_code}: {error}')
+    raise error  # unrelated errors still abort the run
+
+
+def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    last_part = messages[-1].parts[-1]
+    if isinstance(last_part, ToolReturnPart):
+        return ModelResponse(parts=[TextPart(f'Could not fetch the document ({last_part.content}).')])
+    return ModelResponse(parts=[ToolCallPart('get_document', {'doc_id': 42}, tool_call_id='call-1')])
+
+
+agent = Agent(FunctionModel(model_fn), capabilities=[hooks])
+
+
+@agent.tool_plain
+def get_document(doc_id: int) -> str:
+    raise UpstreamError(404, f'document {doc_id} not found')
+
+
+result = agent.run_sync('Fetch document 42')
+print(result.output)
+#> Could not fetch the document (Upstream returned 404: document 42 not found).
+```
+
+Because the failure was raised as `ToolFailed` rather than `ModelRetry`, the model receives it as a
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'` and decides what to
+do next, instead of burning a retry on a call that can't succeed.
+
 ## When to use `Hooks` vs `AbstractCapability`
 
 | Use [`Hooks`][pydantic_ai.capabilities.Hooks] | Use [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] |
