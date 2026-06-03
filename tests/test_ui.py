@@ -1491,6 +1491,35 @@ def test_sanitize_messages_drops_uploaded_files_in_tool_return_parts():
     assert native_return.content is None
 
 
+def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_preserve_file_data():
+    """`UploadedFile`s nested in tool return parts pass through unchanged when `preserve_file_data=True`."""
+    uploaded_file = UploadedFile(file_id='s3://bucket/secret.pdf', provider_name='bedrock')
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup',
+                        tool_call_id='call-1',
+                        content=['see file', {'kept': uploaded_file}],
+                    )
+                ]
+            )
+        ],
+        preserve_file_data=True,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    tool_return = request.parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(['see file', {'kept': uploaded_file}])
+
+
 def test_sanitize_messages_strips_dangling_tool_calls():
     """A trailing ModelResponse with unresolved ToolCallParts has them dropped with a warning."""
     adapter = _make_dummy_adapter(
