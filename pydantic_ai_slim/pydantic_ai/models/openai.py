@@ -719,10 +719,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     openai_background: bool
     """Enable background mode for long-running requests.
 
-    When enabled, this setting both passes `background=True` to the Responses API
-    **and** opts into automatic polling for completion. If the response status is
-    `'queued'` or `'in_progress'`, it sets `state='suspended'`, triggering the
-    agent's automatic continuation loop, which polls via `retrieve()`.
+    When enabled, this setting passes `background=True` to the Responses API and opts into
+    automatic polling for completion. If the response is still pending (`'queued'` or
+    `'in_progress'`), the agent automatically polls for completion using `retrieve()`.
     """
 
     openai_background_poll_interval: float

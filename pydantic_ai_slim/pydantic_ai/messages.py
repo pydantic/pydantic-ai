@@ -135,7 +135,7 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
 - `'suspended'`: the model paused mid-turn and expects a continuation request.
   Used by Anthropic `pause_turn` and OpenAI background mode.
 - `'interrupted'`: streaming was explicitly stopped via
-  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
+  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel] before the model
   finished generating.
 """
 
@@ -2154,13 +2154,11 @@ class ModelResponse:
     """
 
     suspended_retry_delay: float | None = None
-    """Seconds the graph should wait before retrying a suspended response.
+    """Seconds to wait before retrying a suspended response.
 
-    This is only meaningful when `state == 'suspended'`. `None` means the graph should
-    retry immediately. Set by providers that return suspended (in-progress) responses,
-    e.g. OpenAI background mode. The agent graph reads this value to determine how long
-    to wait before making a continuation request, so durable execution frameworks can
-    intercept the sleep.
+    Only meaningful when `state == 'suspended'`. `None` means retry immediately.
+    Set by providers that return in-progress responses, e.g. OpenAI background mode.
+    Durable execution frameworks can intercept the wait via `set_agent_graph_sleep`.
     """
 
     run_id: str | None = None
