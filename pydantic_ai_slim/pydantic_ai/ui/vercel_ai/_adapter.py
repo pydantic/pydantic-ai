@@ -759,6 +759,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
+        Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless for tool
+        results. Successful, failed, and denied results each round-trip via their own part type
+        (`ToolOutputAvailablePart` / `ToolOutputErrorPart` / `ToolOutputDeniedPart`), but a
+        `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='failed'` on reload (or a user
+        text part when it has no `tool_name`), since the protocol has no separate retry concept —
+        both a retry prompt and a `ToolFailed` result map to `ToolOutputErrorPart`.
+
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the
         frontend can render approve/reject buttons on reload. On v5, such tool calls are emitted

@@ -1609,9 +1609,8 @@ def test_dump_load_roundtrip_failed_tool_return() -> None:
     assert tool_message.error == 'tool failed'
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    failed_part = reloaded[1].parts[0]
-    assert isinstance(failed_part, ToolReturnPart)
-    assert failed_part.outcome == 'failed'
+    _sync_timestamps(original, reloaded)
+    assert reloaded == original
 
 
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
@@ -1772,9 +1771,8 @@ def test_dump_load_roundtrip_failed_builtin_tool_return() -> None:
     assert tool_message.error == 'search failed'
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
-    failed_part = reloaded[0].parts[1]
-    assert isinstance(failed_part, NativeToolReturnPart)
-    assert failed_part.outcome == 'failed'
+    _sync_timestamps(original, reloaded)
+    assert reloaded == original
 
 
 def test_dump_builtin_tool_call_without_return() -> None:
