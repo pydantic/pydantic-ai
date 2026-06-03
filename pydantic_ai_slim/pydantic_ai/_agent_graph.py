@@ -1603,6 +1603,10 @@ async def process_tool_calls(  # noqa: C901
 
             if not validated.args_valid:
                 assert validated.validation_error is not None
+                # Output-tool validation (`validate_output_tool_call`) only ever raises
+                # `ToolRetryError`/`ValidationError`/`ModelRetry`, never `ToolFailed`, so
+                # `validation_error` is always a `ToolRetryError` here — unlike the function-tool
+                # path in `process_tool_calls`, which also handles `ToolFailedError`.
                 assert isinstance(validated.validation_error, ToolRetryError)
                 if final_result:
                     part = _make_output_status_part(
