@@ -463,6 +463,86 @@ def test_support_tool_forcing_reads_params_thinking(provider_name: str):
     assert result is False
 
 
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+def test_bedrock_single_tool_fallback_filters_when_unsupported():
+    """When a Bedrock model can't force a single tool (here: thinking enabled blocks `toolChoice.tool`),
+    the single-output-tool path must trim `tool_defs` to the forced name and emit `toolChoice={'auto': {}}`.
+    The cache-preserving full-array shape only applies when `_support_tool_forcing` returns True.
+
+    The thinking-enabled fallback is reached because `tool_choice='none'` + one output tool
+    + no direct output resolves to `('required', {single_name})`, and `_support_tool_forcing`
+    returns False (without raising) because explicit `tool_choice` is `'none'`, not `'required'`/list.
+    """
+    mock_client = MagicMock()
+    provider = BedrockProvider(bedrock_client=mock_client)
+    profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
+    model = BedrockConverseModel('us.amazon.nova-lite-v1:0', provider=provider, profile=profile)
+    params = ModelRequestParameters(
+        function_tools=[make_tool('helper_tool')],
+        output_tools=[make_tool('final_result')],
+        allow_text_output=False,
+        thinking=True,
+    )
+
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'))  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    assert tool_config.get('toolChoice') == {'auto': {}}
+    assert [tool['toolSpec']['name'] for tool in tool_config['tools'] if 'toolSpec' in tool] == ['final_result']
+
+
+@pytest.mark.skipif(not bedrock_available(), reason='bedrock not installed')
+@pytest.mark.parametrize(
+    'tool_choice_value,function_tool_names,output_tool_names,expected_forced_name,expected_tool_names',
+    [
+        pytest.param(
+            ToolOrOutput(function_tools=[]),
+            ['helper_tool'],
+            ['final_result'],
+            'final_result',
+            ['helper_tool', 'final_result'],
+            id='tool_or_output_empty_with_single_output_tool',
+        ),
+        pytest.param(
+            ToolOrOutput(function_tools=['tool_a']),
+            ['tool_a', 'tool_b'],
+            [],
+            'tool_a',
+            ['tool_a', 'tool_b'],
+            id='tool_or_output_single_function_tool_subset',
+        ),
+    ],
+)
+def test_bedrock_tool_or_output_single_resolved_preserves_cache(
+    tool_choice_value: Any,
+    function_tool_names: list[str],
+    output_tool_names: list[str],
+    expected_forced_name: str,
+    expected_tool_names: list[str],
+):
+    """`ToolOrOutput` paths that resolve to `('required', {single_name})` on a supporting model
+    must preserve the full tools array and force via `toolChoice.tool` (no client-side filter).
+
+    Covers the two `resolve_tool_choice` branches that aren't pinned by the explicit-list
+    (`list_single`) or `tool_choice='none'` (`none_with_output`) matrix tests.
+    """
+    mock_client = MagicMock()
+    provider = BedrockProvider(bedrock_client=mock_client)
+    profile = BedrockModelProfile(bedrock_supports_tool_choice=True)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider, profile=profile)
+    params = ModelRequestParameters(
+        function_tools=[make_tool(n) for n in function_tool_names],
+        output_tools=[make_tool(n) for n in output_tool_names],
+        allow_text_output=False,
+    )
+
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value))  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    assert tool_config.get('toolChoice') == {'tool': {'name': expected_forced_name}}
+    assert [tool['toolSpec']['name'] for tool in tool_config['tools'] if 'toolSpec' in tool] == expected_tool_names
+
+
 # =============================================================================
 # Provider-specific tests that don't fit the consolidated patterns
 # =============================================================================

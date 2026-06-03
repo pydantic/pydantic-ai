@@ -8,6 +8,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
+from .._instructions import prepare_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
@@ -101,7 +102,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
-            defer_loading: Whether to hide tools from the model until discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide tools from the model until discovered via tool search.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 Applies to all tools, unless overridden when adding a tool.
             include_return_schema: Whether to include return schemas in tool definitions sent to the model.
@@ -128,13 +129,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         self._instructions: list[str | SystemPromptRunner[AgentDepsT]] = []
         if instructions is not None:
-            if isinstance(instructions, str) or callable(instructions):
-                instructions = [instructions]
-            for instruction in instructions:
-                if isinstance(instruction, str):
-                    self._instructions.append(instruction)
-                else:
-                    self._instructions.append(SystemPromptRunner(instruction))
+            self._instructions.extend(prepare_instructions(instructions))
 
         self.tools = {}
         for tool in tools:

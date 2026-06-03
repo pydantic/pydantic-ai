@@ -132,13 +132,15 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
             profile = provider_to_profile[provider](model_name)
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # OpenRouter accepts `reasoning` universally, so the gate should always forward `thinking`.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
             openai_chat_supports_file_urls=True,
             openai_chat_supports_web_search=True,
+            supports_thinking=True,
         ).update(profile)
 
     @overload
