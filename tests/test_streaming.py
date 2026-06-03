@@ -3910,6 +3910,70 @@ async def test_run_stream_event_stream_handler():
     )
 
 
+async def test_run_event_stream_handler_does_not_need_to_consume_stream():
+    agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    result = await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert result.output == 'hello world this is a long answer'
+
+
+async def test_run_stream_event_stream_handler_does_not_need_to_consume_stream():
+    agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    async with agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
+        output = await result.get_output()
+
+    assert output == 'hello world this is a long answer'
+
+
+async def test_run_event_stream_handler_unconsumed_still_executes_tool_calls():
+    """A handler that ignores the stream must not stop the agent from acting on the model's reply.
+
+    The reply (including tool calls) is built by iterating the stream, so a handler that returns
+    without consuming it used to silently drop the tool call.
+    """
+    tool_calls: list[int] = []
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def record(x: int) -> str:
+        tool_calls.append(x)
+        return 'ok'
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    await agent.run('go', event_stream_handler=event_stream_handler)
+
+    assert tool_calls == [0]
+
+
+async def test_run_stream_event_stream_handler_unconsumed_still_executes_tool_calls():
+    """Same as the `agent.run()` case, but for `agent.run_stream()` (exercises the `CallToolsNode` path)."""
+    tool_calls: list[int] = []
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def record(x: int) -> str:
+        tool_calls.append(x)
+        return 'ok'
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    async with agent.run_stream('go', event_stream_handler=event_stream_handler) as result:
+        await result.get_output()
+
+    assert tool_calls == [0]
+
+
 async def test_stream_tool_returning_user_content():
     m = TestModel()
 
