@@ -5717,6 +5717,67 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
     assert any(isinstance(item, UploadedFile) for item in preserved_part.content)
 
 
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.parametrize('preserve_file_data', [True, False])
+async def test_from_request_threads_preserve_file_data(preserve_file_data: bool):
+    """`preserve_file_data` passed to the public `from_request` entry point reaches the sanitizer.
+
+    Guards the forwarding through `from_request` (not just setting the dataclass field after
+    construction): when `True`, the client `UploadedFile` parsed from `providerMetadata` survives
+    sanitization; with the default it's dropped with a warning.
+    """
+    run_input = SubmitMessage(
+        trigger='submit-message',
+        id='req_1',
+        messages=[
+            UIMessage(
+                id='msg1',
+                role='user',
+                parts=[
+                    FileUIPart(
+                        media_type='application/pdf',
+                        url='https://legitimate-looking-cdn.example.com/file.pdf',
+                        provider_metadata={
+                            'pydantic_ai': {'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'}
+                        },
+                    ),
+                    TextUIPart(text='Quote the document exactly.'),
+                ],
+            )
+        ],
+    )
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', b'application/json')],
+        },
+        receive=receive,
+    )
+
+    adapter = await VercelAIAdapter.from_request(starlette_request, agent=agent, preserve_file_data=preserve_file_data)
+    assert adapter.preserve_file_data is preserve_file_data
+
+    if preserve_file_data:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            sanitized = adapter.sanitize_messages(adapter.messages)
+        sanitized_part = sanitized[0].parts[0]
+        assert isinstance(sanitized_part, UserPromptPart)
+        assert any(isinstance(item, UploadedFile) for item in sanitized_part.content)
+    else:
+        with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
+            sanitized = adapter.sanitize_messages(adapter.messages)
+        sanitized_part = sanitized[0].parts[0]
+        assert isinstance(sanitized_part, UserPromptPart)
+        assert sanitized_part.content == snapshot(['Quote the document exactly.'])
+
+
 async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
     """Test converting a user prompt with UploadedFile that has vendor_metadata and custom identifier."""
     from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
