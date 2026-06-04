@@ -30,13 +30,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import FallbackExceptionGroup
 from pydantic_ai.messages import InstructionPart, ModelResponseState, NativeToolCallPart, NativeToolReturnPart
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -53,6 +47,11 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 requires_openai = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
+else:
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -71,17 +70,6 @@ def failure_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo
 
 success_model = FunctionModel(success_response)
 failure_model = FunctionModel(failure_response)
-
-
-def _assert_fallback_all_failed(exc_info: pytest.ExceptionInfo[FallbackExceptionGroup]) -> None:
-    """Assert that a FallbackExceptionGroup contains 2 ModelHTTPError 500s from test-function-model."""
-    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
-    exceptions = exc_info.value.exceptions
-    assert len(exceptions) == 2
-    assert isinstance(exceptions[0], ModelHTTPError)
-    assert exceptions[0].status_code == 500
-    assert exceptions[0].model_name == 'test-function-model'
-    assert exceptions[0].body == {'error': 'test error'}
 
 
 def test_init() -> None:
@@ -388,9 +376,15 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
 def test_all_failed() -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model)
-    with pytest.raises(FallbackExceptionGroup) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         agent.run_sync('hello')
-    _assert_fallback_all_failed(exc_info)
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    exceptions = exc_info.value.exceptions
+    assert len(exceptions) == 2
+    assert isinstance(exceptions[0], ModelHTTPError)
+    assert exceptions[0].status_code == 500
+    assert exceptions[0].model_name == 'test-function-model'
+    assert exceptions[0].body == {'error': 'test error'}
 
 
 def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -405,9 +399,15 @@ def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, An
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
     agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
-    with pytest.raises(FallbackExceptionGroup) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         agent.run_sync('hello')
-    _assert_fallback_all_failed(exc_info)
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    exceptions = exc_info.value.exceptions
+    assert len(exceptions) == 2
+    assert isinstance(exceptions[0], ModelHTTPError)
+    assert exceptions[0].status_code == 500
+    assert exceptions[0].model_name == 'test-function-model'
+    assert exceptions[0].body == {'error': 'test error'}
     assert add_missing_response_model(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
@@ -601,10 +601,16 @@ async def test_first_failed_streaming() -> None:
 async def test_all_failed_streaming() -> None:
     fallback_model = FallbackModel(failure_model_stream, failure_model_stream)
     agent = Agent(model=fallback_model)
-    with pytest.raises(FallbackExceptionGroup) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         async with agent.run_stream('hello') as result:
             [c async for c in result.stream_response(debounce_by=None)]  # pragma: lax no cover
-    _assert_fallback_all_failed(exc_info)
+    assert 'All models from FallbackModel failed' in exc_info.value.args[0]
+    exceptions = exc_info.value.exceptions
+    assert len(exceptions) == 2
+    assert isinstance(exceptions[0], ModelHTTPError)
+    assert exceptions[0].status_code == 500
+    assert exceptions[0].model_name == 'test-function-model'
+    assert exceptions[0].body == {'error': 'test error'}
 
 
 async def test_fallback_condition_override() -> None:
