@@ -10615,7 +10615,14 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebFetchTool())])
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(CodeExecutionTool()),
+            NativeTool(WebFetchTool()),
+            NativeTool(MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])),
+        ],
+    )
 
     @agent.tool_plain
     def lookup() -> str:  # pragma: no cover
@@ -10639,7 +10646,15 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
         'code_execution': 'code_execution_20260120',
         'web_fetch': 'web_fetch_20250910',
     }
-    assert create_kwargs['betas'] == ['web-fetch-2025-09-10']
+    assert create_kwargs['mcp_servers'] == [
+        {
+            'type': 'url',
+            'name': 'clock',
+            'url': 'https://example.com/mcp',
+            'tool_configuration': {'enabled': True, 'allowed_tools': ['current_time']},
+        }
+    ]
+    assert create_kwargs['betas'] == ['mcp-client-2025-04-04', 'web-fetch-2025-09-10']
 
 
 @pytest.mark.vcr()
