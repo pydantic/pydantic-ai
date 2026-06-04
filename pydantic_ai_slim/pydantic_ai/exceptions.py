@@ -322,12 +322,13 @@ class ToolRetryError(Exception):
 
 
 class ToolFailedError(Exception):
-    """Exception to raise when a tool fails."""
+    """Exception used to signal a failed `ToolReturnPart` should be returned to the LLM."""
 
     def __init__(self, tool_failed: ToolReturnPart):
         self.tool_failed = tool_failed
-        message = tool_failed.content
-        super().__init__(message)
+        # `content` may be non-`str` (a structured object or multimodal sequence), so stringify it
+        # the same way the failed result is rendered to the model.
+        super().__init__(tool_failed.model_response_str())
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.tool_failed,)

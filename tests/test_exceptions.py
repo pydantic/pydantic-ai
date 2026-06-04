@@ -156,6 +156,17 @@ def test_tool_failed_error_pickle_round_trip():
     assert restored.tool_failed.outcome == 'failed'
 
 
+def test_tool_failed_error_non_str_content():
+    """ToolFailedError stringifies non-`str` content the same way the failed result is rendered to the model."""
+    part = ToolReturnPart(content={'code': 42, 'reason': 'disk full'}, tool_name='my_tool', outcome='failed')
+    exc = ToolFailedError(part)
+
+    assert str(exc) == part.model_response_str()
+    restored = pickle.loads(pickle.dumps(exc))
+    assert restored.tool_failed.content == {'code': 42, 'reason': 'disk full'}
+    assert str(restored) == str(exc)
+
+
 def test_tool_retry_error_str_with_string_content():
     """Test that ToolRetryError uses string content as message automatically."""
     part = RetryPromptPart(content='error from tool', tool_name='my_tool')
