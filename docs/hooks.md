@@ -72,6 +72,43 @@ print(result.output)
 
 Both sync and async hook functions are accepted. Sync functions are automatically wrapped for async execution.
 
+### On-demand hooks
+
+[`Hooks`][pydantic_ai.capabilities.Hooks] is a capability, so it can be loaded on demand just like any other capability:
+
+```python {title="deferred_hooks_capability.py"}
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
+from pydantic_ai.messages import ToolCallPart
+
+approval_hooks = Hooks(
+    id='approval-hooks',
+    description='Use when a workflow needs approval before destructive actions.',
+    defer_loading=True,
+)
+
+
+@approval_hooks.on.before_tool_execute
+async def require_approval(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
+    # Runs only after the model loads `approval-hooks`.
+    return args
+
+
+agent = Agent('openai-responses:gpt-5.4', capabilities=[approval_hooks])
+```
+
+You do not need to guard hooks owned by a deferred `Hooks` instance with `ctx.capability_loaded`; Pydantic AI skips those hooks until the model calls the `load_capability` tool for that capability. Once the hook runs, `ctx.capability_loaded` is true for that hook's owning capability. To check a different capability, inspect `ctx.loaded_capability_ids` or `ctx.available_capability_ids`.
+
+If a hook must enforce a rule before a workflow is loaded, keep that hook in an always-available capability and inspect `ctx.loaded_capability_ids`; an on-demand hook cannot run before the model loads its own capability.
+
+The run-scoped hooks — `before_run` and `wrap_run` — are bound at the start of the run, so a capability the model loads mid-run won't get them for that run; they only fire when the capability is already loaded at the start (for example after resuming from message history). The capability's per-step hooks (node, model-request, tool, output) fire from the next step onwards once it has loaded, and `after_run` fires at the end of the run if it was loaded at any point during it.
+
 ## Lifecycle overview
 
 The following sequence diagram shows all hooks firing during a complete run with one tool call (happy path). Error hooks (`on_*_error`) are mutually exclusive with `after_*` — see [error hooks](capabilities.md#error-hooks) for that flow.
@@ -352,10 +389,8 @@ agent = Agent('test', capabilities=[hooks])
 Tool hooks (validation and execution) support a `tools` parameter to target specific tools by name:
 
 ```python {title="hooks_tool_filter.py"}
-from typing import Any
-
 from pydantic_ai import Agent, RunContext, ToolDefinition
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.messages import ToolCallPart
 
 hooks = Hooks()
@@ -368,8 +403,8 @@ async def audit_dangerous_tools(
     *,
     call: ToolCallPart,
     tool_def: ToolDefinition,
-    args: dict[str, Any],
-) -> dict[str, Any]:
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
     call_log.append(f'audit: {call.tool_name}')
     return args
 
@@ -454,6 +489,10 @@ print(wrap_log)
 Within a single [`Hooks`][pydantic_ai.capabilities.Hooks] instance, `before_*`, `after_*`, and `on_*_error` fire in **registration order** (the order they were defined or passed to the constructor). `wrap_*` nests as middleware, with the first-registered wrapper as the outermost layer.
 
 Across multiple capabilities, the [composition rules](capabilities.md#composition-and-middleware-semantics) apply: `before_*` fires in capability order, `after_*` fires in reverse capability order, and `wrap_*` nests as middleware.
+
+Hook timing also affects what is populated on [`RunContext`][pydantic_ai.tools.RunContext]. Early run and node hooks can fire before the current step's tool manager and model request parameters have been assembled. At that point `ctx.available_tool_names` can still include tool-search discoveries reconstructed from history, but `ctx.tools` and current request parameters may be empty or reflect the previous step. `before_model_request` and later model-request hooks see the request about to be sent, including the current function tools, native tools, and model settings. Tool and output hooks see the state for the call or output currently being processed.
+
+For on-demand capabilities, `ctx.loaded_capability_ids` updates as soon as the `load_capability` tool runs. Function tools, native tools, and model settings from the loaded capability appear on the next model request, while hooks owned by that capability can only run for hook points reached after the capability has loaded.
 
 ## Error hooks
 

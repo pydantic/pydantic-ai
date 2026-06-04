@@ -426,9 +426,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
                             if _handler is not None:
                                 await _handler(run_ctx, wrapped)
-                            else:
-                                async for _ in wrapped:
-                                    pass
+                            # If the handler returns normally, drain whatever it left unconsumed so the
+                            # node can finish through any stream wrappers. Cancellation paths interrupt
+                            # the handler and do not reach this drain.
+                            async for _ in wrapped:
+                                pass
                     return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
                 _stream_step = _stream_and_advance
@@ -804,9 +806,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream_to_final(stream))
                         if event_stream_handler is not None:
                             await event_stream_handler(run_ctx, wrapped)
-                        else:
-                            async for _ in wrapped:
-                                pass
+                        # Drain after the handler (same as the `run()` path) so the response is fully
+                        # built and any `wrap_run_event_stream` wrapper finalizes; cancellation/`break`
+                        # interrupt the handler and don't reach here.
+                        async for _ in wrapped:
+                            pass
 
                         if final_result_event is not None:
                             final_result = FinalResult(
@@ -879,9 +883,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream)
                         if event_stream_handler is not None:
                             await event_stream_handler(run_ctx, wrapped)
-                        else:
-                            async for _ in wrapped:
-                                pass
+                        # Drain `wrapped` after the handler, same as the `ModelRequestNode` branch above:
+                        # `CallToolsNode.stream()` self-drains its own events, but `wrapped` is a separate
+                        # `wrap_run_event_stream` layer that must finalize here too, to match the `run()` path.
+                        async for _ in wrapped:
+                            pass
 
                 # Advance graph with remaining hooks (before_node_run already fired above).
                 # Rebuild run_ctx after streaming so hooks see post-streaming state (e.g. run_step).
