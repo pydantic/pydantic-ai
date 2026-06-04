@@ -98,6 +98,35 @@ agent = Agent(model)
 ...
 ```
 
+### Governed OpenAI-compatible endpoints
+
+You can also route Pydantic AI through an OpenAI-compatible gateway or control plane when you need centralized model access, policy, audit trails, routing, quota enforcement, or cost controls across multiple applications.
+
+For example, [Tuning Engines](https://www.tuningengines.com/) exposes an OpenAI-compatible endpoint that can be used with the standard `AsyncOpenAI` client:
+
+```python
+import os
+
+from openai import AsyncOpenAI
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+client = AsyncOpenAI(
+    api_key=os.environ['TUNING_ENGINES_API_KEY'],
+    base_url='https://api.tuningengines.com/v1',
+)
+
+model = OpenAIChatModel(
+    os.environ.get('TUNING_ENGINES_MODEL', 'your-model-alias'),
+    provider=OpenAIProvider(openai_client=client),
+)
+agent = Agent(model)
+```
+
+This keeps Pydantic AI responsible for agent behavior, tools, structured output, and retries, while the gateway handles organization-wide controls such as tenant or role-based model access, policy enforcement, trace capture, and usage reporting.
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIChatModelSettings`][pydantic_ai.models.openai.OpenAIChatModelSettings]:
