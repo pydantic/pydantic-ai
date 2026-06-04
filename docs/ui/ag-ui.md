@@ -272,7 +272,7 @@ from pydantic_ai import Agent
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5-mini', output_type=[str, DeferredToolRequests])
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool_plain(requires_approval=True)
