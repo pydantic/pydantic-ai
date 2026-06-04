@@ -21,7 +21,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
-from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import openai_model_profile
@@ -1147,7 +1147,9 @@ class TestProfileThinkingCapabilities:
         assert isinstance(profile, AnthropicModelProfile)
         assert profile.anthropic_supports_adaptive_thinking is True
 
-        profile = anthropic_model_profile('claude-opus-4-7')
+    @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+    def test_anthropic_profile_thinking_support_opus_47_plus(self, model_name: str):
+        profile = anthropic_model_profile(model_name)
         assert profile is not None
         assert isinstance(profile, AnthropicModelProfile)
         assert profile.anthropic_supports_adaptive_thinking is True
@@ -1188,6 +1190,39 @@ class TestProfileThinkingCapabilities:
         profile = groq_model_profile('llama-3.1-8b-instant')
         assert profile is not None
         assert profile.supports_thinking is False
+
+    @pytest.mark.parametrize(
+        'model_name',
+        [
+            'grok-4.3',
+            'grok-4.3-latest',
+            # Floating alias for the newest Grok, currently 4.3.
+            'grok-latest',
+            'grok-4-1-fast-reasoning',
+            'grok-4-fast-non-reasoning',
+            'grok-3',
+        ],
+    )
+    def test_grok_43_profile_thinking_support(self, model_name: str):
+        profile = grok_model_profile(model_name)
+        assert profile is not None
+        assert isinstance(profile, GrokModelProfile)
+        assert profile.supports_thinking is True
+        assert profile.grok_reasoning_efforts == frozenset({'none', 'low', 'medium', 'high'})
+
+    def test_grok_3_mini_profile_thinking_support(self):
+        profile = grok_model_profile('grok-3-mini')
+        assert profile is not None
+        assert isinstance(profile, GrokModelProfile)
+        assert profile.supports_thinking is True
+        assert profile.grok_reasoning_efforts == frozenset({'low', 'high'})
+
+    def test_grok_3_fast_profile_thinking_support(self):
+        profile = grok_model_profile('grok-3-fast')
+        assert profile is not None
+        assert isinstance(profile, GrokModelProfile)
+        assert profile.supports_thinking is False
+        assert profile.grok_reasoning_efforts == frozenset()
 
     def test_cohere_profile_thinking_support(self):
         profile = cohere_model_profile('command-a-reasoning')
