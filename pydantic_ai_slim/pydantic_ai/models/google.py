@@ -1154,11 +1154,11 @@ class GoogleModel(Model[Client]):
                 fallback_parts.append(file_part)
 
         if part.outcome == 'failed':
+            # Gemini reads the `error` value as the failure message verbatim, so it must stay a
+            # plain string — folding file-reference strings in (as the success branch does under
+            # `output`) pollutes the message. A hand-constructed failed return with files still
+            # sends the file parts below; we just don't anchor them inside the error payload.
             response = {'error': part.model_response_str()}
-            # `ToolFailed` only produces string content. A manually constructed failed
-            # tool return with files still sends `fallback_parts` below, but the
-            # `fallback_refs` are not included in the error payload; leave that edge
-            # case undefined until we decide what multimodal failed results should mean.
         else:
             response = part.model_response_object()
             if fallback_refs:
