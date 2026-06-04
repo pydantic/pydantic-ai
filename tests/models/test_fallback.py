@@ -1993,6 +1993,52 @@ def test_fallback_primary_continuation_fails() -> None:
     assert fallback_calls == 1  # called once via fallback chain after rewind
 
 
+def test_fallback_continuation_failure_rewinds_to_clean_history() -> None:
+    """When a pinned continuation fails and the chain falls through, the fallback model sees clean
+    history ending at the original `ModelRequest`.
+
+    The incomplete suspended response is stripped before the chain is retried, so the fallback model
+    gets the full conversation up to the request rather than a 'partial' turn from the failed model.
+    """
+    primary_calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+
+    fallback_saw_suspended: bool | None = None
+    fallback_saw_user_prompt: bool | None = None
+    fallback_last_kind: str | None = None
+
+    def fallback_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal fallback_saw_suspended, fallback_saw_user_prompt, fallback_last_kind
+        fallback_saw_suspended = any(isinstance(m, ModelResponse) and m.state == 'suspended' for m in messages)
+        fallback_saw_user_prompt = any(
+            isinstance(m, ModelRequest) and any(isinstance(p, UserPromptPart) for p in m.parts) for m in messages
+        )
+        fallback_last_kind = type(messages[-1]).__name__
+        return ModelResponse(parts=[TextPart('fallback success')])
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='primary'),
+        FunctionModel(fallback_fn, model_name='fallback'),
+    )
+    agent = Agent(model=model)
+
+    result = agent.run_sync('test')
+
+    assert result.output == 'fallback success'
+    # The fallback model saw the original request (full context) but not the stripped suspended turn.
+    assert fallback_saw_user_prompt is True
+    assert fallback_saw_suspended is False
+    assert fallback_last_kind == 'ModelRequest'
+    # The persisted history also ends clean: the suspended response was replaced, not left dangling.
+    assert not any(isinstance(m, ModelResponse) and m.state == 'suspended' for m in result.all_messages())
+
+
 def test_fallback_secondary_continuation_fails() -> None:
     """Primary fails, fallback returns state='suspended', gets pinned, then fallback raises error.
     Messages are rewound and the normal chain is retried — primary succeeds."""
