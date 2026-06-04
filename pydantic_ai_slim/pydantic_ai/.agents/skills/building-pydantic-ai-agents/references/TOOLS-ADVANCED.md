@@ -37,7 +37,7 @@ print(result.output)
 Two key rules:
 
 - `DeferredToolRequests` must be in the output type
-- for conditional approval, raise `ApprovalRequired(...)` instead of marking the whole tool `requires_approval=True`
+- for conditional approval, either pass a callable (`RequiresApprovalFunc`) as `requires_approval` that returns metadata to defer or `None` to run, or raise `ApprovalRequired(...)` from inside the tool — instead of marking the whole tool `requires_approval=True`
 
 ## Make an Agent Resilient with Retries
 

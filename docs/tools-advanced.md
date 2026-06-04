@@ -560,6 +560,8 @@ _(This example is complete, it can be run "as is")_
 
 When validation fails, the error message is sent back to the LLM as a retry prompt. This respects the `retries` setting on the tool. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred, while failed validation triggers a retry just like regular tools.
 
+When approval should depend on the validated arguments rather than always being required, pass a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable as `requires_approval` instead of `True`; see [Human-in-the-Loop Tool Approval](deferred-tools.md#human-in-the-loop-tool-approval).
+
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 
 The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]. This reflects all validation — both schema validation and custom `args_validator` validation (if configured): `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. tool calls skipped due to the `'early'` end strategy, or deferred tool calls resolved without execution).

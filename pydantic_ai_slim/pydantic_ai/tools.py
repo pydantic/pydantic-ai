@@ -34,6 +34,7 @@ __all__ = (
     'ToolsPrepareFunc',
     'ToolSelectorFunc',
     'ToolSelector',
+    'RequiresApprovalFunc',
     'matches_tool_selector',
     'AgentNativeTool',
     'NativeToolFunc',
@@ -452,7 +453,7 @@ class Tool(Generic[ToolAgentDepsT]):
     require_parameter_descriptions: bool
     strict: bool | None
     sequential: bool
-    requires_approval: bool
+    requires_approval: bool | RequiresApprovalFunc[ToolAgentDepsT]
     metadata: dict[str, Any] | None
     timeout: float | None
     defer_loading: bool
@@ -479,7 +480,7 @@ class Tool(Generic[ToolAgentDepsT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         sequential: bool = False,
-        requires_approval: bool = False,
+        requires_approval: bool | RequiresApprovalFunc[ToolAgentDepsT] = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -544,6 +545,10 @@ class Tool(Generic[ToolAgentDepsT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                Can also be a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable that
+                receives the run context and validated arguments and returns a metadata dict to require approval
+                (with the dict available via [`DeferredToolRequests.metadata`][pydantic_ai.tools.DeferredToolRequests.metadata]),
+                or `None` to run the tool directly.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
@@ -646,7 +651,7 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata=self.metadata,
             timeout=self.timeout,
             defer_loading=self.defer_loading,
-            kind='unapproved' if self.requires_approval else 'function',
+            kind='unapproved' if self.requires_approval is True else 'function',
             return_schema=self.function_schema.return_schema,
             include_return_schema=self.include_return_schema,
         )
@@ -681,6 +686,22 @@ With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `ext
 
 ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
+
+
+RequiresApprovalFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT], dict[str, Any]],
+    dict[str, Any] | None | Awaitable[dict[str, Any] | None],
+]
+"""A function that decides whether a specific tool call requires human-in-the-loop approval.
+
+Receives the [`RunContext`][pydantic_ai.tools.RunContext] and the validated tool-call arguments,
+and returns a metadata dictionary to require approval (made available via
+[`DeferredToolRequests.metadata`][pydantic_ai.tools.DeferredToolRequests.metadata] keyed by
+`tool_call_id`, and in [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata]
+once approved), or `None` to run the tool directly. May be sync or async.
+
+Usage `RequiresApprovalFunc[AgentDepsT]`.
+"""
 
 
 @dataclass(repr=False, kw_only=True)

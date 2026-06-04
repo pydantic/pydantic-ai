@@ -4415,4 +4415,274 @@ def test_include_return_schema_on_toolset_tool():
     assert tools[0].include_return_schema is True
 
 
+def _approve_large_transfer(ctx: RunContext[None], args: dict[str, Any]) -> dict[str, Any] | None:
+    if args['amount'] > 1000:
+        return {'amount': args['amount'], 'recipient': args['to']}
+    return None
+
+
+def test_requires_approval_callable_defers_with_metadata():
+    """A callable `requires_approval` returning a dict defers the call with that dict as metadata."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('transfer', {'amount': 5000, 'to': 'alice'}, tool_call_id='t1')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=_approve_large_transfer)
+    def transfer(ctx: RunContext[None], amount: float, to: str) -> str:
+        return f'Transferred {amount} to {to}'  # pragma: no cover
+
+    result = agent.run_sync('transfer')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='transfer', args={'amount': 5000, 'to': 'alice'}, tool_call_id='t1')],
+            metadata={'t1': {'amount': 5000, 'recipient': 'alice'}},
+        )
+    )
+
+
+def test_requires_approval_callable_returns_none_runs_directly():
+    """A callable `requires_approval` returning None runs the tool directly."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('transfer', {'amount': 10, 'to': 'bob'}, tool_call_id='t1')])
+        return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=_approve_large_transfer)
+    def transfer(ctx: RunContext[None], amount: float, to: str) -> str:
+        return f'Transferred {amount} to {to}'
+
+    result = agent.run_sync('transfer')
+    assert result.output == 'Done!'
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns[0].content == 'Transferred 10.0 to bob'
+
+
+def test_requires_approval_callable_resumes_after_approval():
+    """After approval the callable guard is skipped and the tool executes, exposing approval metadata."""
+    received_metadata: list[Any] = []
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('transfer', {'amount': 5000, 'to': 'alice'}, tool_call_id='t1')])
+        return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=_approve_large_transfer)
+    def transfer(ctx: RunContext[None], amount: float, to: str) -> str:
+        received_metadata.append(ctx.tool_call_metadata)
+        return f'Transferred {amount} to {to}'
+
+    result = agent.run_sync('transfer')
+    messages = result.all_messages()
+    assert isinstance(result.output, DeferredToolRequests)
+
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={'t1': True},
+            metadata={'t1': {'approver': 'admin'}},
+        ),
+    )
+    assert result.output == 'Done!'
+    assert received_metadata == [{'approver': 'admin'}]
+
+
+async def test_requires_approval_async_callable():
+    """An async callable `requires_approval` is awaited."""
+
+    async def needs_approval(ctx: RunContext[None], args: dict[str, Any]) -> dict[str, Any] | None:
+        if args['amount'] > 1000:
+            return {'amount': args['amount']}
+        return None  # pragma: no cover
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('transfer', {'amount': 5000, 'to': 'alice'}, tool_call_id='t1')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=needs_approval)
+    def transfer(ctx: RunContext[None], amount: float, to: str) -> str:
+        return f'Transferred {amount} to {to}'  # pragma: no cover
+
+    result = await agent.run('transfer')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='transfer', args={'amount': 5000, 'to': 'alice'}, tool_call_id='t1')],
+            metadata={'t1': {'amount': 5000}},
+        )
+    )
+
+
+def test_requires_approval_callable_keeps_function_kind():
+    """A callable `requires_approval` keeps `kind='function'`; `True` produces `kind='unapproved'`."""
+
+    def predicate(ctx: RunContext[None], args: dict[str, Any]) -> dict[str, Any] | None:
+        return None  # pragma: no cover
+
+    def tool_func(ctx: RunContext[None], x: int) -> int:
+        return x  # pragma: no cover
+
+    callable_tool = Tool(tool_func, takes_ctx=True, name='callable_tool', requires_approval=predicate)
+    assert callable_tool.tool_def.kind == 'function'
+
+    always_tool = Tool(tool_func, takes_ctx=True, name='always_tool', requires_approval=True)
+    assert always_tool.tool_def.kind == 'unapproved'
+
+    default_tool = Tool(tool_func, takes_ctx=True, name='default_tool')
+    assert default_tool.tool_def.kind == 'function'
+
+
+def test_requires_approval_callable_receives_validated_args():
+    """The callable receives type-converted (validated) args, not the raw JSON values."""
+    received_type_names: list[str] = []
+
+    def predicate(ctx: RunContext[None], args: dict[str, Any]) -> dict[str, Any] | None:
+        amount: Any = args['amount']
+        received_type_names.append(type(amount).__name__)
+        return {'amount': amount}
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('transfer', {'amount': '1000.5', 'to': 'alice'}, tool_call_id='t1')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=predicate)
+    def transfer(ctx: RunContext[None], amount: float, to: str) -> str:
+        return f'Transferred {amount} to {to}'  # pragma: no cover
+
+    result = agent.run_sync('transfer')
+    assert isinstance(result.output, DeferredToolRequests)
+    assert received_type_names == ['float']
+
+
+def test_requires_approval_callable_entry_points():
+    """A callable `requires_approval` is accepted by all tool registration entry points."""
+
+    def predicate(ctx: RunContext[None], args: dict[str, Any]) -> dict[str, Any] | None:
+        return None  # pragma: no cover
+
+    agent = Agent('test')
+
+    @agent.tool(requires_approval=predicate)
+    def agent_tool(ctx: RunContext[None], x: int) -> int:
+        return x  # pragma: no cover
+
+    @agent.tool_plain(requires_approval=predicate)
+    def agent_plain_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    assert agent._function_toolset.tools['agent_tool'].requires_approval is predicate
+    assert agent._function_toolset.tools['agent_plain_tool'].requires_approval is predicate
+
+    def direct_func(ctx: RunContext[None], x: int) -> int:
+        return x  # pragma: no cover
+
+    direct_tool = Tool(direct_func, takes_ctx=True, name='direct_tool', requires_approval=predicate)
+    assert direct_tool.requires_approval is predicate
+
+    # A toolset-level callable applies to all tools, unless overridden when adding a tool.
+    toolset = FunctionToolset[None](requires_approval=predicate)
+
+    @toolset.tool
+    def toolset_tool(ctx: RunContext[None], x: int) -> int:
+        return x  # pragma: no cover
+
+    @toolset.tool_plain
+    def toolset_plain_tool(x: int) -> int:
+        return x  # pragma: no cover
+
+    def standalone_func(ctx: RunContext[None], x: int) -> int:
+        return x  # pragma: no cover
+
+    toolset.add_function(standalone_func)
+
+    assert toolset.tools['toolset_tool'].requires_approval is predicate
+    assert toolset.tools['toolset_plain_tool'].requires_approval is predicate
+    assert toolset.tools['standalone_func'].requires_approval is predicate
+
+
+def test_requires_approval_toolset_level_callable_executes_guard():
+    """A toolset-level callable `requires_approval` actually runs the guard and defers via the agent."""
+
+    def needs_approval(ctx: RunContext[None], args: dict[str, Any]) -> dict[str, Any] | None:
+        if args['amount'] > 1000:
+            return {'amount': args['amount']}
+        return None
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('transfer', {'amount': 5000}, tool_call_id='t1')])
+        return ModelResponse(parts=[TextPart('Done!')])
+
+    toolset = FunctionToolset[None](requires_approval=needs_approval)
+
+    @toolset.tool_plain
+    def transfer(amount: float) -> str:
+        return f'Transferred {amount}'
+
+    agent = Agent(FunctionModel(llm), toolsets=[toolset], output_type=[str, DeferredToolRequests])
+
+    result = agent.run_sync('transfer')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='transfer', args={'amount': 5000}, tool_call_id='t1')],
+            metadata={'t1': {'amount': 5000}},
+        )
+    )
+
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={'t1': True}),
+    )
+    assert result.output == 'Done!'
+
+
+def test_requires_approval_callable_denied():
+    """Denying an approved callable-deferred call surfaces the denial message to the model."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('transfer', {'amount': 5000, 'to': 'alice'}, tool_call_id='t1')])
+        return ModelResponse(parts=[TextPart('Acknowledged')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=_approve_large_transfer)
+    def transfer(ctx: RunContext[None], amount: float, to: str) -> str:
+        return f'Transferred {amount} to {to}'  # pragma: no cover
+
+    result = agent.run_sync('transfer')
+    messages = result.all_messages()
+    assert isinstance(result.output, DeferredToolRequests)
+
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={'t1': ToolDenied('Transfer not allowed')},
+        ),
+    )
+    assert result.output == 'Acknowledged'
+    denied_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'transfer'
+    ]
+    assert denied_returns[0].content == 'Transfer not allowed'
+    assert denied_returns[0].outcome == 'denied'
+
+
 # endregion

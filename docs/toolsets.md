@@ -457,6 +457,8 @@ print(test_model.last_model_request_parameters.function_tools)
 
 To easily chain different modifications, you can also call [`approval_required()`][pydantic_ai.toolsets.AbstractToolset.approval_required] on any toolset instead of directly constructing a `ApprovalRequiredToolset`.
 
+`ApprovalRequiredToolset` is the right choice for applying an approval policy across a whole toolset (such as an [MCP server](mcp/client.md)). As an alternative, to require approval for a single [function tool](tools.md), pass `requires_approval=True` or a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable directly to the tool, which keeps the policy next to the tool declaration and lets it return per-call metadata. See [Human-in-the-Loop Tool Approval](deferred-tools.md#human-in-the-loop-tool-approval) for details.
+
 See the [Human-in-the-Loop Tool Approval](deferred-tools.md#human-in-the-loop-tool-approval) documentation for more information on how to handle agent runs that call tools that require approval and how to pass in the results.
 
 ```python {title="approval_required_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py,prepared_toolset.py"}
