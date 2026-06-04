@@ -56,6 +56,8 @@ class XaiProvider(Provider[AsyncClient]):
 
     @property
     def base_url(self) -> str:
+        # Canonical pricing/identity label, not the transport host: the xAI SDK is gRPC and the actual
+        # channel target is set via `api_host`. This URL is used for usage/price lookup and telemetry only.
         return 'https://api.x.ai/v1'
 
     @property
@@ -90,7 +92,9 @@ class XaiProvider(Provider[AsyncClient]):
             api_key: The API key to use for authentication, if not provided, the `XAI_API_KEY` environment variable
                 will be used if available.
             api_host: The API host to use for the xAI SDK client.
-            timeout: The default timeout for the xAI SDK client, in seconds.
+            timeout: The client-level default timeout for the xAI SDK client, in seconds, applied to all requests
+                made through it. This is distinct from `ModelSettings.timeout`, which overrides the timeout for an
+                individual request.
             xai_client: An existing `xai_sdk.AsyncClient` to use. This takes precedence over `api_key`, `api_host`,
                 and `timeout`.
         """
@@ -104,7 +108,7 @@ class XaiProvider(Provider[AsyncClient]):
                     'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)`'
                     ' to use the xAI provider.'
                 )
-            client_kwargs: dict[str, Any] = {'api_key': api_key}
+            client_kwargs: dict[str, str | float] = {'api_key': api_key}
             if api_host is not None:
                 client_kwargs['api_host'] = api_host
             if timeout is not None:
