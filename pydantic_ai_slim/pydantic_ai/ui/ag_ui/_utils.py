@@ -29,6 +29,13 @@ INTERRUPTS_VERSION = (0, 1, 19)
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
+INTERRUPT_ID_PREFIX: Final[str] = 'int-'
+"""Prefix used to derive an `Interrupt.id` from a `ToolCallPart.tool_call_id`.
+
+The same prefix is stripped on resume to map `ResumeEntry.interrupt_id` back to a `tool_call_id`.
+Keep this string stable — clients may persist `Interrupt.id` across page reloads.
+"""
+
 FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 """Activity type for agent-generated files stored as AG-UI ActivityMessages."""
 

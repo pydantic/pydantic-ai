@@ -74,11 +74,12 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from ._event_stream import INTERRUPT_ID_PREFIX, AGUIEventStream
+    from ._event_stream import AGUIEventStream
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
         DEFAULT_AG_UI_VERSION,
         FILE_ACTIVITY_TYPE,
+        INTERRUPT_ID_PREFIX,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
         UPLOADED_FILE_ACTIVITY_TYPE,

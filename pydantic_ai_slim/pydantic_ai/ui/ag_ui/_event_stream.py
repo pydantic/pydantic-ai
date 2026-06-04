@@ -34,6 +34,7 @@ from .._event_stream import describe_file
 from ._utils import (
     BUILTIN_TOOL_CALL_ID_PREFIX,
     DEFAULT_AG_UI_VERSION,
+    INTERRUPT_ID_PREFIX,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
     parse_ag_ui_version,
@@ -93,13 +94,6 @@ else:
         class RunFinishedSuccessOutcome:
             """Stub for ag-ui-protocol < 0.1.19."""
 
-
-INTERRUPT_ID_PREFIX = 'int-'
-"""Prefix used to derive an `Interrupt.id` from a `ToolCallPart.tool_call_id`.
-
-The same prefix is stripped on resume to map `ResumeEntry.interrupt_id` back to a `tool_call_id`.
-Keep this string stable — clients may persist `Interrupt.id` across page reloads.
-"""
 
 __all__ = [
     'AGUIEventStream',
