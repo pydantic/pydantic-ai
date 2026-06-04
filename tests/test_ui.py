@@ -40,6 +40,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.models.function import (
@@ -1057,6 +1058,7 @@ def _make_dummy_adapter(
     *,
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
     allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
+    preserve_file_data: bool = False,
 ) -> DummyUIAdapter[None, str]:
     agent: Agent[None, str] = Agent(model=TestModel())
     return DummyUIAdapter(
@@ -1064,6 +1066,7 @@ def _make_dummy_adapter(
         run_input=DummyUIRunInput(messages=messages),
         allowed_file_url_schemes=allowed_file_url_schemes,
         allowed_file_url_force_download=allowed_file_url_force_download,
+        preserve_file_data=preserve_file_data,
     )
 
 
@@ -1381,6 +1384,140 @@ def test_sanitize_messages_strips_disallowed_schemes_in_tool_return_parts():
     native_return = response.parts[0]
     assert isinstance(native_return, NativeToolReturnPart)
     assert native_return.content is None
+
+
+def test_sanitize_messages_drops_uploaded_files_by_default():
+    """Client-submitted `UploadedFile`s are dropped with a warning when `preserve_file_data` is off.
+
+    An `UploadedFile`'s `file_id` is a provider-side reference (e.g. an `s3://`/`gs://` URI) fetched
+    by the model provider using the server-side identity, so — like a non-HTTP `FileUrl` — it is only
+    kept from trusted frontends.
+    """
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Look at this:',
+                            UploadedFile(
+                                file_id='s3://my-bucket/payroll.pdf',
+                                provider_name='bedrock',
+                                media_type='application/pdf',
+                            ),
+                            ImageUrl(url='https://example.com/ok.png'),
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(['Look at this:', ImageUrl(url='https://example.com/ok.png')])
+
+
+def test_sanitize_messages_keeps_uploaded_files_when_preserve_file_data():
+    """`UploadedFile`s pass through unchanged when `preserve_file_data=True` (trusted frontend opt-in)."""
+    uploaded_file = UploadedFile(
+        file_id='gs://my-bucket/object.pdf',
+        provider_name='google-cloud',
+        media_type='application/pdf',
+    )
+    adapter = _make_dummy_adapter(
+        [ModelRequest(parts=[UserPromptPart(content=['Look at this:', uploaded_file])])],
+        preserve_file_data=True,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(['Look at this:', uploaded_file])
+
+
+def test_sanitize_messages_drops_uploaded_files_in_tool_return_parts():
+    """`UploadedFile`s nested in tool return parts are dropped by default, like nested `FileUrl`s."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup',
+                        tool_call_id='call-1',
+                        content=[
+                            'see file',
+                            {
+                                'blocked': UploadedFile(file_id='s3://bucket/secret.pdf', provider_name='bedrock'),
+                                'ok': ImageUrl(url='https://example.com/ok.png'),
+                            },
+                        ],
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        tool_call_id='call-2',
+                        content=UploadedFile(file_id='gs://bucket/native.pdf', provider_name='google-cloud'),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock', 'google-cloud'\]"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    tool_return = request.parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(['see file', {'ok': ImageUrl(url='https://example.com/ok.png')}])
+
+    response = sanitized[1]
+    assert isinstance(response, ModelResponse)
+    native_return = response.parts[0]
+    assert isinstance(native_return, NativeToolReturnPart)
+    assert native_return.content is None
+
+
+def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_preserve_file_data():
+    """`UploadedFile`s nested in tool return parts pass through unchanged when `preserve_file_data=True`."""
+    uploaded_file = UploadedFile(file_id='s3://bucket/secret.pdf', provider_name='bedrock')
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup',
+                        tool_call_id='call-1',
+                        content=['see file', {'kept': uploaded_file}],
+                    )
+                ]
+            )
+        ],
+        preserve_file_data=True,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    tool_return = request.parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(['see file', {'kept': uploaded_file}])
 
 
 def test_sanitize_messages_sanitizes_tool_return_part_in_model_response():
