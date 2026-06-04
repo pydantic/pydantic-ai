@@ -471,14 +471,14 @@ If preserving cache hits matters, prefer providers/cases marked "Never", or use 
 
 ## Tool Execution, Retries, and Failures {#tool-retries}
 
-When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), Pydantic AI automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
+When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
 
 If a tool's own logic cannot produce a normal result, choose the exception based on what you want the model to do next:
 
 - Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should try the tool call again with corrected arguments or a different approach.
 - Raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when the tool call should be reported to the model as a failed result, without consuming the tool's retry budget.
 
-Other exceptions are not sent back to the model by default; they propagate out of the agent run. Keep that behavior for application bugs and infrastructure errors that should stop the run.
+Any other exception propagates out of the agent run and is not sent back to the model.
 
 ### Requesting a Tool Retry
 
@@ -521,7 +521,7 @@ The exception message is recorded in message history as a [`ToolReturnPart`][pyd
 
 Unlike `ModelRetry`, `ToolFailed` does **not** consume the per-tool retry budget; bounding repeated failures is the job of [`UsageLimits`][pydantic_ai.usage.UsageLimits] at the run level.
 
-Rule of thumb: raise `ModelRetry` when you want the model to try again with corrections; raise `ToolFailed` when the call is done and the result is a failure. Some toolsets expose the same choice as configuration; for MCP server tool errors, see [Tool errors](mcp/client.md#tool-errors).
+Rule of thumb: raise `ModelRetry` when you want the model to try again with corrections; raise `ToolFailed` when the call is done and the result is a failure. For MCP server tool errors, the same choice is available as the [`tool_error_behavior`](mcp/client.md#tool-errors) configuration.
 
 You can also raise `ModelRetry` or `ToolFailed` from tool validation and execution hooks. This is useful for converting third-party exceptions without repeating `try`/`except` in every tool; see [Error hooks](hooks.md#error-hooks) and [Tool execution hooks](hooks.md#tool-execution-hooks).
 

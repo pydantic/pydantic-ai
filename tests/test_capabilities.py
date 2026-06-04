@@ -11718,6 +11718,19 @@ class _OnToolValidateErrorFailedCap(AbstractCapability[Any]):
         raise ToolFailed('failed while handling validation error')
 
 
+class _WrapToolValidateFailedCap(AbstractCapability[Any]):
+    async def wrap_tool_validate(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: str | dict[str, Any],
+        handler: Any,
+    ) -> dict[str, Any]:
+        raise ToolFailed('failed during validate wrapper')
+
+
 def _tool_failed_roundtrip_model(tool_args: str) -> Callable[[list[ModelMessage], AgentInfo], ModelResponse]:
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         for msg in messages:
@@ -11805,6 +11818,9 @@ class TestToolFailedFromHooks:
                 'failed while handling validation error',
                 id='on_tool_validate_error',
             ),
+            pytest.param(
+                _WrapToolValidateFailedCap(), '{"x":1}', 'failed during validate wrapper', id='wrap_tool_validate'
+            ),
         ],
     )
     async def test_tool_validate_hook_tool_failed(
@@ -11831,6 +11847,7 @@ class TestToolFailedFromHooks:
         assert tool_call_count == 0
 
     async def test_args_validator_tool_failed(self):
+        """An `args_validator` raising `ToolFailed` reports a failed tool result instead of retrying."""
         tool_call_count = 0
         expected_message = 'failed in args validator'
 

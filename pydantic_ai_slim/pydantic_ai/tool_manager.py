@@ -342,9 +342,7 @@ class ToolManager(Generic[AgentDepsT]):
                     )
                 except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, ToolFailedError):
                     raise  # Control flow, not errors
-                except ToolFailed:
-                    raise  # Propagate to outer handler
-                except ModelRetry:
+                except (ToolFailed, ModelRetry):
                     raise  # Propagate to outer handler
                 except Exception as e:
                     tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
