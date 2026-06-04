@@ -19,7 +19,7 @@ try:
     from botocore.client import BaseClient
     from botocore.exceptions import BotoCoreError, ClientError
     from botocore.model import StructureShape
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install `boto3` to use the Bedrock model, '
         'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
