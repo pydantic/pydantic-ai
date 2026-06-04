@@ -3974,6 +3974,32 @@ async def test_run_stream_event_stream_handler_unconsumed_still_executes_tool_ca
     assert tool_calls == [0]
 
 
+async def test_run_event_stream_handler_interrupted_does_not_drain():
+    """A handler interrupted before returning (cancellation/`break`) must not trigger the drain.
+
+    The drain only runs when the handler returns normally; re-running it on an interrupted handler
+    would consume a stream the caller asked to stop, reintroducing the cancellation hang from #5313.
+    `fully_drained` flips only if the stream is iterated to exhaustion, which the drain would do.
+    """
+    fully_drained = False
+
+    async def tracking_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fully_drained
+        for chunk in ('hello', ' ', 'world'):
+            yield chunk
+        fully_drained = True
+
+    agent = Agent(FunctionModel(stream_function=tracking_stream))
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        raise asyncio.CancelledError  # interrupted before consuming the stream
+
+    with pytest.raises(asyncio.CancelledError):
+        await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert not fully_drained
+
+
 async def test_stream_tool_returning_user_content():
     m = TestModel()
 
