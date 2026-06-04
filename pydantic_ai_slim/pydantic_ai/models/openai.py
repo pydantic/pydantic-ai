@@ -1942,7 +1942,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return response
 
         result = self._process_response(response, settings, model_request_parameters)
-        if result.state == 'suspended':
+        if settings.get('openai_background') and result.state == 'suspended':
             result = replace(
                 result,
                 suspended_retry_delay=settings.get(
@@ -2029,9 +2029,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     model_request_parameters=model_request_parameters,
                     _model_response=self._process_response(response, settings, model_request_parameters),
                 )
-                sr.suspended_retry_delay = settings.get(
-                    'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
-                )
+                if settings.get('openai_background') and sr.state == 'suspended':
+                    sr.suspended_retry_delay = settings.get(
+                        'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
+                    )
                 yield sr
                 return
             response = await self._responses_retrieve(
@@ -2053,9 +2054,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 model_request_parameters,
                 expected_model_name=previous_model_name,
             )
-            sr.suspended_retry_delay = settings.get(
-                'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
-            )
+            if settings.get('openai_background') and sr.state == 'suspended':
+                sr.suspended_retry_delay = settings.get(
+                    'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
+                )
             yield sr
 
     def _process_response(  # noqa: C901
