@@ -239,6 +239,92 @@ async def test_a2a_simple():
             )
 
 
+def return_text_with_embedded_tool_return(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Emit a `ModelResponse` that embeds a `ToolReturnPart` alongside the text output.
+
+    A normal run never puts a `ToolReturnPart` on a `ModelResponse`, but it is a valid
+    `ModelResponsePart` member (issue #5721), so this exercises the A2A worker's handling of one.
+    """
+    return ModelResponse(
+        parts=[
+            PydanticAITextPart(content='done'),
+            ToolReturnPart(tool_name='lookup', content={'result': 'ok'}, tool_call_id='call-1'),
+        ]
+    )
+
+
+text_with_embedded_tool_return_model = FunctionModel(return_text_with_embedded_tool_return)
+
+
+async def test_a2a_response_tool_return_part_not_emitted():
+    """A response-embedded `ToolReturnPart` is dropped from A2A output, which is text-based."""
+    agent = Agent(model=text_with_embedded_tool_return_model)
+    app = agent_to_a2a(agent)
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello, world!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+            result = response['result']
+            assert result['kind'] == 'task'
+            task_id = result['id']
+
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    break
+                await anyio.sleep(0.1)
+
+            # The agent message in history carries only the text part; the embedded
+            # `ToolReturnPart` is dropped (A2A agent output is text-based).
+            assert task == snapshot(
+                {
+                    'jsonrpc': '2.0',
+                    'id': None,
+                    'result': {
+                        'id': IsStr(),
+                        'context_id': IsStr(),
+                        'kind': 'task',
+                        'status': {'state': 'completed', 'timestamp': IsDatetime(iso_string=True)},
+                        'history': [
+                            {
+                                'role': 'user',
+                                'parts': [{'kind': 'text', 'text': 'Hello, world!'}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                            {
+                                'role': 'agent',
+                                'parts': [{'kind': 'text', 'text': 'done'}],
+                                'kind': 'message',
+                                'message_id': IsStr(),
+                                'context_id': IsStr(),
+                                'task_id': IsStr(),
+                            },
+                        ],
+                        'artifacts': [
+                            {
+                                'artifact_id': IsStr(),
+                                'name': 'result',
+                                'parts': [{'kind': 'text', 'text': 'done'}],
+                            }
+                        ],
+                    },
+                }
+            )
+
+
 async def test_a2a_file_message_with_file():
     agent = Agent(model=model, output_type=tuple[str, str])
     app = agent_to_a2a(agent)
