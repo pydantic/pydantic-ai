@@ -56,6 +56,7 @@ from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
+from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -169,6 +170,27 @@ def _normalize_agent_retry_overrides(
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
+
+
+def _validate_native_tool_id_conflicts(
+    native_tools: Sequence[AgentNativeTool[Any]],
+    *,
+    source: str,
+) -> None:
+    seen: dict[str, AbstractNativeTool] = {}
+    for tool in native_tools:
+        if not isinstance(tool, AbstractNativeTool):
+            continue
+
+        unique_id = tool.unique_id
+        if existing := seen.get(unique_id):
+            if existing != tool:
+                raise exceptions.UserError(
+                    f'Duplicate native tool id {unique_id!r} maps to conflicting definitions in {source}. '
+                    'Pass a unique id for each native tool instance in the same capability layer.'
+                )
+        else:
+            seen[unique_id] = tool
 
 
 @dataclasses.dataclass
@@ -509,6 +531,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._validation_context = validation_context
 
         self._cap_native_tools = list(self._root_capability.get_native_tools())
+        _validate_native_tool_id_conflicts(self._cap_native_tools, source='agent capabilities')
 
         self._cap_model_settings = self._root_capability.get_model_settings()
 
@@ -1370,6 +1393,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
         if extra_capabilities:
+            extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
+            for cap in extra_capabilities:
+                extra_native_tools.extend(cap.get_native_tools())
+            _validate_native_tool_id_conflicts(extra_native_tools, source='run capabilities')
+        if extra_capabilities:
             effective_capability = CombinedCapability([base_capability, *extra_capabilities])
         else:
             effective_capability = base_capability
@@ -1418,6 +1446,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # preserving any additional per-run capability-contributed native tools (e.g. from
         # `capabilities=[NativeTool(...)]`) on top.
         if some_native_tools := self._override_builtin_tools.get():
+            _validate_native_tool_id_conflicts(some_native_tools.value, source='override native_tools')
             extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
             for cap in extra_capabilities:
                 extra_native_tools.extend(cap.get_native_tools())

@@ -2,6 +2,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
     ImageGenerationTool,
@@ -198,3 +199,15 @@ def test_with_default_output_mode_overrides_allow_text():
     resolved = params.with_default_output_mode('native')
     assert resolved.output_mode == 'native'
     assert resolved.allow_text_output is True
+
+
+def test_prepare_request_deduplicates_identical_native_tools():
+    model = TestModel()
+    tool = MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')
+    params = ModelRequestParameters(
+        native_tools=[tool, MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')]
+    )
+
+    _, prepared = model.prepare_request(None, params)
+
+    assert prepared.native_tools == [tool]

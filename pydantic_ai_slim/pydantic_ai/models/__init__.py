@@ -692,6 +692,10 @@ class ModelRequestParameters:
 _utils.install_deprecated_kwarg_alias(ModelRequestParameters, old='builtin_tools', new='native_tools')
 
 
+def _deduplicate_native_tools(native_tools: Sequence[AbstractNativeTool]) -> list[AbstractNativeTool]:
+    return list({tool.unique_id: tool for tool in native_tools}.values())
+
+
 @dataclass(kw_only=True)
 class ModelRequestContext:
     """Context for model request hooks.
@@ -855,11 +859,7 @@ class Model(ABC, Generic[InterfaceClient]):
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
         if native_tools := params.native_tools:
-            # Deduplicate native tools
-            params = replace(
-                params,
-                native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
-            )
+            params = replace(params, native_tools=_deduplicate_native_tools(native_tools))
 
         params = params.with_default_output_mode(self.profile.default_structured_output_mode)
 
