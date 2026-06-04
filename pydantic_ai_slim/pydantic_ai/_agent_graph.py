@@ -100,7 +100,7 @@ def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Iterator[None]:
 
 
     async def durable_sleep(seconds: float) -> None:
-        ...
+        ...  # e.g. `await workflow.sleep(seconds)` under Temporal
 
     with set_agent_graph_sleep(durable_sleep):
         ...
@@ -1589,11 +1589,13 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
     def _check_continuation_limit(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> None:
-        ctx.state.continuations += 1
-        if ctx.state.continuations > _MAX_CONTINUATIONS:
+        # Check before incrementing so `continuations` reflects the number of continuations
+        # actually attempted (it reads `_MAX_CONTINUATIONS`, not `+ 1`, on the error path).
+        if ctx.state.continuations >= _MAX_CONTINUATIONS:
             raise exceptions.UnexpectedModelBehavior(
                 f'Exceeded maximum continuations ({_MAX_CONTINUATIONS}) for incomplete responses'
             )
+        ctx.state.continuations += 1
 
     @staticmethod
     def _rewind_suspended(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]) -> None:

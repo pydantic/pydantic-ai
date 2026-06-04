@@ -11309,6 +11309,41 @@ def test_continuation_request_reuses_history_instructions() -> None:
     assert instructions_by_call == ['Agent instructions.', 'Agent instructions.']
 
 
+def test_continuation_merges_parts_and_usage_across_response_ids() -> None:
+    """Continuation responses with different `provider_response_id`s accumulate parts and sum usage.
+
+    The same-id path replaces the response wholesale (OpenAI background retrieve returns the full
+    response under the same id); this covers the other branch of `_merge_response`, where a fresh id
+    means new content (e.g. Anthropic `pause_turn`) that must be appended and have its usage summed.
+    """
+    call_count = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[TextPart('first ')],
+                state='suspended',
+                provider_response_id='resp-1',
+                usage=RequestUsage(input_tokens=10, output_tokens=3),
+            )
+        return ModelResponse(
+            parts=[TextPart('second')],
+            provider_response_id='resp-2',
+            usage=RequestUsage(input_tokens=8, output_tokens=4),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    result = agent.run_sync('test')
+
+    merged = result.all_messages()[-1]
+    assert isinstance(merged, ModelResponse)
+    assert [part.content for part in merged.parts if isinstance(part, TextPart)] == ['first ', 'second']
+    assert merged.provider_response_id == 'resp-2'
+    assert merged.usage == RequestUsage(input_tokens=18, output_tokens=7)
+
+
 def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch) -> None:
     """When no custom sleep is registered, ContinueRequestNode uses asyncio.sleep."""
     call_count = 0
