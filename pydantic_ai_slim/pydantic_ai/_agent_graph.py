@@ -1473,6 +1473,11 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ModelRequest), Anthropic requires the exact same history back, and OpenAI calls
     a retrieve endpoint.
 
+    For the same reason, instructions are reused from the recorded `ModelRequest` in history
+    rather than re-evaluated from instruction providers, so dynamic instructions are not
+    refreshed mid-turn: a continuation completes the same logical request, and Anthropic
+    requires the exact prior history echoed back.
+
     Note: `agent.run_stream()` advances this node via `run()` (non-streaming), not `stream()`.
     The `stream()` method is available for users who manually iterate the graph via `agent.iter()`
     and want streaming events from continuation requests.
