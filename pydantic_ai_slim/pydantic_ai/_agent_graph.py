@@ -1553,7 +1553,11 @@ class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     self._did_stream = True
                     async for event in sr:
                         yield event
-                    new_response = sr.get()
+            # Build the response after the stream context exits, not inside it: wrappers like
+            # `FallbackModel` stamp continuation metadata on `__aexit__` (after their `yield`),
+            # so calling `sr.get()` inside the `async with` would miss it and break re-pinning on
+            # the next continuation. This matches `ModelRequestNode._streaming_handler`.
+            new_response = sr.get()
         except Exception:
             self._rewind_suspended(ctx)
             raise

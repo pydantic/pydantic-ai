@@ -28,6 +28,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._agent_graph import ContinueRequestNode, ModelRequestNode
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import InstructionPart, ModelResponseState, NativeToolCallPart, NativeToolReturnPart
@@ -38,6 +39,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
+from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
@@ -2220,6 +2222,54 @@ async def test_fallback_streaming_pinned_continuation_still_continuing() -> None
             pass
     assert streamed_response.state == 'complete'
     assert call_count == 3
+
+
+async def test_fallback_graph_streaming_continuation_keeps_pin() -> None:
+    """Graph-level streaming continuations must keep the fallback pin across multiple pauses.
+
+    `ContinueRequestNode._run_stream` builds the continuation response with `sr.get()` *after* the
+    stream context exits, so `FallbackModel`'s on-`__aexit__` continuation stamp is captured. If it
+    built the response inside the `async with` instead, the second continuation would see a stamp-less
+    suspended response, fall back to the normal chain, and re-invoke the failing primary rather than
+    staying pinned to the fallback.
+    """
+    primary_calls = 0
+
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        raise ModelHTTPError(status_code=500, model_name='primary', body='error')
+        yield ''  # pragma: no cover
+
+    fallback_calls = 0
+
+    async def fallback_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        yield f'chunk {fallback_calls}'
+
+    primary_model = _ContinuationModel(_inner=FunctionModel(stream_function=primary_stream, model_name='primary'))
+    # Suspended on the initial request and the first continuation, complete on the second: both
+    # continuations must stay pinned to the fallback rather than re-running the primary.
+    fallback_model = _ContinuationModel(
+        _inner=FunctionModel(stream_function=fallback_stream, model_name='fallback'),
+        _stream_state=['suspended', 'suspended', 'complete'],
+    )
+    agent = Agent(FallbackModel(primary_model, fallback_model))
+
+    async with agent.iter('test') as run:
+        node = run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, (ModelRequestNode, ContinueRequestNode)):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:
+                        pass
+            node = await run.next(node)
+
+    # Primary is tried once (the initial request) and fails; every continuation stays pinned to the
+    # fallback, which streams three times (initial pause, continuation pause, completion).
+    assert primary_calls == 1
+    assert fallback_calls == 3
 
 
 async def test_fallback_streaming_pinned_continuation_fails_falls_back() -> None:

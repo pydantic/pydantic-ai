@@ -305,6 +305,9 @@ class FallbackModel(Model):
                 else:
                     self._set_span_attributes(pinned, prepared_parameters)
                     yield streamed_response
+                    # Unlike `request()`, which stamps before returning, the streaming path stamps
+                    # after `yield`: the final `state` is only known once the caller has consumed the
+                    # stream. Callers must therefore call `get()` after the `async with` exits.
                     if streamed_response.state == 'suspended':
                         _stamp_continuation(streamed_response, pinned)
                     return
@@ -325,6 +328,8 @@ class FallbackModel(Model):
 
                 self._set_span_attributes(model, prepared_parameters)
                 yield streamed_response
+                # Stamp after `yield` (see the pinned path above): `state` is only final once the
+                # caller has consumed the stream, so callers must call `get()` after the context exits.
                 if streamed_response.state == 'suspended':
                     _stamp_continuation(streamed_response, model)
                 return
