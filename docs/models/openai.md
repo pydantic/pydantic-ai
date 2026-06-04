@@ -104,7 +104,7 @@ You can also route Pydantic AI through an OpenAI-compatible gateway or control p
 
 For example, [Tuning Engines](https://www.tuningengines.com/) exposes an OpenAI-compatible endpoint that can be used with the standard `AsyncOpenAI` client:
 
-```python
+```python {test="skip"}
 import os
 
 from openai import AsyncOpenAI
