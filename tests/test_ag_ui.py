@@ -148,19 +148,37 @@ pytestmark = [
 ]
 
 
-def simple_result() -> Any:
+def simple_result(*, outcome: dict[str, Any] | None = None) -> Any:
+    """Expected event sequence for `simple_stream`.
+
+    Pass `outcome={'type': 'success'}` for callers that run against `ag-ui-protocol >= 0.1.19`
+    (where the adapter emits `RunFinishedEvent.outcome`). Older negotiated versions
+    (e.g. `ag_ui_version='0.1.10'`) suppress the field, so the default `outcome=None`
+    matches a bare `RUN_FINISHED`.
+    """
+    thread_id = IsSameStr()
+    run_id = IsSameStr()
+    message_id = IsSameStr()
+    run_finished: dict[str, Any] = {
+        'type': 'RUN_FINISHED',
+        'timestamp': IsInt(),
+        'threadId': thread_id,
+        'runId': run_id,
+    }
+    if outcome is not None:
+        run_finished['outcome'] = outcome
     return snapshot(
         [
             {
                 'type': 'RUN_STARTED',
                 'timestamp': IsInt(),
-                'threadId': (thread_id := IsSameStr()),
-                'runId': (run_id := IsSameStr()),
+                'threadId': thread_id,
+                'runId': run_id,
             },
             {
                 'type': 'TEXT_MESSAGE_START',
                 'timestamp': IsInt(),
-                'messageId': (message_id := IsSameStr()),
+                'messageId': message_id,
                 'role': 'assistant',
             },
             {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'success '},
@@ -171,12 +189,7 @@ def simple_result() -> Any:
                 'delta': '(no tool calls)',
             },
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
-            {
-                'type': 'RUN_FINISHED',
-                'timestamp': IsInt(),
-                'threadId': thread_id,
-                'runId': run_id,
-            },
+            run_finished,
         ]
     )
 
@@ -2217,7 +2230,7 @@ async def test_request_with_state() -> None:
         async def on_complete(result: AgentRunResult[Any]):
             seen_deps_states.append(deps.state.value)
 
-        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete):
+        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete, ag_ui_version='0.1.10'):
             events.append(json.loads(event.removeprefix('data: ')))
 
         assert events == simple_result()
@@ -2241,7 +2254,7 @@ async def test_request_with_state_without_handler() -> None:
         match='State was provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps\\[\\.\\.\\.\\]` or implement `StateHandler` to receive AG-UI state.',
     ):
         events = list[dict[str, Any]]()
-        async for event in run_ag_ui(agent, run_input):
+        async for event in run_ag_ui(agent, run_input, ag_ui_version='0.1.10'):
             events.append(json.loads(event.removeprefix('data: ')))
 
     assert events == simple_result()
@@ -2259,7 +2272,7 @@ async def test_request_with_empty_state_without_handler() -> None:
     )
 
     events = list[dict[str, Any]]()
-    async for event in run_ag_ui(agent, run_input):
+    async for event in run_ag_ui(agent, run_input, ag_ui_version='0.1.10'):
         events.append(json.loads(event.removeprefix('data: ')))
 
     assert events == simple_result()
@@ -2403,7 +2416,9 @@ async def test_to_ag_ui() -> None:
                     if line:
                         events.append(json.loads(line.removeprefix('data: ')))
 
-            assert events == simple_result()
+            # `to_ag_ui()` uses the default (current) ag-ui-protocol version, so the
+            # interrupt-aware run lifecycle is active and `RUN_FINISHED` carries an outcome.
+            assert events == simple_result(outcome={'type': 'success'})
 
     # Verify the state was not mutated by the run
     assert deps.state.value == 0
@@ -3084,6 +3099,7 @@ async def test_event_stream_back_to_back_text():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
+                'outcome': {'type': 'success'},
             },
         ]
     )
@@ -3309,6 +3325,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
+                'outcome': {'type': 'success'},
             },
         ]
     )
@@ -3481,6 +3498,7 @@ async def test_handle_ag_ui_request():
                     'timestamp': IsInt(),
                     'threadId': thread_id,
                     'runId': run_id,
+                    'outcome': {'type': 'success'},
                 },
                 'more_body': True,
             },

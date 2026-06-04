@@ -79,11 +79,6 @@ pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 pydantic-docs = { git = "https://github.com/pydantic/pydantic-docs" }
-# Temporary dev-only pin: the AG-UI interrupt-aware run lifecycle (PR #1569, merged 2026-04-30)
-# is on `main` but not yet in a tagged release. The published `>=0.1.10` floor in
-# `pydantic_ai_slim/pyproject.toml` stays put so PyPI users keep getting the released SDK.
-# Remove this entry once ag-ui-protocol 0.1.19 publishes.
-ag-ui-protocol = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "df613e40b857668be9a8986aa7ee388fe65aee31", subdirectory = "sdks/python" }
 
 [tool.uv.workspace]
 members = [

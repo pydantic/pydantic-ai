@@ -4,20 +4,20 @@ Tracks issue [#2889](https://github.com/pydantic/pydantic-ai/issues/2889). Branc
 
 ## Status
 
-Implementation complete on this branch. Diff: **7 files modified, 1 added; +568 / -6**.
+Implementation complete on this branch, including post-release SDK cleanup. `ag-ui-protocol 0.1.19` is now published on PyPI, the temporary `[tool.uv.sources]` git pin has been removed, and the example no longer needs the `ag_ui_version='0.1.19'` override.
 
 | Plan step                                                       | Status | Notes                                                                                                                                                                                                                                                                                                |
 | --------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. `INTERRUPTS_VERSION = (0, 1, 19)` in `_utils.py`            | done   | Verified against the merged-main commit `df613e4`; PyPI release 0.1.19 not yet cut at time of writing.                                                                                                                                                                                              |
-| 2. Try-imports + stubs for `Interrupt`/`ResumeEntry`/outcomes  | done   | Followed the existing `ReasoningMessage`/`AudioInputContent` `TYPE_CHECKING` + runtime-stub pattern. Single `_HAS_INTERRUPTS` flag in each module.                                                                                                                                                  |
-| 2a. Dev install of unreleased ag-ui-protocol                    | done   | Solved by `[tool.uv.sources]` in root `pyproject.toml` pinning to commit `df613e4` + regenerated `uv.lock`. Public `>=0.1.10` floor in `pydantic_ai_slim/pyproject.toml` stays put so PyPI users still get the released SDK. **Remove the entry once `ag-ui-protocol 0.1.19` publishes.**                                                  |
-| 3. Outbound `_build_outcome` + `after_stream`                  | done   | `RunFinishedEvent` construction branches on `_HAS_INTERRUPTS` so old SDKs never see an `outcome=None` kwarg (`ConfiguredBaseModel.extra="forbid"`).                                                                                                                                                  |
-| 4. Inbound `deferred_tool_results` override + helpers           | done   | Added `_interrupt_id_to_tool_call_id`, `_resume_entry_to_approval`, `_payload_dict` — the last one was an extra needed to keep pyright happy when narrowing AG-UI's `Optional[Any]` payload to a typed `dict[str, Any]`.                                                                              |
+| 1. `INTERRUPTS_VERSION = (0, 1, 19)` in `_utils.py`             | done   | `ag-ui-protocol 0.1.19` is published on PyPI; `DEFAULT_AG_UI_VERSION` resolves to `'0.1.19'` automatically.                                                                                                                                                                                          |
+| 2. Try-imports + stubs for `Interrupt`/`ResumeEntry`/outcomes   | done   | Followed the existing `ReasoningMessage`/`AudioInputContent` `TYPE_CHECKING` + runtime-stub pattern. Single `_HAS_INTERRUPTS` flag in each module. Kept in place so the floor stays at `>=0.1.10`.                                                                                                                                |
+| 2a. Dev install of unreleased ag-ui-protocol                    | done   | **No longer needed.** The `[tool.uv.sources]` git pin has been removed from root `pyproject.toml` and the lockfile resolves `0.1.19` from PyPI. Section 2a below is retained as historical context.                                                                                                  |
+| 3. Outbound `_build_outcome` + `after_stream`                   | done   | `RunFinishedEvent` construction branches on `_HAS_INTERRUPTS` so old SDKs never see an `outcome=None` kwarg (`ConfiguredBaseModel.extra="forbid"`).                                                                                                                                                  |
+| 4. Inbound `deferred_tool_results` override + helpers           | done   | Added `_interrupt_id_to_tool_call_id`, `_resume_entry_to_approval`, `_payload_dict` — the last one needed to keep pyright happy when narrowing AG-UI's `Optional[Any]` payload to a typed `dict[str, Any]`. **Deny-by-default**: approval requires explicit `payload.approved == True`.               |
 | 5. Public re-exports                                            | n/a    | Confirmed unchanged — interrupts live in `ag_ui.core`; existing `pydantic_ai` exports already cover `DeferredToolRequests`/`DeferredToolResults`/`ToolApproved`/`ToolDenied`.                                                                                                                          |
-| Tests (planned 8 cases)                                         | done   | Landed **9** cases: added `test_resume_unknown_interrupt_id_prefix_raises` to lock in the `UserError` on a malformed interrupt id. All guarded with `@pytestmark_interrupts` (`skipif` on `try_import` of `ResumeEntry`).                                                                              |
-| Example                                                         | done   | [`examples/pydantic_ai_examples/ag_ui/api/tool_approval.py`](examples/pydantic_ai_examples/ag_ui/api/tool_approval.py), wired into the dojo app at `/tool_approval`.                                                                                                                                  |
+| Tests                                                           | done   | Landed **10** cases (8 planned + 2 extras): `test_resume_unknown_interrupt_id_prefix_raises` locks in the `UserError` on a malformed interrupt id, and a parametrized `test_resume_deny_by_default_for_ambiguous_payload` covers 7 deny-by-default payload shapes. All guarded with `@pytestmark_interrupts`.                                                                              |
+| Example                                                         | done   | [`examples/pydantic_ai_examples/ag_ui/api/tool_approval.py`](examples/pydantic_ai_examples/ag_ui/api/tool_approval.py), wired into the dojo app at `/tool_approval`. Verified end-to-end against `openai:gpt-5-mini` — see verification section.                                                                                                  |
 | Docs                                                            | done   | New "Tool approval (interrupts)" section in [`docs/ui/ag-ui.md`](docs/ui/ag-ui.md) between `### Tools` and `### Events`, with the mapping table and `!!! note` admonition for the version requirement.                                                                                                |
-| Lint / typecheck / tests                                        | done   | `ruff check` ✓, `ruff format` ✓, `pyright` ✓ (0 errors on changed files), `pytest tests/test_ag_ui.py` ✓ 115/115, broader sanity `pytest test_capabilities + test_ui + test_ag_ui + test_tools` ✓ 895/895, `pytest tests/test_examples.py -k ag_ui` ✓ 10/0 (new doc snippet picked up). |
+| Lint / typecheck / tests                                        | done   | `ruff check` ✓, `ruff format` ✓, `pyright` ✓ (0 errors on changed files), `pytest tests/test_ag_ui.py` ✓ 122/122 (post-cleanup), `pytest tests/test_examples.py -k ag_ui` ✓ (new doc snippet picked up). |
 
 ### Deviations / findings during implementation
 
@@ -25,7 +25,8 @@ Implementation complete on this branch. Diff: **7 files modified, 1 added; +568 
 - **`RunFinishedEvent.outcome` field absence on old SDKs.** Passing `outcome=None` to the old (`<0.1.19`) `RunFinishedEvent` triggers `extra="forbid"`, so the call sites split into two literal `RunFinishedEvent(...)` constructions inside `after_stream` rather than building kwargs conditionally. Worth keeping — readable and grep-able.
 - **`Interrupt.id` ↔ `tool_call_id` round-trip.** Settled on a deterministic `f"int-{tool_call_id}"` convention exposed as `INTERRUPT_ID_PREFIX` in `_event_stream.py`. The inbound helper raises `UserError` on a malformed prefix rather than silently mapping to a wrong tool call (this surfaces protocol drift early). A new test pins the behavior.
 - **Pyright narrowing on `entry.payload`.** AG-UI types `ResumeEntry.payload` as `Optional[Any]`. Pyright's `isinstance(x, Mapping)` narrow ignores explicit type annotations and casts to `Mapping[Unknown, Unknown]`, which then poisons downstream `.get(...)` calls. Refactored into a tiny `_payload_dict(raw: Any) -> dict[str, Any]` helper that uses `isinstance(raw, dict)` + `cast` and returns a cleanly-typed dict. Trades one micro-helper for zero pyright noise — net positive.
-- **uv source pin closes the CI coverage gap.** Original plan flagged that the 9 gated tests would skip on CI until 0.1.19 published. The `[tool.uv.sources]` entry on `ag-ui-protocol` resolves this — the lockfile points at commit `df613e4`, so `make install` (which does `uv sync --frozen --all-extras --all-packages`) gets the merged-main snapshot, pyright resolves the new types, and all 9 gated tests run on CI. The pin is dev-only (does not affect PyPI consumers). Must be removed when 0.1.19 publishes — see "Cleanup required" in section 2a.
+- **Deny-by-default on resume parsing.** Code review surfaced that the original `_resume_entry_to_approval` approved whenever `payload.get('approved') is not False` — meaning a missing/null/non-bool field silently approved a `requires_approval=True` tool. Inverted the gate so only an explicit `payload.approved == True` approves; any other shape (missing, `None`, string `"true"`, non-dict payload) is denied. This is the safer-by-default stance for human-in-the-loop workflows. Locked in by 7 parametrized test cases.
+- **Existing test snapshots needed updating after the SDK upgrade.** When `DEFAULT_AG_UI_VERSION` flipped from `'0.1.18'` to `'0.1.19'`, tests using `agent.to_ag_ui()` and bare `run_ag_ui()` started receiving `outcome: {type: success}` on `RUN_FINISHED`. The `simple_result()` test helper now takes an optional `outcome=` kwarg; three deprecated-shim tests pin `ag_ui_version='0.1.10'` to match the convention `run_and_collect_events` already follows. No behavior change.
 
 ## Context
 
@@ -104,26 +105,13 @@ except ImportError:
 
 Behavior: when `_HAS_INTERRUPTS is False`, the outbound encoder skips outcome emission and the inbound translator never inspects `run_input.resume` (older `RunAgentInput` may not even have the field).
 
-### 2a. Developing against the unreleased ag-ui-protocol
+### 2a. Developing against the unreleased ag-ui-protocol *(historical, resolved)*
 
-`ag-ui-protocol 0.1.19` (which ships PR #1569) is not yet on PyPI. The branch handles this with a temporary `[tool.uv.sources]` entry in the **root** `pyproject.toml`:
+During the initial implementation `ag-ui-protocol 0.1.19` was not yet on PyPI (the spec PR #1569 had been merged to `main` but not tagged). The branch worked around that with a temporary `[tool.uv.sources]` entry in root `pyproject.toml` pinning `ag-ui-protocol` to commit `df613e4`. The lockfile recorded the git revision; the public `>=0.1.10` floor in `pydantic_ai_slim/pyproject.toml` was left untouched so PyPI consumers were unaffected.
 
-```toml
-[tool.uv.sources]
-# ... existing workspace entries ...
-ag-ui-protocol = { git = "https://github.com/ag-ui-protocol/ag-ui.git", rev = "df613e40b857668be9a8986aa7ee388fe65aee31", subdirectory = "sdks/python" }
-```
+**This is now resolved:** `0.1.19` is published, the `[tool.uv.sources]` entry has been removed, `uv.lock` resolves the released SDK from PyPI, and the dev-only `ag_ui_version='0.1.19'` override on `tool_approval.py` has been dropped. CI installs the released SDK; all gated tests run.
 
-`uv sync` resolves dev/test/CI installs against this git revision (recorded in `uv.lock` as `source = { git = "..." }`), while the public **floor** in `pydantic_ai_slim/pyproject.toml` (`ag-ui = ["ag-ui-protocol>=0.1.10", ...]`) is untouched — so external PyPI users continue to get the latest released SDK on `pip install pydantic-ai-slim[ag-ui]`.
-
-**Cleanup required when 0.1.19 publishes:**
-
-1. Remove the `ag-ui-protocol = { git = ... }` line from root `pyproject.toml` `[tool.uv.sources]`.
-2. Run `uv sync` to refresh `uv.lock` against PyPI.
-3. Drop the `ag_ui_version='0.1.19'` override in [examples/pydantic_ai_examples/ag_ui/api/tool_approval.py](examples/pydantic_ai_examples/ag_ui/api/tool_approval.py) — it was a temporary workaround because the pre-release SDK from `main` reports its version as `0.1.18`. Once the published SDK identifies itself as `0.1.19`, the adapter's `DEFAULT_AG_UI_VERSION` already picks up the right value.
-4. (Optional but recommended) Bump the floor in `pydantic_ai_slim/pyproject.toml` to `>=0.1.19` and drop the `try_import` / `_HAS_INTERRUPTS` gate, simplifying the adapter — but only if the maintainers approve raising the minimum.
-
-**CI behavior with this branch as-is:** CI runs `make install` which uses `uv sync --frozen --all-extras ...`. The lockfile pins to the git revision, so CI installs the merged-main snapshot; `pyright` resolves the new types; all 9 new gated tests run. No CI coverage gap.
+The only remaining (optional) follow-up from this section is raising the floor in `pydantic_ai_slim/pyproject.toml` to `>=0.1.19` and dropping the `_HAS_INTERRUPTS` / `INTERRUPTS_VERSION` gates entirely. **Intentionally out of scope for this PR** — keeping the floor at `>=0.1.10` preserves backward compatibility per [pydantic_ai_slim/pydantic_ai/ui/CLAUDE.md](pydantic_ai_slim/pydantic_ai/ui/CLAUDE.md). Maintainers can revisit later.
 
 ### 3. Outbound: emit `RunFinishedInterruptOutcome` when the run ends on approvals
 
@@ -265,14 +253,13 @@ Per [pydantic_ai_slim/pydantic_ai/ui/CLAUDE.md](pydantic_ai_slim/pydantic_ai/ui/
 
 ## Verification
 
-Local results on this branch (lockfile pinned to `ag-ui-protocol @ git@df613e4`):
+Local results on this branch with the **released `ag-ui-protocol 0.1.19`** resolved from PyPI:
 
 1. **Type check:** `make typecheck` (`PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright`) → **0 errors, 0 warnings**.
-2. **Unit tests:** `uv run pytest tests/test_ag_ui.py` → **115/115 pass** (106 existing + 9 new).
-3. **Broader sanity:** `pytest tests/test_capabilities.py tests/test_ui.py tests/test_ag_ui.py tests/test_tools.py` → **895/895 pass**.
-4. **Lint / format:** `ruff check` and `ruff format` → clean.
-5. **Docs examples:** `pytest tests/test_examples.py -k ag_ui` → **10 pass, 0 fail** — the new doc snippet is picked up automatically.
-6. **Manual end-to-end (reproducible by a reviewer with an OpenAI key).** Verified locally against `openai:gpt-5-mini` on this branch.
+2. **Unit tests:** `uv run pytest tests/test_ag_ui.py` → **122/122 pass** (was 115/115 pre-cleanup — the additional 7 are post-SDK-upgrade test adjustments and the parametrized deny-by-default test).
+3. **Lint / format:** `ruff check` and `ruff format` → clean.
+4. **Docs examples:** `pytest tests/test_examples.py -k ag_ui` → all pass — the new doc snippet is picked up automatically.
+5. **Manual end-to-end (reproducible by a reviewer with an OpenAI key).** Verified locally against `openai:gpt-5-mini`, both pre- and post-cleanup. The pre-cleanup run used the temporary `ag_ui_version='0.1.19'` override on `dispatch_request`; the post-cleanup run uses the adapter default (`DEFAULT_AG_UI_VERSION` → `0.1.19`).
 
    **Setup (one shell):**
 
@@ -379,8 +366,9 @@ Local results on this branch (lockfile pinned to `ag-ui-protocol @ git@df613e4`)
    - Cancel (payload ignored): `{"interruptId": "int-$TC", "status": "cancelled"}`
    - Approve with edited args: `{"interruptId": "int-$TC", "status": "resolved", "payload": {"approved": true, "editedArgs": {"path": "/tmp/other.txt"}}}`
 
-   **Dev-install footnote.** The example passes `ag_ui_version='0.1.19'` to `AGUIAdapter.dispatch_request(...)`. This override exists only because the unreleased `ag-ui-protocol` installed from the pinned `main` commit (`df613e4`) still reports its package version as `0.1.18`. Without the override, the default `DEFAULT_AG_UI_VERSION = detect_ag_ui_version()` returns `'0.1.18'`, which trips the negotiated-version gate (`< INTERRUPTS_VERSION`) and suppresses `outcome` emission. The override is removable as soon as `pip show ag-ui-protocol` reports `0.1.19` or later. The production gate logic is correct as-is — this is purely an artifact of testing against pre-release SDK.
-7. **Old-SDK regression:** `test_run_finished_no_outcome_on_legacy_version` proves the silent-skip path. A fresh-venv `ag-ui-protocol==0.1.10` install rerun is **not** needed because the version is negotiated at the adapter level (`ag_ui_version="0.1.10"`) rather than at import time. Two `cast` calls are present, both in `_payload_dict`, scoped to AG-UI's `Optional[Any]` payload boundary (explained inline).
+   **Model non-determinism note.** `gpt-5-mini` does not always propose the tool call for "Please delete /tmp/foo.txt" — sometimes it asks for a verbal confirmation in plain text instead, in which case no `TOOL_CALL_*` events are emitted and `RUN_FINISHED` carries `outcome.type == "success"` (the model exercised its prerogative not to call the tool; `requires_approval=True` is downstream of that decision and only fires when the model *does* propose a call). A more directive prompt like `"Use the delete_file tool to delete /tmp/foo.txt. Do not ask me, just call the tool."` reliably exercises the interrupt path. This is a model-behavior observation, not a framework bug.
+
+6. **Old-SDK regression:** `test_run_finished_no_outcome_on_legacy_version` proves the silent-skip path. A fresh-venv `ag-ui-protocol==0.1.10` install rerun is **not** needed because the version is negotiated at the adapter level (`ag_ui_version="0.1.10"`) rather than at import time. Two `cast` calls are present, both in `_payload_dict`, scoped to AG-UI's `Optional[Any]` payload boundary (explained inline).
 
 ## Out of scope (follow-ups)
 
@@ -392,12 +380,12 @@ Local results on this branch (lockfile pinned to `ag-ui-protocol @ git@df613e4`)
 
 ## Files changed
 
-- [pyproject.toml](pyproject.toml) — added a temporary `[tool.uv.sources]` git pin on `ag-ui-protocol` (cleanup when 0.1.19 publishes).
-- `uv.lock` — regenerated by `uv sync` to point `ag-ui-protocol` at git commit `df613e4`.
+- `uv.lock` — regenerated against PyPI; resolves `ag-ui-protocol==0.1.19`.
 - [pydantic_ai_slim/pydantic_ai/ui/ag_ui/_utils.py](pydantic_ai_slim/pydantic_ai/ui/ag_ui/_utils.py) — `INTERRUPTS_VERSION = (0, 1, 19)` constant.
 - [pydantic_ai_slim/pydantic_ai/ui/ag_ui/_event_stream.py](pydantic_ai_slim/pydantic_ai/ui/ag_ui/_event_stream.py) — outbound `_build_outcome` + `_approval_to_interrupt`, version-gated `RunFinishedEvent.outcome` emission, `INTERRUPT_ID_PREFIX` constant.
-- [pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py](pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py) — inbound `deferred_tool_results` `cached_property` override + `_interrupt_id_to_tool_call_id`, `_resume_entry_to_approval`, `_payload_dict` helpers.
-- [tests/test_ag_ui.py](tests/test_ag_ui.py) — 9 new tests in a dedicated `# region: Interrupts` block, guarded by `@pytestmark_interrupts`.
+- [pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py](pydantic_ai_slim/pydantic_ai/ui/ag_ui/_adapter.py) — inbound `deferred_tool_results` `cached_property` override + `_interrupt_id_to_tool_call_id`, `_resume_entry_to_approval`, `_payload_dict` helpers. **Deny-by-default**: approval requires explicit `payload.approved == True`.
+- [tests/test_ag_ui.py](tests/test_ag_ui.py) — 10 new tests in a dedicated `# region: Interrupts` block, guarded by `@pytestmark_interrupts`. Also: `simple_result()` helper now takes optional `outcome=` kwarg; three deprecated-shim tests pin `ag_ui_version='0.1.10'` to keep the legacy snapshot valid against the new SDK default.
 - [examples/pydantic_ai_examples/ag_ui/api/tool_approval.py](examples/pydantic_ai_examples/ag_ui/api/tool_approval.py) — new example *(added)*.
 - [examples/pydantic_ai_examples/ag_ui/api/__init__.py](examples/pydantic_ai_examples/ag_ui/api/__init__.py) and [examples/pydantic_ai_examples/ag_ui/__init__.py](examples/pydantic_ai_examples/ag_ui/__init__.py) — wire the new example into the dojo app at `/tool_approval`.
 - [docs/ui/ag-ui.md](docs/ui/ag-ui.md) — new "Tool approval (interrupts)" section between `### Tools` and `### Events`.
+- [clai/README.md](clai/README.md) — incidental: the `clai-help` pre-commit hook auto-syncs the README to current `clai --help` output, which had pre-existing drift on `main` (`"openai:gpt-5"` → `"openai-chat:gpt-5"`). Not a manual edit; the hook refuses any commit that doesn't sync it.
