@@ -347,6 +347,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           and `True` makes the server fetch the file itself — neither is safe to honor
           from untrusted client input. This applies to file URLs in user content and
           to those nested in tool return parts.
+        - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless
+          [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is `True`.
+          Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model
+          provider fetches using the server-side IAM role, so it should only be accepted
+          from trusted frontends. This applies both to uploaded files in user content and
+          to those nested in tool return parts.
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and
           [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] entries at
           the end of the history that don't have a matching entry in
