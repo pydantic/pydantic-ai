@@ -569,7 +569,10 @@ class BinaryContent:
         prefix = 'data:'
         if not data_uri.startswith(prefix):
             raise ValueError('Data URI must start with "data:"')
-        media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
+        body = data_uri[len(prefix) :]
+        if ';base64,' not in body:
+            raise ValueError('Data URI must be base64-encoded (expected ";base64," marker)')
+        media_type, data = body.split(';base64,', 1)
         return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
     @classmethod
