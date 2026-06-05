@@ -82,7 +82,7 @@ else:
         )
 
         _HAS_INTERRUPTS = True
-    except ImportError:  # pragma: no cover
+    except ImportError:
         _HAS_INTERRUPTS = False
 
         class Interrupt:

@@ -135,7 +135,7 @@ else:
         from ag_ui.core import ResumeEntry
 
         _HAS_INTERRUPTS = True
-    except ImportError:  # pragma: no cover
+    except ImportError:
         _HAS_INTERRUPTS = False
 
         class ResumeEntry:
