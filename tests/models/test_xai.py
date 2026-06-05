@@ -3134,6 +3134,7 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             top_p=0.95,
             presence_penalty=0.1,
             frequency_penalty=0.2,
+            seed=123,
             # xAI-specific settings
             xai_logprobs=True,
             xai_top_logprobs=5,
@@ -3163,6 +3164,7 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
                 'top_p': 0.95,
                 'presence_penalty': 0.1,
                 'frequency_penalty': 0.2,
+                'seed': 123,
                 # xAI-specific settings (mapped from xai_* to SDK parameter names)
                 'logprobs': True,
                 'top_logprobs': 5,

@@ -226,6 +226,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Gemini
     * Outlines (LlamaCpp, VLLMOffline)
+    * xAI
     """
 
     presence_penalty: float
