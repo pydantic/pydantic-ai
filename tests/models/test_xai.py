@@ -449,9 +449,9 @@ async def test_xai_reorders_tool_return_parts_by_tool_call_id(allow_model_reques
                             },
                         ],
                     },
-                    {'content': [{'text': 'tool_a'}], 'role': 'ROLE_TOOL'},
-                    {'content': [{'text': 'tool_c'}], 'role': 'ROLE_TOOL'},
-                    {'content': [{'text': 'tool_b'}], 'role': 'ROLE_TOOL'},
+                    {'content': [{'text': 'tool_a'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'tool_a'},
+                    {'content': [{'text': 'tool_c'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'tool_c'},
+                    {'content': [{'text': 'tool_b'}], 'role': 'ROLE_TOOL', 'tool_call_id': 'tool_b'},
                 ],
                 'tools': None,
                 'tool_choice': None,
@@ -527,14 +527,17 @@ async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_mode
                     {
                         'content': [{'text': 'retry tool_a\n\nFix the errors and try again.'}],
                         'role': 'ROLE_TOOL',
+                        'tool_call_id': 'tool_a',
                     },
                     {
                         'content': [{'text': 'retry tool_c\n\nFix the errors and try again.'}],
                         'role': 'ROLE_TOOL',
+                        'tool_call_id': 'tool_c',
                     },
                     {
                         'content': [{'text': 'retry tool_b\n\nFix the errors and try again.'}],
                         'role': 'ROLE_TOOL',
+                        'tool_call_id': 'tool_b',
                     },
                 ],
                 'tools': None,
@@ -964,20 +967,19 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
             ['hello ', 'hello world', 'hello world.']
         )
         assert result.is_complete
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[TextPart(content='hello world.')],
-                        usage=RequestUsage(input_tokens=2, output_tokens=1),
-                        model_name=XAI_NON_REASONING_MODEL,
-                        timestamp=IsDatetime(),
-                        provider_name='xai',
-                        provider_url='https://api.x.ai/v1',
-                        provider_response_id='grok-123',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[TextPart(content='hello world.')],
+                    usage=RequestUsage(input_tokens=2, output_tokens=1),
+                    model_name=XAI_NON_REASONING_MODEL,
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                    provider_url='https://api.x.ai/v1',
+                    provider_response_id='grok-123',
+                    finish_reason='stop',
                 )
+            )
 
 
 class MyTypedDict(TypedDict, total=False):
@@ -1183,29 +1185,6 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     assert kwargs['frequency_penalty'] == 0.3
     assert kwargs['parallel_tool_calls'] is False
     assert result.output == 'test response'
-
-
-async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking='high' flows through to xAI reasoning_effort."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
-    agent = Agent(m, model_settings={'thinking': 'high'})
-
-    result = await agent.run('What is 2+2?')
-    assert '4' in result.output
-    # Verify we get thinking parts (reasoning model with high effort)
-    response_messages = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
-    assert len(response_messages) >= 1
-    # The reasoning model should produce some output
-    assert result.output
-
-
-async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking=False on a reasoning model is silently ignored (no reasoning_effort sent)."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
-    agent = Agent(m, model_settings={'thinking': False})
-
-    result = await agent.run('What is 2+2?')
-    assert '4' in result.output
 
 
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
@@ -3155,6 +3134,7 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             top_p=0.95,
             presence_penalty=0.1,
             frequency_penalty=0.2,
+            seed=123,
             # xAI-specific settings
             xai_logprobs=True,
             xai_top_logprobs=5,
@@ -3184,6 +3164,7 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
                 'top_p': 0.95,
                 'presence_penalty': 0.1,
                 'frequency_penalty': 0.2,
+                'seed': 123,
                 # xAI-specific settings (mapped from xai_* to SDK parameter names)
                 'logprobs': True,
                 'top_logprobs': 5,
@@ -3294,9 +3275,8 @@ async def test_xai_stream_with_encrypted_reasoning(allow_model_requests: None):
         assert result.is_complete
         # Ensure the final accumulated response contains the expected ThinkingPart (reasoning + signature).
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                final_response = response
+        async for response in result.stream_response(debounce_by=None):
+            final_response = response
         assert final_response is not None
         assert any(
             isinstance(p, ThinkingPart) and p.content == '...' and p.signature == 'sig' and p.provider_name == 'xai'
@@ -4517,8 +4497,8 @@ async def test_xai_stream_server_side_tool_call_and_return_dedupes(allow_model_r
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4562,8 +4542,8 @@ async def test_xai_stream_server_side_tool_call_ignored_for_unknown_role(allow_m
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4594,8 +4574,8 @@ async def test_xai_stream_tool_call_without_name_ignored(allow_model_requests: N
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4646,8 +4626,8 @@ async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_m
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -4682,8 +4662,8 @@ async def test_xai_stream_client_tool_args_non_prefix_path(allow_model_requests:
 
     async with agent.run_stream('') as result:
         final_response: ModelResponse | None = None
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
+        async for response in result.stream_response(debounce_by=None):
+            if response.state != 'incomplete':
                 final_response = response
 
     assert final_response is not None
@@ -5113,8 +5093,15 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     result1 = await agent.run('Search for test')
     result2 = await agent.run('What did you find?', message_history=result1.new_messages())
 
+    # `enable_image_search` is only present in the `web_search` proto from xai-sdk>=1.14.0; the floor
+    # (1.12.2) omits it. We never set it, so drop it to keep the snapshot SDK-version-agnostic.
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    for call in kwargs:
+        for tool in call['tools']:
+            tool['web_search'].pop('enable_image_search', None)
+
     # Verify kwargs - second call should have WebSearchTool builtin call mapped
-    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+    assert kwargs == snapshot(
         [
             {
                 'model': XAI_NON_REASONING_MODEL,

@@ -12,7 +12,7 @@ pip/uv-add "pydantic-ai-slim[xai]"
 
 To use xAI models from [xAI](https://x.ai/api) through their API, go to [console.x.ai](https://console.x.ai/team/default/api-keys) to create an API key.
 
-[docs.x.ai](https://docs.x.ai/docs/models) contains a list of available xAI models.
+[docs.x.ai](https://docs.x.ai/developers/models) contains a list of available xAI models.
 
 ## Environment variable
 
@@ -27,7 +27,7 @@ You can then use [`XaiModel`][pydantic_ai.models.xai.XaiModel] by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('xai:grok-4-1-fast-non-reasoning')
+agent = Agent('xai:grok-4.3')
 ...
 ```
 
@@ -38,7 +38,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 
 # Uses XAI_API_KEY environment variable
-model = XaiModel('grok-4-1-fast-non-reasoning')
+model = XaiModel('grok-4.3')
 agent = Agent(model)
 ...
 ```
@@ -52,10 +52,29 @@ from pydantic_ai.providers.xai import XaiProvider
 
 # Custom API key
 provider = XaiProvider(api_key='your-api-key')
-model = XaiModel('grok-4-1-fast-non-reasoning', provider=provider)
+model = XaiModel('grok-4.3', provider=provider)
 agent = Agent(model)
 ...
 ```
+
+For gateway, regional, or proxy deployments you can also point the provider at a custom host and set a client-level default timeout, both of which are forwarded to the underlying `xai_sdk.AsyncClient`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+provider = XaiProvider(
+    api_key='your-api-key',
+    api_host='gateway.example.com',
+    timeout=30,
+)
+model = XaiModel('grok-4.3', provider=provider)
+agent = Agent(model)
+...
+```
+
+`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. The provider-level `timeout` is distinct from [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout], which overrides the timeout for an individual request. Both options are omitted when left unset, so the SDK's own defaults apply.
 
 Or with a custom `xai_sdk.AsyncClient`:
 
@@ -68,23 +87,23 @@ from pydantic_ai.providers.xai import XaiProvider
 
 xai_client = AsyncClient(api_key='your-api-key')
 provider = XaiProvider(xai_client=xai_client)
-model = XaiModel('grok-4-1-fast-non-reasoning', provider=provider)
+model = XaiModel('grok-4.3', provider=provider)
 agent = Agent(model)
 ...
 ```
 
 ## X Search
 
-xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.models.xai.XSearch] capability, which configures the underlying `x_search` native tool and can be passed alongside any other capabilities on the agent. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for the full list of supported options.
+xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.capabilities.XSearch] capability — see the [capability documentation](../capabilities.md#provider-adaptive-tools) for more details, including cross-provider usage. For the full list of supported options, see the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search).
 
 ```py {title="xai_x_search.py"}
 from datetime import datetime
 
 from pydantic_ai import Agent
-from pydantic_ai.models.xai import XSearch
+from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
-    'xai:grok-4-1-fast',
+    'xai:grok-4.3',
     capabilities=[
         XSearch(
             allowed_x_handles=['OpenAI', 'AnthropicAI', 'dasfacc'],
@@ -116,17 +135,33 @@ The `XSearch` capability accepts:
 
 As an alternative to the capability, you can pass the lower-level [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] directly via `capabilities=[NativeTool(XSearchTool(...))]` — see the [X Search Tool documentation](../native-tools.md#x-search-tool) — or enable raw output globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](../agent.md#model-run-settings).
 
+## Reasoning effort
+
+Grok 4.3 supports `reasoning_effort` values of `'none'`, `'low'`, `'medium'`, and `'high'`. You can configure it directly with [`XaiModelSettings.xai_reasoning_effort`][pydantic_ai.models.xai.XaiModelSettings.xai_reasoning_effort], or use the cross-provider [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
+
+```py {title="xai_reasoning_effort.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModelSettings
+
+agent = Agent(
+    'xai:grok-4.3',
+    model_settings=XaiModelSettings(xai_reasoning_effort='medium'),
+)
+```
+
+Set `xai_reasoning_effort='none'` or `thinking=False` to disable reasoning on Grok 4.3. xAI redirects several retired text model slugs to `grok-4.3`; choose `grok-4.3` and an explicit reasoning effort when you need predictable behavior and cost. See the [xAI May 15 retirement guide](https://docs.x.ai/developers/migration/may-15-retirement) for details.
+
 ## Streaming cancellation
 
 !!! warning "Cancellation limitations"
     The `xai-sdk` SDK exposes streaming responses only as an async iterator, with no separate handle for cancelling the underlying gRPC call. Because of a [Python language rule on async generators](https://peps.python.org/pep-0525/), [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] cannot interrupt an in-flight chunk read while another coroutine is iterating the stream. Pydantic AI marks the response with `state='interrupted'`, but upstream generation may continue until the surrounding `async with agent.run_stream(...)` block exits.
 
-    For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses] and call `cancel()` from the same task that's iterating:
+    For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_response()`][pydantic_ai.result.StreamedRunResult.stream_response] and call `cancel()` from the same task that's iterating:
 
     ```python {title="cancel_xai.py" test="skip"}
     from pydantic_ai import Agent
 
-    agent = Agent('xai:grok-4-1-fast-non-reasoning')
+    agent = Agent('xai:grok-4.3')
 
 
     def should_stop(chunk: str) -> bool:
@@ -148,7 +183,7 @@ As an alternative to the capability, you can pass the lower-level [`XSearchTool`
 
     from pydantic_ai import Agent
 
-    agent = Agent('xai:grok-4-1-fast-non-reasoning')
+    agent = Agent('xai:grok-4.3')
 
 
     def should_stop(chunk: str) -> bool:

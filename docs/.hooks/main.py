@@ -141,8 +141,8 @@ GATEWAY_MODEL_MAP = {
     'openai-responses': 'openai-responses',
     'openai-chat': 'openai',
     'bedrock': 'bedrock',
-    'google-gla': 'gemini',
-    'google-vertex': 'google-vertex',
+    'google-gla': 'google-cloud',
+    'google-vertex': 'google-cloud',
     'groq': 'groq',
 }
 # Models that should get gateway transformation

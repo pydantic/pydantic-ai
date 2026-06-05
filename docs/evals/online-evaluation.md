@@ -231,7 +231,7 @@ config = OnlineEvalConfig(emit_otel_events=False)
 
 #### Evaluator Versioning
 
-Set `evaluator_version` as a class attribute on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to stamp every result it emits with a version string — surfaced as `gen_ai.evaluation.evaluator.version` on emitted events and as `evaluator_version` on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
+Override [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to stamp every result it emits with a version string — surfaced as `gen_ai.evaluation.evaluator.version` on emitted events and as `evaluator_version` on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
 
 ```python
 from dataclasses import dataclass
@@ -241,10 +241,11 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 @dataclass
 class ToneCheck(Evaluator):
-    evaluator_version = 'v2'  # bumped after prompt rewrite
-
     def evaluate(self, ctx: EvaluatorContext) -> str:
         return 'neutral'
+
+    def get_evaluator_version(self) -> str | None:
+        return 'v2'  # bumped after prompt rewrite
 ```
 
 The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results).
@@ -908,6 +909,37 @@ Key behaviors:
 - **One sink's error doesn't affect other sinks** — each sink submission is wrapped individually.
 - **If `on_error` itself raises**, the exception is silently suppressed to protect sibling evaluators.
 - **If no `on_error` is set**, exceptions are silently suppressed — this is the safe default.
+
+### Evaluating Failed Calls
+
+By default, when the decorated function or wrapped agent run raises, **no evaluators are dispatched** — only successful results reach evaluators. The exception propagates to the caller as usual.
+
+To score failure modes (e.g. classify exception types, count tool errors, alert on regressions), opt an evaluator in by setting `run_on_errors=True` on its [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator]. When the call raises, those evaluators are dispatched with the exception as `EvaluatorContext.output`; the exception still propagates after dispatch:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnlineEvaluator, evaluate
+
+
+@dataclass
+class CategorizeError(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> str:
+        # On failed calls, ctx.output is the raised exception.
+        if isinstance(ctx.output, Exception):
+            return type(ctx.output).__name__
+        return 'ok'
+
+
+@evaluate(OnlineEvaluator(evaluator=CategorizeError(), run_on_errors=True))
+async def my_function(x: int) -> int:
+    if x < 0:
+        raise ValueError('negative input')
+    return x * 2
+```
+
+Evaluators sampled for the call but without `run_on_errors=True` are skipped on the error path, so a cheap success-only check can sit alongside a dedicated error categorizer in the same decorator. The flag is also honored by the [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] agent capability.
 
 ## Agent Integration
 

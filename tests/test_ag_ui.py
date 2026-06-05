@@ -57,6 +57,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -199,6 +200,16 @@ def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
 
     assert 'manage_system_prompt' in from_request_parameters
     assert from_request_parameters['manage_system_prompt'].default == 'server'
+
+
+def test_deprecated_ag_ui_helpers_expose_file_url_force_download_allowlist() -> None:
+    handle_parameters = inspect.signature(handle_ag_ui_request).parameters
+    run_parameters = inspect.signature(run_ag_ui).parameters
+
+    assert 'allowed_file_url_force_download' in handle_parameters
+    assert handle_parameters['allowed_file_url_force_download'].default == frozenset()
+    assert 'allowed_file_url_force_download' in run_parameters
+    assert run_parameters['allowed_file_url_force_download'].default == frozenset()
 
 
 async def run_and_collect_events(
@@ -2189,7 +2200,7 @@ async def test_request_with_state() -> None:
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=StateDeps[StateInt],
-        prepare_tools=store_state,
+        capabilities=[PrepareTools(store_state)],
     )
 
     run_inputs = [
@@ -2292,7 +2303,7 @@ async def test_request_with_state_with_custom_handler() -> None:
     agent: Agent[CustomStateDeps, str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=CustomStateDeps,
-        prepare_tools=store_state,
+        capabilities=[PrepareTools(store_state)],
     )
 
     run_input = create_input(
@@ -3840,6 +3851,33 @@ def test_load_messages_uploaded_file_missing_fields() -> None:
             [ActivityMessage(id='msg_1', activity_type='pydantic_ai_uploaded_file', content={})],
             preserve_file_data=True,
         )
+
+
+def test_load_messages_uploaded_file_dropped_by_default() -> None:
+    """AG-UI is default-safe: a client `pydantic_ai_uploaded_file` activity is ignored unless
+    `preserve_file_data=True`, so a client-supplied `file_id` is never honored by default."""
+    activity = ActivityMessage(
+        id='msg_1',
+        activity_type='pydantic_ai_uploaded_file',
+        content={'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'},
+    )
+
+    # Default (preserve_file_data=False): the activity is ignored, no UploadedFile is produced.
+    assert AGUIAdapter.load_messages([activity]) == []
+
+    # Opt-in (preserve_file_data=True): the UploadedFile is reconstructed.
+    reloaded = AGUIAdapter.load_messages([activity], preserve_file_data=True)
+    uploaded = [
+        item
+        for msg in reloaded
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert len(uploaded) == 1
+    assert uploaded[0].file_id == 's3://private-bucket/payroll.pdf'
 
 
 def test_dump_messages_uploaded_file_with_vendor_metadata() -> None:

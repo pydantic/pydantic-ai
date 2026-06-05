@@ -27,6 +27,7 @@ from ...messages import (
     CompactionPart,
     DocumentUrl,
     FilePart,
+    ForceDownloadMode,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -109,14 +110,14 @@ if TYPE_CHECKING:
 else:
     try:
         from ag_ui.core import ReasoningMessage
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ReasoningMessage:
             """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
 
     try:
         from ag_ui.core import AudioInputContent, DocumentInputContent, ImageInputContent, VideoInputContent
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ImageInputContent:
             """Stub for ag-ui-protocol < 0.1.15."""
@@ -274,7 +275,16 @@ def _resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
 
 @dataclass
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
-    """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
+    """UI adapter for the Agent-User Interaction (AG-UI) protocol.
+
+    When [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is `True`,
+    agent-generated files and uploaded files are stored as
+    [activity messages](https://docs.ag-ui.com/concepts/activities) during `dump_messages`
+    and restored during `load_messages`, enabling full round-trip fidelity. When `False`
+    (the default), they are dropped. If your AG-UI frontend uses activities, be aware that
+    `pydantic_ai_*` activity types are reserved for internal round-trip use and should be
+    ignored by frontend activity handlers.
+    """
 
     _: KW_ONLY
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
@@ -297,18 +307,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     of this setting.
     """
 
-    preserve_file_data: bool = False
-    """Whether to preserve agent-generated files and uploaded files in AG-UI message conversion.
-
-    When `True`, agent-generated files and uploaded files are stored as
-    [activity messages](https://docs.ag-ui.com/concepts/activities) during `dump_messages`
-    and restored during `load_messages`, enabling full round-trip fidelity.
-    When `False` (default), they are silently dropped.
-
-    If your AG-UI frontend uses activities, be aware that `pydantic_ai_*` activity types
-    are reserved for internal round-trip use and should be ignored by frontend activity handlers.
-    """
-
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
         """Build an AG-UI run input object from the request body."""
@@ -328,6 +326,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -338,6 +337,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
+            allowed_file_url_force_download=allowed_file_url_force_download,
             **kwargs,
         )
 

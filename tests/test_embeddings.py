@@ -40,7 +40,6 @@ with try_import() as logfire_imports_successful:
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
-    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
@@ -62,6 +61,7 @@ with try_import() as bedrock_imports_successful:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as google_imports_successful:
+    from pydantic_ai._warnings import PydanticAIDeprecationWarning
     from pydantic_ai.embeddings.google import (
         GoogleEmbeddingModel,
         GoogleEmbeddingSettings,
@@ -121,7 +121,10 @@ class TestOpenAI:
     async def test_infer_model_gateway(self):
         with patch.dict(
             os.environ,
-            {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL},
+            {
+                'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key',
+                'PYDANTIC_AI_GATEWAY_BASE_URL': 'https://gateway.pydantic.dev/proxy',
+            },
         ):
             model = infer_embedding_model('gateway/openai:text-embedding-3-small')
         assert isinstance(model, OpenAIEmbeddingModel)
@@ -1212,32 +1215,44 @@ class TestGoogle:
 
     async def test_infer_model_gla(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
-            model = infer_embedding_model('google-gla:gemini-embedding-001')
+            with pytest.warns(PydanticAIDeprecationWarning, match=r"'google-gla:' prefix is deprecated"):
+                model = infer_embedding_model('google-gla:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-gla'
+        assert model.system == 'google'
+        assert 'generativelanguage.googleapis.com' in model.base_url
+
+    async def test_infer_model_google(self, gemini_api_key: str):
+        with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
+            model = infer_embedding_model('google:gemini-embedding-001')
+        assert isinstance(model, GoogleEmbeddingModel)
+        assert model.model_name == 'gemini-embedding-001'
+        assert model.system == 'google'
         assert 'generativelanguage.googleapis.com' in model.base_url
 
     async def test_infer_model_vertex(self):
-        # Vertex AI requires project setup, so we just test the model creation
-        # without actually calling the API
-        with patch.dict(
-            os.environ,
-            {
-                'GOOGLE_API_KEY': 'mock-api-key',
-            },
-        ):
-            model = infer_embedding_model('google-vertex:gemini-embedding-001')
+        # Google Cloud requires project setup, so we just test the model creation
+        # without actually calling the API.
+        with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):
+            with pytest.warns(PydanticAIDeprecationWarning, match=r"'google-vertex:' prefix is deprecated"):
+                model = infer_embedding_model('google-vertex:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-vertex'
+        assert model.system == 'google-cloud'
+
+    async def test_infer_model_google_cloud(self):
+        with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):
+            model = infer_embedding_model('google-cloud:gemini-embedding-001')
+        assert isinstance(model, GoogleEmbeddingModel)
+        assert model.model_name == 'gemini-embedding-001'
+        assert model.system == 'google-cloud'
 
     async def test_model_with_string_provider(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
-            model = GoogleEmbeddingModel('gemini-embedding-001', provider='google-gla')
+            model = GoogleEmbeddingModel('gemini-embedding-001', provider='google')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-gla'
+        assert model.system == 'google'
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
@@ -1249,7 +1264,7 @@ class TestGoogle:
                 usage=RequestUsage(),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1263,7 +1278,7 @@ class TestGoogle:
                 usage=RequestUsage(),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1277,7 +1292,7 @@ class TestGoogle:
                 usage=RequestUsage(),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1313,7 +1328,7 @@ class TestGoogle:
                 usage=RequestUsage(),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1335,7 +1350,7 @@ class TestGoogle:
                 usage=RequestUsage(input_tokens=4),
                 model_name='gemini-embedding-001',
                 timestamp=IsDatetime(),
-                provider_name='google-vertex',
+                provider_name='google-cloud',
             )
         )
 
@@ -1357,7 +1372,7 @@ class TestGoogle:
                 'end_time': IsInt(),
                 'attributes': {
                     'gen_ai.operation.name': 'embeddings',
-                    'gen_ai.provider.name': 'google-gla',
+                    'gen_ai.provider.name': 'google',
                     'gen_ai.request.model': 'gemini-embedding-2-preview',
                     'input_type': 'query',
                     'server.address': 'generativelanguage.googleapis.com',
@@ -1456,13 +1471,13 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 
     openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
-    google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
-    google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
+    google_names = [f'google:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
+    google_cloud_names = [f'google-cloud:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
     voyageai_names = [f'voyageai:{n}' for n in get_model_names(LatestVoyageAIEmbeddingModelNames)]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(LatestBedrockEmbeddingModelNames)]
 
     generated_names = sorted(
-        openai_names + cohere_names + google_gla_names + google_vertex_names + voyageai_names + bedrock_names
+        openai_names + cohere_names + google_names + google_cloud_names + voyageai_names + bedrock_names
     )
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))

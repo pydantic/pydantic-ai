@@ -13,13 +13,17 @@ from typing_extensions import TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from .exceptions import UserError
 
 if TYPE_CHECKING:
     from .agent import Agent
+    from .capabilities.abstract import AbstractCapability
     from .models import Model
-    from .result import RunUsage
     from .settings import ModelSettings
     from .tool_manager import ToolManager
+    from .tools import ToolDefinition
+    from .usage import RunUsage
 
 # TODO (v2): Change the default for all typevars like this from `None` to `object`
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
@@ -99,6 +103,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
     """
+    pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
+    """Internal: queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+
+    Set to the run's live queue during an agent run; `None` in synthetic contexts that aren't
+    backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
+    [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
+    Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages — don't append directly.
+    """
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
     """The tool manager for the current run step.
@@ -111,10 +123,151 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Temporal activity boundaries.
     """
 
+    capabilities: dict[str, AbstractCapability[RunContextAgentDepsT]] = field(default_factory=lambda: {})
+    """All capabilities registered for the current run, including deferred ones."""
+
+    loaded_capability_ids: set[str] = field(default_factory=set[str])
+    """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
+
+    The capability-side mirror of `discovered_tool_names`: the runtime-revealed subset.
+    Seeded during run preparation from message history (`parse_loaded_capabilities`); the
+    `load_capability` tool body adds to it for in-step loads. Use `available_capability_ids`
+    for the full set of currently-active capabilities (auto/always-on plus these).
+    """
+
+    capability_loaded: bool | None = None
+    """Whether the capability whose hook or callback is currently running is loaded.
+
+    This is `None` outside capability dispatch, where there is no current capability.
+    """
+
+    discovered_tool_names: set[str] = field(default_factory=set[str])
+    """Names of deferred tools revealed via tool-search return parts in the message history.
+
+    The tool-side mirror of `loaded_capability_ids`: the runtime-revealed subset that
+    `ToolSearchToolset.get_tools` reads to decide which deferred tools to make visible this
+    turn. Populated during run preparation from message history. Use `available_tool_names`
+    for the full set of currently-callable tools (always-visible plus these).
+    """
+
     @property
     def last_attempt(self) -> bool:
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
+
+    @property
+    def available_capability_ids(self) -> set[str]:
+        """IDs of the capabilities whose contributions are live to the model right now.
+
+        The capability-side mirror of `available_tool_names`: `available = auto/always ∪
+        runtime-revealed`. Here that's the non-deferred capabilities (`defer_loading` not
+        `True`) plus the deferred ones the model has loaded (`loaded_capability_ids`), so
+        `available_capability_ids - loaded_capability_ids` is the auto/always-on subset.
+
+        Distinct from `capabilities`, the full registry (including deferred ones not yet
+        loaded). See `loaded_capability_ids` for the runtime-revealed subset.
+
+        Reliable from `before_run` onwards: the `capabilities` registry is seeded once at
+        run start, and `loaded_capability_ids` is refreshed from history before each model
+        request, so the loaded subset grows across steps as the model loads capabilities.
+        Because it grows step by step, where you read it in the
+        [hook order](../hooks.md#hook-ordering) determines what you see — e.g. a capability
+        loaded during one step is not reflected until the next step's hooks.
+        """
+        return {
+            id for id, cap in self.capabilities.items() if cap.defer_loading is not True
+        } | self.loaded_capability_ids
+
+    @property
+    def available_tool_names(self) -> set[str]:
+        """Names of function tools the model can call on the current turn.
+
+        The visible subset of [`tools`][pydantic_ai.tools.RunContext.tools]: always-visible
+        tools, tools revealed via [tool search](../tools-advanced.md#tool-search), and tools
+        owned by loaded deferred capabilities.
+
+        Only fully populated once the turn's tools have been resolved during model-request
+        preparation, so it is reliable in model-request hooks (`before_model_request`,
+        `wrap_model_request`, `after_model_request`) and tool hooks. In earlier hooks like
+        `before_run` it falls back to `discovered_tool_names` (reconstructed from history).
+        See [hook ordering](../hooks.md#hook-ordering) for how timing affects what you see.
+        """
+        if self.tool_manager is None or self.tool_manager.tools is None:
+            return set[str]() | self.discovered_tool_names
+        # Local import avoids a module-level cycle: `native_tools._tool_search` imports
+        # `RunContext` for tool-search strategy callables.
+        from .native_tools._tool_search import ToolSearchTool
+
+        tools = self.tools
+        # "Always available" = not search-managed AND not deferred. We deliberately keep the
+        # `not defer_loading` check rather than relying on `with_native is None` alone: depending
+        # on hook timing, a deferred tool can be read here before the tool-search toolset has
+        # stamped `with_native='tool-search'` on it, so `with_native is None` by itself would leak
+        # a still-hidden tool. Gating on `defer_loading` keeps it hidden until it's genuinely revealed.
+        always_available = {
+            name
+            for name, tool_def in tools.items()
+            if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading
+        }
+        runtime_revealed = self.discovered_tool_names & set(tools)
+        loaded_capability_tools = {
+            name
+            for name, tool_def in tools.items()
+            if tool_def.capability_id is not None and tool_def.capability_id in self.loaded_capability_ids
+        }
+        return always_available | runtime_revealed | loaded_capability_tools
+
+    @property
+    def tools(self) -> dict[str, ToolDefinition]:
+        """All tool definitions present this turn, keyed by name (includes still-deferred ones). Index `available_tool_names` into this for the callable subset."""
+        if self.tool_manager is None or self.tool_manager.tools is None:
+            return {}
+        return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
+
+    def enqueue(
+        self,
+        *content: EnqueueContent,
+        priority: PendingMessagePriority = 'asap',
+    ) -> None:
+        """Enqueue content to be injected into the conversation.
+
+        Safe to call from anywhere a `RunContext` is available — async tools,
+        sync tools (auto-wrapped in a thread executor by Pydantic AI), and
+        capability hooks. The drain only iterates the queue between graph nodes
+        (in `before_model_request` and `after_node_run`), never concurrently
+        with the tool body, so `list.append` from a worker thread doesn't race
+        the drain.
+
+        Args:
+            *content: One or more [`EnqueueContent`][pydantic_ai._enqueue.EnqueueContent] items.
+                Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
+                content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]) is gathered into one
+                [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], and each
+                [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] (e.g. a
+                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]) is coalesced with adjacent
+                part-style items into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; a complete
+                [`ModelRequest`][pydantic_ai.messages.ModelRequest] or
+                [`ModelResponse`][pydantic_ai.messages.ModelResponse] is kept as its own message. The
+                assembled sequence must end in a request. Calling with no positional args is a no-op.
+            priority: When to deliver:
+                `'asap'` (default) — at the earliest opportunity (next model request,
+                    or a redirect if the agent would otherwise end).
+                `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent's queue (e.g. the
+                synthetic context from `Agent.system_prompt_parts`), since there'd be nowhere
+                to deliver the message.
+        """
+        if self.pending_messages is None:
+            raise UserError(
+                '`enqueue` is only available during an agent run (from tools, capability hooks, or '
+                '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
+            )
+        pending = PendingMessage.from_content(*content, priority=priority)
+        if pending is None:
+            return
+        self.pending_messages.append(pending)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

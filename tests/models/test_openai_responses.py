@@ -38,6 +38,7 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
     UserError,
     UserPromptPart,
     capture_run_messages,
@@ -53,9 +54,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, try_import
@@ -334,7 +335,60 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
                 'type': 'image_generation',
                 'action': 'generate',
                 'background': 'opaque',
-                'input_fidelity': None,
+                'moderation': 'auto',
+                'output_compression': 100,
+                'output_format': 'jpeg',
+                'partial_images': 0,
+                'quality': 'auto',
+                'size': '1536x1024',
+                'model': 'gpt-image-2',
+            }
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        capabilities=[
+            NativeTool(
+                ImageGenerationTool(
+                    action='generate',
+                    model='gpt-image-2',
+                    background='opaque',
+                    output_format='jpeg',
+                    size='1536x1024',
+                    input_fidelity='high',
+                )
+            )
+        ],
+    )
+
+    result = await agent.run('Generate an image.')
+
+    assert result.output == 'done'
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert len(response_kwargs['tools']) == 1
+    assert response_kwargs['tools'] == snapshot(
+        [
+            {
+                'type': 'image_generation',
+                'action': 'generate',
+                'background': 'opaque',
+                'input_fidelity': 'high',
                 'moderation': 'auto',
                 'output_compression': 100,
                 'output_format': 'jpeg',
@@ -634,30 +688,29 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
     async with agent.run_stream('What is the capital of France?') as result:
         async for output in result.stream_text():
             output_text.append(output)
-        async for response, is_last in result.stream_responses(debounce_by=None):
-            if is_last:
-                assert response == snapshot(
-                    ModelResponse(
-                        parts=[
-                            TextPart(
-                                content='The capital of France is Paris.',
-                                id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
-                                provider_name='openai',
-                            )
-                        ],
-                        usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
-                        model_name='gpt-4o-2024-08-06',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                        provider_url='https://api.openai.com/v1/',
-                        provider_details={
-                            'finish_reason': 'completed',
-                            'timestamp': datetime(2025, 3, 27, 13, 37, 38, tzinfo=timezone.utc),
-                        },
-                        provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
-                        finish_reason='stop',
-                    )
+        async for response in result.stream_response(debounce_by=None):
+            assert response == snapshot(
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='The capital of France is Paris.',
+                            id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
+                            provider_name='openai',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': datetime(2025, 3, 27, 13, 37, 38, tzinfo=timezone.utc),
+                    },
+                    provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
+                    finish_reason='stop',
                 )
+            )
 
     assert output_text == snapshot(['The capital of France is Paris.'])
 
@@ -2802,7 +2855,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
     response instead of re-sending the same static seed and duplicating stored state.
     """
     model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, tool_retries=3, output_retries=3)
+    agent = Agent(model=model, retries={'tools': 3, 'output': 3})
 
     attempts: list[str] = []
 
@@ -10815,6 +10868,38 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
     )
 
 
+@pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
+async def test_openai_responses_system_prompt_role(
+    allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
+) -> None:
+    """`openai_system_prompt_role` profile setting drives the role used for `SystemPromptPart`s on the Responses API."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_1',
+                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+    agent = Agent(model, system_prompt='some instructions')
+
+    result = await agent.run('hello')
+    assert result.output == 'world'
+
+    expected_role = system_prompt_role or 'system'
+    kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert kwargs['input'] == [
+        {'content': 'some instructions', 'role': expected_role},
+        {'content': 'hello', 'role': 'user'},
+    ]
+
+
 async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model, instructions='You are a helpful coding assistant.')
@@ -10829,6 +10914,99 @@ async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key
 
 I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.\
 """)
+
+
+async def test_responses_count_tokens(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    result = await model.count_tokens(
+        [ModelRequest(parts=[], instructions='Follow the system instructions.')],
+        OpenAIResponsesModelSettings(timeout=123.0),
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == snapshot(16)
+
+
+async def test_responses_count_tokens_no_messages(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    with pytest.raises(UserError, match='Cannot count tokens without any messages or a previous response ID'):
+        await model.count_tokens([], None, ModelRequestParameters())
+
+
+async def test_responses_count_tokens_with_tools(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a location',
+        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
+    )
+    result = await model.count_tokens(
+        [ModelRequest.user_text_prompt('What is the weather in Paris?')],
+        None,
+        ModelRequestParameters(function_tools=[tool_def], allow_text_output=False),
+    )
+
+    assert result.input_tokens == snapshot(51)
+
+
+async def test_responses_usage_limit_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=r'The next request would exceed the input_tokens_limit of 9 \(input_tokens=18\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazy dog.',
+            usage_limits=UsageLimits(input_tokens_limit=9, count_tokens_before_request=True),
+        )
+
+
+async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
+    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazy dog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot(
+        "That's a classic pangram! It contains every letter of the English alphabet"
+        " at least once. It's commonly used for testing fonts, typewriters, and keyboards."
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='The quick brown fox jumps over the lazy dog.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=(run_id := IsStr()),
+                conversation_id=(conversation_id := IsStr()),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="That's a classic pangram! It contains every letter of the English alphabet at least once. It's commonly used for testing fonts, typewriters, and keyboards.",
+                        id=IsStr(),
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=18, output_tokens=28, details={'reasoning_tokens': 0}),
+                model_name='gpt-4.1-mini',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=run_id,
+                conversation_id=conversation_id,
+            ),
+        ]
+    )
 
 
 async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):

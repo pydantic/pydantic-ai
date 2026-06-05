@@ -338,8 +338,10 @@ async def test_structured_response_iter():
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
-        async for structured_response, last in result.stream_responses(debounce_by=None):
-            response_data = await result.validate_response_output(structured_response, allow_partial=not last)
+        async for structured_response in result.stream_response(debounce_by=None):
+            response_data = await result.validate_response_output(
+                structured_response, allow_partial=structured_response.state == 'incomplete'
+            )
             chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -409,7 +411,7 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
@@ -417,6 +419,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
@@ -424,6 +427,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
@@ -431,6 +435,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
@@ -438,6 +443,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
@@ -445,6 +451,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -452,6 +459,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -459,6 +467,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -466,6 +475,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
+                    state='complete',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -532,7 +542,7 @@ def test_streamed_text_stream_sync():
     )
 
     result = agent.run_stream_sync('Hello')
-    assert [c for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+    assert [c for c in result.stream_response(debounce_by=None)] == snapshot(
         [
             ModelResponse(
                 parts=[TextPart(content='The ')],
@@ -540,6 +550,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat ')],
@@ -547,6 +558,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat ')],
@@ -554,6 +566,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on ')],
@@ -561,6 +574,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the ')],
@@ -568,6 +582,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -575,6 +590,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -582,6 +598,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -589,6 +606,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
+                state='complete',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -835,8 +853,7 @@ async def test_call_tool_wrong_name():
     agent = Agent(
         FunctionModel(stream_function=stream_structured_function),
         output_type=tuple[str, int],
-        tool_retries=0,
-        output_retries=0,
+        retries={'tools': 0, 'output': 0},
     )
 
     @agent.tool_plain
@@ -2541,7 +2558,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=0,  # No retries - model must succeed first try
+            retries={'output': 0},  # No retries - model must succeed first try
         )
 
         async with agent.run_stream('test valid first invalid second') as result:
@@ -2622,7 +2639,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=1,  # Allow 1 retry so ToolRetryError is raised
+            retries={'output': 1},  # Allow 1 retry so ToolRetryError is raised
         )
 
         async with agent.run_stream('test exhaustive with tool retry') as result:
@@ -2960,7 +2977,7 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
     assert sync_result.metadata == {'sync': 'metadata'}
 
 
-async def test_iter_stream_responses():
+async def test_iter_stream_response():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 
     agent = Agent(m)
@@ -2978,28 +2995,39 @@ async def test_iter_stream_responses():
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
-                    async for chunk in stream.stream_responses(debounce_by=None):
+                    async for chunk in stream.stream_response(debounce_by=None):
                         messages.append(chunk)
 
+    incomplete_texts = [
+        '',
+        '',
+        'The ',
+        'The cat ',
+        'The cat sat ',
+        'The cat sat on ',
+        'The cat sat on the ',
+        'The cat sat on the mat.',
+        'The cat sat on the mat.',
+    ]
     assert messages == [
+        *(
+            ModelResponse(
+                parts=[TextPart(content=text)],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                state='incomplete',
+            )
+            for text in incomplete_texts
+        ),
         ModelResponse(
-            parts=[TextPart(content=text)],
+            parts=[TextPart(content='The cat sat on the mat.')],
             usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             provider_name='test',
-        )
-        for text in [
-            '',
-            '',
-            'The ',
-            'The cat ',
-            'The cat sat ',
-            'The cat sat on ',
-            'The cat sat on the ',
-            'The cat sat on the mat.',
-            'The cat sat on the mat.',
-        ]
+        ),
     ]
 
     # Note: as you can see above, the output validator is not applied to the streamed responses, just the final result:
@@ -3314,7 +3342,7 @@ async def test_output_function_model_retry_in_stream():
     agent = Agent(
         FunctionModel(stream_function=stream_final_result),
         output_type=ToolOutput(reject, name='final_result'),
-        output_retries=0,
+        retries={'output': 0},
     )
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
@@ -3461,7 +3489,7 @@ async def test_tool_raises_call_deferred():
         assert await result.get_output() == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+        responses = [c async for c in result.stream_response(debounce_by=None)]
         assert responses == snapshot(
             [
                 ModelResponse(
@@ -3882,6 +3910,98 @@ async def test_run_stream_event_stream_handler():
     )
 
 
+async def test_run_event_stream_handler_does_not_need_to_consume_stream():
+    agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    result = await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert result.output == 'hello world this is a long answer'
+
+
+async def test_run_stream_event_stream_handler_does_not_need_to_consume_stream():
+    agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    async with agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
+        output = await result.get_output()
+
+    assert output == 'hello world this is a long answer'
+
+
+async def test_run_event_stream_handler_unconsumed_still_executes_tool_calls():
+    """A handler that ignores the stream must not stop the agent from acting on the model's reply.
+
+    The reply (including tool calls) is built by iterating the stream, so a handler that returns
+    without consuming it used to silently drop the tool call.
+    """
+    tool_calls: list[int] = []
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def record(x: int) -> str:
+        tool_calls.append(x)
+        return 'ok'
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    await agent.run('go', event_stream_handler=event_stream_handler)
+
+    assert tool_calls == [0]
+
+
+async def test_run_stream_event_stream_handler_unconsumed_still_executes_tool_calls():
+    """Same as the `agent.run()` case, but for `agent.run_stream()` (exercises the `CallToolsNode` path)."""
+    tool_calls: list[int] = []
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def record(x: int) -> str:
+        tool_calls.append(x)
+        return 'ok'
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    async with agent.run_stream('go', event_stream_handler=event_stream_handler) as result:
+        await result.get_output()
+
+    assert tool_calls == [0]
+
+
+async def test_run_event_stream_handler_interrupted_does_not_drain():
+    """A handler interrupted before returning (cancellation/`break`) must not trigger the drain.
+
+    The drain only runs when the handler returns normally; re-running it on an interrupted handler
+    would consume a stream the caller asked to stop, reintroducing the cancellation hang from #5313.
+    The stream is unbounded, so a drain that ran after the interrupt would never terminate.
+    """
+    pulled = 0
+
+    async def counting_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        nonlocal pulled
+        while True:
+            pulled += 1
+            yield 'hello'
+
+    agent = Agent(FunctionModel(stream_function=counting_stream))
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        raise asyncio.CancelledError  # interrupted before consuming the stream
+
+    with pytest.raises(asyncio.CancelledError):
+        await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    # Only the single lookahead the run makes before invoking the handler; the post-handler
+    # drain was skipped (otherwise this unbounded stream would have been pulled forever).
+    assert pulled == 1
+
+
 async def test_stream_tool_returning_user_content():
     m = TestModel()
 
@@ -4005,8 +4125,10 @@ def test_structured_response_sync_validation():
 
     chunks: list[list[int]] = []
     result = agent.run_stream_sync('')
-    for structured_response, last in result.stream_responses(debounce_by=None):
-        response_data = result.validate_response_output(structured_response, allow_partial=not last)
+    for structured_response in result.stream_response(debounce_by=None):
+        response_data = result.validate_response_output(
+            structured_response, allow_partial=structured_response.state == 'incomplete'
+        )
         chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -4587,6 +4709,48 @@ async def test_completed_streamed_response_cancel_noop():
     assert streamed_response.cancelled
     assert streamed_response.get() is response
     assert response.state == 'complete'
+
+
+async def test_stream_response_state_incomplete_until_finished():
+    """`response.state` reads `'incomplete'` mid-stream and flips to `'complete'` once iteration ends."""
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.run_stream('Hello') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):
+            assert result.response.state == 'incomplete'
+        await result.get_output()
+
+    assert result.response.state == 'complete'
+
+
+async def test_stream_response_yields_incomplete_then_complete():
+    """`stream_response` yields `state='incomplete'` mid-stream; the trailing yield is `'complete'`."""
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.run_stream('Hello') as result:
+        states = [msg.state async for msg in result.stream_response(debounce_by=None)]
+
+    assert states[-1] == 'complete'
+    assert all(state == 'incomplete' for state in states[:-1])
+
+
+async def test_stream_response_state_incomplete_after_early_break():
+    """Breaking out of the stream early must not flip `state` to `'complete'`.
+
+    `aclose()` on the underlying async generator raises `GeneratorExit` at the
+    suspended `yield`, so `_finished` must stay `False` and the truncated
+    response must keep reporting `'incomplete'`.
+    """
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.iter('Hello') as run:
+        async for node in run:  # pragma: no branch
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:  # pragma: no branch
+                        break
+                    assert stream.response.state == 'incomplete'
+                return
 
 
 async def test_run_stream_events_aclose():
