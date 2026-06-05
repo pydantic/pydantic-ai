@@ -130,7 +130,9 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
   while iteration is in flight.
 - `'interrupted'`: streaming was explicitly stopped via
   [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
-  finished generating.
+  finished generating. Calling `cancel()` *after* the response is fully received leaves the state
+  as `'complete'`; the [`cancelled`][pydantic_ai.result.StreamedRunResult.cancelled] flag still
+  reads `True`.
 """
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']

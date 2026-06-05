@@ -1327,7 +1327,7 @@ class StreamedResponse(ABC):
         down. `get()` reports a finished stream as `'complete'` regardless of
         `_cancelled`, so a defensive `cancel()` after a successful run records
         the flag without downgrading `response.state` to `'interrupted'`
-        (https://github.com/pydantic/pydantic-ai/issues/5782).
+        (see [issue #5782](https://github.com/pydantic/pydantic-ai/issues/5782)).
         """
         if self.cancelled:
             return

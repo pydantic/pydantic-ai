@@ -947,6 +947,9 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 If you `break` out of `stream_text()` and then leave the surrounding `async with` block, the stream is cleaned up as the context exits. Use `cancel()` when you want to stop generation immediately instead of only stopping local consumption.
 
+!!! note "Cancelling an already-completed stream"
+    Calling `cancel()` after a stream has been fully consumed is safe: the response keeps `state='complete'` while [`cancelled`][pydantic_ai.result.StreamedRunResult.cancelled] reads `True`. A defensive `cancel()` (for example in a `finally` block) therefore never downgrades the state of a run that finished normally.
+
 !!! warning "Interrupted tool calls"
     Cancelling or breaking out of a model response stream can leave the final [`ModelResponse`][pydantic_ai.messages.ModelResponse] with incomplete tool-call arguments. Pydantic AI records the response with `state='interrupted'`, but it does not filter incomplete tool calls, synthesize tool returns, or otherwise define run-resumption behavior for those partial responses. If you are controlling the graph with [`agent.iter()`][pydantic_ai.agent.Agent.iter], stop the outer run loop as well, or check `response.state == 'interrupted'` before allowing the run to continue into tool execution.
 
@@ -977,7 +980,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 #### Message History After Cancellation
 
-When a stream is cancelled, the response is recorded with `state='interrupted'` in the message history. The history includes any partial content that was received before cancellation:
+When a stream is cancelled mid-generation, the response is recorded with `state='interrupted'` in the message history. The history includes any partial content that was received before cancellation:
 
 ```python {title="stream_cancel_history.py"}
 from pydantic_ai import Agent
