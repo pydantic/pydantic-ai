@@ -1,5 +1,4 @@
 import datetime
-import json
 from collections.abc import Sequence
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -1385,8 +1384,7 @@ async def test_openrouter_cache_point_anthropic_e2e(
 
     # Verify cache_control was in the request
     assert vcr is not None
-    assert len(vcr.requests) >= 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
     user_content = request_body['messages'][0]['content']
     # The first content part should have cache_control
     assert 'cache_control' in user_content[0]
@@ -1453,8 +1451,7 @@ async def test_openrouter_cache_point_gemini_e2e(
 
     # Verify cache_control was in the request (without TTL for Gemini)
     assert vcr is not None
-    assert len(vcr.requests) >= 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
     user_content = request_body['messages'][0]['content']
     assert 'cache_control' in user_content[0]
     assert user_content[0]['cache_control'] == {'type': 'ephemeral'}
@@ -1516,7 +1513,7 @@ async def test_openrouter_cache_instructions_e2e(
 
     # Verify cache_control was added to system message
     assert vcr is not None
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
     system_msg = next(m for m in request_body['messages'] if m['role'] in ('system', 'developer'))
     content = system_msg['content']
     assert isinstance(content, list)
@@ -1577,7 +1574,7 @@ async def test_openrouter_cache_messages_e2e(
 
     # Verify cache_control was added to the last message
     assert vcr is not None
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
     last_msg = request_body['messages'][-1]
     content = last_msg['content']
     assert isinstance(content, list)
@@ -1653,7 +1650,7 @@ I have one tool available:
 
     # Verify cache_control was added to the last tool
     assert vcr is not None
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
     tools = request_body.get('tools', [])
     assert len(tools) >= 1
     assert 'cache_control' in tools[-1]
@@ -1800,7 +1797,7 @@ async def test_openrouter_cache_streaming_e2e(
 
     # Verify cache_control was included in the request
     assert vcr is not None
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
 
     # System message should have cache_control from cache_instructions
     system_msg = next(m for m in request_body['messages'] if m['role'] in ('system', 'developer'))

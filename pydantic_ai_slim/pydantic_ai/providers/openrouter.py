@@ -155,7 +155,11 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
-        # Set cache capability flags based on the downstream provider
+        # Set cache capability flags based on the downstream provider.
+        # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
+        # coincide with `supports_anthropic_cache` today: they model independent OpenRouter cache
+        # capabilities that merely happen to line up on the current Anthropic-only provider set, so a
+        # future non-Anthropic downstream can enable any of them independently without re-coupling them.
         supports_cache_control = provider in ('anthropic', 'google')
         supports_anthropic_cache = provider == 'anthropic'
 

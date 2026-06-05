@@ -1690,6 +1690,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     async def _map_user_prompt_content_item(
         self, item: UserContent, content: list[ChatCompletionContentPartParam]
     ) -> None:
+        """Map a single user-prompt content item onto the outgoing `content` list.
+
+        Stable protected hook: subclasses override this to intercept user-prompt content items
+        before the default mapping (e.g. `OpenRouterModel` translates `CachePoint` into a
+        `cache_control` breakpoint on the preceding part).
+        """
         mapped_item = await self._map_content_item(item)
         if mapped_item is not None:
             content.append(mapped_item)
