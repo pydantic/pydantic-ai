@@ -11441,7 +11441,11 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
 
 async def test_openai_responses_stray_function_call_args_delta_dropped(allow_model_requests: None):
     """A `function_call_arguments.delta` arriving after the item is done (non-conforming endpoints)
-    must not corrupt the final tool-call args (https://github.com/pydantic/pydantic-ai/issues/5757)."""
+    must not corrupt the final tool-call args (https://github.com/pydantic/pydantic-ai/issues/5757).
+
+    Uses a mock stream rather than a VCR cassette because a conforming OpenAI Responses endpoint never
+    emits a post-done delta, so the scenario cannot be recorded against the real API.
+    """
     base_response = resp.Response(
         id='resp_001',
         model='gpt-4o',
