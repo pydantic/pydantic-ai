@@ -6,6 +6,18 @@ In September 2025, Pydantic AI reached V1 and committed to API stability: no cha
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v2.0.0b6 (2026-06-04)
+
+The sixth V2 beta, forked from **v1.106.0**. There are no new V2 breaking or behavior changes since [v2.0.0b5](#v200b5-2026-06-02) below — everything in that entry applies unchanged — but this beta picks up the latest V1 release on top, which adds `api_host`/`timeout` configuration and base `seed` mapping for the xAI provider, plus streaming and data-URI handling fixes; see the [v1.106.0 release notes](https://github.com/pydantic/pydantic-ai/releases/tag/v1.106.0) for the full list.
+
+Install it the same way, pinning the exact pre-release version:
+
+```bash
+pip/uv-add "pydantic-ai==2.0.0b6"
+```
+
+For the full breaking-change list and the recommended upgrade path, see the [v2.0.0b1](#v200b1-2026-05-20) entry below; the only difference is that the latest V1 to upgrade through first is now **v1.106.0**.
+
 ### v2.0.0b5 (2026-06-02)
 
 The fifth V2 beta, forked from **v1.105.0**. There are no new V2 breaking or behavior changes since [v2.0.0b4](#v200b4-2026-05-28) below — everything in that entry (including the prepare-callbacks change) still applies — but this beta picks up the latest V1 release on top, which adds [on-demand (deferred-loading) capabilities](https://github.com/pydantic/pydantic-ai/pull/5230) and [Grok 4.3 `reasoning_effort` support](https://github.com/pydantic/pydantic-ai/pull/5454), plus `GoogleModelSettings.google_cached_content` and Temporal `gateway/` fixes; see the [v1.105.0 release notes](https://github.com/pydantic/pydantic-ai/releases/tag/v1.105.0) for the full list.
