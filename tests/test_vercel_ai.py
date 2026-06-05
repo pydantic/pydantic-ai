@@ -8704,3 +8704,105 @@ async def test_denied_builtin_tool_round_trip():
             )
         ]
     )
+
+
+async def test_adapter_roundtrip_preserves_file_vendor_metadata():
+    """`vendor_metadata` on `FileUrl`/`BinaryContent` survives a dump -> load round-trip.
+
+    Regression test for #5764: the Vercel AI adapter dropped `vendor_metadata`
+    (e.g. OpenAI/xAI image `detail`, Google `video_metadata`) for every
+    `ImageUrl`/`AudioUrl`/`VideoUrl`/`DocumentUrl`/`BinaryContent` because the
+    `FileUIPart` was built without `provider_metadata`, even though the adjacent
+    `UploadedFile` branch already round-tripped it.
+    """
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(
+                            url='https://example.com/image.png',
+                            media_type='image/png',
+                            vendor_metadata={'detail': 'high'},
+                        ),
+                        AudioUrl(
+                            url='https://example.com/audio.mp3',
+                            media_type='audio/mpeg',
+                            vendor_metadata={'foo': 'bar'},
+                        ),
+                        VideoUrl(
+                            url='https://example.com/video.mp4',
+                            media_type='video/mp4',
+                            vendor_metadata={'fps': 5},
+                        ),
+                        DocumentUrl(
+                            url='https://example.com/doc.pdf',
+                            media_type='application/pdf',
+                            vendor_metadata={'foo': 'baz'},
+                        ),
+                        BinaryContent(
+                            data=b'fake_doc',
+                            media_type='application/pdf',
+                            vendor_metadata={'detail': 'low'},
+                        ),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+
+    assert len(loaded) == 1
+    request = loaded[0]
+    assert isinstance(request, ModelRequest)
+    user_part = request.parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert isinstance(user_part.content, list)
+
+    image = next(item for item in user_part.content if isinstance(item, ImageUrl))
+    assert image.vendor_metadata == {'detail': 'high'}
+
+    audio = next(item for item in user_part.content if isinstance(item, AudioUrl))
+    assert audio.vendor_metadata == {'foo': 'bar'}
+
+    video = next(item for item in user_part.content if isinstance(item, VideoUrl))
+    assert video.vendor_metadata == {'fps': 5}
+
+    document = next(item for item in user_part.content if isinstance(item, DocumentUrl))
+    assert document.vendor_metadata == {'foo': 'baz'}
+
+    binary = next(item for item in user_part.content if isinstance(item, BinaryContent))
+    assert binary.vendor_metadata == {'detail': 'low'}
+
+
+async def test_adapter_roundtrip_file_without_vendor_metadata_stays_none():
+    """A file with no `vendor_metadata` round-trips to `None` (no spurious metadata)."""
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                        BinaryContent(data=b'fake_image', media_type='image/png'),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    # No vendor_metadata -> no provider_metadata emitted on the file part.
+    file_parts = [part for msg in ui_messages for part in msg.parts if isinstance(part, FileUIPart)]
+    assert len(file_parts) == 2
+    assert all(part.provider_metadata is None for part in file_parts)
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    request = loaded[0]
+    assert isinstance(request, ModelRequest)
+    user_part = request.parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    for item in user_part.content:
+        assert getattr(item, 'vendor_metadata', None) is None
