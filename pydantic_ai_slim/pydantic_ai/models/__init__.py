@@ -1323,7 +1323,7 @@ class StreamedResponse(ABC):
         `close_stream()` itself raises.
 
         Does nothing if the stream was already fully consumed
-        (`self._finished` is ``True``) — a defensive `cancel()` after a
+        (`self._finished` is `True`) — a defensive `cancel()` after a
         successful run must not flip `response.state` from `'complete'` to
         `'interrupted'` (fixes #5782).
         """
