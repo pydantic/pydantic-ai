@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.tools import ToolDefinition
 
 DEFAULT_INSTRUMENTATION_VERSION = 2
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -113,7 +114,34 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': to_json(serialize_any(model_request_parameters)).decode()}
+    return {
+        'model_request_parameters': to_json(serialize_any(_strip_internal_fields(model_request_parameters))).decode()
+    }
+
+
+def _strip_internal_fields(params: ModelRequestParameters) -> ModelRequestParameters:
+    """Strip internal tool-definition fields before OTel serialization.
+
+    Removes metadata and return_schema (unless include_return_schema is True)
+    to avoid bloating span payloads with fields that aren't sent to the model.
+    """
+
+    def _strip_tool_def(tool_def: ToolDefinition) -> ToolDefinition:
+        if tool_def.metadata is None and (tool_def.return_schema is None or tool_def.include_return_schema):
+            return tool_def
+        return replace(
+            tool_def,
+            metadata=None,
+            return_schema=tool_def.return_schema if tool_def.include_return_schema else None,
+        )
+
+    function_tools = [_strip_tool_def(td) for td in params.function_tools]
+    output_tools = [_strip_tool_def(td) for td in params.output_tools]
+
+    if function_tools == params.function_tools and output_tools == params.output_tools:
+        return params
+
+    return replace(params, function_tools=function_tools, output_tools=output_tools)
 
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:
