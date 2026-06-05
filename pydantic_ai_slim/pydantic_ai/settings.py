@@ -222,6 +222,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Gemini
+    * xAI
     """
 
     presence_penalty: float

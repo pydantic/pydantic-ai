@@ -204,7 +204,16 @@ def _user_content_to_input(
 
 @dataclass
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
-    """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
+    """UI adapter for the Agent-User Interaction (AG-UI) protocol.
+
+    When [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is `True`,
+    agent-generated files and uploaded files are stored as
+    [activity messages](https://docs.ag-ui.com/concepts/activities) during `dump_messages`
+    and restored during `load_messages`, enabling full round-trip fidelity. When `False`
+    (the default), they are dropped. If your AG-UI frontend uses activities, be aware that
+    `pydantic_ai_*` activity types are reserved for internal round-trip use and should be
+    ignored by frontend activity handlers.
+    """
 
     _: KW_ONLY
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
@@ -225,18 +234,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
     of this setting.
-    """
-
-    preserve_file_data: bool = False
-    """Whether to preserve agent-generated files and uploaded files in AG-UI message conversion.
-
-    When `True`, agent-generated files and uploaded files are stored as
-    [activity messages](https://docs.ag-ui.com/concepts/activities) during `dump_messages`
-    and restored during `load_messages`, enabling full round-trip fidelity.
-    When `False` (default), they are silently dropped.
-
-    If your AG-UI frontend uses activities, be aware that `pydantic_ai_*` activity types
-    are reserved for internal round-trip use and should be ignored by frontend activity handlers.
     """
 
     @classmethod
