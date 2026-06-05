@@ -3406,6 +3406,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             # Track annotations by item_id and content_index
             _annotations_by_item: dict[str, list[Any]] = {}
+            # Track function-call item_ids that have already received a
+            # "done" signal. Stray arguments deltas arriving after the item
+            # is done (non-conforming endpoints) are silently dropped to
+            # prevent corrupting the final tool-call args (#5757).
+            _done_function_call_ids: set[str] = set()
             # Track `phase` (commentary | final_answer) on assistant message items, captured
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on `output_text.done`.
@@ -3447,15 +3452,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._usage += self._map_usage(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=chunk.item_id,
-                        args=chunk.delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    # Drop stray deltas arriving after the item is done (#5757).
+                    if chunk.item_id not in _done_function_call_ids:
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=chunk.item_id,
+                            args=chunk.delta,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                    pass  # there's nothing we need to do here
+                    # Mark item done so post-done deltas are silently dropped (#5757).
+                    _done_function_call_ids.add(chunk.item_id)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                     self._usage += self._map_usage(chunk.response)
@@ -3581,6 +3589,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
+                    # Mark function-call items done so post-done deltas are
+                    # silently dropped (#5757).
+                    if isinstance(chunk.item, responses.ResponseFunctionToolCall):
+                        _done_function_call_ids.add(chunk.item.id)
                     if isinstance(chunk.item, responses.ResponseReasoningItem):
                         if signature := chunk.item.encrypted_content:  # pragma: no branch
                             # Add the signature to the part corresponding to the first summary/raw CoT

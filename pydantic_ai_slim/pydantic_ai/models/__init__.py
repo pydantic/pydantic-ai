@@ -1321,8 +1321,13 @@ class StreamedResponse(ABC):
         so the flag is visible to any iterator that observes the transport error
         raised when the underlying connection is torn down, even if
         `close_stream()` itself raises.
+
+        Does nothing if the stream was already fully consumed
+        (`self._finished` is ``True``) — a redundant defensive `cancel()` after
+        a successful run must not flip `response.state` from `'complete'` to
+        `'interrupted'` (fixes #5782).
         """
-        if self.cancelled:
+        if self.cancelled or self._finished:
             return
         self._cancelled = True
         await self.close_stream()
