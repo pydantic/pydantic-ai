@@ -569,7 +569,10 @@ class BinaryContent:
         prefix = 'data:'
         if not data_uri.startswith(prefix):
             raise ValueError('Data URI must start with "data:"')
-        media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
+        body = data_uri[len(prefix) :]
+        if ';base64,' not in body:
+            raise ValueError('Data URI must be base64-encoded (expected ";base64," marker)')
+        media_type, data = body.split(';base64,', 1)
         return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
     @classmethod
@@ -1091,7 +1094,7 @@ else:
     )
 
 
-ToolPartKind: TypeAlias = Literal['tool-search']
+ToolPartKind: TypeAlias = Literal['tool-search', 'capability-load']
 """Discriminator value for the typed call/return-part subclass associated with a tool.
 
 Set on [`BaseToolCallPart.tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind],
@@ -1978,6 +1981,13 @@ deserialized). Same population pattern.
 """
 
 
+# Typed subclasses live outside this module; import them here for discriminator
+# unions, narrower registration, and public re-exports from `pydantic_ai.messages`.
+from ._deferred_capabilities import (  # noqa: E402
+    LoadCapabilityCallPart as LoadCapabilityCallPart,
+    LoadCapabilityReturnPart as LoadCapabilityReturnPart,
+)
+
 # Typed subclasses + narrowers + cross-provider history translation live in their own
 # module to keep this file focused on the base part shapes. Imported here so the
 # discriminator unions below can reference them and so import-time registration of
@@ -2024,6 +2034,7 @@ ModelRequestPart = Annotated[
     Annotated[SystemPromptPart, pydantic.Tag('system-prompt')]
     | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
+    | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')],
     pydantic.Discriminator(_model_request_part_discriminator),
@@ -2061,6 +2072,7 @@ def _model_response_part_discriminator(v: Any) -> str | None:
 ModelResponsePart = Annotated[
     Annotated[TextPart, pydantic.Tag('text')]
     | Annotated[ToolSearchCallPart, pydantic.Tag('tool-search-call')]
+    | Annotated[LoadCapabilityCallPart, pydantic.Tag('capability-load-call')]
     | Annotated[ToolCallPart, pydantic.Tag('tool-call')]
     | Annotated[NativeToolSearchCallPart, pydantic.Tag('builtin-tool-search-call')]
     | Annotated[NativeToolCallPart, pydantic.Tag('builtin-tool-call')]
