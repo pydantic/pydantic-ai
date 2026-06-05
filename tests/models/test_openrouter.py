@@ -1282,6 +1282,102 @@ async def test_openrouter_cache_instructions_gemini_skips_dynamic_e2e(
         assert isinstance(content, str) or all('cache_control' not in part for part in content)
 
 
+async def test_openrouter_cache_instructions_system_prompt_e2e(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """`openrouter_cache_instructions` caches the system prompt when it comes via `system_prompt=`.
+
+    With no `instructions=`, there are no structured instruction parts, so the cache point falls back
+    to the last `system`/`developer` message, which here is the `system_prompt`-derived block.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=provider)
+    agent = Agent(
+        model,
+        system_prompt='You are a helpful assistant that specializes in caching. ' * 20,
+        model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True),
+    )
+
+    result = await agent.run('What do you specialize in? Answer in one sentence.')
+
+    assert isinstance(result.output, str)
+    system_msg = next(m for m in single_request_body(vcr)['messages'] if m['role'] in ('system', 'developer'))
+    assert system_msg['content'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+
+
+async def test_openrouter_cache_instructions_system_prompt_dynamic_e2e(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """With only dynamic instructions, the Anthropic cache point falls back to the static `system_prompt` prefix.
+
+    The dynamic instruction block stays uncached; the breakpoint anchors to the message preceding it.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=provider)
+    agent = Agent(
+        model,
+        system_prompt='You are a helpful assistant that specializes in caching. ' * 20,
+        model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True),
+    )
+
+    @agent.instructions
+    def dynamic_instructions() -> str:
+        return 'The current focus is distributed systems.'
+
+    result = await agent.run('What do you specialize in? Answer in one sentence.')
+
+    assert isinstance(result.output, str)
+    system_messages = [m for m in single_request_body(vcr)['messages'] if m['role'] in ('system', 'developer')]
+    # Static `system_prompt` prefix carries the breakpoint; the dynamic tail does not.
+    assert isinstance(system_messages[0]['content'], list) and any(
+        'cache_control' in part for part in system_messages[0]['content']
+    )
+    assert system_messages[-1]['content'] == 'The current focus is distributed systems.'
+
+
+async def test_openrouter_cache_instructions_dynamic_only_e2e(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """Instruction caching is skipped for Anthropic when the only instructions are dynamic and there is no static prefix.
+
+    With no static block to anchor the breakpoint to, no `cache_control` is added anywhere.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=provider)
+    agent = Agent(model, model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True))
+
+    @agent.instructions
+    def dynamic_instructions() -> str:
+        return 'You are a helpful assistant that specializes in caching. ' * 20
+
+    result = await agent.run('What do you specialize in? Answer in one sentence.')
+
+    assert isinstance(result.output, str)
+    for m in single_request_body(vcr)['messages']:
+        content = m['content']
+        assert isinstance(content, str) or all('cache_control' not in part for part in content)
+
+
+async def test_openrouter_cache_instructions_no_instructions_e2e(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """`openrouter_cache_instructions` is a no-op when there are no instructions and no system prompt.
+
+    With no structured instruction parts, the fallback scans for a `system`/`developer` message to
+    anchor the breakpoint to; finding none, it adds no `cache_control` anywhere.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=provider)
+    agent = Agent(model, model_settings=OpenRouterModelSettings(openrouter_cache_instructions=True))
+
+    result = await agent.run('Say hello in one word.')
+
+    assert isinstance(result.output, str)
+    for m in single_request_body(vcr)['messages']:
+        content = m['content']
+        assert isinstance(content, str) or all('cache_control' not in part for part in content)
+
+
 async def test_openrouter_cache_messages_preserves_cachepoint_e2e(
     allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ) -> None:
