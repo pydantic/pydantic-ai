@@ -1082,10 +1082,13 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
     Any, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 
-# Derived from the union members so it can't drift: every `MultiModalContent` type carries a
-# `kind` literal, and `MULTI_MODAL_CONTENT_TYPES` is pinned to the union by
-# `test_multi_modal_content_types_matches_union`.
+# Derived from the union members (pinned by `test_multi_modal_content_types_matches_union`) so it can't drift.
 _MULTIMODAL_KINDS: frozenset[str] = frozenset(t.__dataclass_fields__['kind'].default for t in MULTI_MODAL_CONTENT_TYPES)
+
+# Type-specific fields that, alongside a matching `kind`, mark a dict as a real `MultiModalContent`
+# rather than a user dict reusing one of our `kind` values: `url` (`FileUrl` types), `media_type`
+# (every dumped item), `file_id` (`UploadedFile`).
+_MULTIMODAL_FIELDS: frozenset[str] = frozenset({'url', 'media_type', 'file_id'})
 
 
 def _tool_return_content_discriminator(value: Any) -> str:
@@ -1095,11 +1098,22 @@ def _tool_return_content_discriminator(value: Any) -> str:
     for a dumped `MultiModalContent` dict (e.g. `{'kind': 'binary', 'data': '...'}`) and skip
     the discriminated `MultiModalContent` branch in `validate_python`, leaving multimodal
     leaves as plain dicts.
+
+    A matching `kind` alone is not enough: this alias is wired into the core `ToolReturnContent`
+    type, so `ModelMessagesTypeAdapter` runs the discriminator on every tool return everywhere.
+    A type-specific field must also be present — `url` for the `FileUrl` types, `media_type`
+    (carried by every dumped `MultiModalContent`), or `file_id` for `UploadedFile` — so a user
+    dict that merely reuses one of our `kind` values (e.g. `{'kind': 'binary', 'label': 'foo'}`)
+    stays a plain mapping instead of being forced through multimodal validation.
     """
     if isinstance(value, MULTI_MODAL_CONTENT_TYPES):
         return 'multimodal'
     if isinstance(value, Mapping):
-        if 'kind' in value and value['kind'] in _MULTIMODAL_KINDS:
+        if (
+            'kind' in value
+            and value['kind'] in _MULTIMODAL_KINDS
+            and any(field in value for field in _MULTIMODAL_FIELDS)
+        ):
             return 'multimodal'
         return 'mapping'
     if isinstance(value, (str, bytes, bytearray)):

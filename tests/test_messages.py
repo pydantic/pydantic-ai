@@ -1304,6 +1304,31 @@ def test_tool_return_part_binary_content_round_trip(case_id: str, tiny_audio: Bi
     assert python_part.content == content
 
 
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param({'kind': 'binary', 'label': 'foo'}, id='kind-binary-no-media-type'),
+        pytest.param({'kind': 'image-url', 'note': 'not a real url part'}, id='kind-url-no-media-type'),
+    ],
+)
+def test_tool_return_dict_reusing_kind_without_type_field_stays_mapping(content: dict[str, str]):
+    """A user dict that reuses one of our `kind` values but lacks a type-specific field
+    (`media_type`/`file_id`) is left as a plain mapping rather than forced through
+    `MultiModalContent` validation (which would raise a hard `ValidationError`).
+
+    The discriminator is wired into core `ToolReturnContent`, so this guards every
+    `ModelMessagesTypeAdapter` round trip, not just the UI adapters.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+    part = loaded[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.content == content
+
+
 def test_tool_return_part_list_structure_preserved():
     single_dict = {'result': 'found'}
     single_item_list = [{'result': 'found'}]
