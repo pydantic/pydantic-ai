@@ -86,6 +86,7 @@ with try_import() as imports_successful:
         AsyncStream,
         omit as OMIT,
     )
+    from anthropic._models import construct_type
     from anthropic.lib.tools import BetaAbstractMemoryTool
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
@@ -10953,6 +10954,95 @@ async def test_anthropic_container_id_from_stream_response(allow_model_requests:
     assert model_response.provider_details is not None
     assert model_response.provider_details.get('container_id') == 'container_from_stream'
     assert model_response.provider_details.get('finish_reason') == 'end_turn'
+
+
+async def test_anthropic_bedrock_message_start_without_message(allow_model_requests: None):
+    """Bedrock emits `message_start` events with `message=None` and PAI must not crash on them.
+
+    The Anthropic SDK's stream decoder drops SSE event types on Bedrock, so Bedrock-only chunks
+    (e.g. `amazon-bedrock-invocationMetrics`) are built via non-validating `construct_type` into a
+    `BetaRawMessageStartEvent` whose `message` is `None` — violating the type. This can't be a VCR
+    test because no recorded Anthropic-direct stream produces the malformed event; we construct it
+    the same way the SDK does. The empty event (here trailing the stream, as Bedrock emits it) must
+    be skipped without crashing or contributing usage, while the real `message_start` still drives
+    the output, usage, and response id.
+    """
+    empty_metric_event = construct_type(
+        value={'amazon-bedrock-invocationMetrics': {'inputTokenCount': 1}},
+        type_=BetaRawMessageStreamEvent,
+    )
+    assert isinstance(empty_metric_event, BetaRawMessageStartEvent)
+    assert empty_metric_event.message is None
+
+    # The Bedrock metric event arrives at the end of the stream, after a normal `message_start`.
+    stream_events: list[BetaRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_123',
+                content=[],
+                model='claude-3-5-haiku-123',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=5, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=0,
+            content_block=BetaTextBlock(text='', type='text'),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaTextDelta(type='text_delta', text='hello'),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn', stop_sequence=None),
+            usage=BetaMessageDeltaUsage(output_tokens=5),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+        empty_metric_event,
+    ]
+
+    mock_client = MockAnthropic.create_stream_mock(stream_events)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hello'
+
+    model_response = result.all_messages()[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_response_id == 'msg_123'
+    assert model_response.usage == snapshot(
+        RequestUsage(input_tokens=5, output_tokens=5, details={'input_tokens': 5, 'output_tokens': 5})
+    )
+
+
+def test_map_usage_ignores_bedrock_message_start_without_message():
+    """`_map_usage` defends against the Bedrock `message=None` start event directly.
+
+    The streaming iterator skips these events before `_map_usage` sees them, so this branch isn't
+    reachable through the public API — but `_map_usage` still guards its own contract against the
+    SDK's non-validating `construct_type` output (#5774), returning the existing usage (or an empty
+    one) rather than dereferencing the missing message.
+    """
+    empty_metric_event = construct_type(
+        value={'amazon-bedrock-invocationMetrics': {'inputTokenCount': 1}},
+        type_=BetaRawMessageStreamEvent,
+    )
+    assert isinstance(empty_metric_event, BetaRawMessageStartEvent)
+
+    assert _map_usage(empty_metric_event, 'anthropic', 'https://example.invalid', 'claude-haiku-4-5') == RequestUsage()
+
+    existing = RequestUsage(input_tokens=7, output_tokens=3)
+    assert (
+        _map_usage(empty_metric_event, 'anthropic', 'https://example.invalid', 'claude-haiku-4-5', existing) == existing
+    )
 
 
 @pytest.mark.vcr()

@@ -2098,6 +2098,12 @@ def _map_usage(
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
+        # On Bedrock the Anthropic SDK drops SSE event types, so Bedrock-only chunks (e.g.
+        # `amazon-bedrock-invocationMetrics`) are non-validatingly constructed as a
+        # `BetaRawMessageStartEvent` with `message=None`. Treat those as carrying no usage.
+        # The SDK types `message` as non-optional, but the Bedrock events violate that contract.
+        if message.message is None:  # pyright: ignore[reportUnnecessaryComparison]
+            return existing_usage or usage.RequestUsage()
         response_usage = message.message.usage
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
@@ -2143,6 +2149,10 @@ class AnthropicStreamedResponse(StreamedResponse):
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in self._response:
                 if isinstance(event, BetaRawMessageStartEvent):
+                    # See `_map_usage`: Bedrock emits message_start events with `message=None`,
+                    # which carry no usage or response id to extract.
+                    if event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
+                        continue
                     self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
                     self.provider_response_id = event.message.id
                     if event.message.container:
