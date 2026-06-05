@@ -1094,7 +1094,8 @@ async def test_openrouter_cache_points_exceed_limit_raises(allow_model_requests:
 # ===== Prompt caching: defensive-branch unit tests =====
 # These two pin branches that no real OpenRouter model+provider combination reaches; they're
 # kept as unit tests because routing them through a real request would either be impossible
-# (the config can't arise) or contrived. See the PR thread for the reachability analysis.
+# (the config can't arise) or contrived. They deliberately call the private `_map_messages` to
+# exercise those branches directly. See the PR thread for the reachability analysis.
 
 
 async def test_openrouter_cache_instructions_ignores_user_role_profile() -> None:

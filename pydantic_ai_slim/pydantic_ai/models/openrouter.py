@@ -182,6 +182,13 @@ OpenRouterTransforms = Literal['middle-out']
 Currently only supports 'middle-out', but is expected to grow in the future.
 """
 
+OpenRouterCacheTTL = bool | Literal['5m', '1h']
+"""Cache breakpoint time-to-live for OpenRouter prompt caching.
+
+`True` selects the default TTL ('5m'); '5m' or '1h' may be given explicitly. The TTL is only
+forwarded to downstream providers that support it (Anthropic); it is omitted for Gemini.
+"""
+
 
 class OpenRouterProviderConfig(TypedDict, total=False):
     """Represents the 'Provider' object from the OpenRouter API."""
@@ -283,7 +290,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     The usage config object consolidates settings for enabling detailed usage information. [See more](https://openrouter.ai/docs/use-cases/usage-accounting)
     """
 
-    openrouter_cache_instructions: bool | Literal['5m', '1h']
+    openrouter_cache_instructions: OpenRouterCacheTTL
     """Whether to add `cache_control` to stable system instructions.
 
     When enabled, supported downstream providers (Anthropic, Gemini) can cache stable
@@ -298,7 +305,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
     """
 
-    openrouter_cache_messages: bool | Literal['5m', '1h']
+    openrouter_cache_messages: OpenRouterCacheTTL
     """Convenience setting to enable caching for the last message in the conversation.
 
     When enabled, this automatically adds `cache_control` to the last content block
@@ -317,7 +324,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
     """
 
-    openrouter_cache_tool_definitions: bool | Literal['5m', '1h']
+    openrouter_cache_tool_definitions: OpenRouterCacheTTL
     """Whether to add `cache_control` to the last tool definition.
 
     When enabled, the last tool in the `tools` array will have `cache_control` set,
@@ -701,7 +708,7 @@ class OpenRouterModel(OpenAIChatModel):
         """Get the OpenRouter-specific model profile with cache capability flags."""
         return OpenRouterModelProfile.from_profile(self.profile)
 
-    def _build_cache_control(self, ttl: bool | Literal['5m', '1h'] = '5m') -> dict[str, str]:
+    def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
         """Build a `cache_control` dict for the downstream provider.
 
         Args:
@@ -770,9 +777,7 @@ class OpenRouterModel(OpenAIChatModel):
                     else:
                         del part_dict['cache_control']
 
-    def _add_cache_control(
-        self, params: list[ChatCompletionContentPartParam], ttl: bool | Literal['5m', '1h'] = '5m'
-    ) -> None:
+    def _add_cache_control(self, params: list[ChatCompletionContentPartParam], ttl: OpenRouterCacheTTL = '5m') -> None:
         """Add `cache_control` to the last content part.
 
         Mirrors the Anthropic model's `_add_cache_control_to_last_param` behavior for
@@ -798,7 +803,7 @@ class OpenRouterModel(OpenAIChatModel):
         last_param['cache_control'] = self._build_cache_control(ttl)
 
     def _add_cache_control_to_message(
-        self, message: chat.ChatCompletionMessageParam, ttl: bool | Literal['5m', '1h'] = '5m'
+        self, message: chat.ChatCompletionMessageParam, ttl: OpenRouterCacheTTL = '5m'
     ) -> None:
         """Add `cache_control` to the last content block in a mapped chat message."""
         content = message.get('content')
@@ -815,7 +820,7 @@ class OpenRouterModel(OpenAIChatModel):
         openai_messages: list[chat.ChatCompletionMessageParam],
         messages: Sequence[ModelMessage],
         model_request_parameters: ModelRequestParameters,
-        ttl: bool | Literal['5m', '1h'],
+        ttl: OpenRouterCacheTTL,
     ) -> None:
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         if not instruction_parts:
