@@ -1261,6 +1261,39 @@ def test_multi_modal_content_types_matches_union():
     assert not is_multi_modal_content(42)
 
 
+def test_every_multimodal_type_rehydrates_as_tool_return_content():
+    """Every `MultiModalContent` type, dumped as scalar `ToolReturnPart.content`, must rehydrate to
+    its own subclass through `ModelMessagesTypeAdapter` — not collapse to a plain dict.
+
+    Guards the `ToolReturnContent` discriminator's type-specific-field gate (`_MULTIMODAL_FIELDS`):
+    if a future `MultiModalContent` type serialized without a `url`/`media_type`/`file_id` key, the
+    gate would route its dumped dict to the `mapping` branch and silently stop rehydrating it. The
+    factory must cover exactly `MULTI_MODAL_CONTENT_TYPES`, so a new type forces a deliberate update.
+    `BinaryContent` uses a non-image media type so it isn't narrowed to `BinaryImage`.
+    """
+    samples: dict[type, MultiModalContent] = {
+        ImageUrl: ImageUrl(url='https://example.com/a.png'),
+        AudioUrl: AudioUrl(url='https://example.com/a.mp3'),
+        VideoUrl: VideoUrl(url='https://example.com/a.mp4'),
+        DocumentUrl: DocumentUrl(url='https://example.com/a.pdf'),
+        BinaryContent: BinaryContent(data=b'x', media_type='application/pdf'),
+        UploadedFile: UploadedFile(file_id='f1', provider_name='openai', media_type='image/png'),
+    }
+    assert set(samples) == set(MULTI_MODAL_CONTENT_TYPES)
+
+    for cls, instance in samples.items():
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[ToolReturnPart(tool_name='t', content=instance, tool_call_id='c')])
+        ]
+        reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+        part = reloaded[0].parts[0]
+        assert isinstance(part, ToolReturnPart)
+        assert type(part.content) is cls, (
+            f'{cls.__name__} did not rehydrate through the discriminator gate '
+            f'(got {type(part.content).__name__}) — a `_MULTIMODAL_FIELDS` mismatch would cause this'
+        )
+
+
 def test_tool_return_part_binary_content_serialization():
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
     binary_content = BinaryContent(png_data, media_type='image/png')

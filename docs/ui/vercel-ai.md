@@ -124,6 +124,13 @@ async def search_docs(query: str) -> ToolReturn:
 !!! note
     Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.
 
+### Multimodal tool returns
+
+Tool returns containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], and the other [multimodal content types](../input.md) — survive the [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] / [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] round-trip. The Vercel data-stream tool `output` field carries structured content directly, so files are serialized inline in the output and rehydrated on load — no opt-in flag is required for file URLs and binary content. Client-uploaded files ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) still require `preserve_file_data=True` to survive, and non-HTTP file URL schemes are dropped, per the [Trust model](#trust-model) below.
+
+!!! note
+    This applies to history serialization. During a live streamed run, multimodal tool returns are emitted as text descriptions (e.g. `[File: image/jpeg]`) without the file payload.
+
 ## Message metadata
 
 [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores it on the way back.

@@ -5050,4 +5050,40 @@ async def test_client_submitted_file_url_disallowed_scheme_stripped() -> None:
     assert user_part.content == ['See attached', ImageUrl(url='https://example.com/ok.png')]
 
 
+async def test_sidecar_rehydrated_tool_return_disallowed_scheme_stripped() -> None:
+    """A non-HTTP `FileUrl` rehydrated from an AG-UI sidecar `ActivityMessage` is dropped by the sanitizer.
+
+    The multimodal sidecar load path rehydrates a `DocumentUrl(url='s3://...')` into a `ToolReturnPart`;
+    the shared `sanitize_messages` chokepoint then drops it (content -> `None`) because `s3` isn't in
+    `allowed_file_url_schemes`, blocking server-side IAM-fetch SSRF through the new path. Mirrors the
+    Vercel `test_adapter_drops_non_http_scheme_from_rehydrated_tool_return` so both adapters' rehydration
+    paths are pinned to the same trust boundary.
+    """
+    agent = Agent(model=TestModel())
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='get the doc')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_doc', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_doc',
+                    tool_call_id='tc-1',
+                    content=DocumentUrl(url='s3://private-bucket/payroll.pdf', media_type='application/pdf'),
+                )
+            ]
+        ),
+    ]
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    loaded_return = next(p for m in loaded for p in m.parts if isinstance(p, ToolReturnPart))
+    assert loaded_return.content == DocumentUrl(url='s3://private-bucket/payroll.pdf', media_type='application/pdf')
+
+    adapter = AGUIAdapter(agent=agent, run_input=create_input(UserMessage(id='msg_1', content='Hi')))
+    with pytest.warns(UserWarning, match=r"scheme\(s\).*'s3'"):
+        sanitized = adapter.sanitize_messages(loaded)
+    sanitized_return = next(p for m in sanitized for p in m.parts if isinstance(p, ToolReturnPart))
+    assert sanitized_return.content is None
+
+
 # endregion
