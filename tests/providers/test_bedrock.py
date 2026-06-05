@@ -136,6 +136,14 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.bedrock_supports_adaptive_thinking is False
     assert anthropic_profile.bedrock_supports_effort is False
 
+    anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-7-20260115-v1:0')
+    anthropic_model_profile_mock.assert_called_with('claude-opus-4-7-20260115')
+    assert isinstance(anthropic_profile, BedrockModelProfile)
+    assert anthropic_profile.supports_json_schema_output is False
+    assert anthropic_profile.bedrock_supports_strict_tool_definition is False
+    assert anthropic_profile.bedrock_supports_adaptive_thinking is True
+    assert anthropic_profile.bedrock_supports_effort is True
+
     anthropic_profile = provider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5-20250929')
     assert isinstance(anthropic_profile, BedrockModelProfile)
@@ -364,7 +372,7 @@ def test_latest_bedrock_model_names_geo_prefixes_are_supported():
 
 
 def test_strict_true_simple_schema():
-    """With strict=True, simple schemas are returned (no-op transform), is_strict_compatible=True."""
+    """With strict=True, simple object schemas get Bedrock-required additionalProperties=false."""
 
     class Person(BaseModel):
         name: str
@@ -480,7 +488,12 @@ def test_strict_false_preserves_schema():
 
 
 def test_strict_none_preserves_schema():
-    """With strict=None (default), schema is preserved, is_strict_compatible=True when compatible."""
+    """With strict=None, strict-mode rewrites are skipped and is_strict_compatible=False.
+
+    Mirrors Anthropic: strict=None never auto-promotes to True — the caller must opt in
+    explicitly. See https://github.com/pydantic/pydantic-ai/issues/5579. `title` and
+    `$schema` are still stripped (always-on transformer behavior).
+    """
 
     class User(BaseModel):
         username: Annotated[str, Field(min_length=3)]
@@ -489,7 +502,7 @@ def test_strict_none_preserves_schema():
     transformer = BedrockJsonSchemaTransformer(User.model_json_schema(), strict=None)
     transformed = transformer.walk()
 
-    assert transformer.is_strict_compatible is True
+    assert transformer.is_strict_compatible is False
     assert transformed == snapshot(
         {
             'type': 'object',
@@ -498,13 +511,12 @@ def test_strict_none_preserves_schema():
                 'age': {'type': 'integer'},
             },
             'required': ['username', 'age'],
-            'additionalProperties': False,
         }
     )
 
 
 def test_strict_none_simple_schema():
-    """With strict=None, simple schemas are strict-compatible."""
+    """With strict=None, even simple schemas are not strict-compatible — opt-in required."""
 
     class Person(BaseModel):
         name: str
@@ -513,22 +525,20 @@ def test_strict_none_simple_schema():
     transformer = BedrockJsonSchemaTransformer(Person.model_json_schema(), strict=None)
     transformed = transformer.walk()
 
-    assert transformer.is_strict_compatible is True
+    assert transformer.is_strict_compatible is False
     assert transformed == snapshot(
         {
             'type': 'object',
             'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
             'required': ['name', 'age'],
-            'additionalProperties': False,
         }
     )
 
 
-def test_strict_none_incompatible_schema_disables_auto_strict():
-    """With strict=None and constrained fields, is_strict_compatible=False.
+def test_strict_none_never_strict_compatible():
+    """With strict=None and constrained fields, is_strict_compatible=False and constraints survive.
 
-    This ensures strict is NOT auto-enabled for tools with constrained schemas,
-    mirroring the Anthropic test_strict_tools_incompatible_schema_not_auto_enabled.
+    Mirrors the Anthropic transformer's stance — strict=None is never auto-promoted.
     """
 
     class ConstrainedInput(BaseModel):
@@ -548,7 +558,6 @@ def test_strict_none_incompatible_schema_disables_auto_strict():
                 'count': {'minimum': 0, 'type': 'integer'},
             },
             'required': ['username', 'count'],
-            'additionalProperties': False,
         }
     )
 
@@ -875,6 +884,5 @@ def test_strict_none_preserves_numeric_constraints():
                 'score': {'type': 'number', 'minimum': 0.0, 'maximum': 100.0},
             },
             'required': ['score'],
-            'additionalProperties': False,
         }
     )
