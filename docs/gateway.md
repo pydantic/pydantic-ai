@@ -74,7 +74,7 @@ Examples of providers and models that can be used are:
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 
 !!! warning "Deprecations"
-    The following provider prefixes are deprecated and will be removed in v2.0:
+    The following provider prefixes are deprecated and will be removed in v2:
 
     * `gateway/gemini:` &mdash; use `gateway/google-cloud:` instead.
     * `gateway/google-vertex:` &mdash; use `gateway/google-cloud:` instead.
