@@ -21,6 +21,7 @@ from typing import Annotated, Any, Generic, Literal, TypeVar, cast, get_args, ov
 import httpx
 import pydantic
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
+from typing_inspection.introspection import get_literal_values
 
 from .. import _deferred_capabilities, _utils
 from .._deprecated_callable import deprecated_callable_property
@@ -575,6 +576,18 @@ KnownModelName = TypeAliasType(
 
 `KnownModelName` is provided as a concise way to specify a model.
 """
+
+
+@cache
+def known_model_names() -> tuple[str, ...]:
+    """Return every model name known to [`KnownModelName`][pydantic_ai.models.KnownModelName].
+
+    This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
+    the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
+    not part of the public API and would break if the alias were ever recomposed.
+    """
+    return tuple(get_literal_values(KnownModelName.__value__, unpack_type_aliases='eager'))
+
 
 OpenAIChatCompatibleProvider = TypeAliasType(
     'OpenAIChatCompatibleProvider',
