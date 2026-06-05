@@ -4837,6 +4837,20 @@ async def test_run_finished_no_outcome_on_legacy_version() -> None:
 
 
 @pytestmark_interrupts
+async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the installed ag-ui-protocol SDK predates interrupts, `after_stream` emits a bare
+    `RUN_FINISHED` with no `outcome` field — even on a modern negotiated version. This is the
+    import-gated path (`_HAS_INTERRUPTS` is False), distinct from the version-gated path.
+    """
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream._HAS_INTERRUPTS', False)
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert 'outcome' not in run_finished
+
+
+@pytestmark_interrupts
 async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
     """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
     interrupt outcome carrying one `Interrupt` per pending approval, with `reason='tool_call'`
@@ -4851,7 +4865,9 @@ async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
     agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain(requires_approval=True)
-    def delete_file(path: str) -> str:
+    def delete_file(path: str) -> str:  # pragma: no cover
+        # Body never runs: the tool is deferred for approval and this test asserts the
+        # pre-execution interrupt outcome. The roundtrip test covers an approved execution.
         return f'deleted {path}'
 
     events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete .env')))
@@ -5062,6 +5078,28 @@ async def test_resume_unknown_interrupt_id_prefix_raises() -> None:
 
     with pytest.raises(UserError, match=r'does not start with the expected'):
         _ = adapter.deferred_tool_results
+
+
+@pytestmark_interrupts
+async def test_deferred_tool_results_none_when_sdk_lacks_interrupts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the installed ag-ui-protocol SDK predates interrupts, `resume[]` is ignored entirely
+    (`deferred_tool_results` returns `None`) so the old SDK path stays byte-for-byte unchanged.
+    """
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._adapter._HAS_INTERRUPTS', False)
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results is None
 
 
 @pytestmark_interrupts
