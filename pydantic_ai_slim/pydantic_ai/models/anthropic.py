@@ -2098,6 +2098,11 @@ def _map_usage(
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
+        # Bedrock can emit message_start events with message=None for
+        # Bedrock-only chunks (e.g. amazon-bedrock-invocationMetrics).
+        # Skip usage extraction for those events (#5774).
+        if message.message is None:
+            return existing_usage or usage.RequestUsage.extract({}, provider, provider_url, model)
         response_usage = message.message.usage
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
