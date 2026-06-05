@@ -716,7 +716,10 @@ def test_resolve_provider_name_tool_return_part():
 
     `ToolReturnPart` is a valid `ModelResponsePart` member but is never tracked by the parts
     manager and, unlike the other members, has no `provider_name` attribute. The resolver must
-    short-circuit on it rather than reading a missing attribute.
+    short-circuit on it rather than reading a missing attribute. This exercises
+    `_resolve_provider_name` directly because the guard is unreachable from any public API path
+    (no run feeds a `ToolReturnPart` to the streaming parts manager), so a direct internal test
+    is the only way to cover it.
     """
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     existing_part = ToolReturnPart(tool_name='tool1', content='result', tool_call_id='call1')
