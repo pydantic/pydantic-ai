@@ -77,6 +77,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.settings import ModelSettings, ServiceTier
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
@@ -90,6 +91,7 @@ with try_import() as imports_successful:
         Candidate,
         Content,
         FinishReason as GoogleFinishReason,
+        FunctionCallingConfigMode,
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
@@ -2569,6 +2571,56 @@ async def test_google_unified_service_tier_maps_to_vertex_spillover(
     headers = config_dict['http_options']['headers']
     assert headers['X-Vertex-AI-LLM-Shared-Request-Type'] == expected_header
     assert 'X-Vertex-AI-LLM-Request-Type' not in headers, 'Single-header form preserves PT-first behavior'
+
+
+async def test_google_native_tool_only_omits_function_calling_config(allow_model_requests: None):
+    """Gemini rejects a `function_calling_config` with no `function_declarations`.
+
+    A request whose only tools are native (e.g. web search) must therefore not send one.
+    """
+    m = GoogleModel('gemini-2.5-pro', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings={},
+        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict.get('tool_config') is None
+    assert config_dict['tools'] == [{'google_search': {}}]
+
+
+async def test_google_function_tool_keeps_function_calling_config(allow_model_requests: None):
+    """A request with function tools still sends `function_calling_config` (defaulting to AUTO)."""
+    m = GoogleModel('gemini-2.5-pro', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings={},
+        model_request_parameters=ModelRequestParameters(function_tools=[ToolDefinition(name='get_weather')]),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['tool_config']['function_calling_config']['mode'] == FunctionCallingConfigMode.AUTO
+
+
+async def test_google_native_tool_only_gemini3_keeps_server_side_invocations(allow_model_requests: None):
+    """On Gemini 3+, a native-only request carries `include_server_side_tool_invocations`.
+
+    The `function_calling_config` must still be absent, so the `tool_config` holds only the flag.
+    """
+    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings={},
+        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['tool_config'] == {'include_server_side_tool_invocations': True}
+    assert config_dict['tools'] == [{'google_search': {}}]
 
 
 async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
