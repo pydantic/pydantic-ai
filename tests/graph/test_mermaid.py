@@ -7,7 +7,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Annotated, Union
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from pydantic_graph import BaseNode, Edge, End, GraphRunContext, GraphSetupError
