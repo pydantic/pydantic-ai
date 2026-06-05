@@ -1325,7 +1325,7 @@ class StreamedResponse(ABC):
         Does nothing if the stream was already fully consumed
         (`self._finished` is `True`) — a defensive `cancel()` after a
         successful run must not flip `response.state` from `'complete'` to
-        `'interrupted'` (fixes #5782).
+        `'interrupted'` (fixes https://github.com/pydantic/pydantic-ai/issues/5782).
         """
         if self.cancelled or self._finished:
             return
