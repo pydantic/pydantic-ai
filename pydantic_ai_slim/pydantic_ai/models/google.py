@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Hashable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1291,6 +1291,9 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _emitted_web_search_grounding_metadata: bool = field(default=False, init=False)
+    _web_search_tool_call_id: str | None = field(default=None, init=False)
+    _web_search_tool_response_provider_details: dict[str, Any] | None = field(default=None, init=False)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
@@ -1365,19 +1368,6 @@ class GeminiStreamedResponse(StreamedResponse):
 
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-                # Google streams the grounding metadata (including the web search queries and results)
-                # _after_ the text that was generated using it, so it would show up out of order in the stream,
-                # and cause issues with the logic that doesn't consider text ahead of built-in tool calls as output.
-                # If that gets fixed (or we have a workaround), we can uncomment this:
-                # web_search_call, web_search_return = _map_grounding_metadata(
-                #     candidate.grounding_metadata, self.provider_name
-                # )
-                # if web_search_call and web_search_return:
-                #     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_call)
-                #     yield self._parts_manager.handle_part(
-                #         vendor_part_id=uuid4(), part=web_search_return
-                #     )
-
                 # URL context metadata (for WebFetchTool) is streamed in the first chunk, before the text,
                 # so we can safely yield it here.
                 #
@@ -1396,12 +1386,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_call)
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
-                if candidate.content is None or candidate.content.parts is None:
-                    continue
-
-                parts = candidate.content.parts
-                if not parts:
-                    continue  # pragma: no cover
+                parts = candidate.content.parts if candidate.content and candidate.content.parts else []
 
                 if not self._has_tool_invocations:
                     self._has_tool_invocations = _has_native_tool_invocations(parts)
@@ -1467,11 +1452,29 @@ class GeminiStreamedResponse(StreamedResponse):
                     elif part.tool_call:
                         tool_call_part = _map_tool_call(part.tool_call, self.provider_name)
                         tool_call_part.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
+                        vendor_part_id: Hashable = uuid4()
+                        if tool_call_part.tool_name == WebSearchTool.kind:
+                            self._web_search_tool_call_id = tool_call_part.tool_call_id
+                            vendor_part_id = _native_tool_call_vendor_id(tool_call_part.tool_call_id)
+                        yield self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=tool_call_part)
                     elif part.tool_response:
-                        tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
-                        tool_response_part.provider_details = provider_details
-                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
+                        tool_response_part = _map_tool_response(
+                            part.tool_response, self.provider_name, candidate.grounding_metadata
+                        )
+                        tool_response_part.provider_details = _merge_provider_details(
+                            tool_response_part.provider_details, provider_details
+                        )
+                        vendor_part_id = uuid4()
+                        if tool_response_part.tool_name == WebSearchTool.kind:
+                            self._web_search_tool_call_id = tool_response_part.tool_call_id
+                            self._web_search_tool_response_provider_details = _merge_provider_details(
+                                {'raw_tool_response': part.tool_response.response}, tool_response_part.provider_details
+                            )
+                            tool_response_part.provider_details = self._web_search_tool_response_provider_details
+                            vendor_part_id = _native_tool_return_vendor_id(tool_response_part.tool_call_id)
+                            if _has_web_search_grounding_chunks(candidate.grounding_metadata):
+                                self._emitted_web_search_grounding_metadata = True
+                        yield self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=tool_response_part)
                     elif part.executable_code is not None:
                         part_obj = self._handle_executable_code_streaming(part.executable_code)
                         part_obj.provider_details = provider_details
@@ -1484,8 +1487,18 @@ class GeminiStreamedResponse(StreamedResponse):
                         assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
                 # Grounding metadata is attached to the final text chunk, so
-                # we emit the `NativeToolReturnPart` after the text delta so
-                # that the delta is properly added to the same `TextPart` as earlier chunks
+                # we emit reconstructed native tool parts after the text delta
+                # so that the delta is properly added to the same `TextPart` as earlier chunks.
+                web_search_parts = self._handle_web_search_grounding_metadata_streaming(candidate.grounding_metadata)
+                if web_search_parts is not None:
+                    web_search_call, web_search_return = web_search_parts
+                    if web_search_call is not None:
+                        yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_search_call)
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=_native_tool_return_vendor_id(web_search_return.tool_call_id),
+                        part=web_search_return,
+                    )
+
                 if not self._has_tool_invocations:
                     file_search_part = self._handle_file_search_grounding_metadata_streaming(
                         candidate.grounding_metadata
@@ -1500,6 +1513,31 @@ class GeminiStreamedResponse(StreamedResponse):
                     body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
                 ) from e
             raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+
+    def _handle_web_search_grounding_metadata_streaming(
+        self, grounding_metadata: GroundingMetadata | None
+    ) -> tuple[NativeToolCallPart | None, NativeToolReturnPart] | None:
+        if self._emitted_web_search_grounding_metadata:
+            return None
+
+        sources = _web_search_grounding_chunks(grounding_metadata)
+        if sources and self._web_search_tool_call_id is not None:
+            self._emitted_web_search_grounding_metadata = True
+            return None, NativeToolReturnPart(
+                provider_name=self.provider_name,
+                provider_details=self._web_search_tool_response_provider_details,
+                tool_name=WebSearchTool.kind,
+                tool_call_id=self._web_search_tool_call_id,
+                content=sources,
+            )
+        if self._web_search_tool_call_id is not None:
+            return None
+
+        web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, self.provider_name)
+        if web_search_call and web_search_return:
+            self._emitted_web_search_grounding_metadata = True
+            return web_search_call, web_search_return
+        return None
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None
@@ -1725,7 +1763,11 @@ def _native_tool_return_part_dict(
         raise UnexpectedModelBehavior(f'Unknown native tool name: {item.tool_name!r}')
     if not _can_echo_server_side_tool_part(item.tool_call_id, supports_tool_combination=supports_tool_combination):
         return None
-    response: dict[str, Any] = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
+    raw_response = (item.provider_details or {}).get('raw_tool_response')
+    if item.tool_name == WebSearchTool.kind and _utils.is_str_dict(raw_response):
+        response = raw_response
+    else:
+        response = item.content if _utils.is_str_dict(item.content) else {'result': item.content}
     part: PartDict = {
         'tool_response': {'id': item.tool_call_id, 'tool_type': tool_type, 'response': response},
     }
@@ -1751,7 +1793,10 @@ def _can_echo_server_side_tool_part(tool_call_id: str, *, supports_tool_combinat
 
 
 def _process_part(
-    part: Part, code_execution_tool_call_id: str | None, provider_name: str
+    part: Part,
+    code_execution_tool_call_id: str | None,
+    provider_name: str,
+    grounding_metadata: GroundingMetadata | None = None,
 ) -> tuple[ModelResponsePart | None, str | None]:
     """Process a Google Part and return the corresponding ModelResponsePart.
 
@@ -1789,7 +1834,7 @@ def _process_part(
     elif part.tool_call:
         item = _map_tool_call(part.tool_call, provider_name)
     elif part.tool_response:
-        item = _map_tool_response(part.tool_response, provider_name)
+        item = _map_tool_response(part.tool_response, provider_name, grounding_metadata)
     elif inline_data := part.inline_data:
         data = inline_data.data
         mime_type = inline_data.mime_type
@@ -1820,12 +1865,14 @@ def _process_response_from_parts(
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
 
-    if not _has_native_tool_invocations(parts):
+    has_native_tool_invocations = _has_native_tool_invocations(parts)
+    if not _has_native_tool_invocations(parts, tool_name=WebSearchTool.kind):
         web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
         if web_search_call and web_search_return:
             items.append(web_search_call)
             items.append(web_search_return)
 
+    if not has_native_tool_invocations:
         file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
         if file_search_call and file_search_return:
             items.append(file_search_call)
@@ -1838,7 +1885,9 @@ def _process_response_from_parts(
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
     for part in parts:
-        item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
+        item, code_execution_tool_call_id = _process_part(
+            part, code_execution_tool_call_id, provider_name, grounding_metadata
+        )
         if item is not None:
             items.append(item)
 
@@ -1854,16 +1903,30 @@ def _process_response_from_parts(
     )
 
 
-def _has_native_tool_invocations(parts: list[Part]) -> bool:
+def _has_native_tool_invocations(parts: list[Part], *, tool_name: str | None = None) -> bool:
     """Whether the response carries explicit `tool_call`/`tool_response` parts.
 
     When the API returned these (because `include_server_side_tool_invocations` was set),
-    metadata-based reconstruction (`_map_grounding_metadata`, `_map_url_context_metadata`,
-    `_map_file_search_grounding_metadata`) must be skipped — otherwise we emit duplicate
-    `NativeToolCallPart`/`NativeToolReturnPart` pairs for the same tool invocation.
+    metadata-based reconstruction is usually skipped to avoid duplicate native tool pairs.
+    Web search is handled separately because Gemini 3's explicit `tool_response` carries
+    only `search_suggestions`; the source URLs remain in `grounding_metadata`.
     See https://ai.google.dev/api/caching#ToolConfig.
     """
-    return any(p.tool_call or p.tool_response for p in parts)
+    for part in parts:
+        native_tool_name = _native_tool_invocation_name(part)
+        if native_tool_name is None:
+            continue
+        if tool_name is None or native_tool_name == tool_name:
+            return True
+    return False
+
+
+def _native_tool_invocation_name(part: Part) -> str | None:
+    if isinstance(part.tool_call, ToolCall):
+        return _resolve_native_tool_name(part.tool_call.tool_type)
+    if isinstance(part.tool_response, ToolResponse):
+        return _resolve_native_tool_name(part.tool_response.tool_type)
+    return None
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:
@@ -1955,12 +2018,22 @@ def _map_tool_call(tool_call: ToolCall, provider_name: str) -> NativeToolCallPar
     )
 
 
-def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> NativeToolReturnPart:
+def _map_tool_response(
+    tool_response: ToolResponse, provider_name: str, grounding_metadata: GroundingMetadata | None = None
+) -> NativeToolReturnPart:
+    tool_name = _resolve_native_tool_name(tool_response.tool_type)
+    content: Any = tool_response.response
+    provider_details: dict[str, Any] | None = None
+    if tool_name == WebSearchTool.kind and (sources := _web_search_grounding_chunks(grounding_metadata)):
+        content = sources
+        provider_details = {'raw_tool_response': tool_response.response}
+
     return NativeToolReturnPart(
         provider_name=provider_name,
-        tool_name=_resolve_native_tool_name(tool_response.tool_type),
+        provider_details=provider_details,
+        tool_name=tool_name,
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
-        content=tool_response.response,
+        content=content,
     )
 
 
@@ -1980,13 +2053,37 @@ def _map_grounding_metadata(
                 provider_name=provider_name,
                 tool_name=WebSearchTool.kind,
                 tool_call_id=tool_call_id,
-                content=[chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
-                if (grounding_chunks := grounding_metadata.grounding_chunks)
-                else None,
+                content=_web_search_grounding_chunks(grounding_metadata),
             ),
         )
     else:
         return None, None
+
+
+def _web_search_grounding_chunks(grounding_metadata: GroundingMetadata | None) -> list[dict[str, Any]] | None:
+    if not grounding_metadata or not grounding_metadata.grounding_chunks:
+        return None
+    return [chunk.web.model_dump(mode='json') for chunk in grounding_metadata.grounding_chunks if chunk.web]
+
+
+def _has_web_search_grounding_chunks(grounding_metadata: GroundingMetadata | None) -> bool:
+    return bool(_web_search_grounding_chunks(grounding_metadata))
+
+
+def _merge_provider_details(
+    provider_details: dict[str, Any] | None, extra_provider_details: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    if provider_details and extra_provider_details:
+        return {**provider_details, **extra_provider_details}
+    return provider_details or extra_provider_details
+
+
+def _native_tool_call_vendor_id(tool_call_id: str) -> tuple[str, str]:
+    return ('native-tool-call', tool_call_id)
+
+
+def _native_tool_return_vendor_id(tool_call_id: str) -> tuple[str, str]:
+    return ('native-tool-return', tool_call_id)
 
 
 def _extract_file_search_retrieved_contexts(

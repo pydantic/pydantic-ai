@@ -113,6 +113,7 @@ with try_import() as imports_successful:
         GoogleVertexServiceTier,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
+        _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
@@ -1208,7 +1209,46 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """
-                    )
+                    ),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['weather in San Francisco today']},
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'Weather information for San Francisco, CA, US',
+                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'timeanddate.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'weather.gov',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'wunderground.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'accuweather.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                            },
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=17,
@@ -1325,6 +1365,107 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """
                 ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather in San Francisco today']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather in San Francisco today']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=2,
+                part=NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'domain': None,
+                            'title': 'Weather information for San Francisco, CA, US',
+                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'timeanddate.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'weather.gov',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'wunderground.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'accuweather.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                        },
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather in San Francisco today']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                )
+            ),
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
+                result=NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'domain': None,
+                            'title': 'Weather information for San Francisco, CA, US',
+                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'timeanddate.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'weather.gov',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'wunderground.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'accuweather.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                        },
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                )
             ),
         ]
     )
@@ -4245,10 +4386,373 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
 
 
+async def test_gemini_streamed_response_appends_web_search_grounding_metadata_after_text():
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Pydantic AI '}]),
+            _generate_stream_response('stream-2', parts=[{'text': 'supports agents.'}]),
+            _generate_stream_response(
+                'stream-3',
+                grounding_metadata={
+                    'webSearchQueries': ['Pydantic AI docs'],
+                    'groundingChunks': [
+                        {'web': {'uri': 'https://ai.pydantic.dev/', 'title': 'Pydantic AI'}},
+                        {
+                            'web': {
+                                'uri': 'https://docs.pydantic.dev/latest/',
+                                'title': 'Pydantic documentation',
+                            }
+                        },
+                    ],
+                },
+                finish_reason=GoogleFinishReason.STOP,
+            ),
+        ],
+        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+    )
+
+    events = [event async for event in streamed_response]
+    response = streamed_response.get()
+
+    assert events[0] == snapshot(PartStartEvent(index=0, part=TextPart(content='Pydantic AI ')))
+    assert events[2] == snapshot(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='supports agents.')))
+    assert response.text == snapshot('Pydantic AI supports agents.')
+    assert response.parts == snapshot(
+        [
+            TextPart(content='Pydantic AI supports agents.'),
+            NativeToolCallPart(
+                tool_name='web_search',
+                args={'queries': ['Pydantic AI docs']},
+                tool_call_id=IsStr(),
+                provider_name='google',
+            ),
+            NativeToolReturnPart(
+                tool_name='web_search',
+                content=[
+                    {'domain': None, 'title': 'Pydantic AI', 'uri': 'https://ai.pydantic.dev/'},
+                    {
+                        'domain': None,
+                        'title': 'Pydantic documentation',
+                        'uri': 'https://docs.pydantic.dev/latest/',
+                    },
+                ],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='google',
+            ),
+        ]
+    )
+    assert response.native_tool_calls == snapshot(
+        [
+            (
+                NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['Pydantic AI docs']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {'domain': None, 'title': 'Pydantic AI', 'uri': 'https://ai.pydantic.dev/'},
+                        {
+                            'domain': None,
+                            'title': 'Pydantic documentation',
+                            'uri': 'https://docs.pydantic.dev/latest/',
+                        },
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                ),
+            )
+        ]
+    )
+
+
+async def test_gemini_streamed_response_web_search_sources_are_extractable():
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Use the docs.'}]),
+            _generate_stream_response(
+                'stream-2',
+                grounding_metadata={
+                    'webSearchQueries': ['Pydantic AI source extraction'],
+                    'groundingChunks': [
+                        {'web': {'uri': 'https://ai.pydantic.dev/native-tools/', 'title': 'Native tools'}}
+                    ],
+                },
+                finish_reason=GoogleFinishReason.STOP,
+            ),
+        ],
+        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+    )
+
+    async for _ in streamed_response:
+        pass
+
+    sources: list[tuple[str, str]] = []
+    for call_part, return_part in streamed_response.get().native_tool_calls:
+        if call_part.tool_name != WebSearchTool.kind:
+            continue
+
+        content = return_part.content
+        assert isinstance(content, list)
+        for source in cast(list[dict[str, object]], content):
+            uri = source['uri']
+            title = source['title']
+            assert isinstance(uri, str)
+            assert isinstance(title, str)
+            sources.append((uri, title))
+
+    assert sources == snapshot([('https://ai.pydantic.dev/native-tools/', 'Native tools')])
+
+
+async def test_gemini_streamed_response_uses_grounding_sources_with_explicit_web_search_parts():
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Explicit source.'}]),
+            _generate_stream_response(
+                'stream-2',
+                parts=[
+                    {
+                        'toolCall': {
+                            'id': 'web-search-call-1',
+                            'toolType': 'GOOGLE_SEARCH_WEB',
+                            'args': {'queries': ['explicit query']},
+                        }
+                    },
+                    {
+                        'toolResponse': {
+                            'id': 'web-search-call-1',
+                            'toolType': 'GOOGLE_SEARCH_WEB',
+                            'response': {'search_suggestions': '<style>chip</style>'},
+                        }
+                    },
+                ],
+                grounding_metadata={
+                    'webSearchQueries': ['metadata query'],
+                    'groundingChunks': [{'web': {'uri': 'https://metadata.example/', 'title': 'Metadata source'}}],
+                },
+                finish_reason=GoogleFinishReason.STOP,
+            ),
+        ],
+        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+    )
+
+    async for _ in streamed_response:
+        pass
+
+    response = streamed_response.get()
+    assert response.parts == snapshot(
+        [
+            TextPart(content='Explicit source.'),
+            NativeToolCallPart(
+                tool_name='web_search',
+                args={'queries': ['explicit query']},
+                tool_call_id='web-search-call-1',
+                provider_name='google',
+            ),
+            NativeToolReturnPart(
+                tool_name='web_search',
+                content=[{'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}],
+                tool_call_id='web-search-call-1',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_details={'raw_tool_response': {'search_suggestions': '<style>chip</style>'}},
+            ),
+        ]
+    )
+    assert len([part for part in response.parts if isinstance(part, NativeToolCallPart)]) == 1
+    assert len([part for part in response.parts if isinstance(part, NativeToolReturnPart)]) == 1
+    assert response.native_tool_calls == snapshot(
+        [
+            (
+                NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['explicit query']},
+                    tool_call_id='web-search-call-1',
+                    provider_name='google',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[{'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}],
+                    tool_call_id='web-search-call-1',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_details={'raw_tool_response': {'search_suggestions': '<style>chip</style>'}},
+                ),
+            )
+        ]
+    )
+
+
+async def test_gemini_streamed_response_updates_explicit_web_search_return_with_later_grounding_metadata():
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Later metadata.'}]),
+            _generate_stream_response(
+                'stream-2',
+                parts=[
+                    {
+                        'toolCall': {
+                            'id': 'web-search-call-1',
+                            'toolType': 'GOOGLE_SEARCH_WEB',
+                            'args': {'queries': ['explicit query']},
+                        }
+                    },
+                    {
+                        'toolResponse': {
+                            'id': 'web-search-call-1',
+                            'toolType': 'GOOGLE_SEARCH_WEB',
+                            'response': {'search_suggestions': '<style>chip</style>'},
+                        }
+                    },
+                ],
+            ),
+            _generate_stream_response(
+                'stream-3',
+                grounding_metadata={
+                    'webSearchQueries': ['metadata query'],
+                    'groundingChunks': [{'web': {'uri': 'https://metadata.example/', 'title': 'Metadata source'}}],
+                },
+                finish_reason=GoogleFinishReason.STOP,
+            ),
+        ],
+        model_request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+    )
+
+    async for _ in streamed_response:
+        pass
+
+    assert streamed_response.get().parts == snapshot(
+        [
+            TextPart(content='Later metadata.'),
+            NativeToolCallPart(
+                tool_name='web_search',
+                args={'queries': ['explicit query']},
+                tool_call_id='web-search-call-1',
+                provider_name='google',
+            ),
+            NativeToolReturnPart(
+                tool_name='web_search',
+                content=[{'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}],
+                tool_call_id='web-search-call-1',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_details={'raw_tool_response': {'search_suggestions': '<style>chip</style>'}},
+            ),
+        ]
+    )
+
+
+async def test_gemini_response_uses_grounding_sources_with_explicit_web_search_parts():
+    raw_response = _generate_stream_response(
+        'response-1',
+        parts=[
+            {
+                'toolCall': {
+                    'id': 'web-search-call-1',
+                    'toolType': 'GOOGLE_SEARCH_WEB',
+                    'args': {'queries': ['explicit query']},
+                }
+            },
+            {
+                'toolResponse': {
+                    'id': 'web-search-call-1',
+                    'toolType': 'GOOGLE_SEARCH_WEB',
+                    'response': {'search_suggestions': '<style>chip</style>'},
+                }
+            },
+        ],
+        grounding_metadata={
+            'webSearchQueries': ['metadata query'],
+            'groundingChunks': [{'web': {'uri': 'https://metadata.example/', 'title': 'Metadata source'}}],
+        },
+        finish_reason=GoogleFinishReason.STOP,
+    )
+    candidates = cast(list[Candidate], raw_response.candidates)
+    candidate = candidates[0]
+    content = cast(Content, candidate.content)
+    parts = cast(list[Part], content.parts)
+
+    response = _process_response_from_parts(
+        parts,
+        cast(Any, candidate.grounding_metadata),
+        'gemini-3-flash-preview',
+        'google',
+        'https://generativelanguage.googleapis.com/',
+        RequestUsage(),
+        raw_response.response_id,
+    )
+
+    assert response.parts == snapshot(
+        [
+            NativeToolCallPart(
+                tool_name='web_search',
+                args={'queries': ['explicit query']},
+                tool_call_id='web-search-call-1',
+                provider_name='google',
+            ),
+            NativeToolReturnPart(
+                tool_name='web_search',
+                content=[{'domain': None, 'title': 'Metadata source', 'uri': 'https://metadata.example/'}],
+                tool_call_id='web-search-call-1',
+                timestamp=IsDatetime(),
+                provider_name='google',
+                provider_details={'raw_tool_response': {'search_suggestions': '<style>chip</style>'}},
+            ),
+        ]
+    )
+
+
 async def _cleanup_file_search_store(store: Any, client: Any) -> None:  # pragma: lax no cover
     """Helper function to clean up a file search store if it exists."""
     if store is not None and store.name is not None:
         await client.aio.file_search_stores.delete(name=store.name, config={'force': True})
+
+
+def _gemini_streamed_response_from_chunks(
+    chunks: list[GenerateContentResponse], *, model_request_parameters: ModelRequestParameters
+) -> GeminiStreamedResponse:
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        for chunk in chunks:
+            yield chunk
+
+    return GeminiStreamedResponse(
+        model_request_parameters=model_request_parameters,
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(response_iterator())),
+        _timestamp=IsDatetime(),
+        _provider_name='google',
+        _provider_url='https://generativelanguage.googleapis.com/',
+    )
+
+
+def _generate_stream_response(
+    response_id: str,
+    *,
+    parts: list[dict[str, Any]] | None = None,
+    grounding_metadata: dict[str, Any] | None = None,
+    finish_reason: GoogleFinishReason | None = None,
+) -> GenerateContentResponse:
+    candidate: dict[str, Any] = {'content': {'role': 'model', 'parts': parts or []}}
+    if grounding_metadata is not None:
+        candidate['groundingMetadata'] = grounding_metadata
+    if finish_reason is not None:
+        candidate['finishReason'] = finish_reason
+
+    return GenerateContentResponse.model_validate(
+        {
+            'responseId': response_id,
+            'modelVersion': 'gemini-test',
+            'usageMetadata': {
+                'promptTokenCount': 0,
+                'candidatesTokenCount': 0,
+            },
+            'candidates': [candidate],
+        }
+    )
 
 
 def _generate_response_with_texts(response_id: str, texts: list[str]) -> GenerateContentResponse:

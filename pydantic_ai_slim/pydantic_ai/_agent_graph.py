@@ -1179,7 +1179,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 tool_calls: list[_messages.ToolCallPart] = []
                 files: list[_messages.BinaryContent] = []
 
-                for part in self.model_response.parts:
+                for index, part in enumerate(self.model_response.parts):
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.ToolCallPart):
@@ -1187,9 +1187,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.FilePart):
                         files.append(part.content)
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
-                        text = ''
+                        if _has_text_part_after(self.model_response.parts, index):
+                            # Text parts before a built-in tool call are essentially thoughts,
+                            # not part of the final result output, so we reset the accumulated text.
+                            # If the native tool pair trails all text, it is provider metadata for
+                            # the already-streamed output and should not erase that output.
+                            text = ''
                         yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.NativeToolReturnPart):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
@@ -1307,13 +1310,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         for message in reversed(message_history):
             if isinstance(message, _messages.ModelResponse):
                 text = ''
-                for part in message.parts:
+                for index, part in enumerate(message.parts):
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text.
-                        text = ''  # pragma: no cover
+                        if _has_text_part_after(message.parts, index):
+                            # Text parts before a built-in tool call are essentially thoughts,
+                            # not part of the final result output, so we reset the accumulated text.
+                            text = ''  # pragma: no cover
                 if text:
                     return text
         return None
@@ -2170,6 +2174,10 @@ def _narrow_tool_call_parts(
         else:
             new_parts.append(part)
     return replace(response, parts=new_parts) if changed else response
+
+
+def _has_text_part_after(parts: Sequence[_messages.ModelResponsePart], index: int) -> bool:
+    return any(isinstance(part, _messages.TextPart) for part in parts[index + 1 :])
 
 
 def _first_run_id_index(messages: list[_messages.ModelMessage], run_id: str) -> int:

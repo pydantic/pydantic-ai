@@ -12,7 +12,7 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from pydantic import BaseModel
@@ -35,7 +35,7 @@ from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsDatetime, IsStr, try_import
+from ...conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
@@ -314,13 +314,14 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',
-                        content={
-                            'search_suggestions': IsStr(),
-                        },
+                        content=cast(Any, IsInstance(list)),
                         tool_call_id='d6vd9r5q',
                         timestamp=IsDatetime(),
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'raw_tool_response': {'search_suggestions': IsStr()},
+                            'thought_signature': IsStr(),
+                        },
                     ),
                     TextPart(
                         content="""\
@@ -668,13 +669,14 @@ async def test_native_output_with_function_and_builtin_tools(
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',
-                        content={
-                            'search_suggestions': IsStr(),
-                        },
+                        content=cast(Any, IsInstance(list)),
                         tool_call_id='ccnih13d',
                         timestamp=IsDatetime(),
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'raw_tool_response': {'search_suggestions': IsStr()},
+                            'thought_signature': IsStr(),
+                        },
                     ),
                     TextPart(
                         content="""\
@@ -732,13 +734,14 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',
-                        content={
-                            'search_suggestions': IsStr(),
-                        },
+                        content=cast(Any, IsInstance(list)),
                         tool_call_id='0yzlft9k',
                         timestamp=IsDatetime(),
                         provider_name='google',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'raw_tool_response': {'search_suggestions': IsStr()},
+                            'thought_signature': IsStr(),
+                        },
                     ),
                     TextPart(
                         content="""\
