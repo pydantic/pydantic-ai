@@ -768,6 +768,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` are dropped unless
           `preserve_file_data=True`. With it, files round-trip via a sidecar `ActivityMessage` and reload
           as a list `[text, *files]` (text-then-files; original interleaving order between text and files is lost).
+          This applies to history serialization here; during a live streamed run, multimodal tool returns are
+          emitted as text descriptions (e.g. `[File: image/jpeg]`) without the file payload.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 
         Args:
