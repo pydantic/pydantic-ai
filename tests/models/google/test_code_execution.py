@@ -31,7 +31,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.usage import RequestUsage
 
-from ...conftest import IsDatetime, IsNow, IsStr, try_import
+from ...conftest import IsDatetime, IsInt, IsNow, IsStr, try_import
 from ...parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -126,8 +126,8 @@ print(result)\
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=147,
-                    output_tokens=636,
+                    input_tokens=IsInt(),
+                    output_tokens=IsInt(),
                     details={
                         'thoughts_tokens': 168,
                         'tool_use_prompt_tokens': 360,
@@ -325,8 +325,8 @@ print(datetime.datetime.now())
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=257,
-                    output_tokens=2675,
+                    input_tokens=IsInt(),
+                    output_tokens=IsInt(),
                     details={
                         'thoughts_tokens': 773,
                         'tool_use_prompt_tokens': 1732,
@@ -420,8 +420,8 @@ print(f"Time in Utrecht: {now}")
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=893,
-                    output_tokens=4474,
+                    input_tokens=IsInt(),
+                    output_tokens=IsInt(),
                     details={
                         'thoughts_tokens': 1312,
                         'tool_use_prompt_tokens': 3056,

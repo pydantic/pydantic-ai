@@ -793,10 +793,10 @@ def _part_discriminator(v: Any) -> str:
     if isinstance(v, dict):  # pragma: no branch
         if 'text' in v:
             return 'text'
-        elif 'inlineData' in v:
-            return 'inline_data'  # pragma: no cover
-        elif 'fileData' in v:
-            return 'file_data'  # pragma: no cover
+        elif 'inlineData' in v or 'inline_data' in v:
+            return 'inline_data'
+        elif 'fileData' in v or 'file_data' in v:
+            return 'file_data'
         elif 'thought' in v:
             return 'thought'
         elif 'functionCall' in v or 'function_call' in v:
