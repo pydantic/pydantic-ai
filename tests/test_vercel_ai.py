@@ -4164,8 +4164,11 @@ async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_pa
     'data_payload',
     [
         pytest.param({'type': 'Buffer', 'data': 'not-a-list'}, id='buffer-envelope-non-list-data'),
+        pytest.param({'type': 'Buffer', 'data': [256]}, id='buffer-envelope-out-of-range-int'),
         pytest.param({'0': 1, '2': 3}, id='uint8array-non-contiguous-indices'),
         pytest.param({'0': 'a'}, id='uint8array-non-int-values'),
+        pytest.param({'00': 5, '1': 6}, id='uint8array-non-canonical-key'),
+        pytest.param({'0': 256}, id='uint8array-out-of-range-value'),
     ],
 )
 async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_through(data_payload: Any):

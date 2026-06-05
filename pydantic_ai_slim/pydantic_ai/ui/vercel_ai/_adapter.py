@@ -957,22 +957,26 @@ def _coerce_js_binary_data(value: Any) -> Any:
 
 
 def _js_binary_to_bytes(data: Any) -> Any:
-    """Map a JS-serialized `Uint8Array`/`Buffer` shape to `bytes`; pass through other values."""
+    """Map a JS-serialized `Uint8Array`/`Buffer` shape to `bytes`; pass through other values.
+
+    Any shape that isn't a canonical, in-range byte sequence is passed through unchanged so that
+    `tool_return_content_ta` surfaces a clean `ValidationError`, rather than this helper raising
+    `KeyError`/`ValueError` on malformed client input.
+    """
     if not isinstance(data, dict):
         return data
     mapping: dict[str, Any] = data  # pyright: ignore[reportUnknownVariableType]
     # Node Buffer: `{'type': 'Buffer', 'data': [N, ...]}`
     if mapping.get('type') == 'Buffer':
         buf_data: Any = mapping.get('data')
-        if isinstance(buf_data, list) and all(isinstance(b, int) for b in buf_data):  # pyright: ignore[reportUnknownVariableType]
+        if isinstance(buf_data, list) and all(isinstance(b, int) and 0 <= b <= 255 for b in buf_data):  # pyright: ignore[reportUnknownVariableType]
             return bytes(buf_data)  # pyright: ignore[reportUnknownArgumentType]
-    # Uint8Array via `JSON.stringify`: `{'0': N, '1': N, ...}`
-    if mapping and all(k.isdigit() for k in mapping):
-        indices = sorted(int(k) for k in mapping)
-        if indices == list(range(len(indices))):
-            values: list[Any] = [mapping[str(i)] for i in indices]
-            if all(isinstance(v, int) for v in values):
-                return bytes(values)
+    # Uint8Array via `JSON.stringify`: `{'0': N, '1': N, ...}`. Require canonical contiguous keys
+    # (`'0'..'n-1'`) so non-canonical keys like `'00'` pass through instead of raising `KeyError`.
+    if mapping and all(str(i) in mapping for i in range(len(mapping))):
+        values: list[Any] = [mapping[str(i)] for i in range(len(mapping))]
+        if all(isinstance(v, int) and 0 <= v <= 255 for v in values):
+            return bytes(values)
     return data  # pyright: ignore[reportUnknownVariableType]
 
 
