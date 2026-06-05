@@ -876,12 +876,12 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
 
 
-_ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
+_ToolReturnValueT = TypeVar('_ToolReturnValueT', default='ToolReturnContent')
 """Type variable for the return value type in `ToolReturn[T]`.
 
-When `ToolReturn` is used without a type parameter (bare `ToolReturn`), this defaults to `Any`,
-meaning no return schema is generated. When specified (e.g. `ToolReturn[User]`), the return
-schema is generated from the inner type.
+When `ToolReturn` is used without a type parameter (bare `ToolReturn`), this defaults to
+`ToolReturnContent`, meaning no return schema is generated. When specified
+(e.g. `ToolReturn[User]`), the return schema is generated from the inner type.
 """
 
 
@@ -894,7 +894,7 @@ class ToolReturn(Generic[_ToolReturnValueT]):
     - `ToolReturn` (bare) — no return schema generated
     """
 
-    return_value: ToolReturnContent
+    return_value: _ToolReturnValueT
     """The return value to be used in the tool response."""
 
     _: KW_ONLY
