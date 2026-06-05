@@ -17646,8 +17646,6 @@ class TestStreamingOutputHooks:
 
         hook_calls: list[tuple[str, bool]] = []
 
-        hook_calls: list[tuple[str, bool]] = []
-
         async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
             # Stream the JSON response in chunks
             yield {0: DeltaToolCall(name='final_result', json_args='{"val')}

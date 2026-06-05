@@ -9,7 +9,7 @@ This module uses a custom HTTP implementation. The recommended `GoogleModel` in
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,7 +22,6 @@ from httpx import USE_CLIENT_DEFAULT, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
@@ -49,6 +48,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -192,7 +192,7 @@ class GeminiModel(Model[httpx.AsyncClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -222,7 +222,7 @@ class GeminiModel(Model[httpx.AsyncClient]):
         streamed: bool,
         model_settings: GeminiModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncIterator[HTTPResponse]:
+    ) -> AsyncGenerator[HTTPResponse]:
         tools = self._get_tools(model_request_parameters)
         tool_config = self._get_tool_config(model_request_parameters, tools)
         sys_prompt_parts, contents = await self._message_to_gemini_content(messages, model_request_parameters)

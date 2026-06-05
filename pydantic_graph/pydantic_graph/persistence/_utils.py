@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -56,7 +56,7 @@ def now_utc() -> datetime:
 
 
 @contextmanager
-def set_nodes_type_context(nodes: Sequence[type[BaseNode[Any, Any, Any]]]) -> Iterator[None]:
+def set_nodes_type_context(nodes: Sequence[type[BaseNode[Any, Any, Any]]]) -> Generator[None]:
     token = nodes_type_context.set(nodes)
     try:
         yield

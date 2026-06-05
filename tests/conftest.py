@@ -7,7 +7,7 @@ import os
 import re
 import secrets
 import sys
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -344,7 +344,7 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
 
 
 @contextmanager
-def try_import() -> Iterator[Callable[[], bool]]:
+def try_import() -> Generator[Callable[[], bool]]:
     import_success = False
 
     def check_import() -> bool:

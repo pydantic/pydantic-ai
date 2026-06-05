@@ -4759,7 +4759,7 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
             model_settings: models.ModelSettings | None,
             model_request_parameters: models.ModelRequestParameters,
             run_context: RunContext[None] | None = None,
-        ) -> AsyncIterator[models.StreamedResponse]:
+        ) -> AsyncGenerator[models.StreamedResponse]:
             async with super().request_stream(
                 messages,
                 model_settings,
