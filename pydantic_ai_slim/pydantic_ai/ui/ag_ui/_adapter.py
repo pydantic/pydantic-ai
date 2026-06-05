@@ -483,6 +483,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 ' must have a non-empty tool_call_id.'
                             )
                         bucket = pending_tool_files.setdefault(sidecar_tool_call_id, [])
+                        # No JS-binary coercion here (unlike the Vercel adapter's `_coerce_js_binary_data`):
+                        # this sidecar only ever carries items produced by our own `multi_modal_content_ta`
+                        # dump, so `BinaryContent.data` is always base64. The Vercel path needs coercion
+                        # because its tool `output` is authored by frontend tools that may emit raw
+                        # `Uint8Array`/`Buffer` JSON shapes.
                         for raw in activity_content.get('files', []):
                             item = multi_modal_content_ta.validate_python(raw)
                             # Narrow `BinaryContent` with an image media type to `BinaryImage` so round

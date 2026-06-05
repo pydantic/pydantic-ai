@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 import pytest
+from pydantic import ValidationError
 
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._run_context import RunContext
@@ -4171,8 +4172,6 @@ async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_th
     """Unrecognized binary `data` shapes pass through `_js_binary_to_bytes` unchanged so
     pydantic surfaces a clean `ValidationError` rather than the helper raising
     `KeyError`/`TypeError` on malformed input."""
-    from pydantic import ValidationError
-
     ui_messages: list[UIMessage] = [
         UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
         UIMessage(
@@ -4216,6 +4215,33 @@ async def test_adapter_tool_return_text_only_unchanged():
         p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
     ]
     assert tool_returns[0].content == 'just a string'
+
+
+async def test_adapter_tool_return_none_serializes_as_null():
+    """A `None` tool return serializes as `null` on the Vercel wire and round-trips back to `None`.
+
+    Pins the behavior change from dumping `part.content` directly: the previous
+    `model_response_object()` path wrapped `None` as `{}`. Per the version policy, the exact
+    wire shape of an undocumented serialization is not a stability surface (see PR #4191 for
+    precedent on changing tool-return deserialization output shape as an ordinary fix).
+    """
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='Search')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search', tool_call_id='tc-1', args={})]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='search', tool_call_id='tc-1', content=None)]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assistant = next(m for m in ui_messages if m.role == 'assistant')
+    tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
+
+    assert tool_part.output is None
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns[0].content is None
 
 
 async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage):
@@ -6013,6 +6039,43 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
     preserved_part = preserved[0].parts[0]
     assert isinstance(preserved_part, UserPromptPart)
     assert any(isinstance(item, UploadedFile) for item in preserved_part.content)
+
+
+async def test_adapter_drops_non_http_scheme_from_rehydrated_tool_return():
+    """A non-HTTP `FileUrl` rehydrated from a client tool `output` is dropped by the sanitizer.
+
+    `_validate_tool_output` rehydrates `{'kind': 'image-url', 'url': 's3://...'}` into an `ImageUrl`
+    tool return; the shared `sanitize_messages` chokepoint then drops it (content -> `None`) because
+    `s3` isn't in `allowed_file_url_schemes`, blocking server-side IAM-fetch SSRF through the new path.
+    """
+    ui_messages = [
+        UIMessage(id='m1', role='user', parts=[TextUIPart(text='get the logo')]),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_logo',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output={'kind': 'image-url', 'url': 's3://private-bucket/logo.png'},
+                )
+            ],
+        ),
+    ]
+    run_input = SubmitMessage(trigger='submit-message', id='req_1', messages=ui_messages)
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    loaded_return = next(p for m in loaded for p in m.parts if isinstance(p, ToolReturnPart))
+    assert loaded_return.content == ImageUrl(url='s3://private-bucket/logo.png')
+
+    adapter = VercelAIAdapter(agent=agent, run_input=run_input)
+    with pytest.warns(UserWarning, match=r"scheme\(s\) \['s3'\]"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    sanitized_return = next(p for m in sanitized for p in m.parts if isinstance(p, ToolReturnPart))
+    assert sanitized_return.content is None
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
