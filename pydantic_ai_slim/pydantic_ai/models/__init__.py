@@ -1322,14 +1322,18 @@ class StreamedResponse(ABC):
         raised when the underlying connection is torn down, even if
         `close_stream()` itself raises.
 
-        Does nothing if the stream was already fully consumed
-        (`self._finished` is `True`) — a defensive `cancel()` after a
-        successful run must not flip `response.state` from `'complete'` to
-        `'interrupted'` (fixes https://github.com/pydantic/pydantic-ai/issues/5782).
+        Skips `close_stream()` when the stream was already fully consumed
+        (`self._finished` is `True`): there is no live connection left to tear
+        down. `get()` reports a finished stream as `'complete'` regardless of
+        `_cancelled`, so a defensive `cancel()` after a successful run records
+        the flag without downgrading `response.state` to `'interrupted'`
+        (https://github.com/pydantic/pydantic-ai/issues/5782).
         """
-        if self.cancelled or self._finished:
+        if self.cancelled:
             return
         self._cancelled = True
+        if self._finished:
+            return
         await self.close_stream()
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
@@ -1372,10 +1376,10 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
-        if self._cancelled:
-            state: ModelResponseState = 'interrupted'
-        elif self._finished:
-            state = 'complete'
+        if self._finished:
+            state: ModelResponseState = 'complete'
+        elif self._cancelled:
+            state = 'interrupted'
         else:
             state = 'incomplete'
         return ModelResponse(
