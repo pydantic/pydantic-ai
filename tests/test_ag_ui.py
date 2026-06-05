@@ -57,7 +57,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -4847,6 +4847,32 @@ async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
 
 
 @pytestmark_interrupts
+async def test_run_finished_interrupt_outcome_carries_metadata() -> None:
+    """Per-call `DeferredToolRequests.metadata` surfaces on `Interrupt.metadata`.
+
+    A tool raising `ApprovalRequired(metadata=...)` attaches metadata keyed by `tool_call_id`;
+    the adapter must forward it so a frontend can render context-specific approval UI.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def delete_file(path: str) -> str:
+        raise ApprovalRequired(metadata={'risk': 'high', 'scope': 'filesystem'})
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete .env')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['metadata'] == snapshot({'risk': 'high', 'scope': 'filesystem'})
+
+
+@pytestmark_interrupts
 async def test_resume_resolved_approves_tool() -> None:
     """`status='resolved'` + `payload.approved=True` → `ToolApproved()` for the bound tool call."""
     agent = Agent(model=TestModel())
@@ -4998,6 +5024,32 @@ async def test_resume_unknown_interrupt_id_prefix_raises() -> None:
 
     with pytest.raises(UserError, match=r'does not start with the expected'):
         _ = adapter.deferred_tool_results
+
+
+@pytestmark_interrupts
+async def test_resume_well_formed_but_nonexistent_interrupt_id_is_noop() -> None:
+    """A well-formed `int-` id that binds to no pending approval is accepted, not an error.
+
+    Unlike a missing prefix (which raises `UserError`), a correctly-prefixed id that matches no
+    pending call maps to its own stripped `tool_call_id` — never to a different pending call — so
+    the agent simply finds no call to resolve and the entry is a harmless no-op.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-does-not-exist', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-does-not-exist': ToolApproved()})
+    )
 
 
 @pytestmark_interrupts
