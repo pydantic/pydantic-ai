@@ -1235,9 +1235,10 @@ def test_tool_return_part_in_model_response_round_trips():
     """`ToolReturnPart` inside a `ModelResponse` must survive serialization round-trip.
 
     Regression test for #5721: the `ModelResponsePart` discriminated union omitted the
-    base `ToolReturnPart` (`part_kind='tool-return'`), so `_agent_graph` parts persisted
-    inside a `ModelResponse` (resumed runs, durable workflows, AG-UI/Vercel adapters)
-    failed to deserialize with a `union_tag_invalid` `ValidationError`.
+    base `ToolReturnPart` (`part_kind='tool-return'`), so a user-constructed `ModelResponse`
+    carrying one failed to deserialize with a `union_tag_invalid` `ValidationError`. (A normal
+    agent run never puts a base `ToolReturnPart` on a `ModelResponse` — tool returns go on a
+    `ModelRequest` — so this is reachable only via persisted, user-built response history.)
     """
     msg = ModelResponse(
         parts=[
