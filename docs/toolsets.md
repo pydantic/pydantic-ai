@@ -366,9 +366,9 @@ _(This example is complete, it can be run "as is")_
 
 ### Dynamic Tool Definitions {#preparing-tool-definitions}
 
-[`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the  agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns a list of modified `ToolDefinition`s.
+[`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns the tool definitions to expose for that step.
 
-This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets.
+This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets, following the same return-value rules.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
@@ -958,3 +958,20 @@ toolset = ACIToolset(
 
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
+
+### pydantic-ai-ejentum {#ejentum-tools}
+
+[`pydantic-ai-ejentum`](https://pypi.org/project/pydantic-ai-ejentum/) wraps the [Ejentum Reasoning Harness](https://ejentum.com) as a `FunctionToolset` subclass. `EjentumToolset` registers four agent-callable tools (`harness_reasoning`, `harness_code`, `harness_anti_deception`, `harness_memory`). The agent calls one before generating; each call returns a structured cognitive scaffold (named failure pattern, executable procedure, suppression vectors, falsification test) that the model reads internally to shape its next response.
+
+You will need to install the `pydantic-ai-ejentum` package and set your Ejentum API key in the `EJENTUM_API_KEY` environment variable (free and paid tiers at <https://ejentum.com/pricing>), or pass `api_key=` to the constructor.
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_ejentum import EjentumToolset
+
+toolset = EjentumToolset()
+
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+```
+
+The toolset emits PydanticAI `instructions` that nudge the agent to call the matching `harness_*` tool before generating. Pass `add_instructions=False` to suppress and supply routing guidance from your own system prompt.

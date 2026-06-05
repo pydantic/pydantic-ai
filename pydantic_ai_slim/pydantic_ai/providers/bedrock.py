@@ -178,7 +178,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # These Opus models support structured output on the direct Anthropic API but are not listed
     # in the Bedrock Runtime structured-output docs:
     # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = ('claude-opus-4-1', 'claude-opus-4-7')
+    bedrock_structured_output_unsupported = ('claude-opus-4-1', 'claude-opus-4-7', 'claude-opus-4-8')
     downstream = anthropic_model_profile(model_name)
     # Read anthropic_* capability flags before update() strips them: ModelProfile.update()
     # only copies fields that exist on self, so anthropic-prefixed fields would be lost.
@@ -249,10 +249,13 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
     models_that_support_structured_output = ('qwen3',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
+    # Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3 — no disable value.
+    supports_reasoning = 'qwq' in model_name or 'qwen3' in model_name
     return replace(
         BedrockModelProfile(
             bedrock_thinking_variant='qwen',
-            supports_thinking='qwq' in model_name or 'qwen3' in model_name,
+            supports_thinking=supports_reasoning,
+            thinking_always_enabled=supports_reasoning,
         ).update(_without_builtin_tools(qwen_model_profile(model_name))),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
@@ -349,9 +352,11 @@ class BedrockProvider(Provider[BaseClient]):
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
             'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            # Converse rejects `reasoning_effort='none'` — mark always-on.
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,
+                thinking_always_enabled=True,
             ),
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,

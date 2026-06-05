@@ -1,18 +1,20 @@
 interactions:
 - request:
     body: '{"messages": [{"role": "user", "content": [{"text": "Tell me about Paris"}]}], "system": [], "inferenceConfig":
-      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
-      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "title": "CityInfo", "type": "object"}},
-      "description": "The final response which ends this conversation"}}], "toolChoice": {"tool": {"name": "final_result"}}}}'
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"additionalProperties": false,
+      "properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}, "description": "Get the current
+      weather for a city."}}, {"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"city": {"type":
+      "string"}, "summary": {"type": "string"}}, "required": ["city", "summary"], "type": "object"}}, "description": "The
+      final response which ends this conversation"}}], "toolChoice": {"tool": {"name": "final_result"}}}}'
     headers:
       amz-sdk-invocation-id:
       - !!binary |
-        MGMxNjVkZDctODVhZi00N2IwLWE4YWMtZDk0OWM5MzZhMzA3
+        MGQzYmEyNmQtNzdmOS00OThlLWFkYzUtMWIwZDU2YWZlNzNk
       amz-sdk-request:
       - !!binary |
         YXR0ZW1wdD0x
       content-length:
-      - '472'
+      - '686'
       content-type:
       - !!binary |
         YXBwbGljYXRpb24vanNvbg==
@@ -23,32 +25,29 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1704'
+      - '1449'
       content-type:
       - application/json
     parsed_body:
       metrics:
-        latencyMs: 5796
+        latencyMs: 5822
       output:
         message:
           content:
           - toolUse:
               input:
                 city: Paris
-                summary: |-
-                  Paris is the capital and most populous city of France, located in the north-central part of the country along the Seine River. Known as the "City of Light" (La Ville Lumière), Paris is one of the world's most iconic cities, renowned for its art, culture, fashion, gastronomy, and history.
-
-                  Key highlights include:
-                  - Famous landmarks: The Eiffel Tower, Notre-Dame Cathedral, Arc de Triomphe, and Sacré-Cœur
-                  - World-class museums: The Louvre (home to the Mona Lisa), Musée d'Orsay, and Centre Pompidou
-                  - Culture: A global center for art, fashion, and cuisine, with countless cafés, restaurants, and boutiques
-                  - History: Over 2,000 years old, with rich architectural heritage spanning from Roman times to modern era
-                  - Districts: Divided into 20 arrondissements, each with its own character, including the artistic Montmartre, fashionable Marais, and elegant Champs-Élysées
-                  - Population: Approximately 2.2 million in the city proper, over 12 million in the metropolitan area
-
-                  Paris remains one of the most visited cities in the world, attracting millions of tourists annually who come to experience its romantic atmosphere, exceptional cuisine, and unparalleled cultural offerings.
+                summary: Paris is the capital and most populous city of France, located in the north-central part of the country
+                  along the Seine River. Known as "The City of Light" (La Ville Lumière), Paris is renowned for its art, fashion,
+                  gastronomy, and culture. The city is home to iconic landmarks including the Eiffel Tower, the Louvre Museum
+                  (the world's largest art museum), Notre-Dame Cathedral, the Arc de Triomphe, and the Champs-Élysées. Paris
+                  has been a major center of art, literature, and philosophy for centuries, attracting artists, writers, and
+                  intellectuals from around the world. The city is divided into 20 arrondissements (districts) and is a global
+                  hub for business, diplomacy, fashion, and entertainment. Paris is also famous for its café culture, haute
+                  cuisine, wine, and pastries. With its beautiful architecture, charming neighborhoods like Montmartre and
+                  Le Marais, and romantic atmosphere, Paris remains one of the world's most visited cities.
               name: final_result
-              toolUseId: tooluse_DfmFByjFR5ykvvsjXzbBnw
+              toolUseId: tooluse_MbWBfVhW4qQWxyETq2Gtp6
               type: tool_use
           role: assistant
       stopReason: tool_use
@@ -57,10 +56,10 @@ interactions:
         cacheReadInputTokens: 0
         cacheWriteInputTokenCount: 0
         cacheWriteInputTokens: 0
-        inputTokens: 680
-        outputTokens: 350
+        inputTokens: 734
+        outputTokens: 271
         serverToolUsage: {}
-        totalTokens: 1030
+        totalTokens: 1005
     status:
       code: 200
       message: OK

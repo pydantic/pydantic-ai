@@ -160,13 +160,15 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         supports_anthropic_cache = provider == 'anthropic'
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
+        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
+        # OpenRouter accepts `reasoning` universally, so the gate should always forward `thinking`.
         return OpenRouterModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_chat_send_back_thinking_parts='field',
             openai_chat_thinking_field='reasoning',
             openai_chat_supports_file_urls=True,
             openai_chat_supports_web_search=True,
+            supports_thinking=True,
             openrouter_supports_cache_control=supports_cache_control,
             openrouter_supports_cache_ttl=supports_anthropic_cache,
             openrouter_supports_tool_cache=supports_anthropic_cache,
