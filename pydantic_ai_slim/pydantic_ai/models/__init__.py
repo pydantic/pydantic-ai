@@ -1367,10 +1367,10 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
-        if self._cancelled:
-            state: ModelResponseState = 'interrupted'
-        elif self._finished:
-            state = 'complete'
+        if self._finished:
+            state: ModelResponseState = 'complete'
+        elif self._cancelled:
+            state = 'interrupted'
         else:
             state = 'incomplete'
         return ModelResponse(
