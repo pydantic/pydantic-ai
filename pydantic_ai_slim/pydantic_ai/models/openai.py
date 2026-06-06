@@ -3083,12 +3083,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
                             f'Expected `provider_name` to be `{self.system!r}`.'
                         )
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_id=item.file_id,
-                        )
-                    )
+                    content.append(OpenAIResponsesModel._map_uploaded_file_to_response_input(item))
                 elif isinstance(item, CachePoint):
                     pass
                 elif is_multi_modal_content(item):
@@ -3096,6 +3091,30 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
         return responses.EasyInputMessageParam(role='user', content=content)
+
+    @staticmethod
+    def _map_uploaded_file_to_response_input(
+        item: UploadedFile,
+    ) -> responses.ResponseInputImageParam | responses.ResponseInputFileParam:
+        if item.media_type.startswith('image/'):
+            detail: Literal['auto', 'low', 'high'] = 'auto'
+            if metadata := item.vendor_metadata:
+                detail = metadata.get('detail', 'auto')
+            return responses.ResponseInputImageParam(type='input_image', file_id=item.file_id, detail=detail)
+
+        return responses.ResponseInputFileParam(type='input_file', file_id=item.file_id)
+
+    @staticmethod
+    def _map_uploaded_file_to_response_output_content(
+        item: UploadedFile,
+    ) -> ResponseInputImageContentParam | ResponseInputFileContentParam:
+        if item.media_type.startswith('image/'):
+            detail: Literal['auto', 'low', 'high'] = 'auto'
+            if metadata := item.vendor_metadata:
+                detail = metadata.get('detail', 'auto')
+            return ResponseInputImageContentParam(type='input_image', file_id=item.file_id, detail=detail)
+
+        return ResponseInputFileContentParam(type='input_file', file_id=item.file_id)
 
     @staticmethod
     async def _map_file_to_response_content(
@@ -3170,12 +3189,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         for item in part.content_items(mode='str'):
             if isinstance(item, UploadedFile):
-                output.append(
-                    ResponseInputFileContentParam(
-                        type='input_file',
-                        file_id=item.file_id,
-                    )
-                )
+                output.append(OpenAIResponsesModel._map_uploaded_file_to_response_output_content(item))
             elif is_multi_modal_content(item):
                 output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
             elif isinstance(item, str):  # pragma: no branch
