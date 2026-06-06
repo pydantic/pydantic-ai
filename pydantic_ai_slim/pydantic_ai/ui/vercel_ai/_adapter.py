@@ -151,7 +151,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-        preserve_file_data: bool = False,
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters."""
@@ -163,7 +162,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
-            preserve_file_data=preserve_file_data,
             **kwargs,
         )
 
@@ -193,7 +191,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-        preserve_file_data: bool = False,
         **kwargs: Any,
     ) -> Response:
         """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
@@ -220,7 +217,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
-            preserve_file_data=preserve_file_data,
             **kwargs,
         )
 
@@ -280,6 +276,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, FileUIPart):
                         try:
                             file = BinaryContent.from_data_uri(part.url)
+                            provider_meta = load_provider_metadata(part.provider_metadata)
+                            if vendor_metadata := provider_meta.get('vendor_metadata'):
+                                file.vendor_metadata = vendor_metadata
                         except ValueError:
                             # Check provider_metadata for UploadedFile data
                             provider_meta = load_provider_metadata(part.provider_metadata)
@@ -294,16 +293,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     identifier=provider_meta.get('identifier'),
                                 )
                             else:
+                                vendor_metadata = provider_meta.get('vendor_metadata')
                                 media_type_prefix = part.media_type.split('/', 1)[0]
                                 match media_type_prefix:
                                     case 'image':
-                                        file = ImageUrl(url=part.url, media_type=part.media_type)
+                                        file = ImageUrl(url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata)
                                     case 'video':
-                                        file = VideoUrl(url=part.url, media_type=part.media_type)
+                                        file = VideoUrl(url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata)
                                     case 'audio':
-                                        file = AudioUrl(url=part.url, media_type=part.media_type)
+                                        file = AudioUrl(url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata)
                                     case _:
-                                        file = DocumentUrl(url=part.url, media_type=part.media_type)
+                                        file = DocumentUrl(url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata)
                         user_prompt_content.append(file)
                     elif isinstance(part, DataUIPart):
                         # Contains custom data that shouldn't be sent to the model
@@ -890,9 +890,15 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
             elif isinstance(item, TextContent):
                 ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):
-                ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
+                provider_metadata = dump_provider_metadata(vendor_metadata=item.vendor_metadata)
+                ui_parts.append(
+                    FileUIPart(url=item.data_uri, media_type=item.media_type, provider_metadata=provider_metadata)
+                )
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
-                ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
+                provider_metadata = dump_provider_metadata(vendor_metadata=item.vendor_metadata)
+                ui_parts.append(
+                    FileUIPart(url=item.url, media_type=item.media_type, provider_metadata=provider_metadata)
+                )
             elif isinstance(item, UploadedFile):
                 # Store uploaded file info in provider_metadata for round-trip support
                 provider_metadata = dump_provider_metadata(
