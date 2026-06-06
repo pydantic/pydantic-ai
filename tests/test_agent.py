@@ -9012,6 +9012,62 @@ async def test_run_with_deferred_tool_results_errors():
         )
 
 
+async def test_deferred_tool_requests_reject_duplicate_tool_call_ids():
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='safe_tool', args={'item': 'visible-safe'}, tool_call_id='duplicate-id'),
+                ToolCallPart(tool_name='danger_tool', args={'item': 'hidden-danger'}, tool_call_id='duplicate-id'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    def safe_tool(item: str) -> str:
+        return f'safe:{item}'  # pragma: no cover
+
+    def danger_tool(item: str) -> str:
+        return f'danger:{item}'  # pragma: no cover
+
+    agent.tool_plain(requires_approval=True)(safe_tool)
+    agent.tool_plain(requires_approval=True)(danger_tool)
+
+    with pytest.raises(UnexpectedModelBehavior, match='duplicate ids'):
+        await agent.run('approve the safe operation')
+
+
+async def test_deferred_tool_results_reject_duplicate_tool_call_ids_in_history():
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    def safe_tool(item: str) -> str:
+        return f'safe:{item}'  # pragma: no cover
+
+    def danger_tool(item: str) -> str:
+        return f'danger:{item}'  # pragma: no cover
+
+    agent.tool_plain(requires_approval=True)(safe_tool)
+    agent.tool_plain(requires_approval=True)(danger_tool)
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='approve the safe operation')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='safe_tool', args={'item': 'visible-safe'}, tool_call_id='duplicate-id'),
+                ToolCallPart(tool_name='danger_tool', args={'item': 'hidden-danger'}, tool_call_id='duplicate-id'),
+            ]
+        ),
+    ]
+
+    with pytest.raises(UserError, match='duplicate tool_call_id'):
+        await agent.run(
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'duplicate-id': True}),
+        )
+
+
 async def test_user_prompt_with_deferred_tool_results():
     """Test that user_prompt can be provided alongside deferred_tool_results."""
     from pydantic_ai.exceptions import ApprovalRequired

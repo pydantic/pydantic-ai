@@ -243,6 +243,17 @@ def is_agent_node(
     return isinstance(node, AgentNode)
 
 
+def _duplicate_tool_call_ids(calls: Sequence[_messages.ToolCallPart]) -> list[str]:
+    """Return duplicate tool call ids while preserving first duplicate order."""
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for call in calls:
+        if call.tool_call_id in seen and call.tool_call_id not in duplicates:
+            duplicates.append(call.tool_call_id)
+        seen.add(call.tool_call_id)
+    return duplicates
+
+
 @dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
@@ -1684,6 +1695,12 @@ async def process_tool_calls(  # noqa: C901
         calls_to_run.extend(tool_calls_by_kind['external'])
         calls_to_run.extend(tool_calls_by_kind['unapproved'])
 
+        if duplicate_ids := _duplicate_tool_call_ids(calls_to_run):
+            raise exceptions.UserError(
+                'Tool call results cannot be matched unambiguously because the model response contains duplicate '
+                f'tool_call_id values: {duplicate_ids}'
+            )
+
         result_tool_call_ids = set(tool_call_results.keys())
         tool_call_ids_to_run = {call.tool_call_id for call in calls_to_run}
         if tool_call_ids_to_run != result_tool_call_ids:
@@ -1783,6 +1800,12 @@ async def process_tool_calls(  # noqa: C901
                         yield _messages.FunctionToolResultEvent(e.tool_retry)
 
     if not final_result and deferred_calls:
+        duplicate_deferred_ids = _duplicate_tool_call_ids([*deferred_calls['external'], *deferred_calls['unapproved']])
+        if duplicate_deferred_ids:
+            raise exceptions.UnexpectedModelBehavior(
+                f'Deferred tool calls must have unique tool_call_id values; duplicate ids: {duplicate_deferred_ids}'
+            )
+
         deferred_tool_requests: _output.DeferredToolRequests | None = _output.DeferredToolRequests(
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
