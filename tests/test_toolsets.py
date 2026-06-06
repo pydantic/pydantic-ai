@@ -2627,6 +2627,64 @@ def test_set_tool_metadata_capability_with_dict_selector():
     assert 'audited' not in td_b.metadata
 
 
+async def test_set_tool_metadata_skips_framework_tools():
+    """SetToolMetadata must not apply metadata to framework-managed tools (tool_kind is not None).
+
+    Framework tools like `load_capability` (tool_kind='capability-load') are
+    managed by the framework and must remain callable by the model. Applying
+    code_mode or other per-user-tool metadata would hide them from the model
+    and break deferred capability loading.
+    """
+    from pydantic_ai.capabilities import SetToolMetadata
+    from pydantic_ai.tools import ToolDefinition
+    from pydantic_ai.toolsets.abstract import ToolsetTool
+    from pydantic_ai.toolsets.function import FunctionToolset
+
+    def tool_a(x: int) -> int:
+        return x
+
+    ts = FunctionToolset()
+    ts.add_function(tool_a)
+
+    # Simulate a framework tool with tool_kind set
+    framework_def = ToolDefinition(
+        name='load_capability',
+        description='Load a capability',
+        parameters_json_schema={},
+        tool_kind='capability-load',
+    )
+    framework_tool = ToolsetTool(
+        toolset=ts,
+        tool_def=framework_def,
+        max_retries=1,
+        args_validator=None,
+    )
+
+    class ToolsetWithFrameworkTool(FunctionToolset[None]):
+        async def get_tools(self, ctx):
+            tools = await super().get_tools(ctx)
+            tools['load_capability'] = framework_tool
+            return tools
+
+    test_model = TestModel()
+    cap = SetToolMetadata(tools='all', code_mode=True)
+    wrapped = cap.get_wrapper_toolset(ToolsetWithFrameworkTool())
+    agent = Agent(test_model, toolsets=[wrapped])
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+
+    # Framework tool must NOT receive code_mode metadata
+    td_load = next(td for td in params.function_tools if td.name == 'load_capability')
+    assert td_load.metadata is None or td_load.metadata.get('code_mode') is None
+
+    # User tool SHOULD receive code_mode metadata
+    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    assert td_a.metadata is not None
+    assert td_a.metadata['code_mode'] is True
+
+
 async def test_custom_toolset_returning_plain_str_instructions():
     """A custom AbstractToolset returning a plain str from get_instructions is treated as dynamic."""
     from pydantic_ai import Agent

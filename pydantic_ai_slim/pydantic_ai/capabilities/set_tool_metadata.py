@@ -48,6 +48,13 @@ class SetToolMetadata(AbstractCapability[AgentDepsT]):
         async def _set_metadata(ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             resolved: list[ToolDefinition] = []
             for td in tool_defs:
+                # Framework-managed tools (tool_kind is not None, e.g. 'capability-load')
+                # must not receive code_mode or other per-user-tool metadata — wrapping
+                # them hides them from the model and breaks framework behavior such as
+                # deferred capability loading.
+                if td.tool_kind is not None:
+                    resolved.append(td)
+                    continue
                 if await matches_tool_selector(selector, ctx, td):
                     td = replace(td, metadata={**(td.metadata or {}), **metadata})
                 resolved.append(td)
