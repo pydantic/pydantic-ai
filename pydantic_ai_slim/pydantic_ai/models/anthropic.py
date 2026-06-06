@@ -2098,6 +2098,11 @@ def _map_usage(
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
+        if message.message is None:
+            # Bedrock's SDK decoder can drop event types, resulting in
+            # message.message being None. Fall back to existing usage or
+            # an empty default to avoid crashing.
+            return existing_usage or usage.RequestUsage()
         response_usage = message.message.usage
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
@@ -2144,10 +2149,11 @@ class AnthropicStreamedResponse(StreamedResponse):
             async for event in self._response:
                 if isinstance(event, BetaRawMessageStartEvent):
                     self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
-                    self.provider_response_id = event.message.id
-                    if event.message.container:
-                        self.provider_details = self.provider_details or {}
-                        self.provider_details['container_id'] = event.message.container.id
+                    if event.message is not None:
+                        self.provider_response_id = event.message.id
+                        if event.message.container:
+                            self.provider_details = self.provider_details or {}
+                            self.provider_details['container_id'] = event.message.container.id
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
