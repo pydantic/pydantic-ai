@@ -341,6 +341,38 @@ def test_binary_content_base64():
     assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
 
 
+def test_tool_return_binary_content_roundtrip():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_image', content=BinaryContent(data=b'image-data', media_type='image/png'))
+            ]
+        )
+    ]
+
+    payload = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    round_tripped = ModelMessagesTypeAdapter.validate_python(payload)
+
+    part = round_tripped[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert isinstance(part.content, BinaryContent)
+    assert part.content.data == b'image-data'
+    assert part.content.media_type == 'image/png'
+
+
+def test_tool_return_dict_with_kind_roundtrip():
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_data', content={'kind': 'custom', 'value': 'ok'})])
+    ]
+
+    payload = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    round_tripped = ModelMessagesTypeAdapter.validate_python(payload)
+
+    part = round_tripped[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.content == {'kind': 'custom', 'value': 'ok'}
+
+
 def test_from_data_uri_base64():
     bc = BinaryContent.from_data_uri('data:image/png;base64,SGVsbG8sIHdvcmxkIQ==')
     assert bc.data == b'Hello, world!'

@@ -6,7 +6,7 @@ import mimetypes
 import os
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, ItemsView, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import MimeTypes
@@ -867,6 +867,10 @@ MultiModalContent = Annotated[
 # Explicit tuple for readability; validated against MultiModalContent in tests
 MULTI_MODAL_CONTENT_TYPES: tuple[type, ...] = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)
 
+MULTI_MODAL_CONTENT_KINDS = frozenset(
+    {'image-url', 'audio-url', 'document-url', 'video-url', 'binary', 'uploaded-file'}
+)
+
 
 def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
     """Check if obj is a MultiModalContent type, enabling type narrowing."""
@@ -1094,6 +1098,25 @@ else:
     )
 
 
+multi_modal_content_ta: pydantic.TypeAdapter[MultiModalContent] = pydantic.TypeAdapter(
+    MultiModalContent, config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
+)
+
+
+def _restore_multi_modal_content(content: Any) -> Any:
+    if isinstance(content, Mapping):
+        items = cast(ItemsView[str, Any], content.items())
+        content_dict = dict(items)
+        if content_dict.get('kind') in MULTI_MODAL_CONTENT_KINDS:
+            return multi_modal_content_ta.validate_python(content)
+        return {key: _restore_multi_modal_content(value) for key, value in content_dict.items()}
+    elif isinstance(content, Sequence) and not isinstance(content, str):
+        values = cast(Sequence[Any], content)
+        return [_restore_multi_modal_content(value) for value in values]
+    else:
+        return content
+
+
 ToolPartKind: TypeAlias = Literal['tool-search', 'capability-load']
 """Discriminator value for the typed call/return-part subclass associated with a tool.
 
@@ -1151,6 +1174,11 @@ class BaseToolReturnPart:
     - `'failed'`: The tool raised an error during execution.
     - `'denied'`: The tool call was denied by the approval mechanism.
     """
+
+    @pydantic.field_validator('content', mode='before')
+    @classmethod
+    def _validate_content(cls, content: Any) -> Any:
+        return _restore_multi_modal_content(content)
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
         """Split content into non-file and file parts.
