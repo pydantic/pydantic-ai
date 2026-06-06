@@ -143,7 +143,6 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
-
 with workflow.unsafe.imports_passed_through():
     # Workaround for a race condition when running `logfire.info` inside an activity with attributes to serialize and pandas importable:
     # AttributeError: partially initialized module 'pandas' has no attribute '_pandas_parser_CAPI' (most likely due to a circular import)
@@ -166,7 +165,6 @@ pytestmark = [
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal'),
 ]
-
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
@@ -214,7 +212,7 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
-    async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
+    async with await WorkflowEnvironment.start_local(# pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         ui=True,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
@@ -263,6 +261,7 @@ simple_temporal_agent = TemporalAgent(simple_agent, activity_config=BASE_ACTIVIT
 
 @workflow.defn
 class SimpleAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await simple_temporal_agent.run(prompt)
@@ -332,7 +331,7 @@ with warnings.catch_warnings():
         'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
     )
     warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
-    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
+    complex_agent: Agent[Deps, Response] = Agent(# pyright: ignore[reportCallIssue, reportAssignmentType]
         model,
         deps_type=Deps,
         output_type=Response,
@@ -370,6 +369,7 @@ complex_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class ComplexAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str, deps: Deps) -> Response:
         result = await complex_temporal_agent.run(prompt, deps=deps)
@@ -1300,7 +1300,6 @@ async def test_toolset_without_id():
     ):
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
 
-
 # --- DynamicToolset / @agent.toolset tests ---
 
 
@@ -1333,6 +1332,7 @@ dynamic_toolset_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class DynamicToolsetAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str, deps: DynamicToolsetDeps) -> str:
         result = await dynamic_toolset_temporal_agent.run(prompt, deps=deps)
@@ -1363,7 +1363,6 @@ async def test_dynamic_toolset_outside_workflow():
     )
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
 
-
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset with an MCP toolset works with Temporal workflows.
 # Uses MCPServerStreamableHTTP (HTTP-based) rather than subprocess-based MCP servers.
@@ -1392,6 +1391,7 @@ mcp_dynamic_toolset_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class MCPDynamicToolsetAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await mcp_dynamic_toolset_temporal_agent.run(prompt)
@@ -1439,6 +1439,7 @@ mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class MCPToolsetDynamicToolsetAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await mcptoolset_dynamic_toolset_temporal_agent.run(prompt)
@@ -1475,6 +1476,7 @@ async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None
 # model request) keeps it deterministic.
 @workflow.defn
 class ConstructModelInWorkflow:
+
     @workflow.run
     async def run(self, model_name: str) -> str:
         # We assert only that construction succeeds — no request is made.
@@ -1667,6 +1669,7 @@ async def test_temporal_agent_iter(allow_model_requests: None):
 
 @workflow.defn
 class SimpleAgentWorkflowWithRunSync:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = simple_temporal_agent.run_sync(prompt)
@@ -1706,6 +1709,7 @@ temporal_agent_with_sync_history_processor = TemporalAgent(
 
 @workflow.defn
 class AgentWithSyncHistoryProcessorWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await temporal_agent_with_sync_history_processor.run(prompt)
@@ -1749,6 +1753,7 @@ temporal_agent_with_sync_instructions = TemporalAgent(
 
 @workflow.defn
 class AgentWithSyncInstructionsWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await temporal_agent_with_sync_instructions.run(prompt)
@@ -1777,8 +1782,35 @@ async def test_temporal_agent_with_sync_instructions(allow_model_requests: None,
         assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
+async def test_temporal_dynamic_toolset_get_instructions():
+    """TemporalDynamicToolset should route get_instructions through an activity."""
+
+    class InstructionOnlyToolset(AbstractToolset[None]):
+
+        @property
+        def id(self) -> str:
+            return "instruction-only-toolset"
+
+        async def get_instructions(self, ctx):
+            return "SENTINEL_INSTRUCTION"
+
+        async def get_tools(self, ctx):
+            return {}
+
+    agent = Agent("openai:gpt-4o-mini", deps_type=None)
+
+    @agent.toolset(id="dynamic-instruction-toolset", per_run_step=False)
+    def dynamic_toolset(ctx):
+        return InstructionOnlyToolset()
+
+    temporal_agent = TemporalAgent(agent)
+    
+    ...
+
+    
 @workflow.defn
 class SimpleAgentWorkflowWithRunStream:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         async with simple_temporal_agent.run_stream(prompt) as result:
@@ -1809,6 +1841,7 @@ async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None,
 
 @workflow.defn
 class SimpleAgentWorkflowWithRunStreamEvents:
+
     @workflow.run
     async def run(self, prompt: str) -> list[AgentStreamEvent | AgentRunResultEvent]:
         return [event async for event in simple_temporal_agent.run_stream_events(prompt)]
@@ -1837,6 +1870,7 @@ async def test_temporal_agent_run_stream_events_in_workflow(allow_model_requests
 
 @workflow.defn
 class SimpleAgentWorkflowWithIter:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         async with simple_temporal_agent.iter(prompt) as run:
@@ -1875,6 +1909,7 @@ async def simple_event_stream_handler(
 
 @workflow.defn
 class SimpleAgentWorkflowWithEventStreamHandler:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await simple_temporal_agent.run(prompt, event_stream_handler=simple_event_stream_handler)
@@ -1914,6 +1949,7 @@ unregistered_model = OpenAIChatModel(
 
 @workflow.defn
 class SimpleAgentWorkflowWithRunModel:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await simple_temporal_agent.run(prompt, model=unregistered_model)
@@ -1943,6 +1979,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
 
 @workflow.defn
 class SimpleAgentWorkflowWithRunToolsets:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await simple_temporal_agent.run(prompt, toolsets=[FunctionToolset()])
@@ -1972,6 +2009,7 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
 
 @workflow.defn
 class SimpleAgentWorkflowWithOverrideModel:
+
     @workflow.run
     async def run(self, prompt: str) -> None:
         with simple_temporal_agent.override(model=model):
@@ -2001,6 +2039,7 @@ async def test_temporal_agent_override_model_in_workflow(allow_model_requests: N
 
 @workflow.defn
 class SimpleAgentWorkflowWithOverrideToolsets:
+
     @workflow.run
     async def run(self, prompt: str) -> None:
         with simple_temporal_agent.override(toolsets=[FunctionToolset()]):
@@ -2030,6 +2069,7 @@ async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests
 
 @workflow.defn
 class SimpleAgentWorkflowWithOverrideTools:
+
     @workflow.run
     async def run(self, prompt: str) -> None:
         with simple_temporal_agent.override(tools=[get_weather]):
@@ -2059,6 +2099,7 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
 
 @workflow.defn
 class SimpleAgentWorkflowWithOverrideBuiltinTools:
+
     @workflow.run
     async def run(self, prompt: str) -> None:
         with simple_temporal_agent.override(native_tools=[WebSearchTool()]):
@@ -2088,6 +2129,7 @@ async def test_temporal_agent_override_builtin_tools_in_workflow(allow_model_req
 
 @workflow.defn
 class SimpleAgentWorkflowWithOverrideDeps:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         with simple_temporal_agent.override(deps=None):
@@ -2127,6 +2169,7 @@ temporal_agent_with_sync_tool_activity_disabled = TemporalAgent(
 
 @workflow.defn
 class AgentWorkflowWithSyncToolActivityDisabled:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await temporal_agent_with_sync_tool_activity_disabled.run(prompt)
@@ -2174,6 +2217,7 @@ async def test_temporal_agent_mcp_server_activity_disabled(client: Client):
 
 @workflow.defn
 class DirectStreamWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
@@ -2218,6 +2262,7 @@ unserializable_deps_temporal_agent = TemporalAgent(unserializable_deps_agent, ac
 
 @workflow.defn
 class UnserializableDepsAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await unserializable_deps_temporal_agent.run(prompt, deps=unserializable_deps_temporal_agent.model)
@@ -2246,7 +2291,8 @@ async def test_temporal_agent_with_unserializable_deps_type(allow_model_requests
 
 
 async def test_logfire_plugin(client: Client):
-    def setup_logfire(send_to_logfire: bool = True, metrics: Literal[False] | None = None) -> Logfire:
+
+    def setup_logfire(send_to_logfire: bool=True, metrics: Literal[False] | None=None) -> Logfire:
         instance = logfire.configure(local=True, metrics=metrics)
         instance.config.token = 'test'
         instance.config.send_to_logfire = send_to_logfire
@@ -2309,6 +2355,7 @@ hitl_temporal_agent = TemporalAgent(hitl_agent, activity_config=BASE_ACTIVITY_CO
 
 @workflow.defn
 class HitlAgentWorkflow:
+
     def __init__(self):
         self._status: Literal['running', 'waiting_for_results', 'done'] = 'running'
         self._deferred_tool_requests: DeferredToolRequests | None = None
@@ -2499,6 +2546,7 @@ model_retry_temporal_agent = TemporalAgent(model_retry_agent, activity_config=BA
 
 @workflow.defn
 class ModelRetryWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> AgentRunResult[str]:
         result = await model_retry_temporal_agent.run(prompt)
@@ -2660,6 +2708,7 @@ settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACT
 
 @workflow.defn
 class SettingsAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await settings_temporal_agent.run(prompt)
@@ -2699,6 +2748,7 @@ mcp_instructions_temporal_agent = TemporalAgent(mcp_instructions_agent, activity
 
 @workflow.defn
 class MCPInstructionsWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await mcp_instructions_temporal_agent.run(prompt)
@@ -2743,6 +2793,7 @@ mcptoolset_instructions_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class MCPToolsetInstructionsWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await mcptoolset_instructions_temporal_agent.run(prompt)
@@ -2787,6 +2838,7 @@ image_temporal_agent = TemporalAgent(image_agent, activity_config=BASE_ACTIVITY_
 
 @workflow.defn
 class ImageAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> BinaryImage:
         result = await image_temporal_agent.run(prompt)
@@ -2811,11 +2863,11 @@ async def test_image_agent(allow_model_requests: None, client: Client):
                 task_queue=TASK_QUEUE,
             )
 
-
 # ============================================================================
 # DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
 # media_type is properly serialized through Temporal activities
 # ============================================================================
+
 
 document_url_agent = Agent(
     TestModel(custom_output_args={'url': 'https://example.com/doc/12345', 'media_type': 'application/pdf'}),
@@ -2828,6 +2880,7 @@ document_url_temporal_agent = TemporalAgent(document_url_agent, activity_config=
 
 @workflow.defn
 class DocumentUrlAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> DocumentUrl:
         result = await document_url_temporal_agent.run(prompt)
@@ -2857,11 +2910,11 @@ async def test_document_url_serialization_preserves_media_type(allow_model_reque
             DocumentUrl(url='https://example.com/doc/12345', _media_type='application/pdf', _identifier='eb8998')
         )
 
-
 # ============================================================================
 # UploadedFile Serialization Test - Verifies that UploadedFile with custom
 # media_type is properly serialized through Temporal activities
 # ============================================================================
+
 
 uploaded_file_agent = Agent(
     TestModel(
@@ -2881,6 +2934,7 @@ uploaded_file_temporal_agent = TemporalAgent(uploaded_file_agent, activity_confi
 
 @workflow.defn
 class UploadedFileAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> UploadedFile:
         result = await uploaded_file_temporal_agent.run(prompt)
@@ -2931,13 +2985,14 @@ web_search_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class WebSearchAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await web_search_temporal_agent.run(prompt)
         return result.output
 
 
-@pytest.mark.filterwarnings(  # TODO (v2): Remove this once we drop the deprecated events
+@pytest.mark.filterwarnings(# TODO (v2): Remove this once we drop the deprecated events
     'ignore:`BuiltinToolCallEvent` is deprecated', 'ignore:`BuiltinToolResultEvent` is deprecated'
 )
 async def test_web_search_agent_run_in_workflow(allow_model_requests: None, client: Client):
@@ -3112,6 +3167,7 @@ _tool_return_metadata_temporal_agent = TemporalAgent(_tool_return_metadata_agent
 
 @workflow.defn
 class ToolReturnMetadataWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> list[ModelMessage]:
         result = await _tool_return_metadata_temporal_agent.run(prompt)
@@ -3188,6 +3244,7 @@ fastmcp_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class FastMCPAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await fastmcp_temporal_agent.run(prompt)
@@ -3229,6 +3286,7 @@ mcptoolset_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class MCPToolsetAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await mcptoolset_temporal_agent.run(prompt)
@@ -3250,7 +3308,6 @@ async def test_mcptoolset_in_temporal_workflow(allow_model_requests: None, clien
             task_queue=TASK_QUEUE,
         )
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
-
 
 # ============================================================================
 # ctx.agent in Temporal activities
@@ -3280,6 +3337,7 @@ _ctx_agent_temporal_agent = TemporalAgent(_ctx_agent_test_agent, activity_config
 
 @workflow.defn
 class CtxAgentWorkflow:
+
     @workflow.run
     async def run(self, prompt: str) -> list[ModelMessage]:
         result = await _ctx_agent_temporal_agent.run(prompt)
@@ -3339,7 +3397,6 @@ async def test_ctx_agent_in_temporal_activity(allow_model_requests: None, client
             ),
         ]
     )
-
 
 # ============================================================================
 # Beta Graph API Tests - Tests for running pydantic-graph beta API in Temporal
@@ -3495,8 +3552,8 @@ async def test_passing_agents_through_workflow_without_pydantic_ai_workflow(allo
         )
         assert output == snapshot('The capital of Mexico is Mexico City.')
 
-
 # Multi-Model Support Tests
+
 
 # Module-level test models for multi-model selection test
 test_model_selection_1 = TestModel(custom_output_text='Response from model 1')
@@ -3531,8 +3588,9 @@ multi_model_error_test_agent = TemporalAgent(
 
 @workflow.defn
 class MultiModelWorkflow:
+
     @workflow.run
-    async def run(self, prompt: str, model_id: str | None = None) -> str:
+    async def run(self, prompt: str, model_id: str | None=None) -> str:
         result = await multi_model_selection_test_agent.run(prompt, model=model_id)
         return result.output
 
@@ -3587,8 +3645,9 @@ builtin_tool_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class BuiltinToolWorkflow:
+
     @workflow.run
-    async def run(self, prompt: str, model_id: str | None = None) -> str:
+    async def run(self, prompt: str, model_id: str | None=None) -> str:
         result = await builtin_tool_temporal_agent.run(prompt, model=model_id)
         return result.output
 
@@ -3620,14 +3679,16 @@ builtins_in_workflow_temporal_agent = TemporalAgent(
 
 @workflow.defn
 class BuiltinsInWorkflow(PydanticAIWorkflow):
+
     @workflow.run
-    async def run(self, prompt: str, model_id: str | None = None) -> str:
+    async def run(self, prompt: str, model_id: str | None=None) -> str:
         result = await builtins_in_workflow_temporal_agent.run(prompt, model=model_id)
         return result.output
 
 
 @workflow.defn
 class MultiModelWorkflowUnregistered:
+
     @workflow.run
     async def run(self, prompt: str) -> str:
         # Try to use an unregistered model
@@ -3839,6 +3900,7 @@ _model_instance_map = {
 
 @workflow.defn
 class MultiModelWorkflowInstance:
+
     @workflow.run
     async def run(self, prompt: str, instance_key: str) -> str:
         model_instance = _model_instance_map[instance_key]
@@ -4229,6 +4291,7 @@ def test_temporal_model_customize_request_parameters_with_registered_model() -> 
     """Test customize_request_parameters delegates to the currently active registered model."""
 
     class _CustomizingTestModel(TestModel):
+
         def customize_request_parameters(
             self, model_request_parameters: ModelRequestParameters
         ) -> ModelRequestParameters:
@@ -4249,7 +4312,6 @@ def test_temporal_model_customize_request_parameters_with_registered_model() -> 
 
     assert customized.output_mode == 'tool'
     assert customized.allow_text_output is False
-
 
 # Tests for BinaryContent and DocumentUrl serialization in Temporal
 # This is a regression test for #3702 (BinaryContent) and verifies that FileUrl
@@ -4275,6 +4337,7 @@ multimodal_content_temporal_agent = TemporalAgent(multimodal_content_agent, acti
 
 @workflow.defn
 class MultiModalContentWorkflow:
+
     @workflow.run
     async def run(self, prompt: list[UserContent]) -> list[ModelMessage]:
         result = await multimodal_content_temporal_agent.run(prompt)

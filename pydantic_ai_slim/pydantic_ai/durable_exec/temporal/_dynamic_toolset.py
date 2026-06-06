@@ -48,8 +48,8 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         activity_config: ActivityConfig,
         tool_activity_config: dict[str, ActivityConfig | Literal[False]],
         deps_type: type[AgentDepsT],
-        run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        agent: AbstractAgent[AgentDepsT, Any] | None = None,
+        run_context_type: type[TemporalRunContext[AgentDepsT]]=TemporalRunContext[AgentDepsT],
+        agent: AbstractAgent[AgentDepsT, Any] | None=None,
     ):
         super().__init__(toolset)
         self._agent = agent
@@ -103,9 +103,28 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             call_tool_activity
         )
 
+    async def get_instructions_activity(params: GetToolsParams, deps: AgentDepsT) -> str | None:
+
+    """Activity that calls the dynamic function and returns instructions."""
+    ctx = deserialize_run_context(
+        self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+    )
+
+    run_toolset = await self.wrapped.for_run(ctx)
+    async with run_toolset:
+        run_toolset = await run_toolset.for_run_step(ctx)
+        return await run_toolset.get_instructions(ctx)
+
+
+get_instructions_activity.__annotations__['deps'] = deps_type
+
+self.get_instructions_activity = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{self.id}__get_instructions')(
+    get_instructions_activity
+)
+
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
-        return [self.get_tools_activity, self.call_tool_activity]
+        return [self.get_tools_activity, self.call_tool_activity, self.get_instructions_activity]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if not workflow.in_workflow():  # pragma: no cover
@@ -158,7 +177,24 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
                 **activity_config,
             )
         )
+        
+        async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
 
+         if not workflow.in_workflow():  # pragma: no cover
+
+        return await super().get_instructions(ctx)
+
+        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
+        return await workflow.execute_activity(
+        activity=self.get_instructions_activity,
+        args=[
+            GetToolsParams(serialized_run_context=serialized_run_context),
+            ctx.deps,
+        ],
+        **activity_config,
+        )
+        
     def _tool_for_tool_info(self, tool_info: _ToolInfo) -> ToolsetTool[AgentDepsT]:
         """Create a ToolsetTool from a _ToolInfo for use outside activities.
 
