@@ -1782,7 +1782,7 @@ async def test_temporal_agent_with_sync_instructions(allow_model_requests: None,
         assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
-async def test_temporal_dynamic_toolset_get_instructions():
+async def test_temporal_dynamic_toolset_get_instructions(allow_model_requests: None):
     """TemporalDynamicToolset should route get_instructions through an activity."""
 
     class InstructionOnlyToolset(AbstractToolset[None]):
