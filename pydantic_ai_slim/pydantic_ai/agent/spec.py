@@ -151,6 +151,7 @@ class AgentSpec(BaseModel):
             data = yaml.safe_load(text)
         if not isinstance(data, dict):
             raise UserError(f'Agent spec must parse to an object, got {type(data).__name__}')
+        data = cast(dict[str, Any], data)
         return cls.from_dict(data)
 
     @classmethod
