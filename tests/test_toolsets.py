@@ -2465,6 +2465,43 @@ def test_set_tool_metadata_capability():
     assert td_b.metadata is None or 'code_mode' not in td_b.metadata
 
 
+def test_set_tool_metadata_capability_skips_framework_tools():
+    """Framework-managed tools should not be wrapped by code-mode metadata."""
+    from pydantic_ai.capabilities import Capability, SetToolMetadata
+
+    def visible_tool() -> str:
+        return 'visible'
+
+    hidden_toolset = FunctionToolset[None]()
+
+    @hidden_toolset.tool_plain
+    def hidden_tool() -> str:
+        return 'hidden'
+
+    deferred = Capability[None](
+        id='hidden',
+        description='Hidden tool access.',
+        toolsets=[hidden_toolset],
+        defer_loading=True,
+    )
+    test_model = TestModel(call_tools=[])
+    agent = Agent(
+        test_model,
+        tools=[visible_tool],
+        capabilities=[deferred, SetToolMetadata(code_mode=True)],
+    )
+    agent.run_sync('test')
+
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    tools = {td.name: td for td in params.function_tools}
+
+    assert tools['visible_tool'].metadata is not None
+    assert tools['visible_tool'].metadata['code_mode'] is True
+    assert tools['load_capability'].tool_kind == 'capability-load'
+    assert tools['load_capability'].metadata is None or 'code_mode' not in tools['load_capability'].metadata
+
+
 def test_set_tool_metadata_capability_with_async_selector():
     """SetToolMetadata with async callable selector."""
     from pydantic_ai.capabilities import SetToolMetadata
