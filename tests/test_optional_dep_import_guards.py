@@ -1,17 +1,17 @@
 """Regression tests for #4927: optional-dep import guards must use ModuleNotFoundError.
 
-Each model/provider file optionally guards a third-party import like::
+Each model/provider file optionally guards a third-party import like:
 
     try:
         from mistralai import ...
     except ModuleNotFoundError as e:
         raise ImportError('Please install `mistralai` ...') from e
 
-The original code caught ``ImportError`` instead of ``ModuleNotFoundError``. That
-swallowed *name* import errors (e.g. ``cannot import name 'UNSET' from 'mistralai'``
+The original code caught `ImportError` instead of `ModuleNotFoundError`. That
+swallowed *name* import errors (e.g. `cannot import name 'UNSET' from 'mistralai'`
 when the upstream package renames a symbol) and reported them as if the package
 itself were missing — a frustrating dead-end for users on the wrong upstream
-version. ``ModuleNotFoundError`` is the narrower subclass that fires only when
+version. `ModuleNotFoundError` is the narrower subclass that fires only when
 the module truly isn't importable.
 
 These tests assert the convention statically so newly-added providers can't
