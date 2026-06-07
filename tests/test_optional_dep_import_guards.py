@@ -21,6 +21,7 @@ quietly regress.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,7 @@ MODELS_DIR = ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / 'models'
 PROVIDERS_DIR = ROOT / 'pydantic_ai_slim' / 'pydantic_ai' / 'providers'
 
 
-def _files_with_optional_dep_guard():
+def _files_with_optional_dep_guard() -> Iterator[tuple[Path, ast.ExceptHandler]]:
     """Yield every (file, except-handler) pair where the handler re-raises an
     'install ...optional group' ImportError."""
     for d in (MODELS_DIR, PROVIDERS_DIR):
@@ -61,7 +62,7 @@ def _reraises_install_hint(handler: ast.ExceptHandler) -> bool:
     return False
 
 
-GUARD_FILES = list(_files_with_optional_dep_guard())
+GUARD_FILES: list[tuple[Path, ast.ExceptHandler]] = list(_files_with_optional_dep_guard())
 
 
 @pytest.mark.parametrize(
@@ -69,16 +70,22 @@ GUARD_FILES = list(_files_with_optional_dep_guard())
     GUARD_FILES,
     ids=[f'{p.parent.name}/{p.name}' for p, _ in GUARD_FILES],
 )
-def test_optional_dep_guard_uses_module_not_found_error(path, handler):
+def test_optional_dep_guard_uses_module_not_found_error(path: Path, handler: ast.ExceptHandler) -> None:
     """Every optional-dep guard must catch ModuleNotFoundError, not bare ImportError.
 
     Catching ImportError swallows 'cannot import name X' too, which is what bit
     users in #4927. ModuleNotFoundError is the narrower subclass.
     """
-    assert handler.type is not None, (
+    exc_type = handler.type
+    assert exc_type is not None, (
         f'{path.name}: optional-dep guard uses bare `except:`, expected `except ModuleNotFoundError`'
     )
-    name = getattr(handler.type, 'id', None) or getattr(handler.type, 'attr', None)
+    # `except Name` (e.g. `ModuleNotFoundError`) vs `except module.Attr`.
+    name: str | None = None
+    if isinstance(exc_type, ast.Name):
+        name = exc_type.id
+    elif isinstance(exc_type, ast.Attribute):
+        name = exc_type.attr
     assert name == 'ModuleNotFoundError', (
         f'{path.name} line {handler.lineno}: optional-dep guard catches '
         f'`{name}`, expected `ModuleNotFoundError`. Catching ImportError '
@@ -87,7 +94,7 @@ def test_optional_dep_guard_uses_module_not_found_error(path, handler):
     )
 
 
-def test_at_least_one_guard_was_found():
+def test_at_least_one_guard_was_found() -> None:
     """Smoke test: if a refactor moves all guarded imports elsewhere, the test
     above silently passes with 0 cases. This guards against that."""
     assert len(GUARD_FILES) > 5, (
