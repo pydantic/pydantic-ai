@@ -57,6 +57,7 @@ def test_model_profile_returns_openai_compatible_profile(mocker: MockerFixture):
     # Verify the returned profile is an OpenAIModelProfile with OpenAIJsonSchemaTransformer
     assert isinstance(profile, OpenAIModelProfile)
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.openai_chat_supports_multiple_system_messages is False
 
 
 def test_model_profile_with_different_models(mocker: MockerFixture):
@@ -95,6 +96,7 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
         profile = provider.model_profile(model)
         assert isinstance(profile, OpenAIModelProfile)
         assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+        assert profile.openai_chat_supports_multiple_system_messages is False
 
     # Verify openai_model_profile was called for each model without prefix
     assert mock_profiles['openai'].call_count == len(models_without_prefix)
@@ -126,6 +128,7 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
         profile = provider.model_profile(model_name)
         assert isinstance(profile, OpenAIModelProfile)
         assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+        assert profile.openai_chat_supports_multiple_system_messages is False
         # Verify the correct profile function was called with the correct suffix
         mock_profiles[expected_profile].assert_called_with(expected_suffix)
         mock_profiles[expected_profile].reset_mock()

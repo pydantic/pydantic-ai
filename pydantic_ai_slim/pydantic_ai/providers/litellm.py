@@ -78,9 +78,15 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         if profile is None:
             profile = openai_model_profile(model_name)
 
-        # As LiteLLMProvider is used with OpenAIModel, which uses OpenAIJsonSchemaTransformer,
-        # we maintain that behavior
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        # LiteLLM often fronts strict OpenAI-compatible backends such as vLLM,
+        # which reject multiple leading system messages.
+        profile = OpenAIModelProfile.from_profile(profile)
+        return profile.update(
+            OpenAIModelProfile(
+                json_schema_transformer=OpenAIJsonSchemaTransformer,
+                openai_chat_supports_multiple_system_messages=False,
+            )
+        )
 
     @overload
     def __init__(

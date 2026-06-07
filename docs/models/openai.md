@@ -748,6 +748,9 @@ To use [LiteLLM](https://www.litellm.ai/), set the configs as outlined in the [d
 
 To use custom LLMs, use `custom/` prefix in the model name.
 
+`LiteLLMProvider` merges consecutive leading system messages by default, which is required by stricter
+OpenAI-compatible backends such as some vLLM deployments.
+
 Once you have the configs, use the [`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] as follows:
 
 ```python
