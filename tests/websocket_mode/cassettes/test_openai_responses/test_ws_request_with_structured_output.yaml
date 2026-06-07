@@ -1,0 +1,317 @@
+version: 1
+interactions:
+- direction: sent
+  data:
+    type: response.create
+    input:
+    - role: user
+      content: Tell me about Paris.
+    model: gpt-4o-mini
+    stream: true
+    tool_choice: required
+    tools:
+    - name: final_result
+      parameters:
+        properties:
+          name:
+            type: string
+          country:
+            type: string
+        required:
+        - name
+        - country
+        type: object
+        additionalProperties: false
+      type: function
+      description: The final response which ends this conversation
+      strict: true
+- direction: received
+  data:
+    type: response.created
+    response:
+      id: resp_019045f776176a6a0069c5b99ccaec819f9e5abf0fb1519b8f
+      object: response
+      created_at: 1774565788
+      status: in_progress
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-4o-mini-2024-07-18
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - type: function
+        description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          properties:
+            name:
+              type: string
+            country:
+              type: string
+          required:
+          - name
+          - country
+          type: object
+          additionalProperties: false
+        strict: true
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+- direction: received
+  data:
+    type: response.in_progress
+    response:
+      id: resp_019045f776176a6a0069c5b99ccaec819f9e5abf0fb1519b8f
+      object: response
+      created_at: 1774565788
+      status: in_progress
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-4o-mini-2024-07-18
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - type: function
+        description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          properties:
+            name:
+              type: string
+            country:
+              type: string
+          required:
+          - name
+          - country
+          type: object
+          additionalProperties: false
+        strict: true
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+- direction: received
+  data:
+    type: response.output_item.added
+    item:
+      id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+      type: function_call
+      status: in_progress
+      arguments: ''
+      call_id: call_uo5Vz4darff2OaQYNKeMeMRH
+      name: final_result
+    output_index: 0
+    sequence_number: 2
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: '{"'
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    obfuscation: lHJMxWYEpIBmt5
+    output_index: 0
+    sequence_number: 3
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: name
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    obfuscation: rwvKheDLACTq
+    output_index: 0
+    sequence_number: 4
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: '":"'
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    obfuscation: AfhEMYKySgR7S
+    output_index: 0
+    sequence_number: 5
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: Paris
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    obfuscation: jtanFJtnfwM
+    output_index: 0
+    sequence_number: 6
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: '","'
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    obfuscation: myWO2MdSCzNGz
+    output_index: 0
+    sequence_number: 7
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: country
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    obfuscation: 6notyFoiv
+    output_index: 0
+    sequence_number: 8
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: '":"'
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    obfuscation: 2IEsi1lPhn9F8
+    output_index: 0
+    sequence_number: 9
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: France
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    obfuscation: FUy4Sxy8lP
+    output_index: 0
+    sequence_number: 10
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: '"}'
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    obfuscation: RXXjAMdkK07vPj
+    output_index: 0
+    sequence_number: 11
+- direction: received
+  data:
+    type: response.function_call_arguments.done
+    arguments: '{"name":"Paris","country":"France"}'
+    item_id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+    output_index: 0
+    sequence_number: 12
+- direction: received
+  data:
+    type: response.output_item.done
+    item:
+      id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+      type: function_call
+      status: completed
+      arguments: '{"name":"Paris","country":"France"}'
+      call_id: call_uo5Vz4darff2OaQYNKeMeMRH
+      name: final_result
+    output_index: 0
+    sequence_number: 13
+- direction: received
+  data:
+    type: response.completed
+    response:
+      id: resp_019045f776176a6a0069c5b99ccaec819f9e5abf0fb1519b8f
+      object: response
+      created_at: 1774565788
+      status: completed
+      background: false
+      completed_at: 1774565790
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-4o-mini-2024-07-18
+      output:
+      - id: fc_019045f776176a6a0069c5b99e4194819f9ee1a3ce4622d16f
+        type: function_call
+        status: completed
+        arguments: '{"name":"Paris","country":"France"}'
+        call_id: call_uo5Vz4darff2OaQYNKeMeMRH
+        name: final_result
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: required
+      tools:
+      - type: function
+        description: The final response which ends this conversation
+        name: final_result
+        parameters:
+          properties:
+            name:
+              type: string
+            country:
+              type: string
+          required:
+          - name
+          - country
+          type: object
+          additionalProperties: false
+        strict: true
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 57
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 10
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 67
+      user: null
+      metadata: {}
+    sequence_number: 14

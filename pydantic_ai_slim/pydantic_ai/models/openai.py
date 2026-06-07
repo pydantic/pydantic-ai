@@ -4,8 +4,9 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
@@ -109,6 +110,7 @@ try:
         Omit,
         omit,
     )
+    from openai.resources.responses.responses import AsyncResponsesConnection
     from openai.types import AllModels, chat, responses
     from openai.types.chat import (
         ChatCompletionChunk,
@@ -268,6 +270,25 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
 
 _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
 _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
+
+_WS_CONNECTION: ContextVar[AsyncResponsesConnection | None] = ContextVar(
+    'pydantic_ai.openai_ws_connection', default=None
+)
+
+
+@dataclass
+class _WSState:
+    """Mutable state shared across tasks forked from the same connect() context.
+
+    ContextVar copies the reference (shallow), so mutations to `in_use` are visible
+    across tasks created via asyncio.gather — which is how we detect concurrent use
+    of a single WS connection that doesn't support multiplexing.
+    """
+
+    in_use: bool = False
+
+
+_WS_STATE: ContextVar[_WSState | None] = ContextVar('pydantic_ai.openai_ws_state', default=None)
 
 
 class _ChatCompletion(chat.ChatCompletion):
@@ -743,6 +764,13 @@ def _resolve_openai_service_tier(
     if unified := model_settings.get('service_tier'):
         return unified
     return OMIT
+
+
+def _ws_error_message(event: responses.ResponseErrorEvent) -> str:
+    """Format an OpenAI Responses WebSocket `error` event for a `ModelAPIError`."""
+    if event.code:
+        return f'WebSocket error ({event.code}): {event.message}'
+    return f'WebSocket error: {event.message}'
 
 
 @dataclass(init=False)
@@ -1798,6 +1826,37 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ToolSearchTool}
         )
 
+    @asynccontextmanager
+    async def connect(
+        self,
+        **kwargs: Any,
+    ) -> AsyncIterator[OpenAIResponsesModel]:
+        """Open a persistent WebSocket connection to the OpenAI Responses API.
+
+        While the connection is active, all calls to `request()` and `request_stream()`
+        (including those made by `agent.run()`) are routed over WebSocket instead of HTTP.
+
+        Uses a `ContextVar` for isolation — safe for concurrent use via `asyncio.gather`
+        when each coroutine has its own `connect()` context.
+
+        ```python {test="skip" lint="skip"}
+        model = OpenAIResponsesModel('gpt-4o')
+        agent = Agent(model)
+
+        async with model.connect():
+            result = await agent.run('Hello')  # uses WebSocket
+        result2 = await agent.run('Hello')     # back to HTTP
+        ```
+        """
+        async with self.client.responses.connect(**kwargs) as connection:
+            conn_token = _WS_CONNECTION.set(connection)
+            state_token = _WS_STATE.set(_WSState())
+            try:
+                yield self
+            finally:
+                _WS_STATE.reset(state_token)
+                _WS_CONNECTION.reset(conn_token)
+
     async def compact_messages(
         self,
         request_context: ModelRequestContext,
@@ -1900,17 +1959,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings,
             model_request_parameters,
         )
-        response = await self._responses_create(
-            messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
+        settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
-        # Handle ModelResponse
+        ws_conn = _WS_CONNECTION.get()
+        if ws_conn is not None:
+            # Unlike the HTTP path, there's no `ModelResponse` short-circuit here: the Azure content-filter
+            # recovery only applies to Azure OpenAI, and WebSocket mode connects to OpenAI directly.
+            response = await self._ws_send_request(ws_conn, messages, settings, model_request_parameters)
+            return self._process_response(response, settings, model_request_parameters)
+
+        response = await self._responses_create(messages, False, settings, model_request_parameters)
         if isinstance(response, ModelResponse):
             return response
-
-        return self._process_response(
-            response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
+        return self._process_response(response, settings, model_request_parameters)
 
     async def count_tokens(
         self,
@@ -1977,13 +2038,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings,
             model_request_parameters,
         )
-        response = await self._responses_create(
-            messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-        )
-        async with response:
-            yield await self._process_streamed_response(
-                response, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
-            )
+        settings = cast(OpenAIResponsesModelSettings, model_settings or {})
+
+        ws_conn = _WS_CONNECTION.get()
+        if ws_conn is not None:
+            event_stream = self._ws_send_stream(ws_conn, messages, settings, model_request_parameters)
+            try:
+                yield await self._process_streamed_response(event_stream, settings, model_request_parameters)
+            finally:
+                await event_stream.aclose()
+        else:
+            response = await self._responses_create(messages, True, settings, model_request_parameters)
+            async with response:
+                yield await self._process_streamed_response(response, settings, model_request_parameters)
 
     def _process_response(  # noqa: C901
         self,
@@ -2167,13 +2234,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     async def _process_streamed_response(
         self,
-        response: AsyncStream[responses.ResponseStreamEvent],
+        response: AsyncStream[responses.ResponseStreamEvent] | AsyncGenerator[responses.ResponseStreamEvent, None],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
-        """Process a streamed response, and prepare a streaming response to return."""
+        """Process a streamed response, and prepare a streaming response to return.
+
+        The `response` is an `AsyncStream` over HTTP, or the `_ws_send_stream` async generator in WebSocket mode.
+        """
         peekable_response: _utils.PeekableAsyncStream[
-            responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
+            responses.ResponseStreamEvent,
+            AsyncStream[responses.ResponseStreamEvent] | AsyncGenerator[responses.ResponseStreamEvent, None],
         ] = _utils.PeekableAsyncStream(response)
         with _map_api_errors(self.model_name):
             first_chunk = await peekable_response.peek()
@@ -2269,6 +2340,148 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             context_management=model_settings.get('openai_context_management', OMIT),
         )
 
+    def _ws_acquire(self) -> None:
+        """Mark the WS connection as in-use; raise if already in use."""
+        state = _WS_STATE.get()
+        assert state is not None
+        if state.in_use:
+            raise RuntimeError(
+                'This WebSocket connection is already handling a request. '
+                'For parallel requests, use separate `model.connect()` contexts.'
+            )
+        state.in_use = True
+
+    def _ws_release(self) -> None:
+        """Release the WS connection."""
+        state = _WS_STATE.get()
+        assert state is not None
+        state.in_use = False
+
+    def _build_responses_include(
+        self, model_settings: OpenAIResponsesModelSettings, profile: OpenAIModelProfile
+    ) -> list[responses.ResponseIncludable]:
+        include: list[responses.ResponseIncludable] = []
+        if profile.openai_supports_encrypted_reasoning_content:
+            include.append('reasoning.encrypted_content')
+        if model_settings.get('openai_include_code_execution_outputs'):
+            include.append('code_interpreter_call.outputs')
+        if model_settings.get('openai_include_web_search_sources'):
+            include.append('web_search_call.action.sources')
+        if model_settings.get('openai_include_file_search_results'):
+            include.append('file_search_call.results')
+        if model_settings.get('openai_logprobs'):
+            include.append('message.output_text.logprobs')
+        return include
+
+    async def _ws_create(
+        self,
+        connection: AsyncResponsesConnection,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> None:
+        """Send a `response.create` over the WebSocket connection using the shared param builder."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        include = self._build_responses_include(model_settings, profile)
+
+        request_params = await self._build_responses_request_params(
+            messages,
+            model_settings,
+            model_request_parameters,
+            profile,
+        )
+        _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
+        _drop_unsupported_params(profile, model_settings)
+
+        # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
+        prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+
+        # `stream`/`background` are HTTP transport fields that the WebSocket protocol doesn't use:
+        # a WebSocket connection always streams events back. See OpenAI's WebSocket-mode guide.
+        await connection.response.create(
+            model=request_params.model,
+            input=request_params.input,
+            instructions=request_params.instructions,
+            parallel_tool_calls=request_params.parallel_tool_calls,
+            tools=request_params.tools,
+            tool_choice=request_params.tool_choice,
+            previous_response_id=request_params.previous_response_id,
+            conversation=request_params.conversation,
+            reasoning=request_params.reasoning,
+            text=request_params.text,
+            truncation=request_params.truncation,
+            context_management=request_params.context_management,
+            max_output_tokens=model_settings.get('max_tokens', OMIT),
+            temperature=model_settings.get('temperature', OMIT),
+            top_p=model_settings.get('top_p', OMIT),
+            service_tier=_resolve_openai_service_tier(model_settings),
+            top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
+            store=model_settings.get('openai_store', OMIT),
+            user=model_settings.get('openai_user', OMIT),
+            include=include or OMIT,
+            prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
+            prompt_cache_retention=prompt_cache_retention,
+        )
+
+    async def _ws_send_request(
+        self,
+        connection: AsyncResponsesConnection,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> responses.Response:
+        """Send a request over WS and collect events until completion, returning the final Response."""
+        self._ws_acquire()
+        try:
+            await self._ws_create(connection, messages, model_settings, model_request_parameters)
+
+            async for event in connection:
+                if isinstance(
+                    event,
+                    (
+                        responses.ResponseCompletedEvent,
+                        responses.ResponseFailedEvent,
+                        responses.ResponseIncompleteEvent,
+                    ),
+                ):
+                    return event.response
+                elif isinstance(event, responses.ResponseErrorEvent):
+                    raise ModelAPIError(model_name=self.model_name, message=_ws_error_message(event))
+        finally:
+            self._ws_release()
+
+        raise UnexpectedModelBehavior('WebSocket connection closed before a terminal response event')
+
+    async def _ws_send_stream(
+        self,
+        connection: AsyncResponsesConnection,
+        messages: list[ModelRequest | ModelResponse],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[responses.ResponseStreamEvent, None]:
+        """Send a request over WS and yield events until a terminal event."""
+        self._ws_acquire()
+        try:
+            await self._ws_create(connection, messages, model_settings, model_request_parameters)
+
+            async for event in connection:
+                if isinstance(event, responses.ResponseErrorEvent):
+                    raise ModelAPIError(model_name=self.model_name, message=_ws_error_message(event))
+                yield event
+                if isinstance(
+                    event,
+                    (
+                        responses.ResponseCompletedEvent,
+                        responses.ResponseFailedEvent,
+                        responses.ResponseIncompleteEvent,
+                    ),
+                ):
+                    return
+        finally:
+            self._ws_release()
+
+        raise UnexpectedModelBehavior('WebSocket connection closed before a terminal response event')
+
     @staticmethod
     def _build_request_options(
         model_settings: OpenAIResponsesModelSettings,
@@ -2305,17 +2518,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent] | ModelResponse:
         profile = OpenAIModelProfile.from_profile(self.profile)
 
-        include: list[responses.ResponseIncludable] = []
-        if profile.openai_supports_encrypted_reasoning_content:
-            include.append('reasoning.encrypted_content')
-        if model_settings.get('openai_include_code_execution_outputs'):
-            include.append('code_interpreter_call.outputs')
-        if model_settings.get('openai_include_web_search_sources'):
-            include.append('web_search_call.action.sources')
-        if model_settings.get('openai_include_file_search_results'):
-            include.append('file_search_call.results')
-        if model_settings.get('openai_logprobs'):
-            include.append('message.output_text.logprobs')
+        include = self._build_responses_include(model_settings, profile)
 
         request_params = await self._build_responses_request_params(
             messages,
@@ -3391,7 +3594,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     _model_name: OpenAIModelName
     _model_settings: OpenAIResponsesModelSettings
-    _response: _utils.PeekableAsyncStream[responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]]
+    _response: _utils.PeekableAsyncStream[
+        responses.ResponseStreamEvent,
+        AsyncStream[responses.ResponseStreamEvent] | AsyncGenerator[responses.ResponseStreamEvent, None],
+    ]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
@@ -3400,7 +3606,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _refusal_text: str = field(default='', init=False)
 
     async def close_stream(self) -> None:
-        await self._response.source.close()
+        source = self._response.source
+        if isinstance(source, AsyncGenerator):  # WebSocket transport: the `_ws_send_stream` async generator.
+            await source.aclose()
+        else:
+            await source.close()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):

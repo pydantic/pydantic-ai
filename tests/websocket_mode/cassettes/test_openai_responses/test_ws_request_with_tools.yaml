@@ -1,0 +1,642 @@
+version: 1
+interactions:
+- direction: sent
+  data:
+    type: response.create
+    input:
+    - role: user
+      content: What is the temperature in Paris?
+    model: gpt-4o-mini
+    stream: true
+    tool_choice: auto
+    tools:
+    - name: get_temperature
+      parameters:
+        additionalProperties: false
+        properties:
+          city:
+            type: string
+        required:
+        - city
+        type: object
+      type: function
+      description: Get the current temperature for a city.
+      strict: true
+- direction: received
+  data:
+    type: response.created
+    response:
+      id: resp_0a76d7cc9190bb9d0069c5b9d1743c81a182203d3de7d50b2d
+      object: response
+      created_at: 1774565841
+      status: in_progress
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-4o-mini-2024-07-18
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - type: function
+        description: Get the current temperature for a city.
+        name: get_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+- direction: received
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0a76d7cc9190bb9d0069c5b9d1743c81a182203d3de7d50b2d
+      object: response
+      created_at: 1774565841
+      status: in_progress
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-4o-mini-2024-07-18
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - type: function
+        description: Get the current temperature for a city.
+        name: get_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+- direction: received
+  data:
+    type: response.output_item.added
+    item:
+      id: fc_0a76d7cc9190bb9d0069c5b9d1f4d481a19c11e0e2fb65d6d7
+      type: function_call
+      status: in_progress
+      arguments: ''
+      call_id: call_NnDOtgBLcomuxMOH1WLzvbUR
+      name: get_temperature
+    output_index: 0
+    sequence_number: 2
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: '{"'
+    item_id: fc_0a76d7cc9190bb9d0069c5b9d1f4d481a19c11e0e2fb65d6d7
+    obfuscation: F9sTnZUy90B8VC
+    output_index: 0
+    sequence_number: 3
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: city
+    item_id: fc_0a76d7cc9190bb9d0069c5b9d1f4d481a19c11e0e2fb65d6d7
+    obfuscation: K4yoaO0iGh1b
+    output_index: 0
+    sequence_number: 4
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: '":"'
+    item_id: fc_0a76d7cc9190bb9d0069c5b9d1f4d481a19c11e0e2fb65d6d7
+    obfuscation: c1GZU0YejAMkL
+    output_index: 0
+    sequence_number: 5
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: Paris
+    item_id: fc_0a76d7cc9190bb9d0069c5b9d1f4d481a19c11e0e2fb65d6d7
+    obfuscation: phygR9LripL
+    output_index: 0
+    sequence_number: 6
+- direction: received
+  data:
+    type: response.function_call_arguments.delta
+    delta: '"}'
+    item_id: fc_0a76d7cc9190bb9d0069c5b9d1f4d481a19c11e0e2fb65d6d7
+    obfuscation: xd0yaaepcxRwVG
+    output_index: 0
+    sequence_number: 7
+- direction: received
+  data:
+    type: response.function_call_arguments.done
+    arguments: '{"city":"Paris"}'
+    item_id: fc_0a76d7cc9190bb9d0069c5b9d1f4d481a19c11e0e2fb65d6d7
+    output_index: 0
+    sequence_number: 8
+- direction: received
+  data:
+    type: response.output_item.done
+    item:
+      id: fc_0a76d7cc9190bb9d0069c5b9d1f4d481a19c11e0e2fb65d6d7
+      type: function_call
+      status: completed
+      arguments: '{"city":"Paris"}'
+      call_id: call_NnDOtgBLcomuxMOH1WLzvbUR
+      name: get_temperature
+    output_index: 0
+    sequence_number: 9
+- direction: received
+  data:
+    type: response.completed
+    response:
+      id: resp_0a76d7cc9190bb9d0069c5b9d1743c81a182203d3de7d50b2d
+      object: response
+      created_at: 1774565841
+      status: completed
+      background: false
+      completed_at: 1774565842
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-4o-mini-2024-07-18
+      output:
+      - id: fc_0a76d7cc9190bb9d0069c5b9d1f4d481a19c11e0e2fb65d6d7
+        type: function_call
+        status: completed
+        arguments: '{"city":"Paris"}'
+        call_id: call_NnDOtgBLcomuxMOH1WLzvbUR
+        name: get_temperature
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - type: function
+        description: Get the current temperature for a city.
+        name: get_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 46
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 61
+      user: null
+      metadata: {}
+    sequence_number: 10
+- direction: sent
+  data:
+    type: response.create
+    input:
+    - role: user
+      content: What is the temperature in Paris?
+    - name: get_temperature
+      arguments: '{"city":"Paris"}'
+      call_id: call_NnDOtgBLcomuxMOH1WLzvbUR
+      type: function_call
+    - type: function_call_output
+      call_id: call_NnDOtgBLcomuxMOH1WLzvbUR
+      output: 25°C in Paris
+    model: gpt-4o-mini
+    stream: true
+    tool_choice: auto
+    tools:
+    - name: get_temperature
+      parameters:
+        additionalProperties: false
+        properties:
+          city:
+            type: string
+        required:
+        - city
+        type: object
+      type: function
+      description: Get the current temperature for a city.
+      strict: true
+- direction: received
+  data:
+    type: response.created
+    response:
+      id: resp_0123ba578f5e03220069c5b9d2ecd481a2b2e77235daabd270
+      object: response
+      created_at: 1774565842
+      status: in_progress
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-4o-mini-2024-07-18
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - type: function
+        description: Get the current temperature for a city.
+        name: get_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+- direction: received
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0123ba578f5e03220069c5b9d2ecd481a2b2e77235daabd270
+      object: response
+      created_at: 1774565842
+      status: in_progress
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-4o-mini-2024-07-18
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - type: function
+        description: Get the current temperature for a city.
+        name: get_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+- direction: received
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+      type: message
+      status: in_progress
+      content: []
+      role: assistant
+    output_index: 0
+    sequence_number: 2
+- direction: received
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 3
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: The
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: 2mYSnYLHiJcKQ
+    output_index: 0
+    sequence_number: 4
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' current'
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: HHaJZza3
+    output_index: 0
+    sequence_number: 5
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' temperature'
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: bKvl
+    output_index: 0
+    sequence_number: 6
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' in'
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: 2wr0JmfuWIf7K
+    output_index: 0
+    sequence_number: 7
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' Paris'
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: Xz6YFKkKDT
+    output_index: 0
+    sequence_number: 8
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' is'
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: 9NBOW21TqC77T
+    output_index: 0
+    sequence_number: 9
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: ' '
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: 9dw0m5ykYZzCTSk
+    output_index: 0
+    sequence_number: 10
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: '25'
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: Ma6VruRxBjiMmt
+    output_index: 0
+    sequence_number: 11
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: °C
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: s64URaFSz2uzU2
+    output_index: 0
+    sequence_number: 12
+- direction: received
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: .
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    obfuscation: FYC1L1648Ljufc3
+    output_index: 0
+    sequence_number: 13
+- direction: received
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    logprobs: []
+    output_index: 0
+    sequence_number: 14
+    text: The current temperature in Paris is 25°C.
+- direction: received
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: The current temperature in Paris is 25°C.
+    sequence_number: 15
+- direction: received
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: The current temperature in Paris is 25°C.
+      role: assistant
+    output_index: 0
+    sequence_number: 16
+- direction: received
+  data:
+    type: response.completed
+    response:
+      id: resp_0123ba578f5e03220069c5b9d2ecd481a2b2e77235daabd270
+      object: response
+      created_at: 1774565842
+      status: completed
+      background: false
+      completed_at: 1774565843
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-4o-mini-2024-07-18
+      output:
+      - id: msg_0123ba578f5e03220069c5b9d3977c81a2853d3f2cba4697c1
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: The current temperature in Paris is 25°C.
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - type: function
+        description: Get the current temperature for a city.
+        name: get_temperature
+        parameters:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        strict: true
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 70
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 12
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 82
+      user: null
+      metadata: {}
+    sequence_number: 17
