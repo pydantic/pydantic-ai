@@ -657,7 +657,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile = AnthropicModelProfile.from_profile(self.profile)
         if profile.anthropic_supports_adaptive_thinking:
             return {'type': 'adaptive'}
-        return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+        budget_tokens = ANTHROPIC_THINKING_BUDGET_MAP[thinking]
+        max_tokens = model_settings.get('max_tokens', 4096)
+        if max_tokens is not None and max_tokens > 0:
+            budget_tokens = min(budget_tokens, max_tokens - 1)
+        return {'type': 'enabled', 'budget_tokens': budget_tokens}
 
     @overload
     async def _messages_create(

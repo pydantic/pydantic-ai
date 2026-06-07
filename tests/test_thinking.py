@@ -194,18 +194,25 @@ class TestAnthropicThinkingTranslation:
         assert result == snapshot({'type': 'adaptive'})
 
     def test_thinking_true_non_adaptive(self, non_adaptive_model: FunctionModel):
-        """thinking=True with non-adaptive model -> {'type': 'enabled', 'budget_tokens': 10000}."""
+        """thinking=True is capped below the default max_tokens."""
         params = ModelRequestParameters(thinking=True)
         settings: ModelSettings = {}
         result = AnthropicModel._translate_thinking(non_adaptive_model, settings, params)
-        assert result == snapshot({'type': 'enabled', 'budget_tokens': 10000})
+        assert result == snapshot({'type': 'enabled', 'budget_tokens': 4095})
 
     def test_thinking_high_non_adaptive(self, non_adaptive_model: FunctionModel):
-        """thinking='high' with non-adaptive -> budget_tokens=16384."""
+        """thinking='high' is capped below the default max_tokens."""
         params = ModelRequestParameters(thinking='high')
         settings: ModelSettings = {}
         result = AnthropicModel._translate_thinking(non_adaptive_model, settings, params)
-        assert result == snapshot({'type': 'enabled', 'budget_tokens': 16384})
+        assert result == snapshot({'type': 'enabled', 'budget_tokens': 4095})
+
+    def test_non_adaptive_budget_stays_below_max_tokens(self, non_adaptive_model: FunctionModel):
+        """Anthropic rejects budget_tokens >= max_tokens."""
+        params = ModelRequestParameters(thinking='high')
+        settings: ModelSettings = {'max_tokens': 2048}
+        result = AnthropicModel._translate_thinking(non_adaptive_model, settings, params)
+        assert result == snapshot({'type': 'enabled', 'budget_tokens': 2047})
 
     def test_thinking_low_non_adaptive(self, non_adaptive_model: FunctionModel):
         """thinking='low' with non-adaptive -> budget_tokens=2048."""
@@ -234,6 +241,12 @@ class TestAnthropicThinkingTranslation:
         settings = {'anthropic_thinking': {'type': 'disabled'}}
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
         assert result == snapshot({'type': 'disabled'})
+
+    def test_provider_specific_thinking_budget_is_not_clamped(self, non_adaptive_model: FunctionModel):
+        params = ModelRequestParameters(thinking=True)
+        settings = {'max_tokens': 2048, 'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 3000}}
+        result = AnthropicModel._translate_thinking(non_adaptive_model, settings, params)
+        assert result == snapshot({'type': 'enabled', 'budget_tokens': 3000})
 
     def test_effort_level_on_output_config(self):
         """thinking='high' sets effort on output_config when model supports it."""
