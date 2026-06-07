@@ -943,6 +943,16 @@ async def test_uploaded_file_validation_error_in_tool_return(
         assert_never(provider)  # pyright: ignore[reportArgumentType]
 
 
+@pytest.mark.skipif(not openai_available(), reason='openai dependencies not installed')
+async def test_openai_responses_uploaded_image_tool_return_maps_input_image() -> None:
+    file = UploadedFile(file_id='file-img123', provider_name='openai', media_type='image/png')
+    part = ToolReturnPart(tool_name='get_image', content=file, tool_call_id='1')
+
+    output = await OpenAIResponsesModel._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+    assert output == [{'detail': 'auto', 'file_id': 'file-img123', 'type': 'input_image'}]
+
+
 @pytest.mark.skipif(not google_available(), reason='google dependencies not installed')
 async def test_uploaded_file_vertex_valid_gcs_uri() -> None:
     """Test that a valid Vertex UploadedFile with gs:// URI maps correctly."""

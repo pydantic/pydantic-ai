@@ -1834,6 +1834,46 @@ async def test_uploaded_file_responses_model(allow_model_requests: None) -> None
     )
 
 
+async def test_uploaded_image_file_responses_model(allow_model_requests: None) -> None:
+    """Test that UploadedFile image references use Responses input_image parts."""
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    output_item = ResponseOutputMessage(
+        id='msg_123',
+        type='message',
+        role='assistant',
+        status='completed',
+        content=[ResponseOutputText(text='The image shows a chart.', type='output_text', annotations=[])],
+    )
+    r = response_message([output_item])
+    mock_client = MockOpenAIResponses.create_mock(r)
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'What does this image show?',
+            UploadedFile(file_id='file-img123', provider_name='openai', media_type='image/png'),
+        ]
+    )
+
+    assert result.output == 'The image shows a chart.'
+
+    responses_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    input_content = responses_kwargs['input']
+    assert input_content == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What does this image show?', 'type': 'input_text'},
+                    {'detail': 'auto', 'file_id': 'file-img123', 'type': 'input_image'},
+                ],
+            }
+        ]
+    )
+
+
 async def test_uploaded_file_wrong_provider_chat(allow_model_requests: None) -> None:
     """Test that UploadedFile with wrong provider raises an error in OpenAIChatModel."""
     c = completion_message(
