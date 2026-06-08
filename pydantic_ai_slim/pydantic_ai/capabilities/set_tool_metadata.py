@@ -48,7 +48,7 @@ class SetToolMetadata(AbstractCapability[AgentDepsT]):
         async def _set_metadata(ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             resolved: list[ToolDefinition] = []
             for td in tool_defs:
-                if await matches_tool_selector(selector, ctx, td):
+                if td.tool_kind != 'capability-load' and await matches_tool_selector(selector, ctx, td):
                     td = replace(td, metadata={**(td.metadata or {}), **metadata})
                 resolved.append(td)
             return resolved

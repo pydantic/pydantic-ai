@@ -2852,6 +2852,36 @@ async def test_deferred_capability_partitions_native_tools() -> None:
     assert seen_web_search_tools == snapshot([[], [WebSearchTool()]])
 
 
+async def test_set_tool_metadata_does_not_mark_capability_loader() -> None:
+    seen_metadata: dict[str, dict[str, Any] | None] = {}
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def demo_tool() -> str:
+        return 'ok'
+
+    deferred = Capability[None](
+        id='demo',
+        description='Demo deferred capability.',
+        toolsets=[toolset],
+        defer_loading=True,
+    )
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_metadata.update({tool.name: tool.metadata for tool in info.function_tools})
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[deferred, SetToolMetadata(code_mode=True)])
+
+    await agent.run('inspect tools')
+
+    assert seen_metadata[LOAD_CAPABILITY_TOOL_NAME] is None
+    assert seen_metadata['demo_tool'] == {
+        'pydantic_ai_deferred_capability_tool': True,
+        'code_mode': True,
+    }
+
+
 async def test_load_capability_tool_name_conflict_raises() -> None:
     """The framework loader must not be shadowed by a user tool with the same name."""
     toolset = FunctionToolset[None]()
