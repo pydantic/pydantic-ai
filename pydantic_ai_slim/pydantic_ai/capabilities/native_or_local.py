@@ -65,7 +65,13 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         *,
         native: AgentNativeTool[AgentDepsT] | bool = True,
         local: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = None,
+        id: str | None = None,
+        defer_loading: bool = False,
+        description: str | None = None,
     ) -> None:
+        self.id = id
+        self.description = description
+        self.defer_loading = defer_loading
         self.native = native
         self.local = local
         self.__post_init__()

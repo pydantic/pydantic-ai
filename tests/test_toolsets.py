@@ -32,6 +32,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     InstructionPart,
@@ -358,6 +359,31 @@ async def test_prepared_toolset_user_error_change_tool_names():
         ),
     ):
         await ToolManager[None](prepared_toolset).for_run_step(context)
+
+
+async def test_prepared_toolset_warns_on_none_return():
+    """Direct PreparedToolset usage emits a `PydanticAIDeprecationWarning` when the callback returns None.
+
+    Mirrors the same `None`-return guard at the capability layer (`_call_prepare_func`);
+    this covers the direct/`toolset.prepared()` path where the result reaches
+    `PreparedToolset.get_tools` without prior normalization.
+    """
+    context = build_run_context(None)
+    base_toolset = FunctionToolset[None]()
+
+    @base_toolset.tool_plain
+    def add(a: int, b: int) -> int:
+        """Add two numbers"""
+        return a + b  # pragma: no cover
+
+    async def returns_none(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        return None
+
+    prepared_toolset = PreparedToolset(base_toolset, returns_none)
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='returning `None` from a prepare callback is deprecated'):
+        result = await prepared_toolset.get_tools(context)
+    assert result == {}
 
 
 async def test_comprehensive_toolset_composition():
@@ -843,7 +869,7 @@ async def test_toolset_max_retries_inherits_from_agent():
         attempts.append(x)
         raise ModelRetry('Always fails')
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=0, output_retries=0)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 0, 'output': 0})
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 0'):
@@ -882,7 +908,7 @@ async def test_toolset_explicit_max_retries_overrides_agent():
         attempts.append(x)
         raise ModelRetry('Always fails')
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=0, output_retries=0)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 0, 'output': 0})
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
@@ -907,7 +933,7 @@ async def test_tool_explicit_retries_overrides_toolset_and_agent():
         raise ModelRetry('Always fails')
 
     toolset = FunctionToolset[None](tools=[Tool(always_fails, max_retries=3)])
-    agent = Agent('test', toolsets=[toolset], tool_retries=0, output_retries=0)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 0, 'output': 0})
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
@@ -936,7 +962,7 @@ async def test_prepare_function_sees_agent_max_retries():
         """A tool."""
         return x
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=3, output_retries=3)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 3, 'output': 3})
     result = await agent.run('call my_tool', model=TestModel())
 
     assert captured_max_retries[0] == 3
@@ -995,7 +1021,7 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
         attempts.append(x)
         raise ModelRetry('Always fails')
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=1, output_retries=5)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 1, 'output': 5})
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 1'):
@@ -1027,7 +1053,7 @@ async def test_prepare_function_sees_tool_retries_not_output_retries():
         """A tool."""
         return x
 
-    agent = Agent('test', toolsets=[toolset], tool_retries=1, output_retries=5)
+    agent = Agent('test', toolsets=[toolset], retries={'tools': 1, 'output': 5})
     result = await agent.run('call my_tool', model=TestModel())
 
     assert captured[0] == 1

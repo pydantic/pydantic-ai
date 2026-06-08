@@ -33,7 +33,7 @@ from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
 from .._event_stream import describe_file
-from ._utils import dump_provider_metadata, iter_metadata_chunks, tool_return_output
+from ._utils import dump_message_metadata, dump_provider_metadata, iter_metadata_chunks, tool_return_output
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
@@ -43,6 +43,7 @@ from .response_types import (
     FinishChunk,
     FinishReason,
     FinishStepChunk,
+    MessageMetadataChunk,
     ReasoningDeltaChunk,
     ReasoningEndChunk,
     ReasoningStartChunk,
@@ -147,6 +148,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if pydantic_reason:
             self._finish_reason = _FINISH_REASON_MAP.get(pydantic_reason, 'other')
 
+        # The AI SDK *merges* `messageMetadata` into `message.metadata` rather than replacing it.
+        # Emitting exactly one metadata chunk per run (and none at `start`) keeps merge equivalent
+        # to assignment; adding a `start`-time or mid-stream chunk would need the merge revisited.
+        # Request-side messages have no analogous chunk — frontends that rebuild history purely
+        # from streamed chunks see timestamps only on assistant responses, whereas `dump_messages`
+        # populates both sides.
+        yield MessageMetadataChunk(message_metadata=dump_message_metadata(event.result.response))
+
         # Emit tool approval requests for deferred approvals (only when sdk_version >= 6)
         output = event.result.output
         if self.sdk_version >= 6 and isinstance(output, DeferredToolRequests):
@@ -160,6 +169,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseChunk]:
+        # No `MessageMetadataChunk` here: an errored run has no `AgentRunResultEvent` to source
+        # `timestamp` from, so any partial assistant message rendered on the client is persisted
+        # without one. A future opt-in that broadens the roundtrip should revisit this path.
         self._finish_reason = 'error'
         yield ErrorChunk(error_text=str(error))
 

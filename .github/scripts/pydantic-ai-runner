@@ -1,0 +1,26 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "pydantic-ai-slim[anthropic,mcp]>=1.95.1",
+#   "logfire",
+#   "opentelemetry-instrumentation-httpx",
+# ]
+# ///
+"""Pydantic AI gh-aw shim launcher.
+
+Thin entry point that defers to the `pydantic_ai_gh_aw_shim` package
+beside this script. The real shim lives in `pydantic_ai_gh_aw_shim.cli`;
+the package's `__main__.py` calls `cli.main()`. This file exists only to
+satisfy gh-aw's expectation of a single executable command (and to
+carry the PEP 723 inline-metadata dependency block for `uv run --script`).
+"""
+import pathlib
+import runpy
+import sys
+
+# `pydantic_ai_gh_aw_shim/` lives next to this script — put its parent on
+# `sys.path` so `runpy.run_module` can find it (and the shim's `from .`
+# relative imports resolve).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+runpy.run_module("pydantic_ai_gh_aw_shim", run_name="__main__")

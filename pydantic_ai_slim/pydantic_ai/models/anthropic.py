@@ -66,11 +66,13 @@ from ..profiles import ModelProfileSpec
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
+    AnthropicEffort,
     AnthropicModelProfile,
+    resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, ThinkingEffort, merge_model_settings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -347,18 +349,18 @@ class AnthropicModelSettings(ModelSettings, total=False):
     for more information.
     """
 
-    anthropic_effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None
+    anthropic_effort: AnthropicEffort | None
     """The effort level for the model to use when generating a response.
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/effort) for more information.
     """
 
     anthropic_task_budget: AnthropicTaskBudget
-    """Task budget configuration for Claude Opus 4.7 beta requests.
+    """Task budget configuration for Claude Opus 4.7 / 4.8 beta requests.
 
     Maps to `output_config.task_budget`. This setting is currently only supported on
-    `claude-opus-4-7`, and Pydantic AI automatically enables Anthropic's required
-    task-budget beta when it is present.
+    `claude-opus-4-7` and `claude-opus-4-8`, and Pydantic AI automatically enables
+    Anthropic's required task-budget beta when it is present.
 
     Omit `remaining` unless you are intentionally carrying a budget across compaction
     or other rewritten context.
@@ -406,7 +408,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_speed: Literal['standard', 'fast']
     """The inference speed mode for this request.
 
-    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6 only).
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, and 4.8).
     On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
     Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
     see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
@@ -724,6 +726,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
                 top_p=model_settings.get('top_p', OMIT),
+                top_k=model_settings.get('top_k', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
@@ -936,6 +939,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if raw_finish_reason := response.stop_reason:  # pragma: no branch
             provider_details = {'finish_reason': raw_finish_reason}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+        if response.stop_details is not None:
+            provider_details = provider_details or {}
+            if response.stop_details.explanation is not None:
+                provider_details['refusal'] = response.stop_details.explanation
+            if response.stop_details.category is not None:
+                provider_details['refusal_category'] = response.stop_details.category
         if response.container:
             provider_details = provider_details or {}
             provider_details['container_id'] = response.container.id
@@ -1450,7 +1459,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 'code_execution_tool_result',  # Backward compatibility
                                 'bash_code_execution',
                                 'text_editor_code_execution',
-                            ) and isinstance(response_part.content, dict):
+                            ) and isinstance(response_part.content, dict | list):
                                 match _get_anthropic_code_execution_tool_name(response_part):
                                     case 'code_execution':
                                         assistant_content_params.append(
@@ -1916,19 +1925,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             assert model_request_parameters.output_object is not None
             output_format = {'type': 'json_schema', 'schema': model_request_parameters.output_object.json_schema}
 
-        effort: Literal['low', 'medium', 'high', 'xhigh', 'max'] | None = model_settings.get('anthropic_effort')
+        effort: AnthropicEffort | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
         profile = AnthropicModelProfile.from_profile(self.profile)
         if effort is None and profile.anthropic_supports_effort and isinstance(model_request_parameters.thinking, str):
-            effort_map: dict[ThinkingEffort, Literal['low', 'medium', 'high', 'xhigh', 'max']] = {
-                'minimal': 'low',
-                'low': 'low',
-                'medium': 'medium',
-                'high': 'high',
-                'xhigh': 'xhigh' if profile.anthropic_supports_xhigh_effort else 'max',
-            }
-            effort = effort_map[model_request_parameters.thinking]
+            effort = resolve_anthropic_effort(
+                model_request_parameters.thinking, supports_xhigh=profile.anthropic_supports_xhigh_effort
+            )
 
         task_budget = self._get_task_budget(model_settings)
 
@@ -1953,7 +1957,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not profile.anthropic_supports_task_budgets:
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
-                'Anthropic task budgets are currently only supported on `claude-opus-4-7`.'
+                'Anthropic task budgets are currently only supported on `claude-opus-4-7` and `claude-opus-4-8`.'
             )
 
         return task_budget
@@ -1981,6 +1985,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
 
+@dataclass(init=False)
 class AnthropicCompaction(AbstractCapability[AgentDepsT]):
     """Compaction capability for Anthropic models.
 
@@ -2298,6 +2303,12 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    if event.delta.stop_details is not None:
+                        self.provider_details = self.provider_details or {}
+                        if event.delta.stop_details.explanation is not None:
+                            self.provider_details['refusal'] = event.delta.stop_details.explanation
+                        if event.delta.stop_details.category is not None:
+                            self.provider_details['refusal_category'] = event.delta.stop_details.category
                     if event.delta.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.delta.container.id
