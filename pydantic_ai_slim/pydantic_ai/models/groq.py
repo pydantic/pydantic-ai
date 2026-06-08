@@ -48,7 +48,7 @@ from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -127,6 +127,17 @@ _FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter
     'function_call': 'tool_call',
 }
 
+GROQ_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
+    True: 'default',
+    False: 'none',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'high',
+}
+"""Mapping from pydantic-ai ThinkingLevel to Groq reasoning_effort values."""
+
 
 class GroqModelSettings(ModelSettings, total=False):
     """Settings used for a Groq model request."""
@@ -137,6 +148,15 @@ class GroqModelSettings(ModelSettings, total=False):
     """The format of the reasoning output.
 
     See [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-format) for more details.
+    """
+
+    groq_reasoning_effort: Literal['none', 'default', 'low', 'medium', 'high']
+    """The reasoning effort level for Groq reasoning models.
+
+    Controls how much compute the model uses for reasoning. Takes precedence over the
+    generic `thinking` setting when both are specified.
+
+    See [the Groq docs](https://console.groq.com/docs/reasoning) for more details.
     """
 
 
@@ -344,8 +364,21 @@ class GroqModel(Model[AsyncGroq]):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+                extra_body=self._build_extra_body(model_settings, model_request_parameters),
             )
+
+    @staticmethod
+    def _build_extra_body(
+        model_settings: ModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, Any] | None:
+        extra_body: dict[str, Any] = dict(model_settings.get('extra_body') or {})
+        if 'reasoning_effort' not in extra_body:
+            if effort := model_settings.get('groq_reasoning_effort'):
+                extra_body['reasoning_effort'] = effort
+            elif (thinking := model_request_parameters.thinking) is not None:
+                extra_body['reasoning_effort'] = GROQ_REASONING_EFFORT_MAP[thinking]
+        return extra_body or None
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
