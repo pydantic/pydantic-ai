@@ -2109,6 +2109,8 @@ def _map_usage(
             # On Bedrock the Anthropic SDK drops SSE event types, so Bedrock-only chunks
             # (e.g. `amazon-bedrock-invocationMetrics`) are non-validating `construct_type`d
             # into `BetaRawMessageStartEvent(message=None)`, violating the type annotation.
+            # The metrics chunk's token counts duplicate the canonical `message_start` /
+            # `message_delta` usage, so dropping them here avoids double-counting.
             return existing_usage or usage.RequestUsage()
         response_usage = message.message.usage
     elif isinstance(message, BetaRawMessageDeltaEvent):
