@@ -16,6 +16,7 @@ from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityDescription,
     CapabilityOrdering,
     CapabilityPosition,
     CapabilityRef,
@@ -31,6 +32,7 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .capability import Capability
 from .combined import CombinedCapability
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .hooks import Hooks, HookTimeoutError
@@ -55,6 +57,7 @@ from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
 from .wrapper import WrapperCapability
+from .x_search import XSearch
 
 AgentCapability: TypeAlias = AbstractCapability[AgentDepsT] | CapabilityFunc[AgentDepsT]
 """A capability or a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] that takes a run context and returns one.
@@ -82,6 +85,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         Toolset,
         WebFetch,
         WebSearch,
+        XSearch,
     )
     if (name := cls.get_serialization_name()) is not None
 }
@@ -94,6 +98,7 @@ __all__ = [
     'AbstractCapability',
     'AgentCapability',
     'AgentNode',
+    'CapabilityDescription',
     'CapabilityFunc',
     'CapabilityOrdering',
     'CapabilityPosition',
@@ -111,6 +116,7 @@ __all__ = [
     'WrapOutputProcessHandler',
     'NativeTool',
     'NativeOrLocalTool',
+    'Capability',
     'CAPABILITY_TYPES',
     'ImageGeneration',
     'Instrumentation',
@@ -135,6 +141,7 @@ __all__ = [
     'WebFetch',
     'WebSearch',
     'WrapperCapability',
+    'XSearch',
     'CombinedCapability',
     'DynamicCapability',
     'HandleDeferredToolCalls',

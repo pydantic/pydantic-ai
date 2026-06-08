@@ -11,19 +11,25 @@ class is validated against the same surface area as the legacy `FastMCPToolset`.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import importlib
 import json
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from .conftest import try_import
@@ -36,7 +42,9 @@ with try_import() as imports_successful:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.server import FastMCP
+    from fastmcp.server.tasks import TaskConfig
     from mcp import types as mcp_types
+    from mcp.shared.exceptions import McpError
     from mcp.types import (
         BlobResourceContents,
         EmbeddedResource,
@@ -48,10 +56,17 @@ with try_import() as imports_successful:
     from pydantic_ai.mcp import (
         MCPError,
         MCPToolset,
+        Prompt,
+        PromptArgument,
+        PromptMessage,
+        PromptResult,
         ResourceAnnotations,
         ResourceTemplate,
+        ServerCapabilities,
+        _build_message_handler,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
+    from pydantic_ai.messages import TextContent
 
 
 pytestmark = [
@@ -188,6 +203,14 @@ class TestMCPToolsetConstruction:
         # Both kwargs flow into the FastMCP `Client`; verify the read timeout was forwarded.
         assert toolset.client._init_timeout is not None  # pyright: ignore[reportPrivateUsage]
 
+    def test_works_without_fastmcp_server(self):
+        """Regression: `MCPToolset` must work with `fastmcp-slim[client]` (no `fastmcp.server`). #5512."""
+        with patch.dict(sys.modules, {'fastmcp.server': None}):
+            sys.modules.pop('pydantic_ai.mcp', None)
+            mcp_mod = importlib.import_module('pydantic_ai.mcp')
+            toolset = mcp_mod.MCPToolset('https://example.com/mcp')
+            assert toolset.client is not None
+
 
 class TestResourceTypeMapping:
     """The PAI-shaped `Resource` / `ResourceTemplate` / `MCPError` types are kept under
@@ -274,6 +297,16 @@ async def fastmcp_server() -> FastMCP[None]:
     @server.resource('resource://{name}/profile.json')
     async def profile(name: str) -> str:
         return f'{{"name": "{name}"}}'
+
+    @server.prompt()
+    def simple_prompt() -> str:
+        """A simple prompt template."""
+        return 'This is a simple prompt'
+
+    @server.prompt()
+    def parameterized_prompt(name: str, topic: str) -> str:
+        """A prompt template with parameters."""
+        return f"Hello {name}, let's talk about {topic}!"
 
     return server
 
@@ -454,23 +487,124 @@ class TestMCPToolsetIntegration:
             assert await toolset.list_resources() == []
             assert await toolset.list_resource_templates() == []
 
-    async def test_message_handler_ignores_non_list_changed_notifications(self, fastmcp_server: FastMCP[None]):
-        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+    async def test_list_prompts_returns_pai_types(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            prompts = await toolset.list_prompts()
+        assert prompts == snapshot(
+            [
+                Prompt(
+                    name='simple_prompt', description='A simple prompt template.', metadata={'fastmcp': {'tags': []}}
+                ),
+                Prompt(
+                    name='parameterized_prompt',
+                    description='A prompt template with parameters.',
+                    arguments=[
+                        PromptArgument(
+                            name='name',
+                            description='Provide as a JSON string matching the following schema: {"type":"string"}',
+                            required=True,
+                        ),
+                        PromptArgument(
+                            name='topic',
+                            description='Provide as a JSON string matching the following schema: {"type":"string"}',
+                            required=True,
+                        ),
+                    ],
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+            ]
+        )
 
+    async def test_get_prompt_simple(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('simple_prompt')
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content='This is a simple prompt'))],
+                description='A simple prompt template.',
+            )
+        )
+
+    async def test_get_prompt_parameterized(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content="Hello Alice, let's talk about AI!"))],
+                description='A prompt template with parameters.',
+            )
+        )
+
+    async def test_list_prompts_caches_when_enabled(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            first = await toolset.list_prompts()
+            assert toolset._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+            second = await toolset.list_prompts()
+        assert first == second
+
+    async def test_list_prompts_no_caching_when_disabled(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, cache_prompts=False)
+        async with toolset:
+            await toolset.list_prompts()
+            assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_prompts_cache_invalidation_on_notification(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=None)
+        toolset._cached_prompts = []  # pyright: ignore[reportPrivateUsage]
+
+        await handler(
+            mcp_types.ServerNotification(
+                root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+            )
+        )
+        assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_prompts_without_capability(self, fastmcp_server: FastMCP[None]):
+        """`list_prompts` returns `[]` and `get_prompt` raises `MCPError` when prompts capability is absent."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
+            assert await toolset.list_prompts() == []
+            with pytest.raises(MCPError, match='does not advertise the `prompts` capability') as exc_info:
+                await toolset.get_prompt('does_not_matter')
+            assert exc_info.value.code == -32601
+
+    async def test_list_prompts_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.list_prompts = AsyncMock(
+                side_effect=McpError(mcp_types.ErrorData(code=-32603, message='boom'))
+            )
+            with pytest.raises(MCPError, match='boom'):
+                await toolset.list_prompts()
+
+    async def test_get_prompt_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            with pytest.raises(MCPError, match='Unknown prompt'):
+                await toolset.get_prompt('does_not_exist')
+
+    async def test_message_handler_ignores_non_list_changed_notifications(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
         # An unrelated notification shouldn't touch the caches.
         await handler(
             mcp_types.ServerNotification(
-                root=mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+                root=mcp_types.LoggingMessageNotification(
+                    method='notifications/message',
+                    params=mcp_types.LoggingMessageNotificationParams(level='info', data='hi'),
+                )
             )
         )
         assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
 
     async def test_message_handler_ignores_non_notification_messages(self, fastmcp_server: FastMCP[None]):
-        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
-
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
@@ -481,8 +615,6 @@ class TestMCPToolsetIntegration:
     async def test_message_handler_invalidates_caches(
         self, fastmcp_server: FastMCP[None], run_context: RunContext[None]
     ):
-        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
-
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=None)
         toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
@@ -559,8 +691,6 @@ class TestMCPToolsetIntegration:
         assert 'MCPToolset' in toolset.label
 
     async def test_tool_for_tool_def_uses_default_retries_when_unset(self):
-        from pydantic_ai.tools import ToolDefinition
-
         toolset = MCPToolset('https://example.com/mcp')
         tool = toolset.tool_for_tool_def(
             ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'})
@@ -719,6 +849,104 @@ class TestLoadMCPToolsets:
         # Headers flowed through to the FastMCP transport.
         assert isinstance(wrapped.client.transport, StreamableHttpTransport)
         assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+
+
+class TestMCPToolsetBackgroundTasks:
+    """SEP-1686 task-augmented execution. `MCPToolset` reads each tool's server-declared
+    `execution.taskSupport` and routes the call accordingly:
+    `'required'` and `'optional'` go through `client.call_tool(task=True)` → `tool_task.result()`,
+    while `'forbidden'`/absent stay on the regular sync path."""
+
+    @pytest.fixture
+    async def task_server(self) -> FastMCP[None]:
+        server: FastMCP[None] = FastMCP('task_server')
+
+        @server.tool(task=TaskConfig(mode='required'))
+        async def task_required_tool() -> str:
+            """A tool that requires task-augmented execution."""
+            await asyncio.sleep(0)
+            return 'task_required_completed'
+
+        @server.tool(task=TaskConfig(mode='optional'))
+        async def task_optional_tool() -> str:
+            """A tool that may run either as a task or synchronously."""
+            await asyncio.sleep(0)
+            return 'task_optional_completed'
+
+        @server.tool()
+        async def plain_tool() -> str:
+            """A tool with no task support — `execution` is `None`."""
+            return 'plain_completed'
+
+        return server
+
+    async def test_get_tools_exposes_task_metadata(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """`get_tools` exposes `task: bool` so downstream capabilities can target task-augmented tools."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+
+        assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is True
+        assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is True
+        assert (tools['plain_tool'].tool_def.metadata or {}).get('task') is False
+
+    async def test_required_tool_routes_through_task_path(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """`mode='required'` succeeds — getting the real result proves `task=True` was sent (the server
+        would otherwise return `-32601: requires task-augmented execution`)."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
+        assert result == 'task_required_completed'
+
+    async def test_optional_tool_routes_through_task_path(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """`mode='optional'` also goes through the task path by default — the SEP allows either, and the
+        task path delivers durability/cancellation/progress benefits with no functional downside."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
+        assert result == 'task_optional_completed'
+
+    async def test_plain_tool_stays_on_sync_path(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """A tool with no `execution.taskSupport` stays on the regular sync `tools/call`. Sending
+        `task=True` to such a server would violate the SEP."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('plain_tool', {}, run_context, tools['plain_tool'])
+        assert result == 'plain_completed'
+
+    async def test_direct_call_tool_with_use_task(self, task_server: FastMCP[None]) -> None:
+        """`direct_call_tool(..., use_task=True)` is the low-level escape hatch for users calling without
+        a `ToolDefinition` — `mode='required'` works directly."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
+        assert result == 'task_required_completed'
+
+    async def test_process_tool_call_receives_use_task_partial(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """`process_tool_call` gets a `CallToolFunc` that already has `use_task` baked in via `partial`,
+        so a custom wrapper doesn't need to know about the task path to preserve it."""
+
+        async def passthrough(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
+            return await call_tool(name, args)
+
+        toolset = MCPToolset(task_server, process_tool_call=passthrough)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
+        assert result == 'task_required_completed'
 
 
 def test_construction_does_not_emit_warnings(recwarn: Any) -> None:

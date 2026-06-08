@@ -318,7 +318,6 @@ from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 settings = GoogleModelSettings(
     temperature=0.2,
     max_tokens=1024,
-    google_thinking_config={'thinking_level': 'low'},
     google_safety_settings=[
         {
             'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
@@ -333,33 +332,29 @@ agent = Agent(model, model_settings=settings)
 
 ### Configure thinking
 
-Gemini 3 models use `thinking_level` to control thinking behavior:
+Use the provider-agnostic [`Thinking`][pydantic_ai.capabilities.Thinking] capability to enable thinking:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking
+
+agent = Agent('google:gemini-3.5-flash', capabilities=[Thinking(effort='medium')])
+...
+```
+
+For advanced usage, you can pass Google's native thinking config through [`GoogleModelSettings.google_thinking_config`][pydantic_ai.models.google.GoogleModelSettings.google_thinking_config]:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
-# Set thinking level for Gemini 3 models
-model_settings = GoogleModelSettings(google_thinking_config={'thinking_level': 'low'})  # 'low' or 'high'
-model = GoogleModel('gemini-3-flash-preview')
+model = GoogleModel('gemini-3.5-flash')
+model_settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': 'MEDIUM'})
 agent = Agent(model, model_settings=model_settings)
 ...
 ```
 
-For older models (pre-Gemini 3), you can use `thinking_budget` instead:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-
-# Disable thinking on older models by setting budget to 0
-model_settings = GoogleModelSettings(google_thinking_config={'thinking_budget': 0})
-model = GoogleModel('gemini-2.5-flash')  # Older model
-agent = Agent(model, model_settings=model_settings)
-...
-```
-
-Check out the [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for more on thinking.
+See [Thinking](../thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
 ### Safety settings
 
@@ -415,6 +410,49 @@ avg_logprobs = result.response.provider_details.get('avg_logprobs')
 ```
 
 See the [Google Dev Blog](https://developers.googleblog.com/unlock-gemini-reasoning-with-logprobs-on-vertex-ai/) for more information.
+
+### Context caching (`google_cached_content`)
+
+When you've created a Gemini [cached content resource](https://ai.google.dev/gemini-api/docs/caching), pass its resource name through [`google_cached_content`][pydantic_ai.models.google.GoogleModelSettings.google_cached_content] to reuse it across requests:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+
+model_settings = GoogleModelSettings(
+    google_cached_content='projects/p/locations/global/cachedContents/your-cache-id',
+)
+
+agent = Agent(GoogleModel('gemini-2.5-pro'), model_settings=model_settings)
+...
+```
+
+!!! warning "Cached fields are owned by the cache resource"
+    The cache resource owns `system_instruction`, `tools`, and `tool_config` — Pydantic AI strips them from outgoing requests when `google_cached_content` is set, so agent instructions and registered tools are ignored on cached requests. A `UserWarning` is emitted whenever stripping drops a field, so the mismatch is discoverable.
+
+??? example "Create a cached content resource"
+    Pydantic AI doesn't wrap the cache-management API — create the resource with the underlying [google-genai](https://googleapis.github.io/python-genai/) SDK, then pass its name through `google_cached_content`:
+
+    ```python {test="skip"}
+    from google.genai.types import Content, CreateCachedContentConfig, Part
+
+    from pydantic_ai.providers.google import GoogleProvider
+
+    provider = GoogleProvider(api_key='your-api-key')
+
+    cache = provider.client.caches.create(
+        model='gemini-2.5-flash',
+        config=CreateCachedContentConfig(
+            system_instruction='You are a geography expert. Be concise.',
+            contents=[Content(role='user', parts=[Part(text='...long context to cache...')])],
+            ttl='3600s',
+        ),
+    )
+    print(cache.name)
+    #> cachedContents/abc123...
+    ```
+
+    Caches have a minimum size (≈1024 tokens for `gemini-2.5-flash`, ≈4096 for `gemini-2.5-pro`) and a TTL — see the [Gemini caching docs](https://ai.google.dev/gemini-api/docs/caching) for the current thresholds, pricing, and `list` / `update` / `delete` operations.
 
 ## Streaming cancellation
 

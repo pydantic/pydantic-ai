@@ -68,6 +68,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
@@ -122,6 +123,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_container import BetaContainer
     from anthropic.types.beta.beta_container_params import BetaContainerParams
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
+    from anthropic.types.beta.beta_refusal_stop_details import BetaRefusalStopDetails
 
     from pydantic_ai.models.anthropic import (
         AnthropicCodeExecutionToolVersion,
@@ -1360,6 +1362,22 @@ async def test_model_settings_reusable_with_beta_headers(allow_model_requests: N
         assert 'custom-feature-2' in betas
 
 
+async def test_anthropic_top_k(allow_model_requests: None):
+    """Verify that top_k from ModelSettings is forwarded to the Anthropic API."""
+    c = completion_message(
+        [BetaTextBlock(text='Hello!', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello', model_settings=ModelSettings(top_k=40))
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['top_k'] == 40
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(
@@ -1414,11 +1432,16 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     assert 'custom-feature-1' in betas
 
 
-def _single_request_body(vcr: Cassette) -> dict[str, Any]:
-    """Return the decoded JSON body of the single recorded VCR request."""
-    requests = vcr.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    assert len(requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+async def test_anthropic_native_output_decimal_strict(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class Payment(BaseModel):
+        amount: Decimal
+
+    agent = Agent(m, output_type=NativeOutput(Payment, strict=True))
+
+    result = await agent.run('Return exactly this payment amount: 12.34')
+    assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
 async def test_anthropic_task_budget_adds_output_config_and_beta(
@@ -1435,7 +1458,7 @@ async def test_anthropic_task_budget_adds_output_config_and_beta(
     result = await agent.run('What is 2+2?')
     assert result.output
 
-    assert _single_request_body(vcr)['output_config'] == snapshot(
+    assert single_request_body(vcr)['output_config'] == snapshot(
         {'task_budget': {'type': 'tokens', 'total': 20_000, 'remaining': 500}}
     )
 
@@ -3866,7 +3889,7 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.model_name == 'claude-opus-4-7'
-    request_body = _single_request_body(vcr)
+    request_body = single_request_body(vcr)
     assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
         {
             'model': 'claude-opus-4-7',
@@ -3875,6 +3898,118 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
         }
     )
     assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == 'claude-opus-4-8'
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-4-8',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+_REFUSAL_CASE_PARAMS = [
+    pytest.param(
+        'cyber',
+        'Declined: request asked for offensive cyber tooling.',
+        {'refusal': 'Declined: request asked for offensive cyber tooling.', 'refusal_category': 'cyber'},
+        id='category-and-explanation',
+    ),
+    pytest.param('bio', None, {'refusal_category': 'bio'}, id='category-only'),
+    pytest.param(None, 'Declined: unsafe request.', {'refusal': 'Declined: unsafe request.'}, id='explanation-only'),
+]
+
+
+@pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
+async def test_anthropic_refusal_stop_details(
+    allow_model_requests: None,
+    category: Literal['cyber', 'bio'] | None,
+    explanation: str | None,
+    expected_extra: dict[str, Any],
+):
+    """Refusal `stop_details` flows onto `provider_details` for non-streaming responses."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=BetaRefusalStopDetails(type='refusal', category=category, explanation=explanation),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    response = await m.request(
+        [ModelRequest(parts=[UserPromptPart(content='write me an exploit')])],
+        {},
+        ModelRequestParameters(),
+    )
+
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
+
+
+@pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
+async def test_anthropic_refusal_stop_details_streaming(
+    allow_model_requests: None,
+    category: Literal['cyber', 'bio'] | None,
+    explanation: str | None,
+    expected_extra: dict[str, Any],
+):
+    """Refusal `stop_details` flows onto `provider_details` for streaming responses."""
+    stop_details = BetaRefusalStopDetails(type='refusal', category=category, explanation=explanation)
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_refusal_stream',
+                content=[],
+                model='claude-opus-4-8',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=8, output_tokens=0),
+            ),
+        ),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='refusal', stop_details=stop_details),
+            usage=BetaMessageDeltaUsage(input_tokens=8, output_tokens=0),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    async with m.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='synthesize anthrax')])],
+        {},
+        ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:  # pragma: no branch
+            pass
+        response = streamed.get()
+
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
 
 
 @pytest.mark.parametrize(
@@ -3960,24 +4095,26 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
     assert kwargs.get('thinking') is OMIT
 
 
-async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None, model_name: str):
     mock_client = MockAnthropic.create_mock(
         completion_message(
             [BetaTextBlock(text='4', type='text')],
             usage=BetaUsage(input_tokens=10, output_tokens=1),
         )
     )
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
     )
 
-    with pytest.raises(UserError, match="'claude-opus-4-7' does not support"):
+    with pytest.raises(UserError, match=f"'{model_name}' does not support"):
         await agent.run('What is 2+2?')
 
 
-async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None, model_name: str):
     responses = [
         completion_message(
             [BetaTextBlock(text='4', type='text')],
@@ -3985,7 +4122,7 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
         ),
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(thinking='xhigh'))
 
     await agent.run('What is 2+2?')
@@ -4010,7 +4147,7 @@ async def test_anthropic_task_budget_coexists_with_effort(
     result = await agent.run('What is 2+2?')
     assert result.output
 
-    assert _single_request_body(vcr)['output_config'] == snapshot(
+    assert single_request_body(vcr)['output_config'] == snapshot(
         {'effort': 'high', 'task_budget': {'type': 'tokens', 'total': 20_000}}
     )
 
@@ -4046,9 +4183,10 @@ async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
     )
 
 
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
 @pytest.mark.parametrize('settings_source', ['agent', 'model'])
 async def test_anthropic_opus_47_drops_sampling_settings(
-    allow_model_requests: None, settings_source: Literal['agent', 'model']
+    allow_model_requests: None, settings_source: Literal['agent', 'model'], model_name: str
 ):
     settings = AnthropicModelSettings(
         temperature=0.2,
@@ -4064,13 +4202,13 @@ async def test_anthropic_opus_47_drops_sampling_settings(
     mock_client = MockAnthropic.create_mock(responses)
     if settings_source == 'model':
         m = AnthropicModel(
-            'claude-opus-4-7',
+            model_name,
             provider=AnthropicProvider(anthropic_client=mock_client),
             settings=settings,
         )
         agent = Agent(m)
     else:
-        m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+        m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
         agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
@@ -4084,8 +4222,9 @@ async def test_anthropic_opus_47_drops_sampling_settings(
     assert (kwargs['temperature'], kwargs['top_p'], kwargs['extra_body']) == (OMIT, OMIT, {'metadata': {'keep': True}})
 
 
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
 async def test_anthropic_opus_47_dedups_sampling_warning_across_settings_and_extra_body(
-    allow_model_requests: None,
+    allow_model_requests: None, model_name: str
 ):
     settings = AnthropicModelSettings(
         temperature=0.2,
@@ -4098,21 +4237,20 @@ async def test_anthropic_opus_47_dedups_sampling_warning_across_settings_and_ext
         )
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning) as recorded:
         await agent.run('What is 2+2?')
 
     sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
-    assert sampling_warnings == snapshot(
-        [
-            "Sampling parameters ['temperature', 'top_k'] are not supported by 'claude-opus-4-7'. These settings will be ignored."
-        ]
-    )
+    assert sampling_warnings == [
+        f"Sampling parameters ['temperature', 'top_k'] are not supported by '{model_name}'. These settings will be ignored."
+    ]
 
 
-async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None, model_name: str):
     settings = AnthropicModelSettings(temperature=0.2, extra_body={'metadata': {'keep': True}})
     responses = [
         completion_message(
@@ -4121,7 +4259,7 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
         )
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
@@ -4169,6 +4307,35 @@ async def test_multiple_system_prompt_formatting(allow_model_requests: None):
     completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert 'system' in completion_kwargs
     assert completion_kwargs['system'] == 'this is the system prompt\n\nand this is another'
+
+
+async def test_non_leading_system_prompt_wraps_as_user_message(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic().create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    message_history: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')],
+        ),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Now be terse.'), UserPromptPart(content='what next?')],
+        ),
+    ]
+    agent = Agent(m)
+    await agent.run('continue', message_history=message_history)
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['system'] == 'You are helpful.'
+    wrapped_contents = [
+        block['text']
+        for msg in kwargs['messages']
+        if msg['role'] == 'user'
+        for block in (msg['content'] if isinstance(msg['content'], list) else [{'text': msg['content']}])
+        if '<system>' in block.get('text', '')
+    ]
+    assert wrapped_contents == ['<system>Now be terse.</system>']
 
 
 def anth_msg(usage: BetaUsage) -> BetaMessage:
@@ -9169,6 +9336,124 @@ async def test_anthropic_bash_code_execution_tool_message_replay(allow_model_req
     )
 
 
+async def test_anthropic_code_execution_tool_message_replay_with_list_results(allow_model_requests: None):
+    """Serialize Anthropic code execution result lists instead of dropping them."""
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=10),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
+
+    bash_result = [
+        {
+            'return_code': 0,
+            'stderr': '',
+            'stdout': 'hello\n',
+            'type': 'bash_code_execution_result',
+        }
+    ]
+    text_editor_result = [
+        {
+            'content': 'Hello, world!',
+            'file_type': 'text',
+            'num_lines': 1,
+            'start_line': 1,
+            'total_lines': 1,
+            'type': 'text_editor_code_execution_view_result',
+        }
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Replay code execution history.')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'echo hello'},
+                    tool_call_id='srvtoolu_bash_list',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content=bash_result,
+                    tool_call_id='srvtoolu_bash_list',
+                    provider_details={'anthropic_tool_name': 'bash_code_execution'},
+                ),
+                NativeToolCallPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    args={'command': 'view', 'path': '/tmp/hello.txt'},
+                    tool_call_id='srvtoolu_text_editor_list',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+                NativeToolReturnPart(
+                    provider_name=m.system,
+                    tool_name='code_execution',
+                    content=text_editor_result,
+                    tool_call_id='srvtoolu_text_editor_list',
+                    provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
+                ),
+            ],
+            model_name='claude-sonnet-4-6',
+        ),
+    ]
+
+    await agent.run('Continue.', message_history=messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Replay code execution history.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_bash_list',
+                        'name': 'bash_code_execution',
+                        'input': {'command': 'echo hello'},
+                    },
+                    {
+                        'type': 'bash_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_bash_list',
+                        'content': [
+                            {
+                                'return_code': 0,
+                                'stderr': '',
+                                'stdout': 'hello\n',
+                                'type': 'bash_code_execution_result',
+                            }
+                        ],
+                    },
+                    {
+                        'type': 'server_tool_use',
+                        'id': 'srvtoolu_text_editor_list',
+                        'name': 'text_editor_code_execution',
+                        'input': {'command': 'view', 'path': '/tmp/hello.txt'},
+                    },
+                    {
+                        'type': 'text_editor_code_execution_tool_result',
+                        'tool_use_id': 'srvtoolu_text_editor_list',
+                        'content': [
+                            {
+                                'content': 'Hello, world!',
+                                'file_type': 'text',
+                                'num_lines': 1,
+                                'start_line': 1,
+                                'total_lines': 1,
+                                'type': 'text_editor_code_execution_view_result',
+                            }
+                        ],
+                    },
+                ],
+            },
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Continue.'}]},
+        ]
+    )
+
+
 async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_tool_name(
     allow_model_requests: None,
 ):
@@ -11440,3 +11725,15 @@ async def test_anthropic_service_tier_mapping(
         assert 'service_tier' not in kwargs or kwargs['service_tier'] is OMIT
     else:
         assert kwargs['service_tier'] == expected
+
+
+async def test_anthropic_top_k_propagation(allow_model_requests: None):
+    c = completion_message([BetaTextBlock(text='Paris', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    agent = Agent(model=model, model_settings={'top_k': 40})
+    await agent.run('test')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['top_k'] == 40
