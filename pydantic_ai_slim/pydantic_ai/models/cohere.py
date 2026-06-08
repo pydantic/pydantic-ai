@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
 
@@ -35,6 +35,7 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, check_allow_model_requests
+from ._tool_choice import resolve_tool_choice
 
 try:
     from cohere import (
@@ -53,6 +54,7 @@ try:
         ToolV2,
         ToolV2Function,
         UserChatMessageV2,
+        V2ChatRequestToolChoice,
         V2ChatResponse,
     )
     from cohere.core.api_error import ApiError
@@ -179,6 +181,7 @@ class CohereModel(Model[AsyncClientV2]):
         model_request_parameters: ModelRequestParameters,
     ) -> V2ChatResponse:
         tools = self._get_tools(model_request_parameters)
+        tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
 
         cohere_messages = self._map_messages(messages, model_request_parameters)
         try:
@@ -186,6 +189,7 @@ class CohereModel(Model[AsyncClientV2]):
                 model=self._model_name,
                 messages=cohere_messages,
                 tools=tools or OMIT,
+                tool_choice=tool_choice,
                 max_tokens=model_settings.get('max_tokens', OMIT),
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
                 temperature=model_settings.get('temperature', OMIT),
@@ -199,6 +203,25 @@ class CohereModel(Model[AsyncClientV2]):
             if (status_code := e.status_code) and status_code >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+
+    @staticmethod
+    def _get_tool_choice(
+        model_settings: CohereModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Any:
+        resolved = resolve_tool_choice(model_settings, model_request_parameters)
+        if resolved == 'none':
+            return 'NONE'
+        elif resolved == 'required':
+            return 'REQUIRED'
+        elif resolved == 'auto':
+            return OMIT
+        else:
+            # tuple[mode, tool_names] — single tool name passes through directly; multiple → REQUIRED
+            _, tool_names = resolved
+            if len(tool_names) == 1:
+                return next(iter(tool_names))
+            return 'REQUIRED'
 
     def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""

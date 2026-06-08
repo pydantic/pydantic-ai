@@ -658,6 +658,59 @@ async def test_cohere_model_top_k(allow_model_requests: None):
     assert chat_kwargs['k'] == 50
 
 
+async def test_cohere_model_tool_choice_required_forwarded(allow_model_requests: None):
+    """`tool_choice='required'` in ModelSettings should be forwarded to the Cohere v2 chat API as `tool_choice='REQUIRED'`."""
+    from pydantic_ai.direct import model_request
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.tools import ToolDefinition
+
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+
+    mrp = ModelRequestParameters(function_tools=[ToolDefinition(name='my_tool')], allow_text_output=True)
+
+    await model_request(
+        m,
+        [ModelRequest.user_text_prompt('hi')],
+        model_settings={'tool_choice': 'required'},
+        model_request_parameters=mrp,
+    )
+
+    chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
+    assert chat_kwargs.get('tool_choice') == 'REQUIRED'
+
+
+async def test_cohere_model_tool_choice_none_forwarded(allow_model_requests: None):
+    """`tool_choice='none'` in ModelSettings should be forwarded to the Cohere v2 chat API as `tool_choice='NONE'`."""
+    from pydantic_ai.direct import model_request
+    from pydantic_ai.models import ModelRequestParameters
+
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+
+    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True)
+
+    await model_request(
+        m,
+        [ModelRequest.user_text_prompt('hi')],
+        model_settings={'tool_choice': 'none'},
+        model_request_parameters=mrp,
+    )
+
+    chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
+    assert chat_kwargs.get('tool_choice') == 'NONE'
+
+
 async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
