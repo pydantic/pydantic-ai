@@ -10625,33 +10625,40 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     )
 
     messages = [
-        ModelResponse(parts=[TextPart(content="Hello")]),
-        ModelRequest(parts=[
-            ToolSearchReturnPart(
-                tool_name='search_tools',
-                content=[{'name': 'my_tool'}],
-                discovered_tools=[{'name': 'my_tool', 'description': ''}],
-                message='Found 1 tool',
-            )
-        ])
+        ModelResponse(parts=[TextPart(content='Hello')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    tool_name='search_tools',
+                    content=[{'name': 'my_tool'}],
+                    discovered_tools=[{'name': 'my_tool', 'description': ''}],
+                    message='Found 1 tool',
+                )
+            ]
+        ),
     ]
 
     await m.count_tokens(messages, None, params)
 
-    assert len(mock_client.chat_completion_kwargs) == 1  # type: ignore
-    req = mock_client.chat_completion_kwargs[0]  # type: ignore
+    assert len(mock_client.chat_completion_kwargs) == 1  # pyright: ignore
+    req = cast('dict[str, Any]', mock_client.chat_completion_kwargs[0])  # pyright: ignore
 
     # Server tools should be omitted
     assert 'tools' in req
-    assert len(req['tools']) == 1
-    assert req['tools'][0]['name'] == 'my_tool'
+    tools_payload = cast('list[dict[str, Any]]', req['tools'])
+    assert len(tools_payload) == 1
+    assert tools_payload[0]['name'] == 'my_tool'
 
     # Messages array should preserve the tool_reference block serialization
     assert 'messages' in req
-    assert len(req['messages']) == 2
-    tool_result_content = req['messages'][1]['content'][0]
+    messages_payload = cast('list[dict[str, Any]]', req['messages'])
+    assert len(messages_payload) == 2
+    
+    content_payload = cast('list[dict[str, Any]]', messages_payload[1]['content'])
+    tool_result_content = content_payload[0]
     assert tool_result_content['type'] == 'tool_reference'
     assert tool_result_content['tool_name'] == 'my_tool'
+
 
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
