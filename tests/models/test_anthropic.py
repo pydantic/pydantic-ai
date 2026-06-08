@@ -10630,9 +10630,10 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
             parts=[
                 ToolSearchReturnPart(
                     tool_name='search_tools',
-                    content=[{'name': 'my_tool'}],
-                    discovered_tools=[{'name': 'my_tool', 'description': ''}],
-                    message='Found 1 tool',
+                    content={
+                        'discovered_tools': [{'name': 'my_tool', 'description': ''}],
+                        'message': 'Found 1 tool',
+                    },
                 )
             ]
         ),
