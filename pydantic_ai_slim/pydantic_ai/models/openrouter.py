@@ -836,9 +836,13 @@ class OpenRouterModel(OpenAIChatModel):
 
         has_dynamic_instructions = any(part.dynamic for part in instruction_parts)
         if has_dynamic_instructions and not self._cache_profile.openrouter_supports_dynamic_instruction_cache:
-            # OpenRouter maps Google system/developer messages into one Gemini `systemInstruction`,
-            # and Gemini cached content treats that block as immutable. Unlike Anthropic prefix
-            # caching, we cannot safely cache only the static instruction prefix in that shape.
+            # OpenRouter normalizes Google system/developer messages into Gemini's single
+            # `systemInstruction`, which Gemini caches as an immutable block (explicit
+            # cache_control path). Unlike Anthropic prefix caching, we can't cache only the
+            # static instruction prefix and leave a dynamic tail uncached in that shape, so
+            # skip instruction caching when dynamic instructions are present.
+            # https://openrouter.ai/docs/guides/best-practices/prompt-caching
+            # https://ai.google.dev/api/caching  ('systemInstruction': Input only. Immutable)
             return
 
         instruction_prefix_count = next(
