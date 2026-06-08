@@ -10609,6 +10609,50 @@ async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: Non
     assert result.input_tokens == 10
 
 
+async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: None):
+    """Test that count_tokens omits native tools but preserves tool_reference block."""
+    from pydantic_ai.messages import ToolSearchReturnPart
+    from pydantic_ai.tools import ToolDefinition
+    from pydantic_ai.native_tools import CodeExecutionTool
+    from pydantic_ai.native_tools._tool_search import ToolSearchTool
+
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='my_tool', description='', parameters_json_schema={})],
+        native_tools=[CodeExecutionTool(), ToolSearchTool()],
+    )
+
+    messages = [
+        ModelResponse(parts=[TextPart(content="Hello")]),
+        ModelRequest(parts=[
+            ToolSearchReturnPart(
+                tool_name='search_tools',
+                content=[{'name': 'my_tool'}],
+                discovered_tools=[{'name': 'my_tool', 'description': ''}],
+                message='Found 1 tool',
+            )
+        ])
+    ]
+
+    await m.count_tokens(messages, None, params)
+
+    assert len(mock_client.chat_completion_kwargs) == 1  # type: ignore
+    req = mock_client.chat_completion_kwargs[0]  # type: ignore
+
+    # Server tools should be omitted
+    assert 'tools' in req
+    assert len(req['tools']) == 1
+    assert req['tools'][0]['name'] == 'my_tool'
+
+    # Messages array should preserve the tool_reference block serialization
+    assert 'messages' in req
+    assert len(req['messages']) == 2
+    tool_result_content = req['messages'][1]['content'][0]
+    assert tool_result_content['type'] == 'tool_reference'
+    assert tool_result_content['tool_name'] == 'my_tool'
+
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropic_api_key: str):
     """Test that errors convert to ModelHTTPError."""

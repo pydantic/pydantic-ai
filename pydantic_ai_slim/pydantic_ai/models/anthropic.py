@@ -850,12 +850,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(self.client, AsyncAnthropicBedrock):
             raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
 
-        # standalone function to make it easier to override
-        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
-        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
-
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
+
+        # Omit native/server tools from count_tokens payload to avoid API 400 errors,
+        # but only after mapping messages so that history replay formatting is preserved.
+        count_params = replace(model_request_parameters, native_tools=[])
+        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, count_params)
+        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_params, model_settings)
+
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
         self._limit_cache_points(
