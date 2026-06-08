@@ -439,6 +439,9 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, CompactionPart):  # pragma: no cover
                 # Compaction parts are not sent back to models that don't support compaction.
                 pass
+            elif isinstance(item, ToolReturnPart):  # pragma: no cover
+                # User-defined tool returns in user-constructed message history are not replayed to the provider.
+                pass
             else:
                 assert_never(item)
 

@@ -21,7 +21,12 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
 from pydantic_ai.usage import RequestUsage
@@ -567,3 +572,32 @@ async def test_return_empty():
     with pytest.raises(ValueError, match='Stream function must return at least one item'):
         async with agent.run_stream(''):
             pass
+
+
+async def test_estimate_usage_handles_tool_return_part_in_response():
+    """Regression for #5721: a `ToolReturnPart` on a `ModelResponse` must be handled.
+
+    A base `ToolReturnPart` can appear on a `ModelResponse` only via user-constructed or
+    deserialized message history (the framework itself always routes it into `ModelRequest.parts`).
+    Adding it to the `ModelResponsePart` union means every consumer iterating `ModelResponse.parts`
+    must handle it rather than fall through to `assert_never`. `FunctionModel` reaches that path
+    when it estimates usage of the request history, so running an agent over such a history
+    exercises the estimator through the public API.
+    """
+
+    def return_text(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_text))
+    result = await agent.run(
+        'hello',
+        message_history=[
+            ModelResponse(
+                parts=[
+                    TextPart(content='hello'),
+                    ToolReturnPart(tool_name='my_tool', content='tool result here', tool_call_id='call-1'),
+                ]
+            )
+        ],
+    )
+    assert result.usage == snapshot(RunUsage(input_tokens=51, output_tokens=5, requests=1))

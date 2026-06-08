@@ -1198,6 +1198,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.CompactionPart):
                         if part.content:
                             compaction_text += part.content
+                    elif isinstance(part, _messages.ToolReturnPart):  # pragma: no cover
+                        # User-defined tool returns in user-constructed message history produce no streamed event here.
+                        pass
                     else:
                         assert_never(part)
 

@@ -2078,6 +2078,7 @@ ModelResponsePart = Annotated[
     | Annotated[NativeToolCallPart, pydantic.Tag('builtin-tool-call')]
     | Annotated[NativeToolSearchReturnPart, pydantic.Tag('builtin-tool-search-return')]
     | Annotated[NativeToolReturnPart, pydantic.Tag('builtin-tool-return')]
+    | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[ThinkingPart, pydantic.Tag('thinking')]
     | Annotated[CompactionPart, pydantic.Tag('compaction')]
     | Annotated[FilePart, pydantic.Tag('file')],
@@ -2297,7 +2298,7 @@ class ModelResponse:
 
         return result
 
-    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:  # noqa: C901
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
@@ -2345,6 +2346,10 @@ class ModelResponse:
                     return_part['result'] = serialize_any(part.content)
 
                 parts.append(return_part)
+            elif isinstance(part, ToolReturnPart):
+                # A user-defined tool return can appear here via user-constructed message history; map it
+                # like its request-side counterpart (no `builtin` flag) so it isn't dropped from telemetry.
+                parts.extend(part.otel_message_parts(settings))
             elif isinstance(part, CompactionPart):
                 # Compaction parts don't map to standard OTel message part types
                 pass
@@ -2722,7 +2727,20 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'tool-search-call',
+            'capability-load-call',
+            'tool-call',
+            'builtin-tool-search-call',
+            'builtin-tool-call',
+            'builtin-tool-search-return',
+            'builtin-tool-return',
+            'tool-return',
+            'thinking',
+            'compaction',
+            'file',
+        ]
         | None
     ) = None
     """The kind of the previous part, if any.
@@ -2763,7 +2781,20 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'tool-search-call',
+            'capability-load-call',
+            'tool-call',
+            'builtin-tool-search-call',
+            'builtin-tool-call',
+            'builtin-tool-search-return',
+            'builtin-tool-return',
+            'tool-return',
+            'thinking',
+            'compaction',
+            'file',
+        ]
         | None
     ) = None
     """The kind of the next part, if any.
