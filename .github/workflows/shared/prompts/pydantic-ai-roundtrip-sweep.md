@@ -10,16 +10,6 @@ needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI Round-Trip Sweep
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)), a provider-agnostic Python
-GenAI agent framework.
-
 ## Objective
 
 Find one concrete **state-loss bug across a serialize → deserialize
@@ -57,6 +47,23 @@ existing suite. The bug must be one you triggered and observed.
 - Speculation without a failing reproduction.
 - By-design lossy fields explicitly documented as such.
 - Behavior already tracked by an open issue — **search issues first**.
+
+## Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues using the MCP
+GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[roundtrip-sweep]" OR "round-trip" OR "serialize"
+```
+
+Also search for the specific boundary/function you plan to investigate. If a
+matching issue already exists, call `mcp__safeoutputs__noop` immediately.
+
+## Sandbox notes
+
+- Read files in large ranges (500+ lines per call). Do NOT read in 30–80 line chunks.
+- Use the native `Grep` and `Glob` tools for codebase search.
 
 ## Quality Gate — When to Noop
 
