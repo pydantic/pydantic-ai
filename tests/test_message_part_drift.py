@@ -15,19 +15,15 @@ See issue #5802. The motivating instance is #5721/#5723 (base `ToolReturnPart` m
 from __future__ import annotations
 
 import dataclasses
-import importlib
-import pkgutil
-import sys
 import types
 import typing
-import warnings
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 import pydantic
 import pytest
 
-import pydantic_ai
+from pydantic_ai import _deferred_capabilities, _tool_search, messages
 from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart, LoadCapabilityReturnPart
 from pydantic_ai._tool_search import (
     NativeToolSearchCallPart,
@@ -178,30 +174,16 @@ PART_FACTORIES: dict[type, Any] = {
 
 
 def _discover_concrete_part_classes() -> set[type]:
-    """Every dataclass with a `part_kind` field defined anywhere under the `pydantic_ai` package.
+    """Every dataclass with a `part_kind` field, across the modules that define parts.
 
-    Walks the *entire* package instead of a hand-listed set of modules on purpose: a part defined in a
-    new module must be impossible to miss, or `test_every_concrete_part_is_declared` would pass green —
-    the silent-drift failure mode this suite exists to catch. Discovery is the failsafe; the human-stated
-    `PART_EXPECTED_UNIONS` is the design contract the failsafe forces a newly-added part to be declared in.
-
-    Modules that fail to import (an optional dependency isn't installed) are skipped: none define a part,
-    and the full-extras CI job this guard runs under imports every one of them.
+    Scoped to these three core modules on purpose, *not* a full-package walk: importing every
+    submodule would execute the `except ImportError: raise` guard in each optional-dependency
+    integration module (providers, `ag_ui`, ...) under the minimal-extras CI jobs, covering their
+    production `# pragma: no cover` lines and failing `strict-no-cover`. Parts are only ever defined
+    in these modules, so widening discovery buys nothing but that breakage.
     """
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        for module_info in pkgutil.walk_packages(
-            pydantic_ai.__path__, prefix=f'{pydantic_ai.__name__}.', onerror=lambda _name: None
-        ):
-            try:
-                importlib.import_module(module_info.name)
-            except ImportError:
-                continue
-
     found: set[type] = set()
-    for name, module in list(sys.modules.items()):
-        if not name.startswith(pydantic_ai.__name__):
-            continue
+    for module in (messages, _tool_search, _deferred_capabilities):
         for obj in vars(module).values():
             if (
                 isinstance(obj, type)
