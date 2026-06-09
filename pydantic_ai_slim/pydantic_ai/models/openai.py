@@ -980,7 +980,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         web_search_options = self._get_web_search_options(model_request_parameters)
         profile = OpenAIModelProfile.from_profile(self.profile)
 
-        openai_messages = await self._map_messages(messages, model_request_parameters)
+        openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1443,7 +1443,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     async def _map_messages(
-        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+        self,
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        *,
+        model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
@@ -1692,6 +1696,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         else:
             assert_never(item)
 
+    async def _map_user_prompt_content_item(
+        self, item: UserContent, content: list[ChatCompletionContentPartParam]
+    ) -> None:
+        """Map a single user-prompt content item onto the outgoing `content` list.
+
+        Stable protected hook: subclasses override this to intercept user-prompt content items
+        before the default mapping (e.g. `OpenRouterModel` translates `CachePoint` into a
+        `cache_control` breakpoint on the preceding part).
+        """
+        mapped_item = await self._map_content_item(item)
+        if mapped_item is not None:
+            content.append(mapped_item)
+
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
@@ -1699,9 +1716,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         else:
             content = []
             for item in part.content:
-                mapped_item = await self._map_content_item(item)
-                if mapped_item is not None:
-                    content.append(mapped_item)
+                await self._map_user_prompt_content_item(item, content)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
     def _raise_document_input_not_supported_error(self) -> Never:
