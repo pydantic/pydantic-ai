@@ -51,9 +51,10 @@ CASES = [
         provider='cerebras',
         model_name='gpt-oss-120b',
         thinking=False,
-        # gpt-oss can't disable reasoning on Cerebras (`disable_reasoning=True` → 400), so
-        # `thinking=False` must be silently ignored: no disable signal on the wire, request accepted.
-        absent=('disable_reasoning',),
+        # gpt-oss can't disable reasoning on Cerebras (`disable_reasoning=True` → 400, and the spec
+        # rejects `reasoning_effort='none'` for gpt-oss too), so `thinking=False` must be silently
+        # ignored: no disable signal of any kind on the wire, request accepted.
+        absent=('disable_reasoning', 'reasoning_effort'),
     ),
 ]
 

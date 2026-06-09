@@ -86,6 +86,10 @@ class GroqProvider(Provider[AsyncGroq]):
         # for (e.g. `qwen/qwen3-*` reasons, but the generic Qwen profile doesn't flag it), so overlay
         # Groq's own reasoning flags. Starting from the Groq profile keeps the `groq_`-prefixed flags
         # that `GroqModel` reads at request time.
+        # Invariant: `update` lets the family profile's *non-default* values win over the Groq base, so
+        # a Groq family profile must never claim reasoning support (`supports_thinking` /
+        # `thinking_always_enabled`) for a model Groq doesn't actually expose reasoning controls for —
+        # it would silently override the Groq base and reintroduce the mismatch this overlay fixes.
         profile = groq_model_profile(model_name).update(profile)
         return replace(profile, supports_inline_system_prompts=True)
 
