@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import pytest
+from inline_snapshot import snapshot
 from typing_extensions import assert_never
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
@@ -193,9 +194,12 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     # Vertex AI can't crawl certain URLs blocked by robots.txt (gstatic.com, test-videos.co.uk).
     # force_download variants work since the client downloads locally before sending to Vertex.
     ('google_vertex', 'image', 'url', None): ExpectError(ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED'),
-    # OpenAI uploaded file references only support document formats, not images
-    ('openai_chat', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r'unsupported MIME type'),
-    ('openai_responses', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r'supported format'),
+    # Chat Completions can't reference an uploaded image by file_id (no image equivalent of the
+    # `file` content part), so OpenAIChatModel raises before the request. Responses maps it to
+    # `input_image` and succeeds (see the matrix success path + test_uploaded_image_maps_to_input_image_responses).
+    ('openai_chat', 'image', 'uploaded_file', None): ExpectError(
+        UserError, r'Referencing an uploaded image by `file_id` is not supported by OpenAIChatModel'
+    ),
     # Anthropic API doesn't support 'file' source type in tool_result blocks
     ('anthropic', 'image', 'uploaded_file', None): ExpectError(
         ModelHTTPError, r"Input tag 'file'.*does not match any of the expected tags"
@@ -407,7 +411,8 @@ UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple
     ('google_vertex', 'video'): 'gs://pydantic-ai-test-files-vertex/test-files/small_video.mp4',
     ('openai_chat', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
     ('openai_chat', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
-    ('openai_responses', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
+    # input_image (not input_file) confirms image UploadedFiles are mapped to the vision input type.
+    ('openai_responses', 'image'): 'input_image',
     ('openai_responses', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
     ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
     ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
@@ -753,6 +758,39 @@ async def test_vendor_metadata_detail(
     )
     assert result.output, 'Expected non-empty response from model'
     cassette_ctx.verify_contains('"detail": "high"', '"detail": "low"')
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai dependencies not installed')
+async def test_uploaded_image_maps_to_input_image_responses(openai_api_key: str):
+    """Image `UploadedFile` parts map to `input_image` (carrying `detail`) in both Responses mapping sites.
+
+    `detail` comes from `vendor_metadata['detail']` (defaulting to `'auto'`), matching the `BinaryContent`
+    and `ImageUrl` image paths. Asserted on the mapped params directly since the wire shape is the point.
+    """
+    model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    user_part = UserPromptPart(
+        content=[
+            UploadedFile(
+                file_id='file-abc123',
+                provider_name='openai',
+                media_type='image/png',
+                vendor_metadata={'detail': 'high'},
+            )
+        ]
+    )
+    user_message = await model._map_user_prompt(user_part)  # pyright: ignore[reportPrivateUsage]
+    assert user_message['content'] == snapshot([{'type': 'input_image', 'file_id': 'file-abc123', 'detail': 'high'}])
+
+    tool_part = ToolReturnPart(
+        tool_name='get_file',
+        content=UploadedFile(
+            file_id='file-abc123', provider_name='openai', media_type='image/png', vendor_metadata={'detail': 'low'}
+        ),
+        tool_call_id='1',
+    )
+    tool_output = await OpenAIResponsesModel._map_tool_return_output(tool_part)  # pyright: ignore[reportPrivateUsage]
+    assert tool_output == snapshot([{'type': 'input_image', 'file_id': 'file-abc123', 'detail': 'low'}])
 
 
 async def test_text_plain_document_anthropic(

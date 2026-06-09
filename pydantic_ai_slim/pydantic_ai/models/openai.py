@@ -1667,11 +1667,17 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         elif isinstance(item, VideoUrl):
             return await self._map_video_url_item(item)
         elif isinstance(item, UploadedFile):
-            # Verify provider matches
             if item.provider_name != self.system:
                 raise UserError(
                     f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIChatModel. '
                     f'Expected `provider_name` to be `{self.system!r}`.'
+                )
+            if item.media_type.startswith('image/'):
+                # Chat Completions can only reference an uploaded file as a document `file` part;
+                # `image_url` parts take a URL/data URI, not a `file_id`, so images can't be referenced by id.
+                raise UserError(
+                    'Referencing an uploaded image by `file_id` is not supported by OpenAIChatModel. '
+                    'Use `ImageUrl` or `BinaryContent` for images, or use `OpenAIResponsesModel`.'
                 )
             return File(
                 file=FileFile(file_id=item.file_id),
@@ -3083,12 +3089,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
                             f'Expected `provider_name` to be `{self.system!r}`.'
                         )
-                    if item.media_type and item.media_type.startswith('image/'):
+                    # Image uploads must carry an `image/*` media type to be sent as `input_image`.
+                    # Everything else (documents, audio, video) falls through to `input_file`; note that
+                    # opaque OpenAI Files-API ids (e.g. `file-...`) report `application/octet-stream`, so an
+                    # image referenced by such an id without an explicit `image/*` media type lands here too.
+                    if item.media_type.startswith('image/'):
+                        detail: Literal['auto', 'low', 'high'] = 'auto'
+                        if metadata := item.vendor_metadata:
+                            detail = metadata.get('detail', 'auto')
                         content.append(
                             responses.ResponseInputImageParam(
                                 type='input_image',
                                 file_id=item.file_id,
-                                detail='auto',
+                                detail=detail,
                             )
                         )
                     else:
@@ -3179,12 +3192,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         for item in part.content_items(mode='str'):
             if isinstance(item, UploadedFile):
-                if item.media_type and item.media_type.startswith('image/'):
+                # See `_map_user_prompt`: image uploads need an `image/*` media type to map to
+                # `input_image`; non-image (and opaque-id) uploads fall through to `input_file`.
+                if item.media_type.startswith('image/'):
+                    detail: Literal['auto', 'low', 'high'] = 'auto'
+                    if metadata := item.vendor_metadata:
+                        detail = metadata.get('detail', 'auto')
                     output.append(
                         ResponseInputImageContentParam(
                             type='input_image',
                             file_id=item.file_id,
-                            detail='auto',
+                            detail=detail,
                         )
                     )
                 else:

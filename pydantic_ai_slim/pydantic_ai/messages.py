@@ -776,6 +776,7 @@ class UploadedFile:
 
     Supported by:
     - `GoogleModel`: used as `video_metadata` for video files
+    - `OpenAIResponsesModel`: `UploadedFile.vendor_metadata['detail']` is used as `detail` setting for image files
     """
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
