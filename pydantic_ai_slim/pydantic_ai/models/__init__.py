@@ -62,7 +62,7 @@ from ..providers import InterfaceClient, Provider, infer_provider, infer_provide
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._known_model_names import KnownModelName
+from ._known_model_names import KnownModelName as KnownModelName
 
 DEFAULT_HTTP_TIMEOUT: int = 600
 """Default HTTP timeout in seconds for API requests.
