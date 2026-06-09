@@ -35,7 +35,7 @@ from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsDatetime, IsInt, IsStr, try_import
+from ...conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
@@ -635,8 +635,8 @@ async def test_native_output_with_function_and_builtin_tools(
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=IsInt(),
-                    output_tokens=IsInt(),
+                    input_tokens=35,
+                    output_tokens=71,
                     details={'thoughts_tokens': 59, 'text_prompt_tokens': 35},
                 ),
                 model_name='gemini-3-flash-preview',
@@ -690,8 +690,8 @@ async def test_native_output_with_function_and_builtin_tools(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=IsInt(),
-                    output_tokens=IsInt(),
+                    input_tokens=526,
+                    output_tokens=27,
                     details={'thoughts_tokens': 27, 'tool_use_prompt_tokens': 86, 'text_prompt_tokens': 341},
                 ),
                 model_name='gemini-3-flash-preview',
@@ -872,8 +872,8 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=IsInt(),
-                    output_tokens=IsInt(),
+                    input_tokens=85,
+                    output_tokens=72,
                     details={'thoughts_tokens': 60, 'text_prompt_tokens': 85},
                 ),
                 model_name='gemini-3-flash-preview',
@@ -924,8 +924,8 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=IsInt(),
-                    output_tokens=IsInt(),
+                    input_tokens=510,
+                    output_tokens=18,
                     details={'thoughts_tokens': 18, 'tool_use_prompt_tokens': 78, 'text_prompt_tokens': 301},
                 ),
                 model_name='gemini-3-flash-preview',
@@ -995,8 +995,8 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                     TextPart(content='{"city": "Mexico City", "country": "Mexico"}'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=IsInt(),
-                    output_tokens=IsInt(),
+                    input_tokens=217,
+                    output_tokens=82,
                     details={
                         'thoughts_tokens': 54,
                         'tool_use_prompt_tokens': 132,

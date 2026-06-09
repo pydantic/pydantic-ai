@@ -45,7 +45,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot, warns
-from ..conftest import IsDatetime, IsFloat, IsInt, IsStr, try_import
+from ..conftest import IsDatetime, IsInt, IsStr, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -221,7 +221,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.usage.details.output_audio_tokens': 30,
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
-                    'operation.cost': IsFloat(),
+                    'operation.cost': 0.002225,
                 },
             },
         ]
@@ -457,7 +457,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
-                    'operation.cost': IsFloat(),
+                    'operation.cost': 0.00475,
                 },
             },
         ]
@@ -560,7 +560,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
-                    'operation.cost': IsFloat(),
+                    'operation.cost': 0.00475,
                     'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
                     'logfire.level_num': 17,
                 },
@@ -780,7 +780,7 @@ Fix the errors and try again.\
                             'type': 'object',
                             'properties': {'events': {'type': 'array'}, 'model_request_parameters': {'type': 'object'}},
                         },
-                        'operation.cost': IsFloat(),
+                        'operation.cost': 0.002225,
                         'gen_ai.response.id': 'response_id',
                     },
                 },
@@ -894,7 +894,7 @@ Fix the errors and try again.\
                                 'model_request_parameters': {'type': 'object'},
                             },
                         },
-                        'operation.cost': IsFloat(),
+                        'operation.cost': 0.002225,
                         'gen_ai.response.id': 'response_id',
                     },
                 },
@@ -974,14 +974,14 @@ Fix the errors and try again.\
                             'start_time_unix_nano': IsInt(),
                             'time_unix_nano': IsInt(),
                             'count': 1,
-                            'sum': IsFloat(),
+                            'sum': 0.002225,
                             'scale': 20,
                             'zero_count': 0,
-                            'positive': {'offset': IsInt(), 'bucket_counts': [1]},
+                            'positive': {'offset': -9240030, 'bucket_counts': [1]},
                             'negative': {'offset': 0, 'bucket_counts': [0]},
                             'flags': 0,
-                            'min': IsFloat(),
-                            'max': IsFloat(),
+                            'min': 0.002225,
+                            'max': 0.002225,
                             'exemplars': [],
                         }
                     ],
