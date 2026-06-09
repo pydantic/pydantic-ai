@@ -7,8 +7,9 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
-from pydantic_ai.models import known_model_names
+from pydantic_ai.models import infer_model, known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
 from ..models.test_model_names import UNSUPPORTED_GATEWAY_MODEL_NAMES
@@ -23,7 +24,16 @@ with try_import() as imports_successful:
 if not imports_successful():
     pytest.skip('gateway model checks require provider packages to be installed', allow_module_level=True)
 
-pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore::DeprecationWarning')]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore::DeprecationWarning'),
+    # These smoke tests assert that catalog model names *work* against the gateway, not that the
+    # call is free of deprecation notices. `PydanticAIDeprecationWarning` subclasses `UserWarning`
+    # (so it stays visible to end users by default), which means `ignore::DeprecationWarning` above
+    # doesn't cover it; e.g. resolving `gateway/openai:` emits the v2.0 Responses-API migration
+    # warning. Ignore our own deprecations here so they don't fail the health check.
+    pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning'),
+]
 
 
 @pytest.fixture(scope='module')
@@ -47,7 +57,15 @@ def _gateway_supported_providers() -> set[str]:
 
 
 async def _run_gateway_smoke_test(model_name: str) -> None:
-    agent = Agent(model_name, model_settings={'max_tokens': 256}, retries={'tools': 3, 'output': 3})
+    model = infer_model(model_name)
+    # Reasoning models (OpenAI o-series, DeepSeek R1, etc.) always spend tokens on reasoning before
+    # emitting any output, so a tiny budget can be exhausted before a visible reply is produced
+    # (`finish_reason='length'` with no parts). Give them more headroom while keeping the cheap
+    # models cheap.
+    max_tokens = 4096 if model.profile.thinking_always_enabled else 256
+    model_settings: ModelSettings = {'max_tokens': max_tokens}
+
+    agent = Agent(model, model_settings=model_settings, retries={'tools': 3, 'output': 3})
     result = await agent.run('Reply with exactly OK.')
     assert result.output.strip()
 
