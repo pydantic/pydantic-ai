@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from pluggy import Result
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
@@ -76,6 +75,7 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 if TYPE_CHECKING:
     from typing import TypeVar
 
+    from pluggy import Result
     from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -503,10 +503,11 @@ def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
         return
 
     unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
-    pytest.fail(
-        f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
-        f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
-    )
+    if unused_indexes:
+        pytest.fail(
+            f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
+            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -555,8 +556,12 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
 
     unclosed = [c for c in cache.values() if not c.is_closed]
     if unclosed:  # pragma: no cover
-        for client in unclosed:  # pragma: no cover
-            asyncio.run(client.aclose())  # pragma: no cover
+
+        async def _close_all() -> None:
+            for client in unclosed:
+                await client.aclose()
+
+        asyncio.run(_close_all())
 
 
 @pytest.fixture(autouse=True)
