@@ -326,6 +326,11 @@ class TextOutput(Generic[OutputDataT]):
     print(result.output)
     #> ['Albert', 'Einstein', 'was', 'a', 'German-born', 'theoretical', 'physicist.']
     ```
+
+    !!! note
+        When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] yields the raw
+        model text and does not apply the wrapped function. Use
+        [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] to stream the transformed output.
     """
 
     output_function: TextOutputFunc[OutputDataT]
