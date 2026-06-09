@@ -23,6 +23,7 @@ AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
 
 _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
+    'claude-fable-5',
     'claude-opus-4-5',
     'claude-opus-4-6',
     'claude-opus-4-7',
@@ -90,6 +91,14 @@ class AnthropicModelProfile(ModelProfile):
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 beta feature.
     """
 
+    anthropic_supports_forced_tool_choice: bool = True
+    """Whether the model accepts a forced `tool_choice` (`{'type': 'any'}` or `{'type': 'tool'}`).
+
+    Most Anthropic models only reject forcing alongside thinking mode; Claude Fable 5 rejects it
+    unconditionally with a 400. When False, a resolved `required` tool choice falls back to `auto`
+    (filtering tools to the requested set), and an explicit `tool_choice='required'` raises a `UserError`.
+    """
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
@@ -138,6 +147,7 @@ def resolve_anthropic_effort(level: ThinkingEffort, *, supports_xhigh: bool) -> 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
     models_that_support_json_schema_output = (
+        'claude-fable-5',
         'claude-haiku-4-5',
         'claude-sonnet-4-5',
         'claude-sonnet-4-6',
@@ -156,26 +166,38 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     # Sonnet 4.6+ and Opus 4.6+ support adaptive thinking; older models use budget-based
     supports_adaptive = model_name.startswith(
-        ('claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8')
+        ('claude-fable-5', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8')
     )
 
     # Opus 4.5+ and Sonnet 4.6+ support the effort parameter in output_config
     supports_effort = model_name.startswith(
-        ('claude-opus-4-5', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-sonnet-4-6')
+        (
+            'claude-fable-5',
+            'claude-opus-4-5',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+            'claude-sonnet-4-6',
+        )
     )
-    supports_xhigh_effort = model_name.startswith(('claude-opus-4-7', 'claude-opus-4-8'))
-    disallows_budget_thinking = model_name.startswith(('claude-opus-4-7', 'claude-opus-4-8'))
-    disallows_sampling_settings = model_name.startswith(('claude-opus-4-7', 'claude-opus-4-8'))
+    supports_xhigh_effort = model_name.startswith(('claude-fable-5', 'claude-opus-4-7', 'claude-opus-4-8'))
+    disallows_budget_thinking = model_name.startswith(('claude-fable-5', 'claude-opus-4-7', 'claude-opus-4-8'))
+    disallows_sampling_settings = model_name.startswith(('claude-fable-5', 'claude-opus-4-7', 'claude-opus-4-8'))
     default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
         model_name
     )
-    supports_task_budgets = model_name.startswith(('claude-opus-4-7', 'claude-opus-4-8'))
+    supports_task_budgets = model_name.startswith(('claude-fable-5', 'claude-opus-4-7', 'claude-opus-4-8'))
+
+    # Claude Fable 5 rejects a forced `tool_choice` (`any`/`tool`) outright, unlike other
+    # Anthropic models which only reject forcing while thinking is enabled.
+    supports_forced_tool_choice = not model_name.startswith('claude-fable-5')
 
     # Native tool search requires the `tool_search_tool_bm25_20251119` /
     # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In
     # practice, Anthropic enables it for Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+.
     supports_tool_search = model_name.startswith(
         (
+            'claude-fable-5',
             'claude-sonnet-4-5',
             'claude-sonnet-4-6',
             'claude-opus-4-5',
@@ -202,6 +224,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
+        anthropic_supports_forced_tool_choice=supports_forced_tool_choice,
         supported_native_tools=supported_native_tools,
     )
 

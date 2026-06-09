@@ -647,6 +647,29 @@ async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(al
     assert tool_names == {'tool_a'}
 
 
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_anthropic_fable_5_forced_tool_choice_falls_back_to_auto(allow_model_requests: None):
+    """Claude Fable 5 rejects a forced `tool_choice` even without thinking (unlike other Anthropic
+    models), so a resolved `('required', {single_tool})` falls back to auto and filters tool_defs."""
+    m = AnthropicModel('claude-fable-5', provider=AnthropicProvider(api_key='test-key'))
+    settings: AnthropicModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False)
+
+    tools, tool_choice = m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == {'type': 'auto'}
+    tool_names = {t['name'] for t in tools if isinstance(t, dict) and 'name' in t}
+    assert tool_names == {'tool_a'}
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_anthropic_fable_5_explicit_required_raises(allow_model_requests: None):
+    """Explicit `tool_choice='required'` on Claude Fable 5 raises, since the model rejects forcing outright."""
+    m = AnthropicModel('claude-fable-5', provider=AnthropicProvider(api_key='test-key'))
+    params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True)
+    with pytest.raises(UserError, match="This Anthropic model does not support tool_choice='required'"):
+        m._prepare_tools_and_tool_choice({'tool_choice': 'required'}, params)  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
 async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_requests: None):
     """`ToolOrOutput` single function tool on a no-forcing model falls back to auto and filters tool_defs."""
