@@ -190,6 +190,15 @@ async def test_something(model: Model):
   ]
   ```
 
+### Matcher vs concrete value
+
+When an existing snapshot value *changes* (re-record, dependency bump, refactor), don't swap the concrete value for a matcher (`IsInt()`, `IsFloat()`, `IsStr()`, ...) just to make the test pass. First ask: did the concrete value provide stability — would an unintended future change to it be a bug this snapshot should catch?
+
+- Yes — keep it concrete. Root-cause the change, then update to the new value with `--inline-snapshot=fix`. Small scalars (token counts, costs, ids) are the *reason* the snapshot exists; concreteness is what catches drift, and a matcher silently discards that signal. A small value becoming `IsInt()` is almost always wrong.
+- No — a matcher is fine. Reserve matchers for genuinely non-deterministic values (timestamps, random request ids, durations) or large opaque noise with no drift signal (a static base64 blob, an opaque token).
+
+If a value differs only because CI runs two dependency versions (a lowest-versions shard vs the lock), align the versions and pin the concrete value rather than masking the split with a matcher — the matcher disables drift detection on that dependency for good.
+
 ## Best Practices
 
 - Test through public APIs, not private methods (prefixed with `_`) or helpers — validates actual user-facing behavior and prevents brittle tests tied to implementation details
