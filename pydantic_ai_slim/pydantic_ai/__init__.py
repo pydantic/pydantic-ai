@@ -7,11 +7,13 @@ from .agent import (
     AgentModelSettings,
     AgentRetries,
     CallToolsNode,
+    ContinueRequestNode,
     EndStrategy,
     InstrumentationSettings,
     ModelRequestNode,
     UserPromptNode,
     capture_run_messages,
+    set_agent_graph_sleep,
 )
 from .agent.spec import AgentSpec
 from .capabilities import AgentCapability, CapabilityFunc
@@ -172,9 +174,11 @@ __all__ = (
     'AgentSpec',
     'EndStrategy',
     'CallToolsNode',
+    'ContinueRequestNode',
     'ModelRequestNode',
     'UserPromptNode',
     'capture_run_messages',
+    'set_agent_graph_sleep',
     'InstrumentationSettings',
     # embeddings
     'Embedder',
