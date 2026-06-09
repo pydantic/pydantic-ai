@@ -1,6 +1,6 @@
 # Tools Advanced
 
-Read this file when the user wants advanced tool behavior: approval, retries, validation, timeouts, rich tool returns, or tool search/deferred loading.
+Read this file when the user wants advanced tool behavior: approval, retries, failed tool results, validation, timeouts, rich tool returns, or tool search/deferred loading.
 
 ## Require Tool Approval (Human in the Loop)
 
@@ -59,9 +59,37 @@ def get_user_by_name(ctx: RunContext[dict[str, int]], name: str) -> int:
 
 Use retries for recoverable model mistakes, not application crashes.
 
+## Report a Failed Tool Result
+
+Not every failure is a retry. Choose the exception by what you want the model to do next:
+
+- `ModelRetry` — the model should **try again** with corrected arguments or a different approach. Consumes the tool's retry budget.
+- `ToolFailed` — the call is **done and failed** (resource missing, operation unsupported, definitive upstream error). The model should **see the result and adapt**. Does **not** consume the retry budget — bound repeated failures with `UsageLimits` at the run level.
+- Any other exception propagates and aborts the run.
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent, ToolFailed
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain
+def read_file(path: str) -> str:
+    file_path = Path(path)
+    if not file_path.is_file():
+        raise ToolFailed(f'File not found: {path}')
+    return file_path.read_text()
+```
+
+The failure is recorded in message history as a `ToolReturnPart` with `outcome='failed'` (using the provider's native error field where one exists) and traced as an error in telemetry.
+
+`ToolFailed` can also be raised from an `args_validator` (see below) and from tool validation/execution hooks — same semantics, useful for converting a third-party exception into a failed result in one place instead of per tool. MCP servers expose the same retry-vs-failed choice via `tool_error_behavior`.
+
 ## Validate or Require Approval Before Tool Execution
 
-Use `args_validator=` when arguments are structurally valid but still need business-rule validation before execution or approval.
+Use `args_validator=` when arguments are structurally valid but still need business-rule validation before execution or approval. A validator returns `None` on success, raises `ModelRetry` when the model should correct the arguments, or raises `ToolFailed` to produce a failed tool result instead of a retry.
 
 ```python
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
