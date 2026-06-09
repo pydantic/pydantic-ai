@@ -6,7 +6,7 @@ This module provides simple in memory state persistence for graphs.
 from __future__ import annotations as _annotations
 
 import copy
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -53,7 +53,7 @@ class SimpleStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         self.last_snapshot = EndSnapshot(state=state, result=end)
 
     @asynccontextmanager
-    async def record_run(self, snapshot_id: str) -> AsyncIterator[None]:
+    async def record_run(self, snapshot_id: str) -> AsyncGenerator[None]:
         if self.last_snapshot is None or snapshot_id != self.last_snapshot.id:
             raise LookupError(f'No snapshot found with id={snapshot_id!r}')
 
@@ -119,7 +119,7 @@ class FullStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         self.history.append(snapshot)
 
     @asynccontextmanager
-    async def record_run(self, snapshot_id: str) -> AsyncIterator[None]:
+    async def record_run(self, snapshot_id: str) -> AsyncGenerator[None]:
         try:
             snapshot = next(s for s in self.history if s.id == snapshot_id)
         except StopIteration as e:

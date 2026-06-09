@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -101,10 +101,10 @@ try:
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
-        AsyncAnthropicBedrock,
-        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicFoundry,
-        AsyncAnthropicVertex,
+        AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
         AsyncStream,
         Omit,
         omit as OMIT,
@@ -242,7 +242,7 @@ _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
@@ -559,7 +559,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
