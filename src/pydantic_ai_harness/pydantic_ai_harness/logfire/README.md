@@ -107,8 +107,8 @@ targeting context and then to the active trace id.
 ### Templating with deps
 
 By default the resolved prompt is used verbatim. Pass `render_template=True` to render it as a
-Handlebars template against the agent's `deps` — the same mechanism as
-[`TemplateStr`](https://ai.pydantic.dev/api/#pydantic_ai.TemplateStr) — so `{{field}}` is filled
+Handlebars template against the agent's `deps` -- the same mechanism as
+[`TemplateStr`](https://ai.pydantic.dev/api/#pydantic_ai.TemplateStr) -- so `{{field}}` is filled
 from `deps`:
 
 ```python

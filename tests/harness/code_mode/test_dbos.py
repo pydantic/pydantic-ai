@@ -1,7 +1,7 @@
 """DBOS integration tests for CodeMode.
 
 Verifies that the snapshot-based execution loop works inside a DBOS
-durable workflow. DBOS uses SQLite locally — no external services needed.
+durable workflow. DBOS uses SQLite locally -- no external services needed.
 
 DBOS defaults to `parallel_ordered_events` execution mode, which triggers
 the sequential FutureSnapshot resolution path in the execution loop.
@@ -115,7 +115,7 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     assert user_part.part_kind == 'user-prompt'
     assert user_part.content == 'Calculate 3 + 4'  # pyright: ignore[reportUnknownMemberType]
 
-    # 2. Model response — run_code tool call
+    # 2. Model response -- run_code tool call
     assert isinstance(messages[1], ModelResponse)
     tc = messages[1].parts[0]
     assert isinstance(tc, ToolCallPart)
@@ -160,7 +160,7 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     assert len(_captured_tool_defs) == 2
     for tool_defs in _captured_tool_defs:
         tool_names = [td.name for td in tool_defs]
-        # CodeMode wraps `add` into `run_code` — the model should only see `run_code`
+        # CodeMode wraps `add` into `run_code` -- the model should only see `run_code`
         assert 'run_code' in tool_names
         assert 'add' not in tool_names
 

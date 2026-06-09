@@ -70,6 +70,25 @@ When implementing a new capability, reference these docs:
 - prefer the most generic input types possible (reduce dependency chains)
 - don't add comments that restate what the code does
 
+## Writing style
+
+Applies to docs, READMEs, docstrings, comments, commit messages, and PR text.
+
+- No em-dashes (`—`). Use `--` for an aside or interruption, or split into two
+  sentences. Em-dash-heavy prose reads as machine-generated.
+- State facts, not sales copy. Cut marketing superlatives and hype ("blazingly
+  fast", "battle-tested", "the single most expensive thing you can do",
+  "footgun") and editorializing adjectives ("sprawling", "noisy", "silently").
+- Avoid absolute claims ("never", "always", "guaranteed") unless they are
+  literally true and load-bearing. Name the specific mechanism instead of the
+  slogan.
+- Use bold sparingly -- for the lead-in term of a list item, not to emphasize
+  whole sentences.
+- Document the why, the constraints, and the non-obvious. Don't restate what the
+  code or signature already says.
+- Prefer plain ASCII punctuation over decorative Unicode (arrows, fancy quotes)
+  in prose and comments.
+
 ## Package management
 
 - Use `uv` for all dependency operations

@@ -81,7 +81,7 @@ The sandbox uses Monty, a subset of Python. Key restrictions:
 
 State is preserved between calls (REPL-style). Set `restart: true` to reset state.
 
-The last expression's value is automatically captured as the return value — you do **not** need to \
+The last expression's value is automatically captured as the return value -- you do **not** need to \
 `print()` it. Avoid `print()` for return values as it produces Python string representations, not \
 structured data. Use `print()` only for supplementary logging or debug output.
 
@@ -280,7 +280,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     ) -> Any:
         """Execute Python code in the sandbox, or pass through to a native tool."""
         if not isinstance(tool, _RunCodeTool):
-            # Native (non-sandboxed) tool — pass through to the wrapped toolset.
+            # Native (non-sandboxed) tool -- pass through to the wrapped toolset.
             return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
         code = tool_args['code']
@@ -328,7 +328,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             """Dispatch a single tool call from inside the sandbox.
 
             Returns the serialized tool result on success. On failure, the
-            exception propagates — the execution loop passes it back into
+            exception propagates -- the execution loop passes it back into
             Monty via `ExternalException` so the sandbox sees it at the
             `await` site.
             """
@@ -410,7 +410,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
         except MontySyntaxError as e:
             raise ModelRetry(f'Syntax error in code:\n{_prepend_prints(e.display(), capture)}') from e
-        except MontyTypingError as e:  # pragma: no cover — MontyRepl.feed_start doesn't raise this
+        except MontyTypingError as e:  # pragma: no cover -- MontyRepl.feed_start doesn't raise this
             raise ModelRetry(f'Type error in code:\n{_prepend_prints(e.display(), capture)}') from e
         except MontyRuntimeError as e:
             # Exceptions raised inside dispatch_tool_call (e.g. UserError from
@@ -421,7 +421,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # in the display string, so the model sees a useful error. This means
             # ModelRetry from a wrapped tool gets double-wrapped
             # (ModelRetry → MontyRuntimeError → ModelRetry), but the retry
-            # semantics are the same — the model gets another chance.
+            # semantics are the same -- the model gets another chance.
             raise ModelRetry(f'Runtime error:\n{_prepend_prints(e.display(), capture)}') from e
 
         result = completed.output
@@ -484,7 +484,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     stacklevel=2,
                 )
                 continue
-            # Warn when a sandboxed tool has no return schema — the generated
+            # Warn when a sandboxed tool has no return schema -- the generated
             # signature will show `-> Any`, giving the model no type information
             # about the return shape, which limits code mode effectiveness.
             if td.return_schema is None and name not in self._warned_deferred:
@@ -659,7 +659,7 @@ async def _handle_function_snapshot(
     original_name = sanitized_to_original.get(fn_name, fn_name)
 
     if fn_name in sequential_tools:
-        # Per-tool sequential: rendered as `def` (sync), so must resolve inline —
+        # Per-tool sequential: rendered as `def` (sync), so must resolve inline --
         # the sandbox code doesn't `await` the result. Await pending parallel
         # tasks first (barrier) to maintain ordering.
         for cid in list(pending):
@@ -669,9 +669,9 @@ async def _handle_function_snapshot(
             return snapshot.resume({'return_value': outcome['return_value']})
         return snapshot.resume({'exception': outcome['exception']})
 
-    # Deferred execution — store for later resolution at FutureSnapshot.
+    # Deferred execution -- store for later resolution at FutureSnapshot.
     if global_sequential:
-        # Bare coroutine — don't schedule on the event loop yet.
+        # Bare coroutine -- don't schedule on the event loop yet.
         pending[snapshot.call_id] = dispatch(original_name, snapshot.kwargs)
     else:
         # Eagerly schedule as a Task for concurrent execution.

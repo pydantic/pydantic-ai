@@ -6,8 +6,8 @@ managed background processes.
 ## The problem
 
 Agents frequently need to run a build, a test suite, a linter, or a quick
-`grep`. Wiring up subprocess handling — streaming output, timeouts, truncation,
-killing runaway processes, and cleaning up background jobs at the end of a run —
+`grep`. Wiring up subprocess handling -- streaming output, timeouts, truncation,
+killing runaway processes, and cleaning up background jobs at the end of a run --
 is fiddly boilerplate that every agent reinvents.
 
 ## The solution
@@ -40,8 +40,8 @@ print(result.output)
 
 Output is labelled with `[stdout]` / `[stderr]` markers and an `[exit code: N]`
 line on non-zero exit. When it exceeds `max_output_chars` the **tail** is kept
-(the head is dropped), so errors, stack traces, and the `[stderr]` section —
-which all land at the end — survive truncation.
+(the head is dropped), so errors, stack traces, and the `[stderr]` section --
+which all land at the end -- survive truncation.
 
 ## Command controls
 
@@ -52,7 +52,7 @@ which all land at the end — survive truncation.
 | `denied_operators` | Shell operators (e.g. `>`, `>>`, `|`) that are rejected when present. |
 | `allow_interactive` | If `False` (default), commands that expect a TTY (`vi`, `sudo`, `ssh`, …) are blocked. |
 
-`allowed_commands` and `denied_commands` are mutually exclusive — set one, not
+`allowed_commands` and `denied_commands` are mutually exclusive -- set one, not
 both. `denied_commands` defaults to a list of destructive commands (`rm`,
 `rmdir`, `mkfs`, `dd`, `shutdown`, `reboot`, …); pass an empty list to disable.
 The executable name is extracted with `shlex`, so arguments don't bypass the
@@ -60,7 +60,7 @@ check.
 
 > **These checks are best-effort, not a security boundary.** A sufficiently
 > motivated agent can defeat them (e.g. `bash -c '...'`, env-var indirection).
-> For hard guarantees, run the agent inside OS-level isolation — a container or
+> For hard guarantees, run the agent inside OS-level isolation -- a container or
 > sandbox.
 
 ## Background processes
@@ -68,12 +68,12 @@ check.
 `start_command` writes stdout/stderr to temp files and returns a short ID. Use
 `check_command(id)` to poll and `stop_command(id)` to terminate and collect
 final output. Processes are launched in their own session (`start_new_session`)
-so the whole process group can be signalled — `SIGTERM`, escalating to
+so the whole process group can be signalled -- `SIGTERM`, escalating to
 `SIGKILL` after a grace period.
 
 On run end, the toolset's `__aexit__` terminates every still-running background
 process and deletes its temp files. The agent runtime enters toolsets via an
-`AsyncExitStack`, so this cleanup runs whether the run succeeds or raises — an
+`AsyncExitStack`, so this cleanup runs whether the run succeeds or raises -- an
 agent that forgets to call `stop_command` won't leak processes.
 
 ## Working directory
@@ -88,7 +88,7 @@ subsequent calls. Commands containing `;` skip the sentinel injection so the
 
 ```python
 Shell(
-    cwd='.',                       # str | Path — working directory
+    cwd='.',                       # str | Path -- working directory
     allowed_commands=[],           # allowlist (mutually exclusive with denied)
     denied_commands=[...],         # denylist (defaults to destructive commands)
     denied_operators=[],           # blocked shell operators

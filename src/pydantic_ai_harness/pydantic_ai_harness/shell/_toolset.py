@@ -1,4 +1,4 @@
-"""Shell toolset — gives agents the ability to run commands."""
+"""Shell toolset -- gives agents the ability to run commands."""
 
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     def _check_command(self, command: str) -> None:
         """Validate command against allow/deny lists.
 
-        These checks are best-effort and are not a security boundary — a
+        These checks are best-effort and are not a security boundary -- a
         sufficiently motivated agent can bypass them. Use OS-level isolation
         (containers, sandboxes) for hard enforcement.
         """
@@ -190,8 +190,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
     def _truncate(self, text: str) -> str:
         """Truncate output to the configured cap, keeping the tail.
 
-        The most useful output — errors, stack traces, exit info, and the
-        `[stderr]` section (which callers append last) — lands at the end, so
+        The most useful output -- errors, stack traces, exit info, and the
+        `[stderr]` section (which callers append last) -- lands at the end, so
         the head is dropped and the final `max_output_chars` are kept.
         """
         if len(text) <= self._max_output_chars:
@@ -204,7 +204,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
 
         `pwd` is written to a private temp file whose random path the agent's
         command can't address, so command output can never spoof the tracked
-        cwd — unlike parsing a sentinel out of stdout, where any command that
+        cwd -- unlike parsing a sentinel out of stdout, where any command that
         prints the sentinel string (or one using `;` to skip success-gating)
         could redirect the cwd. Returns the wrapped command plus the temp-file
         path, or the command unchanged and `None` when cwd tracking is off.
@@ -240,7 +240,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             await proc.wait()
             return
 
-        # Still alive after grace period — hard kill
+        # Still alive after grace period -- hard kill
         try:
             os.killpg(os.getpgid(pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):

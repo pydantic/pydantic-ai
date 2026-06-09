@@ -5,7 +5,7 @@ works inside a Temporal workflow sandbox, which forbids threads and
 `call_soon_threadsafe`.
 
 These tests start a local Temporal dev server via
-`WorkflowEnvironment.start_local()` — the Temporal SDK downloads and
+`WorkflowEnvironment.start_local()` -- the Temporal SDK downloads and
 runs `temporalite` automatically.
 """
 
@@ -76,7 +76,7 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
 
 
 # ---------------------------------------------------------------------------
-# Tools and agents (module-level — Temporal requirement)
+# Tools and agents (module-level -- Temporal requirement)
 # ---------------------------------------------------------------------------
 
 
@@ -101,7 +101,7 @@ def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
             if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
                 return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
 
-    # First call — emit run_code.
+    # First call -- emit run_code.
     return ModelResponse(
         parts=[
             ToolCallPart(
@@ -174,7 +174,7 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     assert messages[0]['parts'][0]['part_kind'] == 'user-prompt'
     assert messages[0]['parts'][0]['content'] == 'Calculate 3 + 4'
 
-    # 2. Model response — run_code tool call
+    # 2. Model response -- run_code tool call
     assert messages[1]['kind'] == 'response'
     tc = messages[1]['parts'][0]
     assert tc['part_kind'] == 'tool-call'
@@ -217,7 +217,7 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     assert len(_captured_tool_defs) == 2
     for tool_defs in _captured_tool_defs:
         tool_names = [td.name for td in tool_defs]
-        # CodeMode wraps `add` into `run_code` — the model should only see `run_code`
+        # CodeMode wraps `add` into `run_code` -- the model should only see `run_code`
         assert 'run_code' in tool_names
         assert 'add' not in tool_names
 

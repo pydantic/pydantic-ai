@@ -278,7 +278,7 @@ make testcov   # pytest with 100% branch coverage
 
 Pydantic AI Harness uses **0.x versioning** to signal that APIs are still stabilizing. During 0.x:
 
-- **Minor releases** (0.1 → 0.2) may include breaking changes — renamed parameters, changed defaults, restructured APIs. As the library grows, especially as capabilities gain provider-native support (starting as a local implementation, then auto-switching to the provider's built-in API when available), we may need to reshape APIs we couldn't fully anticipate in the initial design.
+- **Minor releases** (0.1 → 0.2) may include breaking changes -- renamed parameters, changed defaults, restructured APIs. As the library grows, especially as capabilities gain provider-native support (starting as a local implementation, then auto-switching to the provider's built-in API when available), we may need to reshape APIs we couldn't fully anticipate in the initial design.
 - **Patch releases** (0.1.0 → 0.1.1) will not intentionally break existing behavior.
 - **All breaking changes** are documented in release notes with migration guidance.
 - Where practical, we'll keep the previous behavior available under a deprecated name or configuration option before removing it.

@@ -256,7 +256,7 @@ class TestAccessPatterns:
             max_search_results=1000,
             max_find_results=1000,
         )
-        # Reads ignore the protected list — they only block writes.
+        # Reads ignore the protected list -- they only block writes.
         assert ts._is_accessible('.env')
         assert ts._is_accessible('.env', write=True) is False
         # A non-protected path passes the protected check even with write=True,
@@ -907,7 +907,7 @@ class TestMutationKillers:
         assert f'hash:{expected_hash}' in result
 
     async def test_read_file_non_ascii_content(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
-        """With invalid UTF-8 bytes, the tool should not crash — it should use replacement chars."""
+        """With invalid UTF-8 bytes, the tool should not crash -- it should use replacement chars."""
         # Write raw bytes that are invalid UTF-8
         (fs_root / 'broken_utf8.txt').write_bytes(b'hello \xff\xfe world\n')
         result = await toolset.read_file('broken_utf8.txt')
@@ -1024,7 +1024,7 @@ class TestMutationKillers:
 
     async def test_find_hidden_skip_does_not_stop_iteration(self, toolset: FileSystemToolset[None]) -> None:
         """Hidden files must be skipped, but subsequent visible files must still appear."""
-        # .hidden comes before hello.txt alphabetically — skipping must not break the loop
+        # .hidden comes before hello.txt alphabetically -- skipping must not break the loop
         result = await toolset.find_files('*')
         assert 'hello.txt' in result
         assert 'multi.txt' in result

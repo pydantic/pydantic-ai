@@ -70,7 +70,7 @@ async def build_ctx(
 ) -> RunContext[T]:
     """Build a `RunContext` with a prepared `ToolManager`.
 
-    Use this for tests that call `call_tool` — `CodeModeToolset` requires
+    Use this for tests that call `call_tool` -- `CodeModeToolset` requires
     `ctx.tool_manager` to be set.
     """
     from pydantic_ai.tool_manager import ToolManager
@@ -259,7 +259,7 @@ class TestCodeMode:
         """End-to-end: a string-returning tool with a default arg is callable from the sandbox.
 
         Exercises (a) string return values flowing back through the await/dispatch loop,
-        (b) default-argument handling — the LLM-side code only passes `name`, not `greeting`.
+        (b) default-argument handling -- the LLM-side code only passes `name`, not `greeting`.
         """
         wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(greet))
         assert isinstance(wrapper, CodeModeToolset)
@@ -332,7 +332,7 @@ class TestCodeMode:
 
         description = tools['run_code'].tool_def.description
         assert description is not None
-        # Note the lack of `(*, ...)` — empty params render as `()`.
+        # Note the lack of `(*, ...)` -- empty params render as `()`.
         assert 'async def now_iso() -> str' in description
         assert 'async def now_iso(*' not in description
 
@@ -368,7 +368,7 @@ class TestCodeMode:
         run_code = tools['run_code']
 
         await wrapper.call_tool('run_code', {'code': 'x = 99'}, ctx, run_code)
-        # After restart, `x` should no longer exist — on a fresh REPL the static
+        # After restart, `x` should no longer exist -- on a fresh REPL the static
         # type checker catches undefined names before execution.
         with pytest.raises(ModelRetry, match=r'x'):
             await wrapper.call_tool('run_code', {'code': 'print(x)', 'restart': True}, ctx, run_code)
@@ -427,7 +427,7 @@ class TestCodeMode:
     # ---------------------------------------------------------------------------
 
     async def test_for_run_returns_fresh_instance_with_cleared_repl(self) -> None:
-        """`for_run` must hand back a new toolset instance — concurrent runs cannot share REPL state."""
+        """`for_run` must hand back a new toolset instance -- concurrent runs cannot share REPL state."""
         wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
@@ -618,9 +618,9 @@ class TestCodeMode:
         tools = await wrapper.get_tools(ctx)
         run_code = tools['run_code']
 
-        # First call sets up variables — type-checked but valid.
+        # First call sets up variables -- type-checked but valid.
         await wrapper.call_tool('run_code', {'code': "addr = {'street': '1 Main St', 'city': 'NYC'}"}, ctx, run_code)
-        # Second call uses them — not type-checked (accumulated REPL state).
+        # Second call uses them -- not type-checked (accumulated REPL state).
         code = "p = {'name': 'Alice', 'home': addr}\nprint(await lookup_person(person=p, count=3))"
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, run_code)
         assert result.return_value == {'output': '3x Alice @ 1 Main St\n'}
@@ -806,7 +806,7 @@ class TestCodeMode:
             name='search',
             description='Search for things.',
             parameters_json_schema={'type': 'object', 'properties': {'q': {'type': 'string'}}, 'required': ['q']},
-            # No return_schema — simulates an MCP tool without outputSchema.
+            # No return_schema -- simulates an MCP tool without outputSchema.
         )
         static = _StaticToolset([td], results={'search': 'found it'})
         wrapper = CodeMode[None]().get_wrapper_toolset(static)
@@ -870,7 +870,7 @@ class TestCodeMode:
         seen_tool_definitions: list[list[str]] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # Snapshot what tool definitions the model is being shown each turn —
+            # Snapshot what tool definitions the model is being shown each turn --
             # if `CodeMode` is wired correctly the model only ever sees `run_code`.
             seen_tool_definitions.append([td.name for td in info.function_tools])
 
@@ -900,7 +900,7 @@ class TestCodeMode:
 
         result = await agent.run('please add 4 and 6')
 
-        # The model was shown only `run_code` — the wrapped `add` tool is hidden behind it.
+        # The model was shown only `run_code` -- the wrapped `add` tool is hidden behind it.
         assert seen_tool_definitions[0] == ['run_code']
         assert seen_tool_definitions[1] == ['run_code']
 
@@ -928,7 +928,7 @@ class TestCodeMode:
     @pytest.mark.parametrize(
         'original, expected',
         [
-            ('get_weather', 'get_weather'),  # already valid — no change
+            ('get_weather', 'get_weather'),  # already valid -- no change
             ('get-weather', 'get_weather'),  # hyphen → underscore
             ('api.call', 'api_call'),  # dot → underscore
             ('api.call-now', 'api_call_now'),  # mixed
@@ -1120,7 +1120,7 @@ class TestCodeMode:
         """
         try:
             from pydantic_ai.capabilities import HandleDeferredToolCalls
-        except ImportError:  # pragma: no cover — only fires on floor-slim CI, which doesn't gate on coverage
+        except ImportError:  # pragma: no cover -- only fires on floor-slim CI, which doesn't gate on coverage
             pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
 
         from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
@@ -1148,11 +1148,11 @@ class TestCodeMode:
         without re-invoking the handler; the harness then converts it to a `ModelRetry`.
 
         This guards the contract documented on `_resolve_single_deferred.Raises`: a re-raised
-        deferral after approval is *not* re-resolved — it bubbles up to the caller.
+        deferral after approval is *not* re-resolved -- it bubbles up to the caller.
         """
         try:
             from pydantic_ai.capabilities import HandleDeferredToolCalls
-        except ImportError:  # pragma: no cover — only fires on floor-slim CI, which doesn't gate on coverage
+        except ImportError:  # pragma: no cover -- only fires on floor-slim CI, which doesn't gate on coverage
             pytest.skip('Requires pydantic-ai-slim with `HandleDeferredToolCalls` (next release after 1.86.1)')
 
         from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired
@@ -1202,7 +1202,7 @@ class TestCodeMode:
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
 
-        # Pass a string where int is expected — type checker catches this.
+        # Pass a string where int is expected -- type checker catches this.
         with pytest.raises(ModelRetry, match='error in code'):
             await wrapper.call_tool(
                 'run_code',
@@ -1398,7 +1398,7 @@ class TestCodeMode:
         with pytest.raises(ModelRetry, match='error in code'):
             await wrapper.call_tool('run_code', {'code': 'await nonexistent_tool(x=1)'}, ctx, run_code)
 
-        # After a successful call, type checking is skipped — falls to runtime NameError.
+        # After a successful call, type checking is skipped -- falls to runtime NameError.
         await wrapper.call_tool('run_code', {'code': '1 + 1', 'restart': True}, ctx, run_code)
         with pytest.raises(ModelRetry, match='Runtime error'):
             await wrapper.call_tool('run_code', {'code': 'await nonexistent_tool(x=1)'}, ctx, run_code)
@@ -1419,12 +1419,12 @@ class TestCodeMode:
         with pytest.raises(ModelRetry, match='error in code'):
             await wrapper.call_tool('run_code', {'code': 'await add(1, 2)'}, ctx, run_code)
 
-        # After a valid call, type checking is skipped — runtime guard catches it.
+        # After a valid call, type checking is skipped -- runtime guard catches it.
         await wrapper.call_tool('run_code', {'code': '1 + 1', 'restart': True}, ctx, run_code)
         with pytest.raises(ModelRetry, match='does not accept positional arguments'):
             await wrapper.call_tool('run_code', {'code': 'await add(1, 2)'}, ctx, run_code)
 
-        # Caught positional args — sandbox code handles the error gracefully.
+        # Caught positional args -- sandbox code handles the error gracefully.
         result = await wrapper.call_tool(
             'run_code',
             {'code': 'try:\n    await add(1, 2)\nexcept TypeError:\n    pass\n"recovered"'},
@@ -1563,7 +1563,7 @@ class TestCodeMode:
         )
         assert result.return_value == [3, 'Hello, World!']
 
-        # Both calls recorded in metadata — greet resolved at barrier, add resolved inline.
+        # Both calls recorded in metadata -- greet resolved at barrier, add resolved inline.
         assert result.metadata['code_mode'] is True
         calls = result.metadata['tool_calls']
         returns = result.metadata['tool_returns']
@@ -1669,7 +1669,7 @@ class TestCodeMode:
             assert 'def add(' in desc
             assert 'async def add(' not in desc
 
-            # The tool still works — global sequential resolves at FutureSnapshot.
+            # The tool still works -- global sequential resolves at FutureSnapshot.
             result = await seq_wrapper.call_tool('run_code', {'code': 'add(a=5, b=7)'}, ctx, run_code)
             assert result.return_value == 12
 
@@ -1682,14 +1682,14 @@ class TestCodeMode:
         tools = await wrapper.get_tools(ctx)
         run_code = tools['run_code']
 
-        # First call succeeds — REPL has state.
+        # First call succeeds -- REPL has state.
         await wrapper.call_tool('run_code', {'code': 'x = await add(a=1, b=2)'}, ctx, run_code)
 
-        # Restart with bad code — type checking catches it.
+        # Restart with bad code -- type checking catches it.
         with pytest.raises(ModelRetry, match='Type error'):
             await wrapper.call_tool('run_code', {'code': "await add(a='bad', b=3)", 'restart': True}, ctx, run_code)
 
-        # Retry without restart — should still be type-checked (REPL was cleared).
+        # Retry without restart -- should still be type-checked (REPL was cleared).
         with pytest.raises(ModelRetry, match='Type error'):
             await wrapper.call_tool('run_code', {'code': "await add(a='bad', b=3)"}, ctx, run_code)
 

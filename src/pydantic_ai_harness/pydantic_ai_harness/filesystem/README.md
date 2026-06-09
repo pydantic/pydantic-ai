@@ -45,7 +45,7 @@ print(result.output)
 ## Security model
 
 - **Containment.** Paths resolve relative to `root_dir`; anything resolving
-  outside — via `..`, an absolute path, or a symlink — is rejected. Symlinks
+  outside -- via `..`, an absolute path, or a symlink -- is rejected. Symlinks
   are resolved with `os.path.realpath` *before* the containment check, closing
   the TOCTTOU window.
 - **Binary detection.** `read_file` returns a placeholder instead of dumping
@@ -64,7 +64,7 @@ need `**`.
 |---|---|
 | `allowed_patterns` | If non-empty, only matching paths are accessible (allowlist). |
 | `denied_patterns` | Matching paths are always rejected (denylist). |
-| `protected_patterns` | Matching paths are read-only — reads succeed, writes are rejected. |
+| `protected_patterns` | Matching paths are read-only -- reads succeed, writes are rejected. |
 
 `protected_patterns` defaults to `.git/`, `.env`/`.env.*`, `*.pem`, `*.key`,
 and `**/secrets*`. Pass an empty list to disable protection.
@@ -77,7 +77,7 @@ The three rules apply at two different granularities:
   `create_directory`) gates the operation's target path. You must name a path
   that the patterns permit.
 - **Walkers** (`list_directory`, `search_files`, `find_files`) gate their root
-  by deny/protected patterns, but **not** by `allowed_patterns` — a directory
+  by deny/protected patterns, but **not** by `allowed_patterns` -- a directory
   root like `.` never matches a file pattern such as `src/*.py`, so requiring
   it to would make every listing fail. Instead, the root is always walked and
   each **entry** is filtered against all three lists. A directory listing can
@@ -87,14 +87,14 @@ So with `allowed_patterns=['*.py']`, `list_directory('.')` succeeds and shows
 only the `.py` entries; `read_file('notes.md')` is rejected.
 
 > Dotfiles and dot-directories (`.git`, `.env`, `.github`, …) are skipped by
-> all three walkers — `list_directory`, `search_files`, and `find_files` —
+> all three walkers -- `list_directory`, `search_files`, and `find_files` --
 > regardless of patterns.
 
 ## Configuration
 
 ```python
 FileSystem(
-    root_dir='.',                  # str | Path — sandbox root
+    root_dir='.',                  # str | Path -- sandbox root
     allowed_patterns=[],           # allowlist globs (empty = allow all)
     denied_patterns=[],            # denylist globs
     protected_patterns=[...],      # read-only globs (defaults to secrets/.git)

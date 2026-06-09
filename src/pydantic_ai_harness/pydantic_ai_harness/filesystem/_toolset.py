@@ -17,7 +17,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 _P = ParamSpec('_P')
 
-# Errors that mean "the model asked for something the tool couldn't do" — a
+# Errors that mean "the model asked for something the tool couldn't do" -- a
 # missing file, a denied path, a stale edit. pyai only feeds `ModelRetry` back
 # to the model; any other exception aborts the whole run. `_recoverable`
 # converts these so the agent can correct itself and continue.
@@ -118,7 +118,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """Glob-match a relative path, treating a leading `**/` as 'any directory, including the root'.
 
         `fnmatch` has no recursive `**`, so a bare `**/secrets*` would miss a
-        root-level `secrets.yaml` — there's no leading directory to match.
+        root-level `secrets.yaml` -- there's no leading directory to match.
         Retrying with the `**/` prefix stripped covers the zero-directory case.
         """
         if fnmatch.fnmatch(path, pattern):
@@ -148,7 +148,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         `check_allowed=False` skips the `allowed_patterns` gate. Walkers
         (`list_directory`, `search_files`, `find_files`) pass it so their root
-        directory isn't required to match `allowed_patterns` itself — `.` or
+        directory isn't required to match `allowed_patterns` itself -- `.` or
         `src` would never match a file pattern like `src/*.py`. The walk's
         entries are still filtered against `allowed_patterns` per-entry via
         `_is_accessible`. Denied and protected patterns continue to gate the

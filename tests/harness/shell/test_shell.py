@@ -442,7 +442,7 @@ class TestCwdCapture:
 
 class TestForRunIsolation:
     """B3: `get_toolset` builds one shared instance at agent construction, so
-    `for_run` must hand each run a fresh copy — otherwise concurrent runs share
+    `for_run` must hand each run a fresh copy -- otherwise concurrent runs share
     `_cwd`/`_background` and corrupt each other."""
 
     async def test_for_run_returns_fresh_instance(self, persist_toolset: ShellToolset[None]) -> None:
@@ -463,7 +463,7 @@ class TestForRunIsolation:
 
 
 class TestPersistCwdHardening:
-    """B4: regression tests for the old stdout-sentinel footguns — a command's
+    """B4: regression tests for the old stdout-sentinel footguns -- a command's
     output spoofing the cwd, and `;` silently disabling tracking."""
 
     async def test_cd_persists_even_with_semicolon(self, persist_toolset: ShellToolset[None]) -> None:
@@ -1102,7 +1102,7 @@ class TestEdgeCases:
             persist_cwd=True,
             allow_interactive=False,
         )
-        # Successful echo — sentinel shows same dir, cwd should remain valid
+        # Successful echo -- sentinel shows same dir, cwd should remain valid
         await ts.run_command('echo hi')
         assert ts._cwd.is_dir()
 
