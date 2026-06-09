@@ -17,7 +17,7 @@ backwards compatibility. Callers migrating to the singular read `is_last` as
 from __future__ import annotations
 
 import warnings
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 import pytest
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.anyio
 
 
 @contextmanager
-def _no_deprecation() -> Iterator[None]:
+def _no_deprecation() -> Generator[None]:
     """Promote `PydanticAIDeprecationWarning` to errors inside the block.
 
     A `with`-style context manager (rather than a function wrapping a getter) so
