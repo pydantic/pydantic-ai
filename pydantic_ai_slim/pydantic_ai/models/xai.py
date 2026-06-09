@@ -256,6 +256,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'parallel_tool_calls': 'parallel_tool_calls',
     'presence_penalty': 'presence_penalty',
     'frequency_penalty': 'frequency_penalty',
+    'seed': 'seed',
     'xai_logprobs': 'logprobs',
     'xai_top_logprobs': 'top_logprobs',
     'xai_user': 'user',

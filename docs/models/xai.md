@@ -57,6 +57,25 @@ agent = Agent(model)
 ...
 ```
 
+For gateway, regional, or proxy deployments you can also point the provider at a custom host and set a client-level default timeout, both of which are forwarded to the underlying `xai_sdk.AsyncClient`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+provider = XaiProvider(
+    api_key='your-api-key',
+    api_host='gateway.example.com',
+    timeout=30,
+)
+model = XaiModel('grok-4.3', provider=provider)
+agent = Agent(model)
+...
+```
+
+`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. The provider-level `timeout` is distinct from [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout], which overrides the timeout for an individual request. Both options are omitted when left unset, so the SDK's own defaults apply.
+
 Or with a custom `xai_sdk.AsyncClient`:
 
 ```python
