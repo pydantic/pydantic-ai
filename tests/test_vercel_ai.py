@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import NativeTool
@@ -25,6 +26,8 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -6273,6 +6276,69 @@ async def test_adapter_tool_call_part_with_provider_metadata():
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
     _sync_timestamps(messages, reloaded_messages)
     assert reloaded_messages == messages
+
+
+async def test_adapter_preserves_loaded_deferred_capability_state():
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(
+                    tool_call_id='load-foobar',
+                    args={'id': 'foobar'},
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(
+                    tool_call_id='load-foobar',
+                    content={'instructions': '# Foo Bar'},
+                )
+            ]
+        ),
+    ]
+
+    assert parse_loaded_capabilities(messages) == {'foobar'}
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    round_tripped = VercelAIAdapter.load_messages(ui_messages)
+
+    assert parse_loaded_capabilities(round_tripped) == {'foobar'}
+    assert isinstance(round_tripped[0], ModelResponse)
+    assert isinstance(round_tripped[0].parts[0], LoadCapabilityCallPart)
+    assert isinstance(round_tripped[1], ModelRequest)
+    assert isinstance(round_tripped[1].parts[0], LoadCapabilityReturnPart)
+
+
+async def test_adapter_does_not_narrow_failed_loaded_capability_returns():
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='assistant',
+            parts=[
+                ToolOutputErrorPart(
+                    type='tool-load_capability',
+                    tool_call_id='load-foobar',
+                    input={'id': 'foobar'},
+                    error_text='Capability not found',
+                    provider_executed=False,
+                    call_provider_metadata={'pydantic_ai': {'tool_kind': 'capability-load'}},
+                )
+            ],
+        )
+    ]
+
+    messages = VercelAIAdapter.load_messages(ui_messages)
+
+    assert isinstance(messages[0], ModelResponse)
+    assert isinstance(messages[0].parts[0], LoadCapabilityCallPart)
+    assert isinstance(messages[1], ModelRequest)
+    failed_return = messages[1].parts[0]
+    assert isinstance(failed_return, ToolReturnPart)
+    assert not isinstance(failed_return, LoadCapabilityReturnPart)
+    assert failed_return.tool_kind is None
+    assert failed_return.outcome == 'failed'
+    assert parse_loaded_capabilities(messages) == set()
 
 
 async def test_adapter_load_messages_tool_call_with_provider_metadata():
