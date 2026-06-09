@@ -264,6 +264,8 @@ The installed Anthropic SDK exposes the current literal set and still allows arb
 `anthropic` pin in `pydantic_ai_slim/pyproject.toml` is bumped past the version that adds it.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
+# TODO: the installed `anthropic` SDK (pinned `>=0.105.0`) doesn't list `claude-fable-5` yet, but
+# `0.108.0` does. Drop the `Literal['claude-fable-5']` bridge above once the pin reaches `>=0.108.0`.
 
 _AnthropicCodeExecutionToolName: TypeAlias = Literal[
     'code_execution', 'bash_code_execution', 'text_editor_code_execution'
