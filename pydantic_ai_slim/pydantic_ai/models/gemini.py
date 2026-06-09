@@ -435,10 +435,14 @@ def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _Gemi
         config['temperature'] = temperature
     if (top_p := model_settings.get('top_p')) is not None:
         config['top_p'] = top_p
+    if (top_k := model_settings.get('top_k')) is not None:
+        config['top_k'] = top_k
     if (presence_penalty := model_settings.get('presence_penalty')) is not None:
         config['presence_penalty'] = presence_penalty
     if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
         config['frequency_penalty'] = frequency_penalty
+    if (seed := model_settings.get('seed')) is not None:
+        config['seed'] = seed
     if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
         config['thinking_config'] = thinkingConfig
     return config
@@ -636,8 +640,10 @@ class _GeminiGenerationConfig(TypedDict, total=False):
     max_output_tokens: int
     temperature: float
     top_p: float
+    top_k: int
     presence_penalty: float
     frequency_penalty: float
+    seed: int
     stop_sequences: list[str]
     thinking_config: ThinkingConfig
     response_mime_type: str

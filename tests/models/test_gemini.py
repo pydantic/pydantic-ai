@@ -1138,8 +1138,10 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
             'max_output_tokens': 1,
             'temperature': 0.1,
             'top_p': 0.2,
+            'top_k': 5,
             'presence_penalty': 0.3,
             'frequency_penalty': 0.4,
+            'seed': 42,
         }
         return httpx.Response(
             200,
@@ -1160,8 +1162,10 @@ async def test_model_settings(client_with_handler: ClientWithHandler, env: TestE
             'max_tokens': 1,
             'temperature': 0.1,
             'top_p': 0.2,
+            'top_k': 5,
             'presence_penalty': 0.3,
             'frequency_penalty': 0.4,
+            'seed': 42,
         },
     )
     assert result.output == 'world'
