@@ -4445,6 +4445,68 @@ def test_streaming_usage():
     )
 
 
+def test_map_usage_bedrock_start_event_without_message():
+    """On Bedrock the SDK drops SSE event types, so Bedrock-only chunks are non-validating
+    `construct_type`d into `BetaRawMessageStartEvent(message=None)`, violating the annotation.
+    `_map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
+
+    A unit test rather than VCR: the `message=None` event is an SDK construct artifact, not a
+    server response shape, so it can't be elicited from a recorded request.
+    """
+    # `model_construct` skips validation, mirroring the SDK's `construct_type` on Bedrock.
+    start = BetaRawMessageStartEvent.model_construct(type='message_start', message=None)
+    assert _map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
+
+    existing = RequestUsage(input_tokens=7, output_tokens=3)
+    assert _map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
+
+
+async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_model_requests: None):
+    """A Bedrock `message=None` start event must be skipped across the whole streaming path (https://github.com/pydantic/pydantic-ai/issues/5774).
+
+    On Bedrock the SDK drops SSE event types, so Bedrock-only chunks (e.g. `amazon-bedrock-invocationMetrics`)
+    are non-validating `construct_type`d into `BetaRawMessageStartEvent(message=None)`. Driving `run_stream`
+    exercises `_process_streamed_response` and `AnthropicStreamedResponse._get_event_iterator`, which
+    previously crashed on `event.message.id`. The malformed chunk is placed first — a constructed worst case
+    (real Bedrock trails the metrics chunk) that also reaches the `_process_streamed_response` model-name
+    fallback: the streamed response then reports the configured model id, while usage and response id come
+    from the real `message_start` that follows.
+    """
+    stream: list[MockRawMessageStreamEvent] = [
+        # Contract-violating Bedrock chunk: the SDK hands out `message=None`.
+        BetaRawMessageStartEvent.model_construct(type='message_start', message=None),
+        BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=4, output_tokens=0)), type='message_start'),
+        BetaRawContentBlockStartEvent(
+            content_block=BetaTextBlock(text='hello', type='text'), index=0, type='content_block_start'
+        ),
+        BetaRawContentBlockStopEvent(index=0, type='content_block_stop'),
+        BetaRawMessageDeltaEvent(
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(output_tokens=2),
+            type='message_delta',
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        output = await result.get_output()
+    assert output == snapshot('hello')
+
+    # The skipped `message=None` chunk contributes no usage and no response id: usage comes from the
+    # real `message_start` (input) + `message_delta` (output), and the id from the real event. The model
+    # name falls back to the configured id because the peeked-first chunk carried no `message.model`.
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.usage == snapshot(
+        RequestUsage(input_tokens=4, output_tokens=2, details={'input_tokens': 4, 'output_tokens': 2})
+    )
+    assert response.provider_response_id == 'x'
+    assert response.model_name == 'claude-haiku-4-5'
+
+
 def test_streaming_usage_with_compaction():
     """Delta events don't carry the `iterations` array, so the fixed compaction totals set
     by the start event must survive the merge and still be summed into the final totals."""
