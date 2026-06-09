@@ -23,7 +23,16 @@ with try_import() as imports_successful:
 if not imports_successful():
     pytest.skip('gateway model checks require provider packages to be installed', allow_module_level=True)
 
-pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore::DeprecationWarning')]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore::DeprecationWarning'),
+    # These smoke tests assert that catalog model names *work* against the gateway, not that the
+    # call is free of deprecation notices. `PydanticAIDeprecationWarning` subclasses `UserWarning`
+    # (so it stays visible to end users by default), which means `ignore::DeprecationWarning` above
+    # doesn't cover it; e.g. resolving `gateway/openai:` emits the v2.0 Responses-API migration
+    # warning. Ignore our own deprecations here so they don't fail the health check.
+    pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning'),
+]
 
 
 @pytest.fixture(scope='module')

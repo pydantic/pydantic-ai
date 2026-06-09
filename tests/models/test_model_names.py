@@ -83,10 +83,12 @@ _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
 
 UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
     {
+        'gateway/anthropic:claude-3-haiku-20240307',
         'gateway/bedrock:amazon.titan-text-express-v1',
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',
         'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
         'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
         'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
         'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
@@ -145,6 +147,7 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
         'gateway/groq:meta-llama/llama-guard-4-12b',
         'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
+        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
         'gateway/groq:playai-tts',
         'gateway/groq:playai-tts-arabic',
         'gateway/groq:qwen/qwen-3-32b',
