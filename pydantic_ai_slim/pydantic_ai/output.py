@@ -328,9 +328,9 @@ class TextOutput(Generic[OutputDataT]):
     ```
 
     !!! note
-        When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] yields the raw
-        model text and does not apply the wrapped function. Use
-        [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] to stream the transformed output.
+        When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does not apply the
+        wrapped function. Use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] to stream
+        the value it produces.
     """
 
     output_function: TextOutputFunc[OutputDataT]
