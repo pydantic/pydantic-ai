@@ -180,6 +180,7 @@ KnownModelName = TypeAliasType(
         'gateway/openai:gpt-5.2-2025-12-11',
         'gateway/openai:gpt-5.2-chat-latest',
         'gateway/openai:gpt-5.2',
+        'gateway/openai:gpt-5.3-chat-latest',
         'gateway/openai:gpt-5.4-mini-2026-03-17',
         'gateway/openai:gpt-5.4-mini',
         'gateway/openai:gpt-5.4-nano-2026-03-17',

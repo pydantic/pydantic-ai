@@ -182,7 +182,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:gpt-5.1-mini',
         'gateway/openai:gpt-5.2-pro',
         'gateway/openai:gpt-5.2-pro-2025-12-11',
-        'gateway/openai:gpt-5.3-chat-latest',
         'gateway/openai:o1-mini',
         'gateway/openai:o1-mini-2024-09-12',
         'gateway/openai:o1-preview',
