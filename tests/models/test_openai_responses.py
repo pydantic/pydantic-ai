@@ -10296,6 +10296,61 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
     )
 
 
+async def test_openai_responses_unified_thinking_with_send_reasoning_ids(allow_model_requests: None):
+    """Unified `thinking` and `openai_send_reasoning_ids` compose across a 2-turn round-trip.
+
+    The unified `thinking='high'` (not `openai_reasoning_effort`) drives `reasoning.effort='high'` on the wire,
+    and the reasoning item it yields is replayed on turn 2 with its provider id intact because
+    `openai_send_reasoning_ids=True`. Locks that the unified setting and reasoning-id replay don't interfere.
+    """
+    c1 = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[Summary(text='thinking about it', type='summary_text')],
+                encrypted_content='enc_123',
+                type='reasoning',
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(list[Content], [ResponseOutputText(text='9', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(thinking='high', openai_send_reasoning_ids=True),
+    )
+    agent = Agent(model=model)
+
+    result1 = await agent.run('What is 2+2?')
+    await agent.run('Add 5 to that', message_history=result1.all_messages())
+
+    turn1_kwargs, turn2_kwargs = get_mock_responses_kwargs(mock_client)
+    # Unified `thinking` drives `reasoning.effort` on the wire for both turns.
+    assert turn1_kwargs['reasoning'] == {'effort': 'high'}
+    assert turn2_kwargs['reasoning'] == {'effort': 'high'}
+    # The turn-1 reasoning item is replayed on turn 2 with its provider id intact.
+    turn2_reasoning = [m for m in turn2_kwargs['input'] if m.get('type') == 'reasoning']
+    assert [m['id'] for m in turn2_reasoning] == ['rs_123']
+
+
 async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_model_requests: None, openai_api_key: str):
     async_client = AsyncOpenAI(api_key=openai_api_key)
 

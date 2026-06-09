@@ -711,6 +711,47 @@ async def test_fallback_model_settings_merge_streaming():
     assert json.loads(output) == expected
 
 
+async def test_fallback_thinking_idempotent_across_heterogeneous_models() -> None:
+    """`thinking='high'` flows correctly through a FallbackModel whose inner models disagree on thinking support.
+
+    `FallbackModel.request` calls each inner model's `prepare_request` once (for span attributes), then
+    `model.request` re-runs it — so `prepare_request` runs twice per inner model. This locks that the double-run is
+    idempotent and leaks nothing across runs or across inner models: the reasoning model still sees `thinking='high'`
+    lifted into its request parameters, the non-reasoning fallback has it gated out, and the caller's `model_settings`
+    is left untouched.
+    """
+    seen_params: dict[str, ModelRequestParameters] = {}
+    seen_settings: dict[str, ModelSettings | None] = {}
+
+    def reasoning(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_params['reasoning'] = info.model_request_parameters
+        seen_settings['reasoning'] = info.model_settings
+        raise ModelHTTPError(status_code=500, model_name='reasoning', body=None)
+
+    def non_reasoning(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_params['non_reasoning'] = info.model_request_parameters
+        seen_settings['non_reasoning'] = info.model_settings
+        return ModelResponse(parts=[TextPart('success')])
+
+    reasoning_model = FunctionModel(reasoning, profile=ModelProfile(supports_thinking=True))
+    non_reasoning_model = FunctionModel(non_reasoning, profile=ModelProfile(supports_thinking=False))
+    fallback_model = FallbackModel(reasoning_model, non_reasoning_model)
+
+    settings = ModelSettings(thinking='high')
+    agent = Agent(fallback_model, model_settings=settings)
+    result = await agent.run('Hello')
+
+    assert result.output == 'success'
+    # Reasoning model: unified `thinking` lifted into request parameters and stripped from `model_settings`.
+    assert seen_params['reasoning'].thinking == 'high'
+    assert seen_settings['reasoning'] is None
+    # Non-reasoning fallback: `thinking` gated out at the profile, never reaching request parameters.
+    assert seen_params['non_reasoning'].thinking is None
+    assert seen_settings['non_reasoning'] is None
+    # The caller's settings object is not mutated by the double `prepare_request` run.
+    assert settings == {'thinking': 'high'}
+
+
 async def test_fallback_model_structured_output():
     class Foo(BaseModel):
         bar: str
