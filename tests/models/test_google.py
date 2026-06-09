@@ -538,8 +538,11 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
 
 
 async def test_google_model_max_tokens(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
+    # With thinking disabled, the model spends its tiny budget on visible output, so it returns the partial
+    # text generated before the `max_tokens` limit is hit, with `finish_reason=MAX_TOKENS` and no error.
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings = GoogleModelSettings(max_tokens=5, google_thinking_config={'thinking_budget': 0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is')
 
@@ -547,9 +550,9 @@ async def test_google_model_max_tokens(allow_model_requests: None, google_provid
 async def test_google_model_max_tokens_thinking_model_empty_response(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
-    # Unlike the non-thinking `gemini-1.5-flash` above, which returns the partial text it generated before
-    # truncation, a thinking model spends the tiny token budget on hidden reasoning and returns no content
-    # parts with `finish_reason=MAX_TOKENS`, which the agent graph surfaces as a clear `UnexpectedModelBehavior`.
+    # Unlike the non-thinking case above, a thinking model spends the tiny token budget on hidden reasoning
+    # and returns no content parts with `finish_reason=MAX_TOKENS`, which the agent graph surfaces as a clear
+    # `UnexpectedModelBehavior`.
     model = GoogleModel('gemini-2.5-pro', provider=google_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
     with pytest.raises(
