@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -101,10 +101,10 @@ try:
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
-        AsyncAnthropicBedrock,
-        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicFoundry,
-        AsyncAnthropicVertex,
+        AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
         AsyncStream,
         Omit,
         omit as OMIT,
@@ -242,7 +242,7 @@ _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
@@ -559,7 +559,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -850,6 +850,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(self.client, AsyncAnthropicBedrock):
             raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
 
+        # Anthropic docs: https://platform.claude.com/docs/en/api/messages-count-tokens
+        # The `count_tokens` endpoint rejects server-side tools (`web_search`, `code_execution`,
+        # `web_fetch`, `tool_search`) and the `mcp_servers` param with a 400, so omit them. This
+        # undercounts the prompt by those tools' definitions, but it's the only way to get a count
+        # until Anthropic supports them. Client-side tools like `MemoryTool` are accepted and
+        # contribute real tokens, so keep them for an accurate count.
+        # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
+        model_request_parameters = replace(
+            model_request_parameters,
+            native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
+        )
+
         # standalone function to make it easier to override
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
@@ -973,9 +985,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         assert isinstance(first_chunk, BetaRawMessageStartEvent)
 
+        # On Bedrock the SDK drops SSE event types, so a leading Bedrock-only chunk
+        # (e.g. `amazon-bedrock-invocationMetrics`) is non-validating `construct_type`d
+        # into `BetaRawMessageStartEvent(message=None)`. Fall back to the configured model
+        # name rather than dereference `first_chunk.message.model` (https://github.com/pydantic/pydantic-ai/issues/5774). The
+        # iterator below skips these `message=None` events.
+        model_name = first_chunk.message.model if first_chunk.message is not None else self.model_name  # pyright: ignore[reportUnnecessaryComparison]
+
         return AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=first_chunk.message.model,
+            _model_name=model_name,
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
@@ -2098,6 +2117,13 @@ def _map_usage(
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
+        if message.message is None:  # pyright: ignore[reportUnnecessaryComparison]
+            # On Bedrock the Anthropic SDK drops SSE event types, so Bedrock-only chunks
+            # (e.g. `amazon-bedrock-invocationMetrics`) are non-validating `construct_type`d
+            # into `BetaRawMessageStartEvent(message=None)`, violating the type annotation.
+            # The metrics chunk's token counts duplicate the canonical `message_start` /
+            # `message_delta` usage, so dropping them here avoids double-counting.
+            return existing_usage or usage.RequestUsage()
         response_usage = message.message.usage
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
@@ -2143,6 +2169,11 @@ class AnthropicStreamedResponse(StreamedResponse):
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in self._response:
                 if isinstance(event, BetaRawMessageStartEvent):
+                    if event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
+                        # See `_map_usage`: Bedrock emits type-less chunks the SDK constructs
+                        # as `BetaRawMessageStartEvent(message=None)`. Skip them entirely so we
+                        # don't dereference `event.message.id` / `.container` below.
+                        continue
                     self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
                     self.provider_response_id = event.message.id
                     if event.message.container:
