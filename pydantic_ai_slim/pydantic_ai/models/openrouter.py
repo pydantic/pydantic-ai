@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from functools import cached_property
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
@@ -703,9 +702,8 @@ class OpenRouterModel(OpenAIChatModel):
         """
         super().__init__(model_name, provider=provider or OpenRouterProvider(), profile=profile, settings=settings)
 
-    @cached_property
-    def _cache_profile(self) -> OpenRouterModelProfile:
-        """Get the OpenRouter-specific model profile with cache capability flags."""
+    @property
+    def _resolved_profile(self) -> OpenRouterModelProfile:
         return OpenRouterModelProfile.from_profile(self.profile)
 
     def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
@@ -717,7 +715,7 @@ class OpenRouterModel(OpenAIChatModel):
         """
         resolved_ttl: Literal['5m', '1h'] = '5m' if isinstance(ttl, bool) else ttl
         cache_control: dict[str, str] = {'type': 'ephemeral'}
-        if self._cache_profile.openrouter_supports_cache_ttl:
+        if self._resolved_profile.openrouter_supports_cache_ttl:
             cache_control['ttl'] = resolved_ttl
         return cache_control
 
@@ -743,7 +741,7 @@ class OpenRouterModel(OpenAIChatModel):
             openai_messages: The mapped OpenAI messages to limit.
             has_tool_cache_point: Whether a tool definition cache point was added by `_get_tool_choice`.
         """
-        max_points = self._cache_profile.openrouter_max_cache_points
+        max_points = self._resolved_profile.openrouter_max_cache_points
         if max_points is None:
             return
 
@@ -790,7 +788,7 @@ class OpenRouterModel(OpenAIChatModel):
             ttl: The cache time-to-live (`True` -> `'5m'`, or `'5m'`/`'1h'`).
                 Ignored for providers that don't support it.
         """
-        if not self._cache_profile.openrouter_supports_cache_control:
+        if not self._resolved_profile.openrouter_supports_cache_control:
             return
 
         if not params:
@@ -830,12 +828,12 @@ class OpenRouterModel(OpenAIChatModel):
                     break
             return
 
-        instruction_role = self._cache_profile.openai_system_prompt_role or 'system'
+        instruction_role = self._resolved_profile.openai_system_prompt_role or 'system'
         if instruction_role not in ('system', 'developer'):
             return
 
         has_dynamic_instructions = any(part.dynamic for part in instruction_parts)
-        if has_dynamic_instructions and not self._cache_profile.openrouter_supports_dynamic_instruction_cache:
+        if has_dynamic_instructions and not self._resolved_profile.openrouter_supports_dynamic_instruction_cache:
             # OpenRouter normalizes Google system/developer messages into Gemini's single
             # `systemInstruction`, which Gemini caches as an immutable block (explicit
             # cache_control path). Unlike Anthropic prefix caching, we can't cache only the
@@ -912,7 +910,7 @@ class OpenRouterModel(OpenAIChatModel):
         if (
             tools
             and (cache_tool_defs := model_settings.get('openrouter_cache_tool_definitions'))
-            and self._cache_profile.openrouter_supports_tool_cache
+            and self._resolved_profile.openrouter_supports_tool_cache
         ):
             last_tool = cast(dict[str, Any], tools[-1])
             last_tool['cache_control'] = self._build_cache_control(cache_tool_defs)
@@ -933,14 +931,14 @@ class OpenRouterModel(OpenAIChatModel):
             openai_messages
             and model_settings
             and (cache_messages := model_settings.get('openrouter_cache_messages'))
-            and self._cache_profile.openrouter_supports_cache_control
+            and self._resolved_profile.openrouter_supports_cache_control
         ):
             self._add_cache_control_to_message(openai_messages[-1], cache_messages)
 
         if (
             model_settings
             and (cache_instructions := model_settings.get('openrouter_cache_instructions'))
-            and self._cache_profile.openrouter_supports_cache_control
+            and self._resolved_profile.openrouter_supports_cache_control
         ):
             self._add_cache_control_to_instructions(
                 openai_messages, messages, model_request_parameters, cache_instructions
@@ -950,7 +948,7 @@ class OpenRouterModel(OpenAIChatModel):
             model_settings
             and model_settings.get('openrouter_cache_tool_definitions')
             and model_request_parameters.tool_defs
-            and self._cache_profile.openrouter_supports_tool_cache
+            and self._resolved_profile.openrouter_supports_tool_cache
         )
         self._limit_cache_points(openai_messages, has_tool_cache_point=has_tool_cache_point)
 
