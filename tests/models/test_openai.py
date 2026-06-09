@@ -45,7 +45,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
@@ -4398,6 +4398,59 @@ async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_
     assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
         {'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}
     )
+
+
+@pytest.mark.parametrize('thinking', [True, False])
+async def test_deepseek_reasoning_field_on_synthetic_tool_search_turn(allow_model_requests: None, thinking: bool):
+    """Regression test for #5829: deterministic per-CI guard for the wire mapping.
+
+    Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn
+    with tool calls but no thinking. DeepSeek (which round-trips thinking in `reasoning_content`)
+    400s if such a turn omits that field while the run is thinking, so it must be sent empty when
+    thinking is active and left off otherwise (e.g. `deepseek-chat`). The real-API counterpart is
+    `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
+    """
+    load_capability_turn = completion_message(
+        ChatCompletionMessage.model_construct(
+            content=None,
+            role='assistant',
+            reasoning_content='I should load the dice capability.' if thinking else None,
+            tool_calls=[
+                ChatCompletionMessageFunctionToolCall(
+                    id='call_load',
+                    type='function',
+                    function=Function(name='load_capability', arguments=json.dumps({'id': 'DICE_ROLL'})),
+                )
+            ],
+        )
+    )
+    final_turn = completion_message(ChatCompletionMessage.model_construct(content='You win!', role='assistant'))
+    mock = MockOpenAI.create_mock([load_capability_turn, final_turn])
+    model = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=mock),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts='field',
+        ),
+    )
+
+    def roll_dice() -> str:
+        return '4'
+
+    agent = Agent(model, capabilities=[Capability(id='DICE_ROLL', tools=[roll_dice], defer_loading=True)])
+    await agent.run('My guess is 4')
+
+    # The second request is the one made after `load_capability` returned; it carries the
+    # synthetic `search_tools` assistant turn that the load injected into history.
+    second_request_messages = get_mock_chat_completion_kwargs(mock)[1]['messages']
+    synthetic_turn = next(
+        message
+        for message in second_request_messages
+        if message.get('role') == 'assistant'
+        and any(call['function']['name'] == 'search_tools' for call in message.get('tool_calls', ()))
+    )
+    assert synthetic_turn.get('reasoning_content') == ('' if thinking else None)
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):

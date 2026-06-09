@@ -8,10 +8,13 @@ from pydantic_ai import (
     Agent,
     ModelRequest,
     ModelResponse,
+    RunContext,
     TextPart,
     ThinkingPart,
+    ToolCallPart,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.usage import RequestUsage
 
@@ -28,6 +31,60 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
+
+
+async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: None, deepseek_api_key: str):
+    """Regression test for #5829: real-API check that deferred capabilities work on a DeepSeek thinking model.
+
+    Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn with
+    tool calls but no thinking; before the fix DeepSeek rejected it with a 400. A successful
+    recording confirms DeepSeek accepts the empty `reasoning_content` the fix sends. The
+    deterministic mapping guard is in
+    `test_openai.py::test_deepseek_reasoning_field_on_synthetic_tool_search_turn`.
+
+    Recording notes (for whoever records the cassette):
+
+    - Needs a real `DEEPSEEK_API_KEY` and `--record-mode=rewrite` (see `.claude/skills/testing-skill`).
+    - `model_name` must support tool calling AND think (emit `reasoning_content`); the issue used a
+      `deepseek-v4-*` SKU, so swap if `deepseek-reasoner` doesn't reproduce it.
+    """
+    model_name = 'deepseek-reasoner'
+    model = OpenAIChatModel(model_name, provider=DeepSeekProvider(api_key=deepseek_api_key))
+
+    def roll_dice() -> str:
+        """Roll a six-sided die and return the result."""
+        return '4'
+
+    def get_player_name(ctx: RunContext[str]) -> str:
+        """Get the player's name."""
+        return ctx.deps
+
+    agent = Agent(
+        model,
+        deps_type=str,
+        instructions=(
+            "You're a dice game, you should roll the die and see if the number you get back "
+            "matches the user's guess. If so, tell them they're a winner. Use the player's name "
+            'in the response.'
+        ),
+        capabilities=[Capability[str](id='DICE_ROLL', tools=[get_player_name, roll_dice], defer_loading=True)],
+    )
+
+    result = await agent.run('My guess is 4', deps='Anne')
+
+    # The run completing at all is the core regression signal — it 400'd before the fix. The
+    # structural checks make sure the recording exercised the deferred + thinking path rather than
+    # the model answering directly (which would leave the bug untested).
+    assert isinstance(result.output, str) and result.output
+    messages = result.all_messages()
+    assert any(
+        isinstance(part, ToolCallPart) and part.tool_name == 'load_capability'
+        for message in messages
+        for part in message.parts
+    ), 'expected the model to call `load_capability`; the deferred path was not exercised'
+    assert any(isinstance(part, ThinkingPart) for message in messages for part in message.parts), (
+        'expected a `ThinkingPart`; thinking was not exercised, so the reasoning_content round-trip is untested'
+    )
 
 
 async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek_api_key: str):
