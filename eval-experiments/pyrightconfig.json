@@ -1,0 +1,20 @@
+{
+  "typeCheckingMode": "strict",
+  "pythonVersion": "3.10",
+  "venvPath": "..",
+  "venv": ".venv",
+  "extraPaths": [
+    "."
+  ],
+  "reportMissingTypeStubs": false,
+  "reportUnnecessaryIsInstance": false,
+  "reportUnnecessaryTypeIgnoreComment": true,
+  "reportMissingModuleSource": false,
+  "executionEnvironments": [
+    {
+      "root": "tests",
+      "reportUnusedFunction": false,
+      "reportPrivateImportUsage": false
+    }
+  ]
+}
