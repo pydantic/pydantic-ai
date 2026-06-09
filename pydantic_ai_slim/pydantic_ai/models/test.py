@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
@@ -35,7 +35,7 @@ from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import ObjectJsonSchema, ToolDefinition
 from ..usage import RequestUsage
 from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
@@ -135,7 +135,7 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -402,7 +402,7 @@ class _JsonSchemaTestData:
     This tries to generate the minimal viable data for the schema.
     """
 
-    def __init__(self, schema: _utils.ObjectJsonSchema, seed: int = 0):
+    def __init__(self, schema: ObjectJsonSchema, seed: int = 0):
         self.schema = schema
         self.defs = schema.get('$defs', {})
         self.seed = seed

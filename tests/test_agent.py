@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -11164,7 +11164,7 @@ async def test_image_output_validator_model_retry():
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext | None = None,
-        ) -> AsyncIterator[StreamedResponse]:
+        ) -> AsyncGenerator[StreamedResponse]:
             yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
 
     image_profile = ModelProfile(supports_image_output=True)
@@ -11237,7 +11237,7 @@ async def test_image_output_validators_run_stream():
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext | None = None,
-        ) -> AsyncIterator[StreamedResponse]:
+        ) -> AsyncGenerator[StreamedResponse]:
             yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
 
     image_profile = ModelProfile(supports_image_output=True)

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import types
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -200,7 +200,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         persistence: BaseStatePersistence[StateT, RunEndT] | None = None,
         span: AbstractContextManager[AbstractSpan] | None = None,
         infer_name: bool = True,
-    ) -> AsyncIterator[GraphRun[StateT, DepsT, RunEndT]]:
+    ) -> AsyncGenerator[GraphRun[StateT, DepsT, RunEndT]]:
         """A contextmanager which can be used to iterate over the graph's nodes as they are executed.
 
         This method returns a `GraphRun` object which can be used to async-iterate over the nodes of this `Graph` as
@@ -265,7 +265,7 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
         deps: DepsT = None,
         span: AbstractContextManager[AbstractSpan] | None = None,
         infer_name: bool = True,
-    ) -> AsyncIterator[GraphRun[StateT, DepsT, RunEndT]]:
+    ) -> AsyncGenerator[GraphRun[StateT, DepsT, RunEndT]]:
         """A contextmanager to iterate over the graph's nodes as they are executed, created from a persistence object.
 
         This method has similar functionality to [`iter`][pydantic_graph.graph.Graph.iter],
