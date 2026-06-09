@@ -54,7 +54,6 @@ try:
         ToolV2,
         ToolV2Function,
         UserChatMessageV2,
-        V2ChatRequestToolChoice,
         V2ChatResponse,
     )
     from cohere.core.api_error import ApiError
