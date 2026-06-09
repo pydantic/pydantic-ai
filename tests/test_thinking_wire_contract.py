@@ -40,6 +40,8 @@ class WireCase:
     provider: str
     model_name: str
     thinking: ThinkingLevel
+    extra_body: dict[str, object] | None = None
+    """User-supplied `extra_body` passed via `ModelSettings`, to exercise the disable-signal merge path."""
     present: dict[str, object] = field(default_factory=dict[str, object])
     """Keys that must appear in the request body with exactly these values."""
     absent: tuple[str, ...] = ()
@@ -54,6 +56,17 @@ CASES = [
         model_name='qwen/qwen3-32b',
         thinking=False,
         present={'reasoning_effort': 'none'},
+        absent=('reasoning_format',),
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-qwen3-disable-merges-user-extra-body',
+        provider='groq',
+        model_name='qwen/qwen3-32b',
+        thinking=False,
+        extra_body={'service_tier': 'auto'},
+        # The user's own `extra_body` must survive the merge that injects `reasoning_effort='none'`.
+        present={'reasoning_effort': 'none', 'service_tier': 'auto'},
         absent=('reasoning_format',),
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
@@ -89,7 +102,10 @@ async def test_thinking_disable_wire_contract(
 ):
     """`thinking=False` must emit a true disable signal on the request wire body."""
     model = _build_model(case, groq_api_key=groq_api_key, cerebras_api_key=cerebras_api_key)
-    agent = Agent(model, model_settings=ModelSettings(thinking=case.thinking))
+    settings = ModelSettings(thinking=case.thinking)
+    if case.extra_body is not None:
+        settings['extra_body'] = case.extra_body
+    agent = Agent(model, model_settings=settings)
     await agent.run('What is 2+2? Reply with just the number.')
 
     body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
