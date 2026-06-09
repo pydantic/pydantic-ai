@@ -458,7 +458,7 @@ def pytest_addoption(parser: Any) -> None:
     parser.addoption(
         '--strict-vcr-cassette-usage',
         action='store_true',
-        help='Fail when a loaded VCR cassette has no interactions played, not only when playback leaves a stale tail.',  # pragma: no cover
+        help='Fail when a loaded VCR cassette has no interactions played, not only when playback leaves a stale tail.',
     )
 
 
@@ -521,7 +521,7 @@ def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Casse
     if vcr is None or vcr.record_mode != RecordMode.NONE or vcr.all_played:
         return
 
-    strict_usage = request.config.getoption('--strict-vcr-cassette-usage')
+    strict_usage = bool(request.config.getoption('--strict-vcr-cassette-usage'))
     check_vcr_cassette_usage(vcr, strict_usage)
 
 
