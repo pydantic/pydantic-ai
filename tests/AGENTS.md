@@ -128,6 +128,8 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 ## VCR Workflow
 
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
+Playback fails if a cassette is partially consumed; this catches stale interactions left behind by earlier recordings. For a stricter targeted audit that also flags cassettes loaded but not consumed through vcrpy, run `uv run pytest <nodeid> --strict-vcr-cassette-usage`.
+Google OAuth token requests are excluded from recordings because local ADC and CI test credentials do not make the same auth calls.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
 ## Key Fixtures
