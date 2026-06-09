@@ -850,6 +850,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(self.client, AsyncAnthropicBedrock):
             raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
 
+        # Anthropic docs: https://platform.claude.com/docs/en/api/messages-count-tokens
+        # The `count_tokens` endpoint rejects server-side tools (`web_search`, `code_execution`,
+        # `web_fetch`, `tool_search`) and the `mcp_servers` param with a 400, so omit them. This
+        # undercounts the prompt by those tools' definitions, but it's the only way to get a count
+        # until Anthropic supports them. Client-side tools like `MemoryTool` are accepted and
+        # contribute real tokens, so keep them for an accurate count.
+        # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
+        model_request_parameters = replace(
+            model_request_parameters,
+            native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
+        )
+
         # standalone function to make it easier to override
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
