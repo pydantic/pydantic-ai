@@ -498,6 +498,17 @@ def vcr_config():
     }
 
 
+def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
+    if vcr.play_count == 0 and not strict_usage:
+        return
+
+    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
+    pytest.fail(
+        f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
+        f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
+    )
+
+
 @pytest.fixture(autouse=True)
 def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
     yield
@@ -511,14 +522,7 @@ def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Casse
         return
 
     strict_usage = request.config.getoption('--strict-vcr-cassette-usage')
-    if vcr.play_count == 0 and not strict_usage:
-        return
-
-    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
-    pytest.fail(
-        f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
-        f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
-    )
+    check_vcr_cassette_usage(vcr, strict_usage)
 
 
 _HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
