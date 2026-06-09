@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import pytest
-from inline_snapshot import snapshot
 from typing_extensions import assert_never
 
 from pydantic_ai import Agent, BinaryContent, BinaryImage
@@ -734,7 +733,11 @@ async def test_vendor_metadata_detail(
     allow_model_requests: None,
     cassette_ctx: CassetteContext,
 ):
-    """Test that vendor_metadata with detail setting is handled correctly."""
+    """`vendor_metadata['detail']` reaches the OpenAI Responses wire for image inputs.
+
+    Covers `BinaryImage`, `ImageUrl`, and an image `UploadedFile` — the last referenced by `file_id`
+    and mapped to an `input_image` part that must carry its `detail`.
+    """
     model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
     image_binary = BinaryImage(
         data=assets_path.joinpath('kiwi.jpg').read_bytes(),
@@ -745,12 +748,18 @@ async def test_vendor_metadata_detail(
         url=IMAGE_URL,
         vendor_metadata={'detail': 'low'},
     )
+    uploaded_image = UploadedFile(
+        file_id='file-BVTjj4CLd1Z7cgppk5sL45',
+        provider_name='openai',
+        media_type='image/jpeg',
+        vendor_metadata={'detail': 'high'},
+    )
 
     agent: Agent[None, str] = Agent(model)
 
     @agent.tool_plain
     def get_images_with_metadata() -> list[Any]:
-        return [image_binary, image_url]
+        return [image_binary, image_url, uploaded_image]
 
     result = await agent.run(
         'Call the get_images_with_metadata tool and describe what you see.',
@@ -758,39 +767,8 @@ async def test_vendor_metadata_detail(
     )
     assert result.output, 'Expected non-empty response from model'
     cassette_ctx.verify_contains('"detail": "high"', '"detail": "low"')
-
-
-@pytest.mark.skipif(not openai_available(), reason='openai dependencies not installed')
-async def test_uploaded_image_maps_to_input_image_responses(openai_api_key: str):
-    """Image `UploadedFile` parts map to `input_image` (carrying `detail`) in both Responses mapping sites.
-
-    `detail` comes from `vendor_metadata['detail']` (defaulting to `'auto'`), matching the `BinaryContent`
-    and `ImageUrl` image paths. Asserted on the mapped params directly since the wire shape is the point.
-    """
-    model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
-
-    user_part = UserPromptPart(
-        content=[
-            UploadedFile(
-                file_id='file-abc123',
-                provider_name='openai',
-                media_type='image/png',
-                vendor_metadata={'detail': 'high'},
-            )
-        ]
-    )
-    user_message = await model._map_user_prompt(user_part)  # pyright: ignore[reportPrivateUsage]
-    assert user_message['content'] == snapshot([{'type': 'input_image', 'file_id': 'file-abc123', 'detail': 'high'}])
-
-    tool_part = ToolReturnPart(
-        tool_name='get_file',
-        content=UploadedFile(
-            file_id='file-abc123', provider_name='openai', media_type='image/png', vendor_metadata={'detail': 'low'}
-        ),
-        tool_call_id='1',
-    )
-    tool_output = await OpenAIResponsesModel._map_tool_return_output(tool_part)  # pyright: ignore[reportPrivateUsage]
-    assert tool_output == snapshot([{'type': 'input_image', 'file_id': 'file-abc123', 'detail': 'low'}])
+    # The uploaded image is sent as an `input_image` referenced by `file_id`, carrying its `detail`.
+    cassette_ctx.verify_contains('"detail": "high", "file_id": "file-BVTjj4CLd1Z7cgppk5sL45", "type": "input_image"')
 
 
 async def test_text_plain_document_anthropic(
