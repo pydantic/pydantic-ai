@@ -19,10 +19,10 @@ from .._json_schema import JsonSchema, JsonSchemaTransformer
 try:
     from anthropic import (
         AsyncAnthropic,
-        AsyncAnthropicBedrock,
-        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicFoundry,
-        AsyncAnthropicVertex,
+        AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
     )
 except ImportError as _import_error:
     raise ImportError(
