@@ -976,7 +976,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # On Bedrock the SDK drops SSE event types, so a leading Bedrock-only chunk
         # (e.g. `amazon-bedrock-invocationMetrics`) is non-validating `construct_type`d
         # into `BetaRawMessageStartEvent(message=None)`. Fall back to the configured model
-        # name rather than dereference `first_chunk.message.model` (issue #5774). The
+        # name rather than dereference `first_chunk.message.model` (https://github.com/pydantic/pydantic-ai/issues/5774). The
         # iterator below skips these `message=None` events.
         model_name = first_chunk.message.model if first_chunk.message is not None else self.model_name  # pyright: ignore[reportUnnecessaryComparison]
 

@@ -4448,7 +4448,7 @@ def test_streaming_usage():
 def test_map_usage_bedrock_start_event_without_message():
     """On Bedrock the SDK drops SSE event types, so Bedrock-only chunks are non-validating
     `construct_type`d into `BetaRawMessageStartEvent(message=None)`, violating the annotation.
-    `_map_usage` must not dereference `message.message.usage` on such events (issue #5774).
+    `_map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
 
     A unit test rather than VCR: the `message=None` event is an SDK construct artifact, not a
     server response shape, so it can't be elicited from a recorded request.
@@ -4462,7 +4462,7 @@ def test_map_usage_bedrock_start_event_without_message():
 
 
 async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_model_requests: None):
-    """A Bedrock `message=None` start event must be skipped across the whole streaming path (issue #5774).
+    """A Bedrock `message=None` start event must be skipped across the whole streaming path (https://github.com/pydantic/pydantic-ai/issues/5774).
 
     On Bedrock the SDK drops SSE event types, so Bedrock-only chunks (e.g. `amazon-bedrock-invocationMetrics`)
     are non-validating `construct_type`d into `BetaRawMessageStartEvent(message=None)`. Driving `run_stream`
