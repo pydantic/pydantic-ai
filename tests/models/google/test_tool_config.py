@@ -10,7 +10,9 @@ VCR test proves live acceptance, since its cassette can only be recorded once th
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -25,7 +27,9 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider
+
+if TYPE_CHECKING:
+    GoogleModelFactory = Callable[..., GoogleModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
@@ -70,8 +74,10 @@ CASES = [
 
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in CASES])
-async def test_tool_config_set_only_when_function_tools_present(allow_model_requests: None, case: Case):
-    m = GoogleModel(case.model, provider=GoogleProvider(api_key='test-key'))
+async def test_tool_config_set_only_when_function_tools_present(
+    allow_model_requests: None, google_model: GoogleModelFactory, case: Case
+):
+    m = google_model(case.model)
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -84,7 +90,7 @@ async def test_tool_config_set_only_when_function_tools_present(allow_model_requ
 
 
 @pytest.mark.vcr()
-async def test_native_tool_only_web_search_completes(allow_model_requests: None, gemini_api_key: str):
+async def test_native_tool_only_web_search_completes(allow_model_requests: None, google_model: GoogleModelFactory):
     """A native-tool-only request must reach the live API and return an answer.
 
     On the buggy code this 400s before any response, so the cassette could not have been recorded.
@@ -92,7 +98,7 @@ async def test_native_tool_only_web_search_completes(allow_model_requests: None,
     actually breaks. Gemini 3+ sets `include_server_side_tool_invocations` and the API tolerates the
     empty config there, so a Gemini 3 model would pass with or without the fix and prove nothing.
     """
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    m = google_model('gemini-2.5-flash')
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco right now?')
