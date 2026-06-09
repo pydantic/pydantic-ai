@@ -458,7 +458,6 @@ def pytest_addoption(parser: Any) -> None:
     parser.addoption(
         '--strict-vcr-cassette-usage',
         action='store_true',
-        default=False,
         help='Fail when a loaded VCR cassette has no interactions played, not only when playback leaves a stale tail.',
     )
 
@@ -552,12 +551,8 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
 
     unclosed = [c for c in cache.values() if not c.is_closed]
     if unclosed:  # pragma: no cover
-
-        async def _close_all() -> None:
-            for client in unclosed:
-                await client.aclose()
-
-        asyncio.run(_close_all())
+        for client in unclosed:
+            asyncio.run(client.aclose())
 
 
 @pytest.fixture(autouse=True)
