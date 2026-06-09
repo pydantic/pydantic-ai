@@ -94,9 +94,10 @@ class AnthropicModelProfile(ModelProfile):
     anthropic_supports_forced_tool_choice: bool = True
     """Whether the model accepts a forced `tool_choice` (`{'type': 'any'}` or `{'type': 'tool'}`).
 
-    Most Anthropic models only reject forcing alongside thinking mode; Claude Fable 5 rejects it
-    unconditionally with a 400. When False, a resolved `required` tool choice falls back to `auto`
-    (filtering tools to the requested set), and an explicit `tool_choice='required'` raises a `UserError`.
+    Most Anthropic models only reject forcing alongside thinking mode; Claude Fable 5 and Claude
+    Mythos Preview reject it unconditionally with a 400. When False, a resolved `required` tool choice
+    falls back to `auto` (filtering tools to the requested set), and an explicit `tool_choice='required'`
+    (or an explicit list of tools) raises a `UserError`.
     """
 
 
@@ -188,9 +189,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     supports_task_budgets = model_name.startswith(('claude-fable-5', 'claude-opus-4-7', 'claude-opus-4-8'))
 
-    # Claude Fable 5 rejects a forced `tool_choice` (`any`/`tool`) outright, unlike other
-    # Anthropic models which only reject forcing while thinking is enabled.
-    supports_forced_tool_choice = not model_name.startswith('claude-fable-5')
+    # Claude Fable 5 and Claude Mythos Preview reject a forced `tool_choice` (`any`/`tool`)
+    # outright, unlike other Anthropic models which only reject forcing while thinking is enabled.
+    supports_forced_tool_choice = not model_name.startswith(('claude-fable-5', 'claude-mythos-preview'))
 
     # Native tool search requires the `tool_search_tool_bm25_20251119` /
     # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In

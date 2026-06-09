@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
-from pydantic_ai.settings import ModelSettings, ToolOrOutput
+from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
@@ -647,11 +647,16 @@ async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(al
     assert tool_names == {'tool_a'}
 
 
+# Models that reject a forced `tool_choice` outright, even without thinking (unlike other Anthropic models).
+NO_FORCING_ANTHROPIC_MODELS = ['claude-fable-5', 'claude-mythos-preview']
+
+
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_fable_5_forced_tool_choice_falls_back_to_auto(allow_model_requests: None):
-    """Claude Fable 5 rejects a forced `tool_choice` even without thinking (unlike other Anthropic
-    models), so a resolved `('required', {single_tool})` falls back to auto and filters tool_defs."""
-    m = AnthropicModel('claude-fable-5', provider=AnthropicProvider(api_key='test-key'))
+@pytest.mark.parametrize('model_name', NO_FORCING_ANTHROPIC_MODELS)
+async def test_anthropic_no_forcing_model_falls_back_to_auto(allow_model_requests: None, model_name: str):
+    """Models that reject forcing outright fall back to auto for a resolved `('required', {single_tool})`,
+    filtering tool_defs to the requested set."""
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
     settings: AnthropicModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False)
 
@@ -662,12 +667,18 @@ async def test_anthropic_fable_5_forced_tool_choice_falls_back_to_auto(allow_mod
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_fable_5_explicit_required_raises(allow_model_requests: None):
-    """Explicit `tool_choice='required'` on Claude Fable 5 raises, since the model rejects forcing outright."""
-    m = AnthropicModel('claude-fable-5', provider=AnthropicProvider(api_key='test-key'))
+@pytest.mark.parametrize('model_name', NO_FORCING_ANTHROPIC_MODELS)
+@pytest.mark.parametrize('tool_choice', ['required', ['tool_a']])
+async def test_anthropic_no_forcing_model_explicit_forcing_raises(
+    allow_model_requests: None, model_name: str, tool_choice: ToolChoice
+):
+    """An explicit forcing `tool_choice` (`'required'` or a list of tools) raises on models that reject
+    forcing outright, since we can't silently downgrade a user's explicit request."""
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True)
-    with pytest.raises(UserError, match="This Anthropic model does not support tool_choice='required'"):
-        m._prepare_tools_and_tool_choice({'tool_choice': 'required'}, params)  # pyright: ignore[reportPrivateUsage]
+    settings: AnthropicModelSettings = {'tool_choice': tool_choice}
+    with pytest.raises(UserError, match='Anthropic does not support .* for this model'):
+        m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')

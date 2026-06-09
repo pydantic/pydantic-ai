@@ -317,3 +317,13 @@ def test_model_profile_fable_5():
     # Fable-5-specific divergences from the Opus mirror
     assert profile.anthropic_supports_fast_speed is False
     assert profile.anthropic_supports_forced_tool_choice is False
+
+
+def test_model_profile_mythos_rejects_forced_tool_choice():
+    """Claude Mythos Preview rejects a forced `tool_choice` outright, like Fable 5.
+
+    Per the Anthropic docs, requests with `tool_choice: {'type': 'any'}` or `{'type': 'tool'}`
+    return a 400 on this model, so `anthropic_supports_forced_tool_choice` must be False.
+    """
+    profile = AnthropicModelProfile.from_profile(anthropic_model_profile('claude-mythos-preview'))
+    assert profile.anthropic_supports_forced_tool_choice is False

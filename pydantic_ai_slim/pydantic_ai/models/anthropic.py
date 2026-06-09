@@ -2777,7 +2777,7 @@ def _support_tool_forcing(
 ) -> bool:
     """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
-    Thinking mode rejects forcing, and some models (e.g. Claude Fable 5) reject it unconditionally.
+    Thinking mode rejects forcing, and some models (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
     We only raise an error if the user explicitly set a forcing value; a forcing value that came
     from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
@@ -2797,7 +2797,7 @@ def _support_tool_forcing(
     explicit_choice = model_settings.get('tool_choice')
     if explicit_choice == 'required' or isinstance(explicit_choice, list):
         if not supports_forced_tool_choice:
-            raise UserError(f"This Anthropic model does not support {context}. Use `tool_choice='auto'`.")
+            raise UserError(f"Anthropic does not support {context} for this model. Use `tool_choice='auto'`.")
         raise UserError(
             f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
         )
