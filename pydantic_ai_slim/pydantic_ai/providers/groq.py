@@ -74,16 +74,20 @@ class GroqProvider(Provider[AsyncGroq]):
             'openai/': openai_model_profile,
         }
 
+        model_name = model_name.lower()
         profile: ModelProfile | None = None
         for prefix, profile_func in prefix_to_profile.items():
-            model_name = model_name.lower()
             if model_name.startswith(prefix):
-                if prefix.endswith('/'):
-                    model_name = model_name[len(prefix) :]
-                profile = profile_func(model_name)
+                family_name = model_name[len(prefix) :] if prefix.endswith('/') else model_name
+                profile = profile_func(family_name)
                 break
 
-        return replace(profile or ModelProfile(), supports_inline_system_prompts=True)
+        # The generic family profiles above don't know which models Groq exposes reasoning controls
+        # for (e.g. `qwen/qwen3-*` reasons, but the generic Qwen profile doesn't flag it), so overlay
+        # Groq's own reasoning flags. Starting from the Groq profile keeps the `groq_`-prefixed flags
+        # that `GroqModel` reads at request time.
+        profile = groq_model_profile(model_name).update(profile)
+        return replace(profile, supports_inline_system_prompts=True)
 
     @overload
     def __init__(self, *, groq_client: AsyncGroq | None = None) -> None: ...

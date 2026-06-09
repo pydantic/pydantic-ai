@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -271,7 +271,11 @@ class GroqModel(Model[AsyncGroq]):
             return fmt
         thinking = model_request_parameters.thinking
         if thinking is False:
-            # Groq has no true disable; 'hidden' suppresses reasoning output
+            if GroqModelProfile.from_profile(self.profile).groq_supports_reasoning_disable:
+                # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
+                # so no reasoning format is needed.
+                return NOT_GIVEN
+            # Other reasoning models have no true disable; 'hidden' only suppresses reasoning output.
             return 'hidden'
         if thinking is not None:
             return 'parsed'
@@ -323,6 +327,20 @@ class GroqModel(Model[AsyncGroq]):
 
         extra_headers = model_settings.get('extra_headers', {})
         extra_headers.setdefault('User-Agent', get_user_agent())
+
+        extra_body = model_settings.get('extra_body')
+        if (
+            model_request_parameters.thinking is False
+            and GroqModelProfile.from_profile(self.profile).groq_supports_reasoning_disable
+        ):
+            # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
+            # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.
+            merged_extra_body: dict[str, object] = {}
+            if isinstance(extra_body, Mapping):
+                merged_extra_body.update(extra_body)  # pyright: ignore[reportUnknownArgumentType]
+            merged_extra_body['reasoning_effort'] = 'none'
+            extra_body = merged_extra_body
+
         with _map_api_errors(self.model_name):
             return await self.client.chat.completions.create(
                 model=self._model_name,
@@ -344,7 +362,7 @@ class GroqModel(Model[AsyncGroq]):
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+                extra_body=extra_body,
             )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
