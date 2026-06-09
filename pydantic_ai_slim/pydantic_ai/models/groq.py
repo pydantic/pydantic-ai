@@ -266,13 +266,14 @@ class GroqModel(Model[AsyncGroq]):
         self,
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
+        disable_via_effort: bool,
     ) -> Literal['hidden', 'raw', 'parsed'] | NotGiven:
         """Get reasoning format, falling back to unified thinking when provider-specific setting is not set."""
         if fmt := model_settings.get('groq_reasoning_format'):
             return fmt
         thinking = model_request_parameters.thinking
         if thinking is False:
-            if GroqModelProfile.from_profile(self.profile).groq_supports_reasoning_disable:
+            if disable_via_effort:
                 # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
                 # so no reasoning format is needed.
                 return NOT_GIVEN
@@ -329,11 +330,14 @@ class GroqModel(Model[AsyncGroq]):
         extra_headers = model_settings.get('extra_headers', {})
         extra_headers.setdefault('User-Agent', get_user_agent())
 
+        # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`) and omitting
+        # `reasoning_format`. These two wire params are coupled, so the flag is computed once and shared with
+        # `_translate_thinking` to keep them from diverging.
+        groq_profile = GroqModelProfile.from_profile(self.profile)
+        disable_via_effort = model_request_parameters.thinking is False and groq_profile.groq_supports_reasoning_disable
+
         extra_body = model_settings.get('extra_body')
-        if (
-            model_request_parameters.thinking is False
-            and GroqModelProfile.from_profile(self.profile).groq_supports_reasoning_disable
-        ):
+        if disable_via_effort:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
             # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.
             merged_extra_body: dict[str, object] = {}
@@ -359,7 +363,7 @@ class GroqModel(Model[AsyncGroq]):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                reasoning_format=self._translate_thinking(model_settings, model_request_parameters),
+                reasoning_format=self._translate_thinking(model_settings, model_request_parameters, disable_via_effort),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,

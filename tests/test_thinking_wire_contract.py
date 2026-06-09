@@ -100,7 +100,7 @@ async def test_thinking_disable_wire_contract(
     cerebras_api_key: str,
     vcr: Cassette,
 ):
-    """`thinking=False` must emit a true disable signal on the request wire body."""
+    """`thinking=False` produces the correct wire behavior: a true disable signal where the model supports it, and its absence where reasoning is always on."""
     model = _build_model(case, groq_api_key=groq_api_key, cerebras_api_key=cerebras_api_key)
     settings = ModelSettings(thinking=case.thinking)
     if case.extra_body is not None:
