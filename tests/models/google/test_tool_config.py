@@ -1,23 +1,16 @@
 """Tests for `GoogleModel`'s `tool_config` construction.
 
-A `function_calling_config` only governs *function* tools. The Gemini Developer API
-(`GoogleProvider(api_key=...)`, the `generativelanguage.googleapis.com` backend) rejects one
-that has no `function_declarations` to apply to — ``400 INVALID_ARGUMENT: Function calling
-config is set without function_declarations`` — which is what happens when only native tools
-(e.g. web search) are configured. Vertex AI tolerates the empty config, so the regression only
-bit Gemini Developer API users.
+Since #3611, a native-tool-only request (e.g. web search, no function tools) 400s on the Gemini
+Developer API: `Function calling config is set without function_declarations`. A
+`function_calling_config` only governs function tools, so it must be omitted when there are none.
 
-The no-network tests assert the request shape directly: that is the actual regression guard,
-because a VCR *replay* test cannot catch a malformed request (it replays a recorded response and
-never re-validates against the API — which is why the pre-existing `test_google_model_web_search_tool`
-VCR test stayed green through the regression). The VCR test below proves the fix end-to-end: its
-cassette can only be recorded against the live API once the request is accepted.
+The no-network test guards the request shape (a VCR replay can't catch a malformed request); the
+VCR test proves live acceptance, since its cassette can only be recorded once the request is accepted.
 """
 
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
 
 import pytest
 
@@ -51,8 +44,7 @@ class Case:
     id: str
     model: str
     request_parameters: ModelRequestParameters
-    expected_tool_config: dict[str, Any] | None
-    marks: tuple[pytest.MarkDecorator, ...] = ()
+    expected_tool_config: dict[str, object] | None
 
 
 CASES = [
@@ -77,7 +69,7 @@ CASES = [
 ]
 
 
-@pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in CASES])
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in CASES])
 async def test_tool_config_set_only_when_function_tools_present(allow_model_requests: None, case: Case):
     m = GoogleModel(case.model, provider=GoogleProvider(api_key='test-key'))
 
@@ -87,7 +79,8 @@ async def test_tool_config_set_only_when_function_tools_present(allow_model_requ
         model_request_parameters=case.request_parameters,
     )
 
-    assert cast(dict[str, Any], config).get('tool_config') == case.expected_tool_config
+    # `GenerateContentConfigDict.get` has partially unknown types in the google-genai stubs.
+    assert config.get('tool_config') == case.expected_tool_config  # pyright: ignore[reportUnknownMemberType]
 
 
 @pytest.mark.vcr()
