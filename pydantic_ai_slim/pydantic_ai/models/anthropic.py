@@ -256,16 +256,12 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-AnthropicModelName = LatestAnthropicModelNames | Literal['claude-fable-5']
+AnthropicModelName = LatestAnthropicModelNames
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
-`claude-fable-5` is included here ahead of an SDK release that lists it; drop the extra literal once the
-`anthropic` pin in `pydantic_ai_slim/pyproject.toml` is bumped past the version that adds it.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
-# TODO: the installed `anthropic` SDK (pinned `>=0.105.0`) doesn't list `claude-fable-5` yet, but
-# `0.108.0` does. Drop the `Literal['claude-fable-5']` bridge above once the pin reaches `>=0.108.0`.
 
 _AnthropicCodeExecutionToolName: TypeAlias = Literal[
     'code_execution', 'bash_code_execution', 'text_editor_code_execution'
