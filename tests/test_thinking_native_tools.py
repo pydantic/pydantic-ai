@@ -19,6 +19,20 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.settings import ModelSettings
 
+from .conftest import try_import
+
+with try_import() as anthropic_imports:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+with try_import() as google_imports:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
@@ -47,6 +61,7 @@ CASES = [
         present=((('thinking', 'type'), 'enabled'), (('thinking', 'budget_tokens'), 16384)),
         tool_marker='"type":"web_search_',
         max_tokens=20000,
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
     ),
     WireCase(
         id='openai-responses',
@@ -54,6 +69,7 @@ CASES = [
         model_name='gpt-5',
         present=((('reasoning', 'effort'), 'high'),),
         tool_marker='"type":"web_search"',
+        marks=(pytest.mark.skipif(not openai_imports(), reason='openai not installed'),),
     ),
     WireCase(
         id='google',
@@ -66,25 +82,17 @@ CASES = [
             (('generationConfig', 'thinkingConfig', 'thinking_level'), 'HIGH'),
         ),
         tool_marker='"googleSearch":',
+        marks=(pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),),
     ),
 ]
 
 
 def _build_model(case: WireCase, *, anthropic_api_key: str, openai_api_key: str, gemini_api_key: str) -> Model:
     if case.provider == 'anthropic':
-        from pydantic_ai.models.anthropic import AnthropicModel
-        from pydantic_ai.providers.anthropic import AnthropicProvider
-
         return AnthropicModel(case.model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
     if case.provider == 'openai-responses':
-        from pydantic_ai.models.openai import OpenAIResponsesModel
-        from pydantic_ai.providers.openai import OpenAIProvider
-
         return OpenAIResponsesModel(case.model_name, provider=OpenAIProvider(api_key=openai_api_key))
     if case.provider == 'google':
-        from pydantic_ai.models.google import GoogleModel
-        from pydantic_ai.providers.google import GoogleProvider
-
         return GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 

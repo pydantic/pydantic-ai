@@ -18,6 +18,16 @@ from vcr.cassette import Cassette
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
+from .conftest import try_import
+
+with try_import() as groq_imports:
+    from pydantic_ai.models.groq import GroqModel
+    from pydantic_ai.providers.groq import GroqProvider
+
+with try_import() as cerebras_imports:
+    from pydantic_ai.models.cerebras import CerebrasModel
+    from pydantic_ai.providers.cerebras import CerebrasProvider
+
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
@@ -45,6 +55,7 @@ CASES = [
         thinking=False,
         present={'reasoning_effort': 'none'},
         absent=('reasoning_format',),
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
         id='cerebras-gpt-oss-always-on',
@@ -55,20 +66,15 @@ CASES = [
         # rejects `reasoning_effort='none'` for gpt-oss too), so `thinking=False` must be silently
         # ignored: no disable signal of any kind on the wire, request accepted.
         absent=('disable_reasoning', 'reasoning_effort'),
+        marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
     ),
 ]
 
 
 def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str) -> Model:
     if case.provider == 'groq':
-        from pydantic_ai.models.groq import GroqModel
-        from pydantic_ai.providers.groq import GroqProvider
-
         return GroqModel(case.model_name, provider=GroqProvider(api_key=groq_api_key))
     if case.provider == 'cerebras':
-        from pydantic_ai.models.cerebras import CerebrasModel
-        from pydantic_ai.providers.cerebras import CerebrasProvider
-
         return CerebrasModel(case.model_name, provider=CerebrasProvider(api_key=cerebras_api_key))
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 
