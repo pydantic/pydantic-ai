@@ -1179,7 +1179,15 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         kind: str = result.kind
         inner_data: dict[str, Any] = result.data
 
-        # Pydantic validation ensures kind is always valid, so KeyError can't happen.
+        # In tool/native output mode the provider enforces the `kind` const from the JSON
+        # schema, but in the text-output fallback nothing constrains it, so the model can
+        # return a `kind` that isn't one of the registered members. Treat that like any
+        # other invalid output and re-prompt the model rather than crashing with a KeyError.
+        if kind not in self._processors:
+            raise ModelRetry(
+                f'Invalid kind {kind!r} for union output, expected one of: '
+                f'{", ".join(map(repr, self._processors))}'
+            )
         inner = self._processors[kind]
         inner_validated = inner.validate(inner_data, allow_partial=allow_partial, validation_context=validation_context)
         # Unwrap to semantic here so the wrapper's `data` is always what hooks / callers

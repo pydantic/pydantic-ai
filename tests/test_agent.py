@@ -1540,6 +1540,27 @@ def test_output_type_tool_output_union():
     )
 
 
+def test_output_type_union_text_fallback_invalid_kind():
+    """An unknown `kind` in the text-output union fallback should retry, not raise KeyError."""
+
+    class Apple(BaseModel):
+        color: str
+
+    class Banana(BaseModel):
+        length: float
+
+    def return_invalid_kind(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Tool-output mode is active, but the model replies with the union envelope as text,
+        # using a `kind` that isn't one of the registered discriminator values.
+        text = '{"result": {"kind": "Cherry", "data": {"color": "red"}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(return_invalid_kind), output_type=[Apple, Banana])
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        agent.run_sync('What fruit is it?')
+
+
 def test_output_type_function():
     class Weather(BaseModel):
         temperature: float
