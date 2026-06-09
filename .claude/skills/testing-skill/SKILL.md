@@ -48,15 +48,6 @@ If tests use [`snapshot()`](https://github.com/15r10nk/inline-snapshot) assertio
 - You only review - don't manually write snapshot contents
 - Snapshots capture what the test actually produced, additional to explicit assertions
 
-## Snapshots: prefer a concrete value over a dirty-equals matcher
-
-When an existing concrete snapshot value changes (re-record, dependency bump, code change), don't reach for a dirty-equals matcher (`IsInt()`, `IsFloat()`, `IsStr()`, `IsDatetime()`, ...) just to make the test green. First ask: **did the concrete value provide stability?** -- would an *unintended* future change to it be a bug this snapshot should catch?
-
-- **Yes -> keep it concrete.** Root-cause the change, then update to the new value with `--inline-snapshot=fix`. Small scalars (token counts, costs, lengths, ids) are the *reason* the snapshot exists -- concreteness is what catches drift; a matcher silently discards that signal. A small value going to `IsInt()` is almost always wrong.
-- **No -> a matcher is fine.** Reserve matchers for genuinely non-deterministic values (timestamps, random request ids, durations) or large opaque noise with no drift signal (a long static base64 blob, an opaque token), where concreteness only adds review burden.
-
-If a value differs only because CI runs two dependency versions (e.g. a lowest-versions shard vs the lock), align the versions and pin the concrete value rather than masking the split with a matcher -- the matcher disables drift detection on that dependency for good.
-
 ## Parsing Cassettes
 
 Parse VCR cassette YAML files to inspect request/response bodies without dealing with raw YAML.
