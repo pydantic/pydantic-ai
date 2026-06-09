@@ -327,3 +327,27 @@ def test_model_profile_mythos_rejects_forced_tool_choice():
     """
     profile = AnthropicModelProfile.from_profile(anthropic_model_profile('claude-mythos-preview'))
     assert profile.anthropic_supports_forced_tool_choice is False
+
+
+def test_model_profile_mythos_5():
+    """Claude Mythos 5 is the safety-classifier-free twin of Claude Fable 5 and carries the same
+    capability profile (Anthropic: 'Mythos 5 shares the same capabilities without the safety classifiers').
+
+    Every capability is documented for Mythos 5 by name except the forced-`tool_choice` rejection,
+    which is inferred from it being both the successor to Mythos Preview and Fable 5's twin.
+    """
+    profile = AnthropicModelProfile.from_profile(anthropic_model_profile('claude-mythos-5'))
+
+    # Identical to the Fable 5 / Opus 4.8 capability set
+    assert profile.supports_json_schema_output is True
+    assert profile.anthropic_supports_adaptive_thinking is True
+    assert profile.anthropic_supports_effort is True
+    assert profile.anthropic_supports_xhigh_effort is True
+    assert profile.anthropic_disallows_budget_thinking is True
+    assert profile.anthropic_disallows_sampling_settings is True
+    assert profile.anthropic_supports_task_budgets is True
+    assert profile.anthropic_default_code_execution_tool_version == '20260120'
+
+    # Shared divergences from the Opus mirror (same as Fable 5)
+    assert profile.anthropic_supports_fast_speed is False
+    assert profile.anthropic_supports_forced_tool_choice is False

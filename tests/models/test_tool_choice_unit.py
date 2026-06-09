@@ -648,7 +648,7 @@ async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(al
 
 
 # Models that reject a forced `tool_choice` outright, even without thinking (unlike other Anthropic models).
-NO_FORCING_ANTHROPIC_MODELS = ['claude-fable-5', 'claude-mythos-preview']
+NO_FORCING_ANTHROPIC_MODELS = ['claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview']
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')

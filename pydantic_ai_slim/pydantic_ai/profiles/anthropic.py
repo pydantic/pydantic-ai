@@ -24,6 +24,7 @@ AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 
 _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-fable-5',
+    'claude-mythos-5',
     'claude-opus-4-5',
     'claude-opus-4-6',
     'claude-opus-4-7',
@@ -149,6 +150,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
     models_that_support_json_schema_output = (
         'claude-fable-5',
+        'claude-mythos-5',
         'claude-haiku-4-5',
         'claude-sonnet-4-5',
         'claude-sonnet-4-6',
@@ -167,13 +169,21 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     # Sonnet 4.6+ and Opus 4.6+ support adaptive thinking; older models use budget-based
     supports_adaptive = model_name.startswith(
-        ('claude-fable-5', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8')
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-sonnet-4-6',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+        )
     )
 
     # Opus 4.5+ and Sonnet 4.6+ support the effort parameter in output_config
     supports_effort = model_name.startswith(
         (
             'claude-fable-5',
+            'claude-mythos-5',
             'claude-opus-4-5',
             'claude-opus-4-6',
             'claude-opus-4-7',
@@ -181,17 +191,29 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-sonnet-4-6',
         )
     )
-    supports_xhigh_effort = model_name.startswith(('claude-fable-5', 'claude-opus-4-7', 'claude-opus-4-8'))
-    disallows_budget_thinking = model_name.startswith(('claude-fable-5', 'claude-opus-4-7', 'claude-opus-4-8'))
-    disallows_sampling_settings = model_name.startswith(('claude-fable-5', 'claude-opus-4-7', 'claude-opus-4-8'))
+    supports_xhigh_effort = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8')
+    )
+    disallows_budget_thinking = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8')
+    )
+    disallows_sampling_settings = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8')
+    )
     default_code_execution_tool_version, supported_code_execution_tool_versions = _code_execution_tool_versions(
         model_name
     )
-    supports_task_budgets = model_name.startswith(('claude-fable-5', 'claude-opus-4-7', 'claude-opus-4-8'))
+    supports_task_budgets = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8')
+    )
 
-    # Claude Fable 5 and Claude Mythos Preview reject a forced `tool_choice` (`any`/`tool`)
-    # outright, unlike other Anthropic models which only reject forcing while thinking is enabled.
-    supports_forced_tool_choice = not model_name.startswith(('claude-fable-5', 'claude-mythos-preview'))
+    # Claude Fable 5, Claude Mythos 5, and Claude Mythos Preview reject a forced `tool_choice`
+    # (`any`/`tool`) outright, unlike other Anthropic models which only reject forcing while thinking
+    # is enabled. The forcing-tool-use docs name Mythos Preview explicitly; Mythos 5 is its successor
+    # and the safety-classifier-free twin of Fable 5, both of which reject forcing.
+    supports_forced_tool_choice = not model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview')
+    )
 
     # Native tool search requires the `tool_search_tool_bm25_20251119` /
     # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In
@@ -199,6 +221,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_tool_search = model_name.startswith(
         (
             'claude-fable-5',
+            'claude-mythos-5',
             'claude-sonnet-4-5',
             'claude-sonnet-4-6',
             'claude-opus-4-5',
