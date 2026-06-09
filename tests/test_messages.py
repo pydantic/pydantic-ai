@@ -1237,28 +1237,6 @@ def test_tool_return_content_nested_multimodal():
     assert reloaded_content['regular_data'] == [{'url': '/api/path', 'id': 123, 'name': 'test'}]
 
 
-def test_tool_return_part_in_model_response_otel_message_parts():
-    """A `ToolReturnPart` in a `ModelResponse` must render in OTel message parts, not silently drop.
-
-    `ModelResponse.otel_message_parts` maps `NativeToolReturnPart` to a `tool_call_response` part;
-    now that base `ToolReturnPart` is a valid `ModelResponsePart` (reachable via user-constructed
-    history), it must map the same way (without the `builtin` flag) rather than being omitted.
-    """
-    response = ModelResponse(
-        parts=[
-            TextPart(content='hi'),
-            ToolReturnPart(tool_name='my_tool', content={'result': 'success'}, tool_call_id='call-1'),
-        ]
-    )
-    settings = InstrumentationSettings(include_content=True)
-    assert response.otel_message_parts(settings) == snapshot(
-        [
-            {'type': 'text', 'content': 'hi'},
-            {'type': 'tool_call_response', 'id': 'call-1', 'name': 'my_tool', 'result': {'result': 'success'}},
-        ]
-    )
-
-
 def test_multi_modal_content_types_matches_union():
     """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members,
     and that is_multi_modal_content correctly narrows types."""

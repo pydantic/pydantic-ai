@@ -15,15 +15,19 @@ See issue #5802. The motivating instance is #5721/#5723 (base `ToolReturnPart` m
 from __future__ import annotations
 
 import dataclasses
+import importlib
+import pkgutil
+import sys
 import types
 import typing
+import warnings
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 import pydantic
 import pytest
 
-from pydantic_ai import _deferred_capabilities, _tool_search, messages
+import pydantic_ai
 from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart, LoadCapabilityReturnPart
 from pydantic_ai._tool_search import (
     NativeToolSearchCallPart,
@@ -174,9 +178,30 @@ PART_FACTORIES: dict[type, Any] = {
 
 
 def _discover_concrete_part_classes() -> set[type]:
-    """Every dataclass with a `part_kind` field, across the modules that define parts."""
+    """Every dataclass with a `part_kind` field defined anywhere under the `pydantic_ai` package.
+
+    Walks the *entire* package instead of a hand-listed set of modules on purpose: a part defined in a
+    new module must be impossible to miss, or `test_every_concrete_part_is_declared` would pass green —
+    the silent-drift failure mode this suite exists to catch. Discovery is the failsafe; the human-stated
+    `PART_EXPECTED_UNIONS` is the design contract the failsafe forces a newly-added part to be declared in.
+
+    Modules that fail to import (an optional dependency isn't installed) are skipped: none define a part,
+    and the full-extras CI job this guard runs under imports every one of them.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        for module_info in pkgutil.walk_packages(
+            pydantic_ai.__path__, prefix=f'{pydantic_ai.__name__}.', onerror=lambda _name: None
+        ):
+            try:
+                importlib.import_module(module_info.name)
+            except ImportError:
+                continue
+
     found: set[type] = set()
-    for module in (messages, _tool_search, _deferred_capabilities):
+    for name, module in list(sys.modules.items()):
+        if not name.startswith(pydantic_ai.__name__):
+            continue
         for obj in vars(module).values():
             if (
                 isinstance(obj, type)
@@ -185,6 +210,30 @@ def _discover_concrete_part_classes() -> set[type]:
             ):
                 found.add(obj)
     return found
+
+
+# Known-pending drift: base `ToolReturnPart` is a valid response part (it can appear on a
+# user-constructed or deserialized `ModelResponse`) but is not yet a `ModelResponsePart` member.
+# The fix lives in #5723; until it lands, the response-role cases below are expected to fail.
+# `strict=True` flips them to failures (prompting removal of this marker) the moment the union is
+# corrected, so the guard and the fix stay coupled.
+_PENDING_PART_ROLES: set[tuple[type, str]] = {(ToolReturnPart, 'response')}
+
+
+def _part_role_params() -> list[Any]:
+    params: list[Any] = []
+    for cls, roles in PART_EXPECTED_UNIONS.items():
+        for role in sorted(roles):
+            marks = (
+                (pytest.mark.xfail(strict=True, reason='ToolReturnPart not yet a ModelResponsePart member; see #5723'),)
+                if (cls, role) in _PENDING_PART_ROLES
+                else ()
+            )
+            params.append(pytest.param(cls, role, id=f'{cls.__name__}-{role}', marks=marks))
+    return params
+
+
+PART_ROLE_PARAMS = _part_role_params()
 
 
 # --- Guard 2a: every concrete part is wired into the source-of-truth maps --------------------
@@ -205,35 +254,31 @@ def test_every_serialized_part_has_a_factory():
 # --- Guard 2b: declared membership matches actual union membership ----------------------------
 
 
-def test_declared_membership_matches_unions():
+@pytest.mark.parametrize(('part_cls', 'role'), PART_ROLE_PARAMS)
+def test_declared_membership_matches_unions(part_cls: type, role: str):
     """Each part declared for a role is actually a member of that role's union. This is the precise
     one-line localizer for #5721 (base `ToolReturnPart` missing from `ModelResponsePart`)."""
-    for cls, roles in PART_EXPECTED_UNIONS.items():
-        if 'request' in roles:
-            assert cls in REQUEST_PART_MEMBERS.values(), f'{cls.__name__} missing from ModelRequestPart'
-        if 'response' in roles:
-            assert cls in RESPONSE_PART_MEMBERS.values(), f'{cls.__name__} missing from ModelResponsePart'
+    members = REQUEST_PART_MEMBERS if role == 'request' else RESPONSE_PART_MEMBERS
+    assert part_cls in members.values(), f'{part_cls.__name__} missing from {role} union'
 
 
 # --- Guard 1 (umbrella): round-trip every concrete part ----------------------------------------
 
 
-@pytest.mark.parametrize('part_cls', list(PART_FACTORIES))
-def test_round_trip_every_part(part_cls: type):
+@pytest.mark.parametrize(('part_cls', 'role'), PART_ROLE_PARAMS)
+def test_round_trip_every_part(part_cls: type, role: str):
     """Every concrete part survives `ModelMessagesTypeAdapter` dump→validate (python + json) inside
     each message role it's declared for, preserving both `type(...)` and field values."""
-    roles = PART_EXPECTED_UNIONS[part_cls]
-    for role in roles:
-        part = PART_FACTORIES[part_cls]()
-        message: ModelMessage = ModelRequest(parts=[part]) if role == 'request' else ModelResponse(parts=[part])
+    part = PART_FACTORIES[part_cls]()
+    message: ModelMessage = ModelRequest(parts=[part]) if role == 'request' else ModelResponse(parts=[part])
 
-        for dump, validate in (
-            (ModelMessagesTypeAdapter.dump_python, ModelMessagesTypeAdapter.validate_python),
-            (ModelMessagesTypeAdapter.dump_json, ModelMessagesTypeAdapter.validate_json),
-        ):
-            round_tripped = validate(dump([message]))[0].parts[0]
-            assert type(round_tripped) is part_cls, f'{part_cls.__name__} mis-routed in {role}'
-            assert round_tripped == part
+    for dump, validate in (
+        (ModelMessagesTypeAdapter.dump_python, ModelMessagesTypeAdapter.validate_python),
+        (ModelMessagesTypeAdapter.dump_json, ModelMessagesTypeAdapter.validate_json),
+    ):
+        round_tripped = validate(dump([message]))[0].parts[0]
+        assert type(round_tripped) is part_cls, f'{part_cls.__name__} mis-routed in {role}'
+        assert round_tripped == part
 
 
 # --- Guard 3: discriminator-tag <-> member bijection ------------------------------------------

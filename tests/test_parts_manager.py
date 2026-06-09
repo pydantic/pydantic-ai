@@ -15,7 +15,6 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
-    ToolReturnPart,
     UnexpectedModelBehavior,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
@@ -709,20 +708,3 @@ def test_get_part_by_vendor_id():
     assert part == snapshot(TextPart(content='hello', part_kind='text'))
 
     assert manager.get_part_by_vendor_id('missing') is None
-
-
-def test_resolve_provider_name_tool_return_part():
-    """`ToolReturnPart` carries no `provider_name`, so the resolver returns the incoming one.
-
-    `ToolReturnPart` is a valid `ModelResponsePart` member but is never tracked by the parts
-    manager and, unlike the other members, has no `provider_name` attribute. The resolver must
-    short-circuit on it rather than reading a missing attribute. This exercises
-    `_resolve_provider_name` directly because the guard is unreachable from any public API path
-    (no run feeds a `ToolReturnPart` to the streaming parts manager), so a direct internal test
-    is the only way to cover it.
-    """
-    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
-    existing_part = ToolReturnPart(tool_name='tool1', content='result', tool_call_id='call1')
-
-    assert manager._resolve_provider_name(existing_part, 'openai') == 'openai'  # pyright: ignore[reportPrivateUsage]
-    assert manager._resolve_provider_name(existing_part, None) is None  # pyright: ignore[reportPrivateUsage]

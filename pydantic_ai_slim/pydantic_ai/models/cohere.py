@@ -253,7 +253,7 @@ class CohereModel(Model[AsyncClientV2]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(
-                        item, NativeToolCallPart | NativeToolReturnPart | FilePart | CompactionPart | ToolReturnPart
+                        item, NativeToolCallPart | NativeToolReturnPart | FilePart | CompactionPart
                     ):  # pragma: no cover
                         pass
                     else:

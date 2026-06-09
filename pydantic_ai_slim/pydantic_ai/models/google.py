@@ -1529,7 +1529,7 @@ class GeminiStreamedResponse(StreamedResponse):
         assert self._code_execution_tool_call_id is not None
         return _map_code_execution_result(code_execution_result, self.provider_name, self._code_execution_tool_call_id)
 
-    def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> NativeToolCallPart:
+    def _handle_executable_code_streaming(self, executable_code: ExecutableCode) -> ModelResponsePart:
         """Handle executable code for streaming responses.
 
         Returns a NativeToolCallPart for file search or code execution.
@@ -1636,9 +1636,6 @@ def _content_model_response(
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
             part = None
-        elif isinstance(item, ToolReturnPart):  # pragma: no cover
-            # User-defined tool returns in user-constructed message history are not replayed to the provider.
-            part = None
         else:
             assert_never(item)
 
@@ -1658,9 +1655,6 @@ def _decode_inline_thought_signature(
     Returns the raw signature bytes ready to embed in a `PartDict`, or `None` if no signature
     applies (either missing, or the response originated from a different provider).
     """
-    if isinstance(item, ToolReturnPart):  # pragma: no cover
-        # User-defined tool returns carry no provider signature.
-        return None
     if not item.provider_details:
         return None
     if m.provider_name not in accepted_provider_names and item.provider_name not in accepted_provider_names:

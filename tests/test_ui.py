@@ -1520,46 +1520,6 @@ def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_preser
     assert tool_return.content == snapshot(['see file', {'kept': uploaded_file}])
 
 
-def test_sanitize_messages_sanitizes_tool_return_part_in_model_response():
-    """A base `ToolReturnPart` embedded in a `ModelResponse` is sanitized like one in a `ModelRequest`.
-
-    `ToolReturnPart` joined the `ModelResponsePart` union (issue #5721), so a client-submitted
-    `ModelResponse` can now carry one; it has `tool_kind=None`, so it flows through the same
-    response-part content sanitization as the native tool returns above.
-    """
-    adapter = _make_dummy_adapter(
-        [
-            ModelResponse(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='lookup',
-                        tool_call_id='call-1',
-                        content=[
-                            'see file',
-                            ImageUrl(url='s3://bucket/blocked.png'),
-                            {'ok': ImageUrl(url='https://example.com/ok.png')},
-                        ],
-                    )
-                ]
-            ),
-        ]
-    )
-
-    with pytest.warns(UserWarning, match=r"scheme\(s\).*'s3'"):
-        sanitized = adapter.sanitize_messages(adapter.messages)
-
-    response = sanitized[0]
-    assert isinstance(response, ModelResponse)
-    tool_return = response.parts[0]
-    assert isinstance(tool_return, ToolReturnPart)
-    assert tool_return.content == snapshot(
-        [
-            'see file',
-            {'ok': ImageUrl(url='https://example.com/ok.png')},
-        ]
-    )
-
-
 def test_sanitize_messages_strips_dangling_tool_calls():
     """A trailing ModelResponse with unresolved ToolCallParts has them dropped with a warning."""
     adapter = _make_dummy_adapter(
