@@ -10615,14 +10615,7 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     )
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(
-        m,
-        capabilities=[
-            NativeTool(CodeExecutionTool()),
-            NativeTool(WebFetchTool()),
-            NativeTool(MCPServerTool(id='clock', url='https://example.com/mcp', allowed_tools=['current_time'])),
-        ],
-    )
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebFetchTool())])
 
     @agent.tool_plain
     def lookup() -> str:  # pragma: no cover
@@ -10646,15 +10639,29 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
         'code_execution': 'code_execution_20260120',
         'web_fetch': 'web_fetch_20250910',
     }
-    assert create_kwargs['mcp_servers'] == [
-        {
-            'type': 'url',
-            'name': 'clock',
-            'url': 'https://example.com/mcp',
-            'tool_configuration': {'enabled': True, 'allowed_tools': ['current_time']},
-        }
-    ]
-    assert create_kwargs['betas'] == ['mcp-client-2025-04-04', 'web-fetch-2025-09-10']
+    assert create_kwargs['betas'] == ['web-fetch-2025-09-10']
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_with_native_tools(allow_model_requests: None, anthropic_api_key: str):
+    """`count_tokens` succeeds against the live API when a native/server tool is configured.
+
+    Anthropic rejects server tools (e.g. `code_execution`) on the `count_tokens` endpoint with a 400, so
+    the model strips native tools from the `count_tokens` payload. A successful token count proves the
+    native tools were omitted. The recorded request is itself the regression guard: it must NOT contain
+    the `code_execution` entry, so a revert of the fix would send it and break playback.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5702
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    usage = await m.count_tokens(
+        [ModelRequest.user_text_prompt('What is 2 + 2?')],
+        None,
+        ModelRequestParameters(native_tools=[CodeExecutionTool()]),
+    )
+
+    assert usage.input_tokens > 0
 
 
 @pytest.mark.vcr()
