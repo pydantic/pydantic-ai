@@ -54,14 +54,29 @@ def test_init_with_base_url(
 
 
 def test_init_gateway_without_api_key_raises_error(env: TestEnv):
+    # With no API key the provider falls back to auto-detecting credentials, but it still needs a
+    # `base_url` to know which gateway/authorization server to talk to (a `pylf_*` key would encode it).
     env.remove('PYDANTIC_AI_GATEWAY_API_KEY')
+    env.remove('PYDANTIC_AI_GATEWAY_BASE_URL')
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(..., api_key=...)` to use the Pydantic AI Gateway provider.'
+            'Set `base_url` or the `PYDANTIC_AI_GATEWAY_BASE_URL` environment variable when using the '
+            'Pydantic AI Gateway without a `pylf_*` API key.'
         ),
     ):
         gateway_provider('openai')
+
+
+def test_init_gateway_without_credentials_raises_error(env: TestEnv):
+    # With a base_url but no key, no ambient OIDC, and no auth-server config, it fails closed.
+    env.remove('PYDANTIC_AI_GATEWAY_API_KEY')
+    env.remove('PYDANTIC_AI_GATEWAY_AUTH_URL')
+    env.remove('GATEWAY_OIDC_TOKEN')
+    env.remove('ACTIONS_ID_TOKEN_REQUEST_URL')
+    env.remove('ACTIONS_ID_TOKEN_REQUEST_TOKEN')
+    with pytest.raises(UserError, match=re.escape('PYDANTIC_AI_GATEWAY_AUTH_URL')):
+        gateway_provider('openai', base_url='https://example.com/')
 
 
 async def test_init_with_http_client():
