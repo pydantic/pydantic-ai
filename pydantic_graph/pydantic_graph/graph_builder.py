@@ -295,7 +295,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         inputs: InputT = None,
         span: AbstractContextManager[AbstractSpan] | None = None,
         infer_name: bool = True,
-    ) -> AsyncIterator[GraphRun[StateT, DepsT, OutputT]]:
+    ) -> AsyncGenerator[GraphRun[StateT, DepsT, OutputT]]:
         """Create an iterator for step-by-step graph execution.
 
         This method allows for more fine-grained control over graph execution,

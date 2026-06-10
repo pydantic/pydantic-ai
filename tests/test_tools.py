@@ -3049,7 +3049,10 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
         is_called.set()
 
         try:
-            await asyncio.sleep(1.0)
+            # Block until cancelled instead of sleeping a fixed duration: a sleep that races the
+            # `wait_for` timeouts below is flaky under CI load — if the loop is starved past the
+            # sleep, the tool returns normally and `is_cancelled` is never set.
+            await asyncio.Event().wait()
 
         except asyncio.CancelledError:
             is_cancelled.set()
@@ -3064,9 +3067,9 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
                 pass
 
     task = asyncio.create_task(run_agent())
-    await asyncio.wait_for(is_called.wait(), timeout=1.0)
+    await asyncio.wait_for(is_called.wait(), timeout=10)
     task.cancel()
-    await asyncio.wait_for(is_cancelled.wait(), timeout=1.0)
+    await asyncio.wait_for(is_cancelled.wait(), timeout=10)
 
 
 def test_tool_approved_with_metadata():

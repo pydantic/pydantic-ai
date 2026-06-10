@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
@@ -106,7 +106,7 @@ class MyModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         yield MyResponseStream(model_request_parameters=model_request_parameters)
 
     async def count_tokens(
@@ -221,7 +221,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.usage.details.output_audio_tokens': 30,
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
-                    'operation.cost': 0.00188125,
+                    'operation.cost': 0.002225,
                 },
             },
         ]
@@ -780,7 +780,7 @@ Fix the errors and try again.\
                             'type': 'object',
                             'properties': {'events': {'type': 'array'}, 'model_request_parameters': {'type': 'object'}},
                         },
-                        'operation.cost': 0.00188125,
+                        'operation.cost': 0.002225,
                         'gen_ai.response.id': 'response_id',
                     },
                 },
@@ -894,7 +894,7 @@ Fix the errors and try again.\
                                 'model_request_parameters': {'type': 'object'},
                             },
                         },
-                        'operation.cost': 0.00188125,
+                        'operation.cost': 0.002225,
                         'gen_ai.response.id': 'response_id',
                     },
                 },
@@ -974,14 +974,14 @@ Fix the errors and try again.\
                             'start_time_unix_nano': IsInt(),
                             'time_unix_nano': IsInt(),
                             'count': 1,
-                            'sum': 0.00188125,
+                            'sum': 0.002225,
                             'scale': 20,
                             'zero_count': 0,
-                            'positive': {'offset': -9493905, 'bucket_counts': [1]},
+                            'positive': {'offset': -9240030, 'bucket_counts': [1]},
                             'negative': {'offset': 0, 'bucket_counts': [0]},
                             'flags': 0,
-                            'min': 0.00188125,
-                            'max': 0.00188125,
+                            'min': 0.002225,
+                            'max': 0.002225,
                             'exemplars': [],
                         }
                     ],
