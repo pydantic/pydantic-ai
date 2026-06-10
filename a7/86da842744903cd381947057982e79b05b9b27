@@ -1,0 +1,19 @@
+tests/evals/test_dataset.py
+  s_ea27a899901838::t_edf35e38be3283 4,1405-1438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "a786da842744903cd381947057982e79b05b9b27",
+  "prompts": {},
+  "sessions": {
+    "s_ea27a899901838": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eb16c-44c8-75e1-9442-f3d086dda3b7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
