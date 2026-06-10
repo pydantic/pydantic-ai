@@ -2444,9 +2444,11 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
 
 
-async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    agent = Agent(m, model_settings=GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
+async def test_google_extra_headers(allow_model_requests: None, google_model: GoogleModelFactory):
+    m = google_model(
+        'gemini-1.5-flash', settings=GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'})
+    )
+    agent = Agent(m)
     result = await agent.run('Hello')
     assert result.output == snapshot('Hello there! How can I help you today?\n')
 
