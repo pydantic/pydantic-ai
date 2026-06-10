@@ -4424,8 +4424,20 @@ async def test_deepseek_reasoning_field_on_synthetic_tool_search_turn(allow_mode
             ],
         )
     )
+    roll_dice_turn = completion_message(
+        ChatCompletionMessage.model_construct(
+            content=None,
+            role='assistant',
+            reasoning_content='Now I can roll.' if thinking else None,
+            tool_calls=[
+                ChatCompletionMessageFunctionToolCall(
+                    id='call_roll', type='function', function=Function(name='roll_dice', arguments='{}')
+                )
+            ],
+        )
+    )
     final_turn = completion_message(ChatCompletionMessage.model_construct(content='You win!', role='assistant'))
-    mock = MockOpenAI.create_mock([load_capability_turn, final_turn])
+    mock = MockOpenAI.create_mock([load_capability_turn, roll_dice_turn, final_turn])
     model = OpenAIChatModel(
         'foobar',
         provider=OpenAIProvider(openai_client=mock),
