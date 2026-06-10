@@ -65,14 +65,18 @@ class _PydanticAIMessageMetadata(BaseModel):
 
 
 def tool_return_output(part: BaseToolReturnPart, *, preserve_file_data: bool = False) -> Any:
-    """Serialize tool return content for `ToolOutputAvailablePart.output`.
+    """Serialize a tool return's content for `ToolOutputAvailablePart.output`.
 
-    With `preserve_file_data=True`, multimodal items (`BinaryContent`, `ImageUrl`, etc.) are dumped
-    inline alongside any other content; `ToolReturnContent`'s discriminator rehydrates them on load
-    via `tool_return_content_ta`, so no envelope wrapping is needed.
+    `preserve_file_data` decides whether file data in the return (`BinaryContent`, `ImageUrl`, etc.)
+    is sent to the client:
 
-    With the default `preserve_file_data=False`, file content is dropped and only the text survives
-    (via `model_response_str`), mirroring the AG-UI adapter and the `preserve_file_data` trust model.
+    - `False` (the default): drop the files and keep only the text (via `model_response_str`). File
+      data stays on the server — the trust-model default from #3971 — and this matches the AG-UI dump path.
+    - `True`: dump the files inline; they're rehydrated on load via `ToolReturnContent`'s discriminator.
+
+    The streaming path (`_tool_return_with_files`) ignores this flag and always replaces files with text
+    placeholders, because event-stream formats can't carry multimodal tool output (#3826). That
+    dump-vs-stream difference is intentional, not a gap to fix.
     """
     if not preserve_file_data and part.files:
         return part.model_response_str()
