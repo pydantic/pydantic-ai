@@ -1,0 +1,20 @@
+id: prefer-model-factory
+language: python
+severity: error
+message: >-
+  Use the `<provider>_model` factory fixture from this dir's conftest.py
+  (`google_model` in tests/models/google/, `anthropic_model` in
+  tests/models/anthropic/) instead of hand-building `Provider(api_key=...)` +
+  `Model(...)`. The factory centralizes api-key wiring for VCR integration tests.
+  If you genuinely need a one-off provider (custom base_url/http_client, or a
+  cross-provider model whose factory is in another dir), add `# ast-grep-ignore`
+  with a short reason.
+files:
+  - 'tests/models/google/**'
+  - 'tests/models/anthropic/**'
+ignores:
+  - '**/conftest.py'
+rule:
+  any:
+    - pattern: GoogleProvider(api_key=$$$)
+    - pattern: AnthropicProvider(api_key=$$$)

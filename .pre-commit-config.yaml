@@ -49,6 +49,14 @@ repos:
     hooks:
       - id: zizmor
 
+  - repo: https://github.com/boidolr/ast-grep-pre-commit
+    rev: 0.43.0
+    hooks:
+      # Runs `sg scan` (auto-discovers sgconfig.yml). Rules live in .ast-grep/rules/;
+      # scoped here to the provider test dirs that have a `<provider>_model` factory fixture.
+      - id: ast-grep
+        files: ^tests/models/(google|anthropic)/.*\.py$
+
   - repo: local
     hooks:
       - id: no-rst-syntax

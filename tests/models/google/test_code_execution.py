@@ -36,7 +36,6 @@ from ...parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -445,10 +444,12 @@ print(f"Time in Utrecht: {now}")
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_receive_history_from_another_provider(
-    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+    allow_model_requests: None, anthropic_api_key: str, google_model: GoogleModelFactory
 ):
+    # The `anthropic_model` factory fixture lives in tests/models/anthropic/, not reachable from this google test dir
+    # ast-grep-ignore: prefer-model-factory
     anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
-    google_model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key=gemini_api_key))
+    google = google_model('gemini-3-flash-preview')
     agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
@@ -456,7 +457,7 @@ async def test_receive_history_from_another_provider(
         [[UserPromptPart], [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart]]
     )
 
-    result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
+    result = await agent.run('Multiplied by 12390', model=google, message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
