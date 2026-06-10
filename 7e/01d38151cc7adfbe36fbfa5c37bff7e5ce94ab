@@ -1,0 +1,23 @@
+tests/evals/test_evaluator_base.py
+  s_ea27a899901838::t_d733a7e0bec989 4,476-513
+pydantic_evals/pydantic_evals/evaluators/evaluator.py
+  s_ea27a899901838::t_d733a7e0bec989 8,10,29,32
+pydantic_evals/pydantic_evals/evaluators/_run_evaluator.py
+  s_ea27a899901838::t_d733a7e0bec989 8,110-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "7e01d38151cc7adfbe36fbfa5c37bff7e5ce94ab",
+  "prompts": {},
+  "sessions": {
+    "s_ea27a899901838": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eb16c-44c8-75e1-9442-f3d086dda3b7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
