@@ -6,6 +6,18 @@ In September 2025, Pydantic AI reached V1 and committed to API stability: no cha
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v2.0.0b7 (2026-06-10)
+
+The seventh V2 beta, forked from **v1.107.0**. There are no new V2 breaking or behavior changes since [v2.0.0b6](#v200b6-2026-06-04) below — everything in that entry applies unchanged — but this beta picks up the latest V1 release on top, which adds Claude Fable 5 / Mythos 5 model support and OpenRouter prompt caching (`CachePoint`), plus `known_model_names()` and Anthropic fixes; see the [v1.107.0 release notes](https://github.com/pydantic/pydantic-ai/releases/tag/v1.107.0) for the full list.
+
+Install it the same way, pinning the exact pre-release version:
+
+```bash
+pip/uv-add "pydantic-ai==2.0.0b7"
+```
+
+For the full breaking-change list and the recommended upgrade path, see the [v2.0.0b1](#v200b1-2026-05-20) entry below; the only difference is that the latest V1 to upgrade through first is now **v1.107.0**.
+
 ### v2.0.0b6 (2026-06-04)
 
 The sixth V2 beta, forked from **v1.106.0**. There are no new V2 breaking or behavior changes since [v2.0.0b5](#v200b5-2026-06-02) below — everything in that entry applies unchanged — but this beta picks up the latest V1 release on top, which adds `api_host`/`timeout` configuration and base `seed` mapping for the xAI provider, plus streaming and data-URI handling fixes; see the [v1.106.0 release notes](https://github.com/pydantic/pydantic-ai/releases/tag/v1.106.0) for the full list.
