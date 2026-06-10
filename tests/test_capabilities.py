@@ -657,7 +657,9 @@ def test_model_json_schema_with_capabilities():
                 'KnownModelName': {
                     'enum': [
                         'anthropic:claude-3-haiku-20240307',
+                        'anthropic:claude-fable-5',
                         'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-mythos-5',
                         'anthropic:claude-mythos-preview',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-opus-4-0',
@@ -748,7 +750,9 @@ def test_model_json_schema_with_capabilities():
                         'deepseek:deepseek-v4-flash',
                         'deepseek:deepseek-v4-pro',
                         'gateway/anthropic:claude-3-haiku-20240307',
+                        'gateway/anthropic:claude-fable-5',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-mythos-5',
                         'gateway/anthropic:claude-mythos-preview',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-opus-4-0',
