@@ -48,9 +48,11 @@ pytestmark = [
 # ===== Prompt caching: pre-request guards (public API, no request) =====
 
 
-async def test_openrouter_cache_point_first_content_raises_error(allow_model_requests: None) -> None:
+async def test_openrouter_cache_point_first_content_raises_error(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
+) -> None:
     """A `CachePoint` with no preceding content raises `UserError` before any request."""
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+    model = openrouter_model('anthropic/claude-sonnet-4.6')
     agent = Agent(model)
 
     with pytest.raises(
@@ -70,6 +72,8 @@ async def test_openrouter_cache_points_exceed_limit_raises(allow_model_requests:
     """
     model = OpenRouterModel(
         'anthropic/claude-sonnet-4.6',
+        # custom `profile=` is not forwarded by the openrouter_model factory
+        # ast-grep-ignore: prefer-model-factory
         provider=OpenRouterProvider(api_key='test-key'),
         profile=OpenRouterModelProfile(
             openrouter_supports_cache_control=True,
@@ -111,6 +115,8 @@ async def test_openrouter_cache_instructions_ignores_user_role_profile() -> None
     """
     model = OpenRouterModel(
         'anthropic/claude-sonnet-4.6',
+        # custom `profile=` is not forwarded by the openrouter_model factory
+        # ast-grep-ignore: prefer-model-factory
         provider=OpenRouterProvider(api_key='test-key'),
         profile=OpenRouterModelProfile(openai_system_prompt_role='user', openrouter_supports_cache_control=True),
     )
@@ -127,13 +133,13 @@ async def test_openrouter_cache_instructions_ignores_user_role_profile() -> None
         assert 'cache_control' not in content
 
 
-async def test_openrouter_cache_messages_empty_content_no_crash() -> None:
+async def test_openrouter_cache_messages_empty_content_no_crash(openrouter_model: OpenRouterModelFactory) -> None:
     """`openrouter_cache_messages` is a no-op (not a crash) when the last message has empty content.
 
     The empty-content list is only reachable via a degenerate `agent.run([])`; pins the guard that
     prevents an `IndexError` on `content[-1]`.
     """
-    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+    model = openrouter_model('anthropic/claude-sonnet-4.6')
     settings = OpenRouterModelSettings(openrouter_cache_messages=True)
 
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[])])]
