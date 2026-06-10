@@ -53,9 +53,10 @@ repos:
     rev: 0.43.0
     hooks:
       # Runs `sg scan` (auto-discovers sgconfig.yml). Rules live in .ast-grep/rules/;
-      # scoped here to the provider test dirs that have a `<provider>_model` factory fixture.
+      # the prefer-model-factory rule covers all of tests/models/ (every flagged site is
+      # migrated to a `<provider>_model` factory fixture or carries an `# ast-grep-ignore`).
       - id: ast-grep
-        files: ^tests/models/(google|anthropic)/.*\.py$
+        files: ^tests/models/.*\.py$
 
   - repo: local
     hooks:
