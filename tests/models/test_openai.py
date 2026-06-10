@@ -1867,6 +1867,22 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
 
+async def test_uploaded_file_wrong_provider_responses_tool_return(allow_model_requests: None) -> None:
+    """An `UploadedFile` from another provider in a tool return must raise the same error as in a user prompt.
+
+    Unit test rather than VCR: this is a pre-request guard that raises while mapping the tool return, before any
+    HTTP request, and reaching it through the public API would require mocking a full tool-call round-trip.
+    """
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+    part = ToolReturnPart(
+        tool_name='get_file',
+        content=[UploadedFile(file_id='file-xyz789', provider_name='anthropic')],
+        tool_call_id='call_1',
+    )
+    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
+        await m._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_text_content_input(allow_model_requests: None):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
     res = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]

@@ -3177,8 +3177,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             raise NotImplementedError(f'VideoUrl is not supported in OpenAI Responses {context}')
 
-    @staticmethod
     async def _map_tool_return_output(
+        self,
         part: ToolReturnPart,
     ) -> str | list[ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam]:
         """Map a `ToolReturnPart` to OpenAI Responses API output format, supporting multimodal content.
@@ -3194,6 +3194,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         for item in part.content_items(mode='str'):
             if isinstance(item, UploadedFile):
+                if item.provider_name != self.system:
+                    raise UserError(
+                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
+                        f'Expected `provider_name` to be `{self.system!r}`.'
+                    )
                 output.append(
                     ResponseInputFileContentParam(
                         type='input_file',
