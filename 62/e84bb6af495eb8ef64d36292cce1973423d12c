@@ -1,0 +1,19 @@
+pydantic_evals/pydantic_evals/evaluators/_run_evaluator.py
+  s_ea27a899901838::t_488c6451c6b2d5 110-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "62e84bb6af495eb8ef64d36292cce1973423d12c",
+  "prompts": {},
+  "sessions": {
+    "s_ea27a899901838": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eb16c-44c8-75e1-9442-f3d086dda3b7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
