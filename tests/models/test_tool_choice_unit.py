@@ -17,6 +17,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
@@ -597,6 +598,44 @@ def test_google_auto_tuple_filters_tool_defs():
     assert tools[0]['function_declarations'][0]['name'] == 'final_result'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalSubscript]
     assert tool_config is not None
     assert tool_config['function_calling_config']['mode'].name == 'AUTO'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
+
+
+NATIVE_TOOL_CONFIG_CASES = [
+    dict(
+        id='native-only-pre-gemini-3-omits-config',
+        model='gemini-2.5-pro',
+        request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+        expected_tool_config=None,
+    ),
+    dict(
+        id='native-only-gemini-3-keeps-only-server-side-flag',
+        model='gemini-3-flash-preview',
+        request_parameters=ModelRequestParameters(native_tools=[WebSearchTool()]),
+        expected_tool_config={'include_server_side_tool_invocations': True},
+    ),
+    dict(
+        id='function-tool-keeps-config',
+        model='gemini-2.5-pro',
+        request_parameters=ModelRequestParameters(function_tools=[make_tool('get_weather')]),
+        expected_tool_config={'function_calling_config': {'mode': 'AUTO'}},
+    ),
+]
+
+
+@pytest.mark.skipif(not google_available(), reason='google not installed')
+@pytest.mark.parametrize('case', NATIVE_TOOL_CONFIG_CASES, ids=lambda c: c['id'])
+def test_google_native_tool_only_omits_function_calling_config(case: dict[str, Any]):
+    """A `function_calling_config` only governs function tools, so it must be omitted when there are
+    only native tools: since #3611 Gemini 400s on one with no `function_declarations`.
+
+    Asserted on the request shape directly rather than via VCR: a cassette replay can't catch a
+    malformed request, since it replays a recorded response without re-validating against the API.
+    """
+    m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock()))
+
+    _, tool_config, _ = m._get_tool_config(case['request_parameters'], {})  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config == case['expected_tool_config']
 
 
 @pytest.mark.skipif(not xai_available(), reason='xai not installed')
