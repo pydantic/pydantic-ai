@@ -828,7 +828,6 @@ class StreamedResponse(ABC):
         so the flag is visible to any iterator that observes the transport error
         raised when the underlying connection is torn down, even if
         `close_stream()` itself raises.
-
         """
         if self.cancelled:
             return
