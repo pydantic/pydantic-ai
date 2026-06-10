@@ -6,7 +6,7 @@ import json
 import os
 import random
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import date, timezone
 from decimal import Decimal
 from typing import Any, cast
@@ -119,6 +119,13 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
+    GoogleModelFactory = Callable[..., GoogleModel]
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
+
+    AnthropicModelFactory = Callable[..., AnthropicModel]
+
 if not imports_successful():  # pragma: lax no cover
     # Define placeholder errors module so parametrize decorators can be parsed
     from types import SimpleNamespace
@@ -140,6 +147,8 @@ pytestmark = [
 
 @pytest.fixture()
 def google_provider(gemini_api_key: str) -> GoogleProvider:
+    # returns a bare provider for tests that need provider-level access; the model factory can't express this
+    # ast-grep-ignore: prefer-model-factory
     return GoogleProvider(api_key=gemini_api_key)
 
 
@@ -317,6 +326,8 @@ async def test_google_model_structured_output(allow_model_requests: None, google
 
 
 async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
+    # provider built with a custom base_url, which the model factory can't express
+    # ast-grep-ignore: prefer-model-factory
     provider = GoogleProvider(api_key=gemini_api_key, base_url='https://generativelanguage.googleapis.com')
     model = GoogleModel('gemini-2.0-flash', provider=provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
@@ -1654,13 +1665,10 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
 
 
 async def test_google_model_receive_web_search_history_from_another_provider(
-    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, google_model: GoogleModelFactory
 ):
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
-    anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
-    anthropic_agent = Agent(model=anthropic_model, capabilities=[NativeTool(WebSearchTool())])
+    anthropic = anthropic_model('claude-sonnet-4-6')
+    anthropic_agent = Agent(model=anthropic, capabilities=[NativeTool(WebSearchTool())])
 
     result = await anthropic_agent.run('What are the latest news in the Netherlands?')
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -1700,8 +1708,8 @@ async def test_google_model_receive_web_search_history_from_another_provider(
         ]
     )
 
-    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    google_agent = Agent(model=google_model)
+    google = google_model('gemini-2.0-flash')
+    google_agent = Agent(model=google)
     result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
@@ -2444,8 +2452,8 @@ async def test_google_extra_headers(allow_model_requests: None, google_provider:
     assert result.output == snapshot('Hello there! How can I help you today?\n')
 
 
-async def test_google_extra_headers_in_config(allow_model_requests: None):
-    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+async def test_google_extra_headers_in_config(allow_model_requests: None, google_model: GoogleModelFactory):
+    m = google_model('gemini-1.5-flash')
     model_settings = GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'})
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -2462,8 +2470,8 @@ async def test_google_extra_headers_in_config(allow_model_requests: None):
     assert headers['Content-Type'] == 'application/json'
 
 
-async def test_google_unified_service_tier(allow_model_requests: None):
-    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+async def test_google_unified_service_tier(allow_model_requests: None, google_model: GoogleModelFactory):
+    m = google_model('gemini-3-flash-preview')
     model_settings = GoogleModelSettings(service_tier='flex')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -2480,8 +2488,8 @@ async def test_google_unified_service_tier(allow_model_requests: None):
         assert h not in headers
 
 
-async def test_google_service_tier_in_config(allow_model_requests: None):
-    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+async def test_google_service_tier_in_config(allow_model_requests: None, google_model: GoogleModelFactory):
+    m = google_model('gemini-3-flash-preview')
     model_settings = GoogleModelSettings(service_tier='priority')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -2494,9 +2502,9 @@ async def test_google_service_tier_in_config(allow_model_requests: None):
     assert config_dict['service_tier'] == 'priority'
 
 
-async def test_google_service_tier_auto_omits_field(allow_model_requests: None):
+async def test_google_service_tier_auto_omits_field(allow_model_requests: None, google_model: GoogleModelFactory):
     """Top-level `service_tier='auto'` is omitted from the GLA request body."""
-    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    m = google_model('gemini-3-flash-preview')
     model_settings = GoogleModelSettings(service_tier='auto')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -2509,8 +2517,10 @@ async def test_google_service_tier_auto_omits_field(allow_model_requests: None):
     assert config_dict.get('service_tier') is None
 
 
-async def test_google_service_tier_default_maps_to_standard(allow_model_requests: None):
-    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+async def test_google_service_tier_default_maps_to_standard(
+    allow_model_requests: None, google_model: GoogleModelFactory
+):
+    m = google_model('gemini-3-flash-preview')
     model_settings = GoogleModelSettings(service_tier='default')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
@@ -2523,11 +2533,13 @@ async def test_google_service_tier_default_maps_to_standard(allow_model_requests
     assert config_dict['service_tier'] == 'standard'
 
 
-async def test_google_service_tier_not_in_config_when_unset(allow_model_requests: None):
+async def test_google_service_tier_not_in_config_when_unset(
+    allow_model_requests: None, google_model: GoogleModelFactory
+):
     """Test that `service_tier` is completely omitted from the config when not configured."""
     # This field has an explicit not-set test as it serves two different APIs
     # with two different mechanisms, making it a tad more complex than others.
-    m = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    m = google_model('gemini-3-flash-preview')
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
         messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
@@ -3789,13 +3801,13 @@ async def test_google_vertexai_image_generation(
     assert result.output == snapshot(IsInstance(BinaryImage))
 
 
-async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
+async def test_google_httpx_client_is_not_closed(allow_model_requests: None, google_model: GoogleModelFactory):
     # This should not raise any errors, see https://github.com/pydantic/pydantic-ai/issues/3242.
-    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
+    agent = Agent(google_model('gemini-2.5-flash-lite'))
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
 
-    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
+    agent = Agent(google_model('gemini-2.5-flash-lite'))
     result = await agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is **Mexico City**.')
 
@@ -4629,12 +4641,12 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
         await _cleanup_file_search_store(store, client)
 
 
-async def test_cache_point_filtering():
+async def test_cache_point_filtering(google_model: GoogleModelFactory):
     """Test that CachePoint is filtered out in Google internal method."""
     from pydantic_ai import CachePoint
 
     # Create a minimal GoogleModel instance to test _map_user_prompt
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
 
     # Test that CachePoint in a list is handled (triggers line 606)
     content = await model._map_user_prompt(UserPromptPart(content=['text before', CachePoint(), 'text after']))  # pyright: ignore[reportPrivateUsage]
@@ -4645,9 +4657,9 @@ async def test_cache_point_filtering():
     assert content[1] == {'text': 'text after'}
 
 
-async def test_uploaded_file_mapping():
+async def test_uploaded_file_mapping(google_model: GoogleModelFactory):
     """Test that UploadedFile is correctly mapped to file_data in Google model."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
 
     file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
     content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
@@ -4659,9 +4671,9 @@ async def test_uploaded_file_mapping():
     assert content[1] == {'file_data': {'file_uri': file_uri, 'mime_type': 'application/octet-stream'}}
 
 
-async def test_uploaded_file_mapping_with_media_type():
+async def test_uploaded_file_mapping_with_media_type(google_model: GoogleModelFactory):
     """Test that UploadedFile with media_type is correctly mapped."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
 
     file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/xyz789'
     content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
@@ -4672,27 +4684,27 @@ async def test_uploaded_file_mapping_with_media_type():
     assert content[0] == {'file_data': {'file_uri': file_uri, 'mime_type': 'application/pdf'}}
 
 
-async def test_uploaded_file_wrong_provider(allow_model_requests: None):
+async def test_uploaded_file_wrong_provider(allow_model_requests: None, google_model: GoogleModelFactory):
     """Test that UploadedFile with wrong provider raises an error in GoogleModel."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
     agent = Agent(model)
 
     with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with GoogleModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
-async def test_uploaded_file_invalid_file_id(allow_model_requests: None):
+async def test_uploaded_file_invalid_file_id(allow_model_requests: None, google_model: GoogleModelFactory):
     """Test that UploadedFile with a non-URI file_id raises an error in GoogleModel."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
     agent = Agent(model)
 
     with pytest.raises(UserError, match='must use a file URI from the Google Files API'):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='google')])
 
 
-async def test_uploaded_file_vertex_requires_gs_uri(mocker: MockerFixture):
+async def test_uploaded_file_vertex_requires_gs_uri(mocker: MockerFixture, google_model: GoogleModelFactory):
     """Vertex `UploadedFile` must use a gs:// URI (not Files API https URLs)."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
     https_files_api = 'https://generativelanguage.googleapis.com/v1beta/files/abc123'
@@ -4704,9 +4716,9 @@ async def test_uploaded_file_vertex_requires_gs_uri(mocker: MockerFixture):
         )
 
 
-async def test_uploaded_file_with_vendor_metadata():
+async def test_uploaded_file_with_vendor_metadata(google_model: GoogleModelFactory):
     """Test that UploadedFile with vendor_metadata includes video_metadata."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
 
     file_uri = 'https://generativelanguage.googleapis.com/v1beta/files/video123'
     content = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
@@ -4729,9 +4741,9 @@ async def test_uploaded_file_with_vendor_metadata():
     }
 
 
-async def test_youtube_video_url_without_vendor_metadata():
+async def test_youtube_video_url_without_vendor_metadata(google_model: GoogleModelFactory):
     """Test that YouTube VideoUrl without vendor_metadata doesn't include video_metadata."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
 
     video = VideoUrl(url='https://youtu.be/dQw4w9WgXcQ', media_type='video/mp4')  # No vendor_metadata
     content = await model._map_user_prompt(UserPromptPart(content=[video]))  # pyright: ignore[reportPrivateUsage]
@@ -4752,13 +4764,15 @@ async def test_youtube_video_url_without_vendor_metadata():
 # =============================================================================
 
 
-async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(mocker: MockerFixture):
+async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(
+    mocker: MockerFixture, google_model: GoogleModelFactory
+):
     """GCS URIs use file_uri with video_metadata on google-vertex.
 
     This is the main fix - GCS URIs were previously falling through to FileUrl
     handling which doesn't pass vendor_metadata as video_metadata.
     """
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
     video = VideoUrl(
@@ -4774,14 +4788,14 @@ async def test_gcs_video_url_with_vendor_metadata_on_google_vertex(mocker: Mocke
     }
 
 
-async def test_gcs_video_url_raises_error_on_google_gla():
+async def test_gcs_video_url_raises_error_on_google_gla(google_model: GoogleModelFactory):
     """GCS URIs on google-gla fall through to FileUrl and raise a clear error.
 
     google-gla cannot access GCS buckets, so attempting to use gs:// URLs
     should fail with a helpful error message rather than a cryptic API error.
     SSRF protection now catches non-http(s) protocols first.
     """
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
     # google-gla is the default for GoogleProvider with api_key, but be explicit
     assert model.system == 'google'
 
@@ -4800,9 +4814,9 @@ async def test_gcs_video_url_raises_error_on_google_gla():
 # =============================================================================
 
 
-async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
+async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture, google_model: GoogleModelFactory):
     """HTTP VideoUrls are downloaded on google-gla with video_metadata preserved."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
 
     mock_download = mocker.patch(
         'pydantic_ai.models.google.download_item',
@@ -4823,9 +4837,9 @@ async def test_http_video_url_downloads_on_google_gla(mocker: MockerFixture):
     assert content[0].get('video_metadata') == {'start_offset': '10s', 'end_offset': '20s'}
 
 
-async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixture):
+async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixture, google_model: GoogleModelFactory):
     """HTTP VideoUrls use file_uri directly on google-vertex with video_metadata."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
     video = VideoUrl(
@@ -4871,10 +4885,10 @@ async def test_http_video_url_uses_file_uri_on_google_vertex(mocker: MockerFixtu
     ],
 )
 async def test_file_url_in_tool_return_on_vertex(
-    mocker: MockerFixture, file_url: VideoUrl | ImageUrl, expected: dict[str, Any]
+    mocker: MockerFixture, file_url: VideoUrl | ImageUrl, expected: dict[str, Any], google_model: GoogleModelFactory
 ):
     """Test file URLs use file_data (not download) in tool returns on Vertex."""
-    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-3-flash-preview')
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-vertex')
 
     result = await model._map_file_to_function_response_part(file_url)  # pyright: ignore[reportPrivateUsage]
@@ -4882,9 +4896,9 @@ async def test_file_url_in_tool_return_on_vertex(
     assert result == expected
 
 
-async def test_map_user_prompt_with_text_content(mocker: MockerFixture):
+async def test_map_user_prompt_with_text_content(mocker: MockerFixture, google_model: GoogleModelFactory):
     """Test that _map_user_prompt correctly handles a mix of text content and str."""
-    model = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-1.5-flash')
     mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-gla')
 
     user_prompt_part = UserPromptPart(
@@ -5715,6 +5729,8 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
     """
     custom_timeout = 120
     custom_http_client = HttpxAsyncClient(timeout=Timeout(custom_timeout))
+    # provider built with a custom http_client for provider-level timeout access; the model factory can't express this
+    # ast-grep-ignore: prefer-model-factory
     provider = GoogleProvider(api_key=gemini_api_key, http_client=custom_http_client)
 
     http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
@@ -6397,9 +6413,9 @@ async def test_google_service_tier_vertex_headers(
     assert actual_routing_headers == expected_headers
 
 
-async def test_google_service_tier_not_set_no_headers(allow_model_requests: None):
+async def test_google_service_tier_not_set_no_headers(allow_model_requests: None, google_model: GoogleModelFactory):
     """Test that no Vertex PT/Flex routing headers are set when `google_service_tier` is omitted."""
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))
+    m = google_model('gemini-2.5-flash')
     model_settings = GoogleModelSettings()
 
     _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
