@@ -185,6 +185,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_supports_adaptive_thinking': True,
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supports_forced_tool_choice': True,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
         }
     )
@@ -210,6 +211,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_disallows_sampling_settings': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_forced_tool_choice': True,
             'anthropic_supports_task_budgets': True,
         }
     )
@@ -224,6 +226,7 @@ def test_anthropic_claude_haiku_4_5():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -240,6 +243,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
             ),
@@ -443,6 +447,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
@@ -466,6 +471,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_tool_caching': True,
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
@@ -489,6 +495,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_effort': False,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
@@ -626,6 +633,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
@@ -633,6 +641,11 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'openrouter_supports_cache_control': True,
+            'openrouter_supports_cache_ttl': True,
+            'openrouter_supports_tool_cache': True,
+            'openrouter_supports_dynamic_instruction_cache': True,
+            'openrouter_max_cache_points': 4,
         }
     )
 
@@ -660,6 +673,11 @@ def test_openrouter_openai_gpt_5_4():
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 
@@ -691,6 +709,11 @@ def test_openrouter_google_gemini_3_pro():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'openrouter_supports_cache_control': True,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 
@@ -707,6 +730,11 @@ def test_openrouter_mistral_large():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'supports_thinking': True,
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 
@@ -726,6 +754,11 @@ def test_openrouter_xai_grok_4():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 
@@ -743,6 +776,11 @@ def test_openrouter_qwen():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'supports_thinking': True,
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 
@@ -759,6 +797,11 @@ def test_openrouter_deepseek():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 
@@ -775,6 +818,11 @@ def test_openrouter_meta_llama():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'supports_thinking': True,
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 
@@ -792,6 +840,11 @@ def test_openrouter_moonshotai():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'supports_thinking': True,
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 
@@ -809,6 +862,11 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'supports_thinking': True,
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
         }
     )
 
@@ -1141,6 +1199,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
             ),
@@ -1255,6 +1314,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_forced_tool_choice': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
