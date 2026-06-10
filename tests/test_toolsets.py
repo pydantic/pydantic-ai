@@ -2657,11 +2657,11 @@ async def test_set_tool_metadata_skips_framework_tools():
         toolset=ts,
         tool_def=framework_def,
         max_retries=1,
-        args_validator=None,
+        args_validator=None,  # type: ignore[arg-type]
     )
 
     class ToolsetWithFrameworkTool(FunctionToolset[None]):
-        async def get_tools(self, ctx):
+        async def get_tools(self, ctx: RunContext[None]):
             tools = await super().get_tools(ctx)
             tools['load_capability'] = framework_tool
             return tools
@@ -2670,7 +2670,7 @@ async def test_set_tool_metadata_skips_framework_tools():
     cap = SetToolMetadata(tools='all', code_mode=True)
     wrapped = cap.get_wrapper_toolset(ToolsetWithFrameworkTool())
     agent = Agent(test_model, toolsets=[wrapped])
-    agent.run_sync('test')
+    await agent.run('test')
 
     params = test_model.last_model_request_parameters
     assert params is not None
