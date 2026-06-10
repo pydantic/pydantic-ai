@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -81,7 +81,7 @@ class MCPSamplingModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         raise NotImplementedError('MCP Sampling does not support streaming')
         yield
 

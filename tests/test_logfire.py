@@ -24,7 +24,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr
+from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics
 
 try:
     import logfire
@@ -59,7 +59,11 @@ class LogfireSummary:
             span_lookup[tid] = span_summary = SpanSummary(
                 id=id_counter, name=span['name'], message=span['attributes']['logfire.msg']
             )
-            self.attributes[id_counter] = span['attributes']
+            # `logfire.metrics` is a logfire-version-dependent span decoration (added in 4.3x): newer
+            # logfire attaches the aggregated `gen_ai.client.token.usage` metric to spans, older does not.
+            # Strip it so these assertions hold across the supported logfire range; the token usage itself
+            # is still covered by the stable `gen_ai.usage.*` attributes and `get_collected_metrics()`.
+            self.attributes[id_counter] = {k: v for k, v in span['attributes'].items() if k != 'logfire.metrics'}
             id_counter += 1
             if parent := span['parent']:
                 parent_span = span_lookup[(parent['trace_id'], parent['span_id'])]
@@ -1249,7 +1253,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
 
     await agent.run('Hello')
 
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
 
     # Verify that agent run span uses aggregated_usage attribute names
     agent_run_span = next(s for s in spans if s['name'] == 'agent run')
@@ -1302,7 +1306,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
     assert traceparent == snapshot('00-00000000000000000000000000000001-0000000000000001-01')
     record_feedback(traceparent, 'factuality', 0.1, comment='the agent lied', extra={'foo': 'bar'})
 
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat test',
@@ -3537,7 +3541,7 @@ async def test_run_stream(
 
 def _get_tool_span(capfire: CaptureLogfire) -> dict[str, Any]:
     """Get the completed tool span from exported spans."""
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
     tool_span = next(
         s for s in spans if s['attributes'].get('logfire.span_type') == 'span' and 'tool' in s['name'].lower()
     )
@@ -4080,7 +4084,7 @@ def test_instrumentation_capability_template_description(
     result = agent.run_sync('Hello', deps=MyDeps(name='testing'))
     assert result.output == snapshot('success (no tool calls)')
 
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
     agent_span = spans[-1]  # outermost span is the agent run
     assert agent_span['attributes']['gen_ai.agent.description'] == snapshot('Agent for testing')
 

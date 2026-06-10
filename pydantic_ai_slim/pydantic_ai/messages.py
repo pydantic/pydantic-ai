@@ -569,7 +569,10 @@ class BinaryContent:
         prefix = 'data:'
         if not data_uri.startswith(prefix):
             raise ValueError('Data URI must start with "data:"')
-        media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
+        body = data_uri[len(prefix) :]
+        if ';base64,' not in body:
+            raise ValueError('Data URI must be base64-encoded (expected ";base64," marker)')
+        media_type, data = body.split(';base64,', 1)
         return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
 
     @classmethod
@@ -696,6 +699,7 @@ class CachePoint:
 
     - Anthropic
     - Amazon Bedrock (Converse API)
+    - OpenRouter (Anthropic and Gemini models)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
@@ -708,6 +712,7 @@ class CachePoint:
 
     * Anthropic — see https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
     * Amazon Bedrock (Converse API) — see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    * OpenRouter with Anthropic models (automatically omitted for Gemini models, which do not support explicit TTL).
     """
 
 

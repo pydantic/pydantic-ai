@@ -8,7 +8,7 @@ import re
 import ssl
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -853,7 +853,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     @asynccontextmanager
     async def client_streams(
         self,
-    ) -> AsyncIterator[
+    ) -> AsyncGenerator[
         tuple[
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
@@ -1558,7 +1558,7 @@ class MCPServerStdio(MCPServer):
     @asynccontextmanager
     async def client_streams(
         self,
-    ) -> AsyncIterator[
+    ) -> AsyncGenerator[
         tuple[
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
@@ -1787,7 +1787,7 @@ class MCPServerSSE(_MCPServerHTTP):
     @asynccontextmanager
     async def client_streams(  # pragma: no cover
         self,
-    ) -> AsyncIterator[
+    ) -> AsyncGenerator[
         tuple[
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
@@ -1896,7 +1896,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     @asynccontextmanager
     async def client_streams(
         self,
-    ) -> AsyncIterator[
+    ) -> AsyncGenerator[
         tuple[
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],

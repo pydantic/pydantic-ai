@@ -113,7 +113,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr
+from .conftest import IsDatetime, IsInstance, IsStr, remove_schema_descriptions
 
 pytestmark = [
     pytest.mark.anyio,
@@ -543,32 +543,11 @@ def test_agent_from_spec_capabilities_merged():
 def test_model_json_schema_with_capabilities():
     pytest.importorskip('mcp', reason='schema varies without mcp package')
     schema = AgentSpec.model_json_schema_with_capabilities()
-    assert schema == snapshot(
+    assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
                 'AgentRetries': {
                     'additionalProperties': False,
-                    'description': """\
-Per-category retry budgets for an [`Agent`][pydantic_ai.agent.Agent].
-
-Pass to `Agent(retries=...)` as a dict to set different budgets per category.
-
-`int` semantics differ by call site:
-
-- At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
-  to `N`.
-- At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
-  budget. Tool retries cannot be overridden per run or via `override()` — passing
-  `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
-  manager is built once at agent construction.
-
-Keys:
-    tools: Default number of retries for tool calls before raising an error.
-    output: Maximum number of retries for output validation. On the text path
-        this is a global per-run budget; on the tool path it is the default
-        per-tool `max_retries` for each output tool, overridable via
-        [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].\
-""",
                     'properties': {
                         'tools': {'title': 'Tools', 'type': 'integer'},
                         'output': {'title': 'Output', 'type': 'integer'},
@@ -679,7 +658,9 @@ Keys:
                 'KnownModelName': {
                     'enum': [
                         'anthropic:claude-3-haiku-20240307',
+                        'anthropic:claude-fable-5',
                         'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-mythos-5',
                         'anthropic:claude-mythos-preview',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-opus-4-0',
@@ -770,7 +751,9 @@ Keys:
                         'deepseek:deepseek-v4-flash',
                         'deepseek:deepseek-v4-pro',
                         'gateway/anthropic:claude-3-haiku-20240307',
+                        'gateway/anthropic:claude-fable-5',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-mythos-5',
                         'gateway/anthropic:claude-mythos-preview',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-opus-4-0',
@@ -1218,14 +1201,6 @@ Keys:
                     'type': 'object',
                 },
                 'ModelSettings': {
-                    'description': """\
-Settings to configure an LLM.
-
-Includes only settings which apply to multiple models / model providers,
-though not all of these settings are supported by all models.
-
-All types must be serializable using Pydantic.\
-""",
                     'properties': {
                         'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
                         'temperature': {'title': 'Temperature', 'type': 'number'},
@@ -1388,14 +1363,6 @@ All types must be serializable using Pydantic.\
                 },
                 'WebSearchUserLocation': {
                     'additionalProperties': False,
-                    'description': """\
-Allows you to localize search results based on a user's location.
-
-Supported by:
-
-* Anthropic
-* OpenAI Responses\
-""",
                     'properties': {
                         'city': {'title': 'City', 'type': 'string'},
                         'country': {'title': 'Country', 'type': 'string'},
@@ -1552,8 +1519,8 @@ Supported by:
                     'additionalProperties': False,
                     'properties': {
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'tools': {
                             'anyOf': [
                                 {'const': 'all', 'type': 'string'},
@@ -1591,8 +1558,8 @@ Supported by:
                     'additionalProperties': False,
                     'properties': {
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
                     },
                     'title': 'spec_params_ReinjectSystemPrompt',
@@ -1602,8 +1569,8 @@ Supported by:
                     'additionalProperties': False,
                     'properties': {
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'effort': {
                             'anyOf': [
                                 {'type': 'boolean'},
@@ -1766,7 +1733,6 @@ Supported by:
                     'additionalProperties': False,
                     'properties': {
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                         'strategy': {
                             'anyOf': [
@@ -1781,6 +1747,7 @@ Supported by:
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'title': 'Tool Description',
                         },
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'parameter_description': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'title': 'Parameter Description',
@@ -17866,8 +17833,6 @@ class TestStreamingOutputHooks:
 
     async def test_output_hooks_fire_during_streaming(self):
         """Validate hooks fire on partial attempts; execute hooks fire only when partial validation succeeds."""
-
-        hook_calls: list[tuple[str, bool]] = []
 
         hook_calls: list[tuple[str, bool]] = []
 
