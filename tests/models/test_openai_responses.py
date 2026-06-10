@@ -1,6 +1,6 @@
 import json
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -84,8 +84,9 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    AnthropicModelFactory = Callable[..., AnthropicModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -3379,11 +3380,10 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
 
 
 async def test_openai_responses_thinking_part_from_other_model(
-    allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, openai_api_key: str
 ):
-    m = AnthropicModel(
+    m = anthropic_model(
         'claude-sonnet-4-6',
-        provider=AnthropicProvider(api_key=anthropic_api_key),
         settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
     )
     agent = Agent(m)
@@ -9890,6 +9890,8 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
     """
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
+    # exercises OpenAIResponsesModel against an OpenRouter provider; the openrouter_model factory builds OpenRouterModel, not this pairing
+    # ast-grep-ignore: prefer-model-factory
     model = OpenAIResponsesModel('openai/gpt-oss-20b', provider=OpenRouterProvider(api_key=openrouter_api_key))
     agent = Agent(model=model)
     async with agent.run_stream('What is 2+2?') as result:
