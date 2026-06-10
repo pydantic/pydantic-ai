@@ -38,6 +38,7 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UploadedFile,
     UsageLimitExceeded,
     UserError,
     UserPromptPart,
@@ -12067,3 +12068,46 @@ def test_openai_responses_phase_profile_flag():
     assert cast(Any, openai_model_profile('gpt-5.2')).openai_supports_phase is False
     assert cast(Any, openai_model_profile('gpt-5')).openai_supports_phase is False
     assert cast(Any, openai_model_profile('gpt-4o')).openai_supports_phase is False
+
+
+async def test_provider_name_mismatch_in_tool_return_raises_user_error(allow_model_requests: None) -> None:
+    """UploadedFile with a foreign provider_name must raise UserError in the tool-return path."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    part = ToolReturnPart(
+        tool_name='get_file',
+        content=[
+            UploadedFile(file_id='file-abc123', provider_name='google'),
+            'result text',
+        ],
+    )
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "UploadedFile with `provider_name='google'` cannot be used with OpenAIResponsesModel. "
+            "Expected `provider_name` to be `'openai'`."
+        ),
+    ):
+        await model._map_tool_return_output(part)
+
+
+async def test_provider_name_match_in_tool_return_passes(allow_model_requests: None) -> None:
+    """UploadedFile with a matching provider_name in tool-return is mapped without error."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    part = ToolReturnPart(
+        tool_name='get_file',
+        content=[
+            UploadedFile(file_id='file-abc123', provider_name='openai'),
+            'result text',
+        ],
+    )
+
+    result = await model._map_tool_return_output(part)
+    assert isinstance(result, list)
+    file_params = [item for item in result if item.get('type') == 'input_file']
+    assert len(file_params) == 1
+    assert file_params[0]['file_id'] == 'file-abc123'
