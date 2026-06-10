@@ -2649,7 +2649,9 @@ def test_model_request_parameters_attributes_strips_internal_tool_fields() -> No
     )
 
     result = model_request_parameters_attributes(params)
-    data = json.loads(result['model_request_parameters'])
+    serialized = result['model_request_parameters']
+    assert isinstance(serialized, str)  # model_request_parameters_attributes always returns a JSON string
+    data = json.loads(serialized)
     fat_tool = next(t for t in data['function_tools'] if t['name'] == 'fat_tool')
     output_fat = next(t for t in data['output_tools'] if t['name'] == 'output_fat')
     slim_tool = next(t for t in data['function_tools'] if t['name'] == 'slim_tool')
