@@ -2666,7 +2666,10 @@ async def test_set_tool_metadata_skips_framework_tools():
             tools['load_capability'] = framework_tool
             return tools
 
-    test_model = TestModel()
+    # Use `call_tools=[]` so TestModel inspects the tool definitions without
+    # invoking them. The simulated framework tool has `args_validator=None`,
+    # which would raise during argument validation if it were actually called.
+    test_model = TestModel(call_tools=[])
     cap = SetToolMetadata(tools='all', code_mode=True)
     wrapped = cap.get_wrapper_toolset(ToolsetWithFrameworkTool())
     agent = Agent(test_model, toolsets=[wrapped])
