@@ -4401,48 +4401,61 @@ async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_
 
 
 @pytest.mark.parametrize('thinking', [True, False])
-async def test_deepseek_reasoning_field_on_synthetic_tool_search_turn(allow_model_requests: None, thinking: bool):
+@pytest.mark.parametrize(
+    'thinking_field',
+    [
+        pytest.param('reasoning_content', id='deepseek'),
+        pytest.param('reasoning', id='openrouter'),
+        pytest.param('reasoning_content', id='moonshotai'),
+    ],
+)
+async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
+    allow_model_requests: None, thinking_field: str, thinking: bool
+):
     """Regression test for #5829: deterministic per-CI guard for the wire mapping.
 
     Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn
-    with tool calls but no thinking. DeepSeek (which round-trips thinking in `reasoning_content`)
-    400s if such a turn omits that field while the run is thinking, so it must be sent empty when
-    thinking is active and left off otherwise (e.g. `deepseek-chat`). The real-API counterpart is
-    `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
+    with tool calls but no thinking. A `'field'`-mode provider (one that round-trips thinking in a
+    custom field) 400s if such a turn omits that field while the run is thinking, so it must be sent
+    empty when thinking is active and left off otherwise. Parametrized over the three providers that
+    use this mode — DeepSeek and MoonshotAI (`reasoning_content`) and OpenRouter (`reasoning`) — to
+    pin that the backfill is field-name-agnostic (it reads `openai_chat_thinking_field`). The
+    real-API counterpart is `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
     """
-    load_capability_turn = completion_message(
-        ChatCompletionMessage.model_construct(
-            content=None,
-            role='assistant',
-            reasoning_content='I should load the dice capability.' if thinking else None,
-            tool_calls=[
-                ChatCompletionMessageFunctionToolCall(
-                    id='call_load',
-                    type='function',
-                    function=Function(name='load_capability', arguments=json.dumps({'id': 'DICE_ROLL'})),
-                )
-            ],
-        )
+    load_capability_message = ChatCompletionMessage.model_construct(
+        content=None,
+        role='assistant',
+        tool_calls=[
+            ChatCompletionMessageFunctionToolCall(
+                id='call_load',
+                type='function',
+                function=Function(name='load_capability', arguments=json.dumps({'id': 'DICE_ROLL'})),
+            )
+        ],
     )
-    roll_dice_turn = completion_message(
-        ChatCompletionMessage.model_construct(
-            content=None,
-            role='assistant',
-            reasoning_content='Now I can roll.' if thinking else None,
-            tool_calls=[
-                ChatCompletionMessageFunctionToolCall(
-                    id='call_roll', type='function', function=Function(name='roll_dice', arguments='{}')
-                )
-            ],
-        )
+    roll_dice_message = ChatCompletionMessage.model_construct(
+        content=None,
+        role='assistant',
+        tool_calls=[
+            ChatCompletionMessageFunctionToolCall(
+                id='call_roll', type='function', function=Function(name='roll_dice', arguments='{}')
+            )
+        ],
     )
+    if thinking:
+        # The provider returns its reasoning in the profile's custom field; the model parses it into a
+        # `ThinkingPart`, which makes the run thinking-active so the synthetic turn gets backfilled.
+        setattr(load_capability_message, thinking_field, 'I should load the dice capability.')
+        setattr(roll_dice_message, thinking_field, 'Now I can roll.')
+    load_capability_turn = completion_message(load_capability_message)
+    roll_dice_turn = completion_message(roll_dice_message)
     final_turn = completion_message(ChatCompletionMessage.model_construct(content='You win!', role='assistant'))
     mock = MockOpenAI.create_mock([load_capability_turn, roll_dice_turn, final_turn])
     model = OpenAIChatModel(
         'foobar',
         provider=OpenAIProvider(openai_client=mock),
         profile=OpenAIModelProfile(
-            openai_chat_thinking_field='reasoning_content',
+            openai_chat_thinking_field=thinking_field,
             openai_chat_send_back_thinking_parts='field',
         ),
     )
@@ -4462,7 +4475,7 @@ async def test_deepseek_reasoning_field_on_synthetic_tool_search_turn(allow_mode
         if message.get('role') == 'assistant'
         and any(call['function']['name'] == 'search_tools' for call in message.get('tool_calls', ()))
     )
-    assert synthetic_turn.get('reasoning_content') == ('' if thinking else None)
+    assert synthetic_turn.get(thinking_field) == ('' if thinking else None)
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):

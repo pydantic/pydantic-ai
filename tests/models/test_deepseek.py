@@ -40,7 +40,7 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     tool calls but no thinking; before the fix DeepSeek rejected it with a 400. A successful
     recording confirms DeepSeek accepts the empty `reasoning_content` the fix sends. The
     deterministic mapping guard is in
-    `test_openai.py::test_deepseek_reasoning_field_on_synthetic_tool_search_turn`.
+    `test_openai.py::test_field_mode_thinking_backfill_on_synthetic_tool_search_turn`.
     """
     model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
 

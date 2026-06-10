@@ -1439,10 +1439,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = OpenAIModelProfile.from_profile(self.profile)
-        # A tool-calling assistant turn with no thinking, while the run is thinking, is one the
-        # framework synthesized (e.g. the deferred-capability tool-search exchange), not the model.
-        # DeepSeek-style `'field'` providers 400 unless it carries their thinking field, so backfill
-        # the field name to set empty below (the synthesized turn produced no reasoning).
+        # DeepSeek-style `'field'` providers 400 on a tool-calling assistant turn that omits their
+        # thinking field while the run is reasoning. The framework-synthesized deferred-capability
+        # tool-search turn is the common trigger (it carries no thinking), but the backfill below
+        # deliberately covers any such turn missing the field. Resolve the field name to set empty below.
         thinking_active = any(
             isinstance(part, ThinkingPart)
             for message in messages
