@@ -107,6 +107,8 @@ async def run_evaluator(
     return details
 
 
+# `EvaluationReason` is a plain dataclass, so pydantic would otherwise trust
+# existing instances and skip validating `value` against the finite-float constraint.
 _EVALUATOR_OUTPUT_ADAPTER = TypeAdapter[EvaluatorOutput](
     EvaluatorOutput, config=ConfigDict(revalidate_instances='always')
 )
