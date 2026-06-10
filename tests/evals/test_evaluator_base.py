@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import math
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -472,3 +473,41 @@ async def test_run_evaluator():
             }
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'output',
+    [
+        pytest.param(math.nan, id='nan-scalar'),
+        pytest.param(math.inf, id='inf-scalar'),
+        pytest.param(-math.inf, id='negative-inf-scalar'),
+        pytest.param({'score': math.nan}, id='nan-mapping'),
+        pytest.param(EvaluationReason(value=math.nan, reason='not finite'), id='nan-reason'),
+        pytest.param({'score': EvaluationReason(value=math.inf, reason='not finite')}, id='inf-mapped-reason'),
+    ],
+)
+async def test_run_evaluator_rejects_non_finite_numbers(output: Any):
+    """Adapter validation should reject non-finite numbers before report conversion."""
+    ctx = EvaluatorContext(
+        name='test',
+        inputs={},
+        metadata=None,
+        expected_output=None,
+        output={},
+        duration=0.0,
+        _span_tree=SpanTreeRecordingError('did not record spans'),
+        attributes={},
+        metrics={},
+    )
+
+    @dataclass
+    class NonFiniteEvaluator(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> Any:
+            return output
+
+    results = await run_evaluator(NonFiniteEvaluator(), ctx)
+
+    assert isinstance(results, EvaluatorFailure)
+    assert results.name == 'NonFiniteEvaluator'
+    assert results.error_type == 'ValueError'
+    assert 'returned a value of an invalid type' in results.error_message
