@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import math
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -476,18 +476,19 @@ async def test_run_evaluator():
 
 
 @pytest.mark.parametrize(
-    'output',
+    'output_factory',
     [
-        pytest.param(math.nan, id='nan-scalar'),
-        pytest.param(math.inf, id='inf-scalar'),
-        pytest.param(-math.inf, id='negative-inf-scalar'),
-        pytest.param({'score': math.nan}, id='nan-mapping'),
-        pytest.param(EvaluationReason(value=math.nan, reason='not finite'), id='nan-reason'),
-        pytest.param({'score': EvaluationReason(value=math.inf, reason='not finite')}, id='inf-mapped-reason'),
+        pytest.param(lambda: math.nan, id='nan-scalar'),
+        pytest.param(lambda: math.inf, id='inf-scalar'),
+        pytest.param(lambda: -math.inf, id='negative-inf-scalar'),
+        pytest.param(lambda: {'score': math.nan}, id='nan-mapping'),
+        pytest.param(lambda: EvaluationReason(value=math.nan, reason='not finite'), id='nan-reason'),
+        pytest.param(lambda: {'score': EvaluationReason(value=math.inf, reason='not finite')}, id='inf-mapped-reason'),
     ],
 )
-async def test_run_evaluator_rejects_non_finite_numbers(output: Any):
+async def test_run_evaluator_rejects_non_finite_numbers(output_factory: Callable[[], Any]):
     """Adapter validation should reject non-finite numbers before report conversion."""
+    output = output_factory()
     ctx = EvaluatorContext(
         name='test',
         inputs={},
