@@ -1322,14 +1322,12 @@ class StreamedResponse(ABC):
         raised when the underlying connection is torn down, even if
         `close_stream()` itself raises.
 
-        Skips `close_stream()` when the stream was already fully consumed
-        (`self._finished` is `True`), since there is no live connection to
-        tear down. `get()` checks `_finished` before `_cancelled`, so a
-        finished stream stays `'complete'` even after `cancel()`.
         """
         if self.cancelled:
             return
         self._cancelled = True
+        # _finished is checked before _cancelled in get(), so a finished
+        # stream stays complete even after cancel().
         if self._finished:
             return
         await self.close_stream()
