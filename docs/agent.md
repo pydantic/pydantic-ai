@@ -480,6 +480,9 @@ updater.start(wait=True)  # Wait for the first fetch to complete before continui
 updater.stop()
 ```
 
+!!! note
+    Only one updater can be active per process, so don't combine [`update_in_background()`][pydantic_ai.prices.update_in_background] with a [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices) you manage yourself. If `update_in_background()` runs second, the redundant call is silently ignored; if it runs first, your own `UpdatePrices.start()` raises `RuntimeError`.
+
 #### Streaming All Events and Output
 
 Here is an example of streaming an agent run in combination with `async for` iteration:

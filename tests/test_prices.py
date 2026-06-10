@@ -1,5 +1,7 @@
 """Tests for `pydantic_ai.prices`."""
+
 # pyright: reportPrivateUsage=false
+from __future__ import annotations
 
 import threading
 

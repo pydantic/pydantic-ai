@@ -256,7 +256,7 @@ filterwarnings = [
     "ignore:Iterating `AgentEventStream` directly with `async for event in stream.* is deprecated:DeprecationWarning",
     # Most tests are not testing cost calculation or genai-prices data freshness. Dedicated tests
     # assert this warning explicitly where the user-facing behavior matters.
-    "ignore::pydantic_ai._instrumentation.CostCalculationFailedWarning",
+    "ignore::pydantic_ai.models.instrumented.CostCalculationFailedWarning",
     # `Agent(instrument=...)` / `Agent.from_spec(instrument=...)` / `Agent.from_file(instrument=...)`
     # are deprecated in favor of `capabilities=[Instrumentation(...)]`. Many existing tests still
     # exercise the legacy kwarg on purpose; dedicated tests (`test_agent_*_instrument*` in

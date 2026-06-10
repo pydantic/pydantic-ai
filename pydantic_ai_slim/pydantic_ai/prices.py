@@ -1,8 +1,12 @@
+"""Keep model pricing data fresh by fetching the latest `genai-prices` data in the background."""
+
 from __future__ import annotations
 
-from genai_prices import UpdatePrices
+from genai_prices import UpdatePrices as _UpdatePrices
 
-_updater: UpdatePrices | None = None
+__all__ = ('update_in_background',)
+
+_updater: _UpdatePrices | None = None
 
 
 def update_in_background() -> None:
@@ -33,7 +37,7 @@ def update_in_background() -> None:
     if _updater is not None:
         return
     try:
-        _updater = UpdatePrices()
+        _updater = _UpdatePrices()
         _updater.start()
     except Exception:
         _updater = None

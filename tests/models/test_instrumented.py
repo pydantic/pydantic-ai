@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime
 from typing import Literal
 
@@ -1873,6 +1874,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
 
 
 async def test_response_cost_unknown_model(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai._instrumentation._warned_unknown_cost_models', set[str]())
     model = InstrumentedModel(MyModel())
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
 
@@ -1894,6 +1896,43 @@ async def test_response_cost_unknown_model(capfire: CaptureLogfire, monkeypatch:
 
     [span] = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     assert 'operation.cost' not in span['attributes']
+
+
+class MyModelWithProviderName(MyModel):
+    """A model whose response carries a provider name, to exercise the `provider:model` warning path."""
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        response = await super().request(messages, model_settings, model_request_parameters)
+        return replace(response, provider_name='openai')
+
+
+async def test_response_cost_unknown_model_warns_once(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
+    """The unknown-model cost warning is emitted once per model, not once per request."""
+    monkeypatch.setattr('pydantic_ai._instrumentation._warned_unknown_cost_models', set[str]())
+    model = InstrumentedModel(MyModelWithProviderName())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
+
+    def raise_lookup(self: ModelResponse) -> None:
+        raise LookupError('no pricing data')
+
+    monkeypatch.setattr(ModelResponse, 'cost', raise_lookup)
+
+    with warns(
+        snapshot(
+            [
+                'CostCalculationFailedWarning: No pricing data found for openai:gpt-4o-2024-11-20; '
+                '`operation.cost` will not be set. Upgrade `genai-prices` or call '
+                '`pydantic_ai.prices.update_in_background()` to keep pricing up to date.'
+            ]
+        )
+    ):
+        await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
+        await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
 
 
 def test_message_with_native_tool_calls():
