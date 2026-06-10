@@ -110,10 +110,25 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
     return attributes
 
 
+def _strip_internal_tool_fields(params: Any) -> Any:
+    """Remove internal fields from tool definitions that are not sent to the model.
+
+    `metadata` and `return_schema` are never sent to the model but can carry
+    large payloads (e.g. MCP output schemas, ~365 KiB each). Serializing them
+    into every OTel span attribute causes OOMs in the Python protobuf encoder
+    under realistic batch sizes.
+    """
+    return replace(
+        params,
+        function_tools=[replace(t, metadata=None, return_schema=None) for t in params.function_tools],
+        output_tools=[replace(t, metadata=None, return_schema=None) for t in params.output_tools],
+    )
+
+
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': to_json(serialize_any(model_request_parameters)).decode()}
+    return {'model_request_parameters': to_json(serialize_any(_strip_internal_tool_fields(model_request_parameters))).decode()}
 
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:

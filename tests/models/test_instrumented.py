@@ -2616,3 +2616,60 @@ async def test_instrumented_model_request_error(capfire: CaptureLogfire):
     # finish() was never called, so response-specific attributes are absent
     assert 'gen_ai.response.id' not in spans[0]['attributes']
     assert 'gen_ai.usage.input_tokens' not in spans[0]['attributes']
+
+
+def test_model_request_parameters_attributes_strips_internal_tool_fields() -> None:
+    """Internal tool fields (metadata, return_schema) must be stripped from OTel span attributes."""
+    from dataclasses import replace
+
+    from pydantic_ai._instrumentation import model_request_parameters_attributes
+    from pydantic_ai.tools import ToolDefinition
+
+    # A tool with large metadata and return_schema — these should be stripped
+    fat_meta = {'output_schema': {'properties': {f'f{i}': {'type': 'string'} for i in range(100)}}}
+    fat_return = {'type': 'object', 'properties': {f'p{i}': {'type': 'string'} for i in range(100)}}
+    tool_with_fat = ToolDefinition(
+        name='fat_tool',
+        description='A tool with large internal fields',
+        parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'string'}}},
+        metadata=fat_meta,
+        return_schema=fat_return,
+    )
+    # A tool without those fields — should be unaffected
+    tool_slim = ToolDefinition(
+        name='slim_tool',
+        description='A tool without internal fields',
+        parameters_json_schema={'type': 'object'},
+    )
+
+    params = ModelRequestParameters(
+        function_tools=[tool_with_fat, tool_slim],
+        output_tools=[replace(tool_with_fat, name='output_fat')],
+    )
+
+    result = model_request_parameters_attributes(params)
+    serialized = result['model_request_parameters']
+
+    # Parse the JSON to verify structured stripping
+    import json
+
+    data = json.loads(serialized)
+    fat_tool = next(t for t in data['function_tools'] if t['name'] == 'fat_tool')
+    output_fat = next(t for t in data['output_tools'] if t['name'] == 'output_fat')
+    slim_tool = next(t for t in data['function_tools'] if t['name'] == 'slim_tool')
+
+    # metadata and return_schema must be stripped from all tools
+    assert fat_tool['metadata'] is None
+    assert fat_tool['return_schema'] is None
+    assert output_fat['metadata'] is None
+    assert output_fat['return_schema'] is None
+
+    # Tools that never had those fields should still have None
+    assert slim_tool['metadata'] is None
+    assert slim_tool['return_schema'] is None
+
+    # Core fields must be preserved
+    assert fat_tool['name'] == 'fat_tool'
+    assert fat_tool['description'] == 'A tool with large internal fields'
+    assert fat_tool['parameters_json_schema'] == {'type': 'object', 'properties': {'x': {'type': 'string'}}}
+    assert slim_tool['parameters_json_schema'] == {'type': 'object'}
