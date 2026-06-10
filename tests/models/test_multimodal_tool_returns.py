@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import unittest.mock
+from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import count
 from pathlib import Path
@@ -52,10 +53,14 @@ with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
+    AnthropicModelFactory = Callable[..., AnthropicModel]
+
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleCloudLocation, GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
+    GoogleModelFactory = Callable[..., GoogleModel]
 
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -270,11 +275,15 @@ def create_model(
 ) -> Model:
     model_name = MODEL_CONFIGS[provider][0]
     if provider == 'anthropic':
+        # cross-provider helper dispatching over an api_keys dict; a plain function, not a pytest fixture, so it can't use the `*_model` factory fixtures
+        # ast-grep-ignore: prefer-model-factory
         return AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_keys['anthropic']))
     elif provider in ('bedrock_nova', 'bedrock_claude'):
         assert bedrock_provider is not None
         return BedrockConverseModel(model_name, provider=bedrock_provider)
     elif provider in ('google_2_5', 'google_gemini3'):
+        # cross-provider helper dispatching over an api_keys dict; a plain function, not a pytest fixture, so it can't use the `*_model` factory fixtures
+        # ast-grep-ignore: prefer-model-factory
         return GoogleModel(model_name, provider=GoogleProvider(api_key=api_keys['google']))
     elif provider == 'google_vertex':  # pragma: no cover
         assert vertex_provider is not None
@@ -756,7 +765,7 @@ async def test_vendor_metadata_detail(
 
 
 async def test_text_plain_document_anthropic(
-    anthropic_api_key: str,
+    anthropic_model: AnthropicModelFactory,
     assets_path: Path,
     allow_model_requests: None,
     cassette_ctx: CassetteContext,
@@ -765,7 +774,7 @@ async def test_text_plain_document_anthropic(
     if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = anthropic_model('claude-sonnet-4-5')
     text_content = assets_path.joinpath('dummy.txt').read_bytes()
     document = BinaryContent(data=text_content, media_type='text/plain')
 
@@ -910,6 +919,8 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
 async def test_uploaded_file_validation_error_in_tool_return(
     case: UploadedFileErrorCase,
     bedrock_provider: Any,
+    anthropic_model: AnthropicModelFactory,
+    google_model: GoogleModelFactory,
 ) -> None:
     """Test that invalid UploadedFile in a tool return raises UserError before the API call."""
     provider = case.provider
@@ -923,7 +934,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
     params = ModelRequestParameters()
 
     if provider == 'anthropic':
-        m_anthropic = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
+        m_anthropic = anthropic_model('claude-haiku-4-5')
         with pytest.raises(UserError, match=case.match):
             await m_anthropic._map_message(messages, params, {})  # pyright: ignore[reportPrivateUsage]
     elif provider in ('bedrock_nova', 'bedrock_claude'):
@@ -933,7 +944,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
         with pytest.raises(UserError, match=case.match):
             await m_bedrock._map_messages(messages, params, None)  # pyright: ignore[reportPrivateUsage]
     elif provider == 'google_vertex':
-        m_google = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+        m_google = google_model('gemini-3-flash-preview')
         with pytest.raises(UserError, match=case.match):
             with unittest.mock.patch.object(
                 type(m_google), 'system', new_callable=lambda: property(lambda self: 'google-vertex')
@@ -944,9 +955,9 @@ async def test_uploaded_file_validation_error_in_tool_return(
 
 
 @pytest.mark.skipif(not google_available(), reason='google dependencies not installed')
-async def test_uploaded_file_vertex_valid_gcs_uri() -> None:
+async def test_uploaded_file_vertex_valid_gcs_uri(google_model: GoogleModelFactory) -> None:
     """Test that a valid Vertex UploadedFile with gs:// URI maps correctly."""
-    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test-key'))
+    model = google_model('gemini-3-flash-preview')
     file = UploadedFile(file_id='gs://bucket/path/file.pdf', provider_name='google-cloud', media_type='application/pdf')
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=file, tool_call_id='1')]),
