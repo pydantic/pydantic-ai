@@ -7,6 +7,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -27,7 +28,8 @@ with try_import() as anthropic_available:
         AnthropicModelSettings,
         _support_tool_forcing as anthropic_support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    AnthropicModelFactory = Callable[..., AnthropicModel]
 
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import (
@@ -316,12 +318,12 @@ def test_resolve_tool_choice_partial_invalid_warns(case: dict[str, Any]):
 @pytest.mark.parametrize('tool_choice', ['required', ['my_tool']], ids=['required', 'list'])
 @pytest.mark.parametrize('provider_name', ['anthropic', 'bedrock'])
 async def test_thinking_with_forced_tool_choice_raises(
-    provider_name: str, tool_choice: Any, allow_model_requests: None
+    provider_name: str, tool_choice: Any, allow_model_requests: None, anthropic_model: AnthropicModelFactory
 ):
     """Providers don't support forcing tool use with thinking mode enabled."""
     if provider_name == 'anthropic':
         pytest.importorskip('anthropic')
-        m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+        m = anthropic_model('claude-sonnet-4-5')
         settings: Any = {
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
             'tool_choice': tool_choice,
@@ -628,13 +630,15 @@ async def test_xai_fallback_multiple_tools_without_required_support(allow_model_
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
-async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(allow_model_requests: None):
+async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory
+):
     """`ToolOrOutput` single function tool with thinking enabled falls back to auto and filters tool_defs.
 
     Explicit `tool_choice=['tool_a']` with thinking would raise UserError before reaching this branch;
     `ToolOrOutput` is the path where the resolved `('required', {single_tool})` actually reaches the fallback.
     """
-    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
+    m = anthropic_model('claude-sonnet-4-5')
     settings: AnthropicModelSettings = {
         'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
         'tool_choice': ToolOrOutput(function_tools=['tool_a']),
@@ -653,10 +657,12 @@ NO_FORCING_ANTHROPIC_MODELS = ['claude-fable-5', 'claude-mythos-5', 'claude-myth
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 @pytest.mark.parametrize('model_name', NO_FORCING_ANTHROPIC_MODELS)
-async def test_anthropic_no_forcing_model_falls_back_to_auto(allow_model_requests: None, model_name: str):
+async def test_anthropic_no_forcing_model_falls_back_to_auto(
+    allow_model_requests: None, model_name: str, anthropic_model: AnthropicModelFactory
+):
     """Models that reject forcing outright fall back to auto for a resolved `('required', {single_tool})`,
     filtering tool_defs to the requested set."""
-    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
+    m = anthropic_model(model_name)
     settings: AnthropicModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False)
 
@@ -670,11 +676,11 @@ async def test_anthropic_no_forcing_model_falls_back_to_auto(allow_model_request
 @pytest.mark.parametrize('model_name', NO_FORCING_ANTHROPIC_MODELS)
 @pytest.mark.parametrize('tool_choice', ['required', ['tool_a']])
 async def test_anthropic_no_forcing_model_explicit_forcing_raises(
-    allow_model_requests: None, model_name: str, tool_choice: ToolChoice
+    allow_model_requests: None, model_name: str, tool_choice: ToolChoice, anthropic_model: AnthropicModelFactory
 ):
     """An explicit forcing `tool_choice` (`'required'` or a list of tools) raises on models that reject
     forcing outright, since we can't silently downgrade a user's explicit request."""
-    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
+    m = anthropic_model(model_name)
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True)
     settings: AnthropicModelSettings = {'tool_choice': tool_choice}
     with pytest.raises(UserError, match='Anthropic does not support .* for this model'):
