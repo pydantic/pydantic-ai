@@ -8,7 +8,6 @@ the wire (the methodology that surfaced the OpenRouter `enabled: True` miss).
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -18,6 +17,7 @@ from vcr.cassette import Cassette
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
+from .cassette_utils import single_request_body
 from .conftest import try_import
 
 with try_import() as groq_imports:
@@ -108,7 +108,7 @@ async def test_thinking_disable_wire_contract(
     agent = Agent(model, model_settings=settings)
     await agent.run('What is 2+2? Reply with just the number.')
 
-    body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    body = single_request_body(vcr)
     for key, value in case.present.items():
         assert body.get(key) == value, f'expected {key}={value!r} on the wire, got {body.get(key)!r}'
     for key in case.absent:

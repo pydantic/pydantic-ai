@@ -19,6 +19,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.settings import ModelSettings
 
+from .cassette_utils import single_request_body
 from .conftest import try_import
 
 with try_import() as anthropic_imports:
@@ -121,7 +122,7 @@ async def test_thinking_with_native_tool_wire_contract(
     agent = Agent(model, model_settings=settings, capabilities=[NativeTool(WebSearchTool())])
     await agent.run('What is the top news story today? Use web search.')
 
-    body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    body = single_request_body(vcr)
     for path, value in case.present:
         node = body
         for key in path:

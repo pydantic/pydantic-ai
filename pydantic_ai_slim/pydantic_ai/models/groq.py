@@ -330,9 +330,11 @@ class GroqModel(Model[AsyncGroq]):
         extra_headers = model_settings.get('extra_headers', {})
         extra_headers.setdefault('User-Agent', get_user_agent())
 
-        # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`) and omitting
-        # `reasoning_format`. These two wire params are coupled, so the flag is computed once and shared with
-        # `_translate_thinking` to keep them from diverging.
+        # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`); `_translate_thinking`
+        # then omits `reasoning_format`. The flag is computed once and shared with `_translate_thinking` so the two
+        # stay aligned for the default path. An explicit `groq_reasoning_format` does still ride alongside
+        # `reasoning_effort='none'` on the wire (it short-circuits `_translate_thinking`), but Groq accepts the pair
+        # (HTTP 200) and lets `reasoning_effort='none'` win — reasoning is disabled and the format is ignored.
         groq_profile = GroqModelProfile.from_profile(self.profile)
         disable_via_effort = model_request_parameters.thinking is False and groq_profile.groq_supports_reasoning_disable
 
