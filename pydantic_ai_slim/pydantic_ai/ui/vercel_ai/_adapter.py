@@ -552,6 +552,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         msg: ModelResponse,
         tool_results: dict[str, ToolReturnPart | RetryPromptPart],
         sdk_version: Literal[5, 6] = 5,
+        *,
+        preserve_file_data: bool = False,
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
         ui_parts: list[UIMessagePart] = []
@@ -653,7 +655,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
                                 input=part.args_as_dict(),
-                                output=tool_return_output(builtin_return),
+                                output=tool_return_output(builtin_return, preserve_file_data=preserve_file_data),
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
                             )
@@ -689,7 +691,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
             elif isinstance(part, ToolCallPart):
-                ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
+                ui_parts.extend(
+                    cls._dump_tool_call_part(part, tool_results, sdk_version, preserve_file_data=preserve_file_data)
+                )
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in the UI
             else:
@@ -702,6 +706,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         part: ToolCallPart,
         tool_results: dict[str, ToolReturnPart | RetryPromptPart],
         sdk_version: Literal[5, 6] = 5,
+        *,
+        preserve_file_data: bool = False,
     ) -> list[UIMessagePart]:
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
@@ -744,7 +750,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        output=tool_return_output(tool_result),
+                        output=tool_return_output(tool_result, preserve_file_data=preserve_file_data),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )
@@ -800,6 +806,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
         | None = None,
         sdk_version: Literal[5, 6] = 5,
+        preserve_file_data: bool = False,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
@@ -817,6 +824,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 run_id-based IDs for messages with run_id, or a deterministic UUID5 fallback.
             sdk_version: Vercel AI SDK version to target. Defaults to 5 for backwards compatibility.
                 Set to 6 to emit tool approval parts for deferred tool calls.
+            preserve_file_data: Whether to serialize multimodal file content (`BinaryContent`, `ImageUrl`,
+                etc.) in tool returns. With the default `False`, file content is dropped and only the text
+                survives, mirroring the AG-UI adapter; set to `True` to round-trip the file data.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
@@ -866,7 +876,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
-                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
+                ui_parts: list[UIMessagePart] = cls._dump_response_message(
+                    msg, tool_results, sdk_version, preserve_file_data=preserve_file_data
+                )
                 if ui_parts:  # pragma: no branch
                     result.append(
                         UIMessage(

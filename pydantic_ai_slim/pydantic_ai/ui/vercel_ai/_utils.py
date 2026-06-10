@@ -64,13 +64,18 @@ class _PydanticAIMessageMetadata(BaseModel):
     timestamp: datetime | None = None
 
 
-def tool_return_output(part: BaseToolReturnPart) -> Any:
+def tool_return_output(part: BaseToolReturnPart, *, preserve_file_data: bool = False) -> Any:
     """Serialize tool return content for `ToolOutputAvailablePart.output`.
 
-    Multimodal items (`BinaryContent`, `ImageUrl`, etc.) are dumped inline alongside any other
-    content; `ToolReturnContent`'s discriminator rehydrates them on load via
-    `tool_return_content_ta`, so no envelope wrapping is needed.
+    With `preserve_file_data=True`, multimodal items (`BinaryContent`, `ImageUrl`, etc.) are dumped
+    inline alongside any other content; `ToolReturnContent`'s discriminator rehydrates them on load
+    via `tool_return_content_ta`, so no envelope wrapping is needed.
+
+    With the default `preserve_file_data=False`, file content is dropped and only the text survives
+    (via `model_response_str`), mirroring the AG-UI adapter and the `preserve_file_data` trust model.
     """
+    if not preserve_file_data and part.files:
+        return part.model_response_str()
     return tool_return_ta.dump_python(part.content, mode='json')
 
 

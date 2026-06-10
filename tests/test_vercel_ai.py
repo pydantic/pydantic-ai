@@ -4073,9 +4073,10 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
 ):
     """Multimodal `ToolReturnPart.content` round-trips through `ToolOutputAvailablePart.output`.
 
-    The output field carries the dumped `ToolReturnContent` shape directly; on load,
-    `tool_return_content_ta` rehydrates `MultiModalContent` items via the explicit
-    `Discriminator` lifted onto the recursive alias.
+    With `preserve_file_data=True`, the output field carries the dumped `ToolReturnContent` shape
+    directly; on load, `tool_return_content_ta` rehydrates `MultiModalContent` items via the explicit
+    `Discriminator` lifted onto the recursive alias. The default-drop behavior is covered by
+    `test_adapter_tool_return_multimodal_dropped_by_default`.
     """
     contents: dict[str, Any] = {
         'single-image': tiny_image,
@@ -4093,7 +4094,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
         ModelResponse(parts=[TextPart(content='Done')]),
     ]
 
-    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_messages = VercelAIAdapter.dump_messages(messages, preserve_file_data=True)
     assistant = next(m for m in ui_messages if m.role == 'assistant')
     tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
     assert tool_part.output == expected_output
@@ -4248,7 +4249,7 @@ async def test_adapter_tool_return_none_serializes_as_null():
 
 
 async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage):
-    """Multimodal `NativeToolReturnPart.content` round-trips through the discriminated alias."""
+    """Multimodal `NativeToolReturnPart.content` round-trips through the discriminated alias with `preserve_file_data=True`."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
@@ -4269,7 +4270,7 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_i
         ),
     ]
 
-    ui_messages = VercelAIAdapter.dump_messages(messages)
+    ui_messages = VercelAIAdapter.dump_messages(messages, preserve_file_data=True)
     reloaded = VercelAIAdapter.load_messages(ui_messages)
     returns = [
         p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
@@ -4283,6 +4284,45 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_i
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
             )
+        ]
+    )
+
+
+async def test_adapter_tool_return_multimodal_dropped_by_default(tiny_image: BinaryImage, tiny_audio: BinaryContent):
+    """With the default `preserve_file_data=False`, multimodal tool-return content is dropped and only text survives.
+
+    Mirrors AG-UI's `test_tool_return_multimodal_dropped_by_default` so both adapters gate
+    `dump_messages` on `preserve_file_data` identically (cross-adapter dump parity).
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_files', tool_call_id='tc-1', args={})]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_files', tool_call_id='tc-1', content=['the narration says...', tiny_audio]
+                )
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_image', tool_call_id='tc-2', args={})]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_image', tool_call_id='tc-2', content=tiny_image)]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    outputs = [p.output for m in ui_messages for p in m.parts if isinstance(p, ToolOutputAvailablePart)]
+    # Text survives; the file payloads (base64 data / URLs) never reach the wire.
+    assert outputs == snapshot(['the narration says...', ''])
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='get_files', tool_call_id='tc-1', content='the narration says...', timestamp=IsDatetime()
+            ),
+            ToolReturnPart(tool_name='get_image', tool_call_id='tc-2', content='', timestamp=IsDatetime()),
         ]
     )
 
