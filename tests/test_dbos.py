@@ -114,7 +114,7 @@ def _clear_mcp_tool_cache() -> None:
 
 
 @contextmanager
-def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
+def workflow_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
     """Helper for asserting that a DBOS workflow fails with the expected error."""
     with pytest.raises(Exception) as exc_info:
         yield

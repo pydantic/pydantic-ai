@@ -1,6 +1,6 @@
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -100,7 +100,7 @@ async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: 
 
 
 @asynccontextmanager
-async def _openai_conversation(openai_api_key: str) -> AsyncIterator[tuple['AsyncOpenAI', str]]:
+async def _openai_conversation(openai_api_key: str) -> AsyncGenerator[tuple['AsyncOpenAI', str]]:
     async with AsyncOpenAI(api_key=openai_api_key) as async_client:
         conversation = await async_client.conversations.create()
         try:

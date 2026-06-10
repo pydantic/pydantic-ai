@@ -18,7 +18,7 @@ from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
 from .exceptions import ToolRetryError
-from .tools import DeferredToolResult, ToolApproved, ToolDenied, ToolKind
+from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
 
 if TYPE_CHECKING:
     from ._agent_graph import GraphAgentDeps, GraphAgentState
@@ -743,7 +743,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         if self.final_result:
             # If the run was already determined to end on deferred tool calls,
             # we shouldn't insert return parts as the deferred tools will still get a real result.
-            if not isinstance(self.final_result.output, _output.DeferredToolRequests):
+            if not isinstance(self.final_result.output, DeferredToolRequests):
                 for call in calls:
                     self.output_parts.append(
                         _messages.ToolReturnPart(
@@ -778,7 +778,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
-        deferred_tool_requests: _output.DeferredToolRequests | None = _output.DeferredToolRequests(
+        deferred_tool_requests: DeferredToolRequests | None = DeferredToolRequests(
             calls=self.deferred_calls['external'],
             approvals=self.deferred_calls['unapproved'],
             metadata=self.deferred_metadata,
@@ -830,7 +830,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
             if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
                 if deferred_tool_requests is None:
-                    deferred_tool_requests = _output.DeferredToolRequests()
+                    deferred_tool_requests = DeferredToolRequests()
                 deferred_tool_requests.calls.extend(new_deferred_calls['external'])
                 deferred_tool_requests.approvals.extend(new_deferred_calls['unapproved'])
                 deferred_tool_requests.metadata.update(new_deferred_metadata)

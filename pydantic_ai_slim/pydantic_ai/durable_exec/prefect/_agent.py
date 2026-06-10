@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, overload
@@ -170,7 +170,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return super().toolsets
 
     @contextmanager
-    def _prefect_overrides(self) -> Iterator[None]:
+    def _prefect_overrides(self) -> Generator[None]:
         # Override with PrefectModel and PrefectMCPToolset in the toolsets.
         with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
             yield
@@ -543,7 +543,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
         Example:
@@ -749,7 +749,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         super_run_stream_events = super().run_stream_events
 
         @asynccontextmanager
-        async def run_stream_events_context() -> AsyncIterator[
+        async def run_stream_events_context() -> AsyncGenerator[
             AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]
         ]:
             if FlowRunContext.get() is not None:
@@ -849,7 +849,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
-    ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then returns an
@@ -982,7 +982,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.

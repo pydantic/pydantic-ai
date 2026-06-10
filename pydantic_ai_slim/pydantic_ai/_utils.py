@@ -8,7 +8,16 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Iterable,
+    Iterator,
+)
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
@@ -63,7 +72,7 @@ _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', d
 
 
 @contextmanager
-def disable_threads() -> Iterator[None]:
+def disable_threads() -> Generator[None]:
     """Context manager to disable thread-based execution for sync functions.
 
     Inside this context, sync functions will execute inline rather than
@@ -83,7 +92,7 @@ def disable_threads() -> Iterator[None]:
 
 
 @contextmanager
-def using_thread_executor(executor: Executor) -> Iterator[None]:
+def using_thread_executor(executor: Executor) -> Generator[None]:
     """Context manager to use a custom executor for running sync functions in threads.
 
     Inside this context, sync functions will be executed using the provided executor
@@ -281,7 +290,7 @@ async def _cleanup_temporal_group(
 @asynccontextmanager
 async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None
-) -> AsyncIterator[AsyncIterable[list[T]]]:
+) -> AsyncGenerator[AsyncIterable[list[T]]]:
     """Group items from an async iterable into lists based on time interval between them.
 
     Effectively, this debounces the iterator.

@@ -15,6 +15,7 @@ from pydantic_ai import (
 )
 
 from ._inline_snapshot import snapshot
+from .conftest import remove_schema_descriptions
 
 pytestmark = pytest.mark.anyio
 
@@ -384,7 +385,7 @@ async def test_override_output_json_schema():
 
 async def test_deferred_output_json_schema():
     agent = Agent('test', output_type=[str, DeferredToolRequests])
-    assert agent.output_json_schema() == snapshot(
+    assert remove_schema_descriptions(agent.output_json_schema()) == snapshot(
         {
             'anyOf': [
                 {'type': 'string'},
@@ -452,11 +453,10 @@ async def test_deferred_output_json_schema():
 
     # special case of only BinaryImage and DeferredToolRequests
     agent = Agent('test', output_type=[BinaryImage, DeferredToolRequests])
-    assert agent.output_json_schema() == snapshot(
+    assert remove_schema_descriptions(agent.output_json_schema()) == snapshot(
         {
             'anyOf': [
                 {
-                    'description': "Binary content that's guaranteed to be an image.",
                     'properties': {
                         'data': {'format': 'base64url', 'title': 'Data', 'type': 'string'},
                         'media_type': {
@@ -498,19 +498,6 @@ async def test_deferred_output_json_schema():
                         },
                         'kind': {'const': 'binary', 'default': 'binary', 'title': 'Kind', 'type': 'string'},
                         'identifier': {
-                            'description': """\
-Identifier for the binary content, such as a unique ID.
-
-This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
-and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
-
-This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool.
-If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
-e.g. "This is file <identifier>:" preceding the `BinaryContent`.
-
-It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
-distinguish multiple files.\
-""",
                             'readOnly': True,
                             'title': 'Identifier',
                             'type': 'string',
@@ -636,7 +623,6 @@ class DCWithNestedField:
             BMWithDoc,
             snapshot(
                 {
-                    'description': 'The result with name and score.',
                     'properties': {
                         'name': {'title': 'Name', 'type': 'string'},
                         'score': {'title': 'Score', 'type': 'integer'},
@@ -667,7 +653,7 @@ class DCWithNestedField:
 )
 async def test_output_type_description(output_type: type, expected_schema: dict[str, object]):
     agent: Agent[object, str] = Agent('test', output_type=output_type)
-    assert agent.output_json_schema() == expected_schema
+    assert remove_schema_descriptions(agent.output_json_schema()) == expected_schema
 
 
 @pytest.mark.parametrize(
@@ -679,13 +665,11 @@ async def test_output_type_description(output_type: type, expected_schema: dict[
                 {
                     '$defs': {
                         'BMNested': {
-                            'description': 'Nested filter criteria.',
                             'properties': {'category': {'default': 'all', 'title': 'Category', 'type': 'string'}},
                             'title': 'BMNested',
                             'type': 'object',
                         }
                     },
-                    'description': 'Output with nested model.',
                     'properties': {'filters': {'$ref': '#/$defs/BMNested'}},
                     'required': ['filters'],
                     'title': 'BMWithNestedField',
@@ -717,4 +701,4 @@ async def test_output_type_description(output_type: type, expected_schema: dict[
 )
 async def test_nested_output_type_description(output_type: type, expected_schema: dict[str, object]):
     agent: Agent[object, str] = Agent('test', output_type=output_type)
-    assert agent.output_json_schema() == expected_schema
+    assert remove_schema_descriptions(agent.output_json_schema()) == expected_schema

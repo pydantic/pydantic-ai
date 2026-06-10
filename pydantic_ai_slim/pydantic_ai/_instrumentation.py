@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 import warnings
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
@@ -166,7 +166,7 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
-) -> Iterator[tuple[Callable[[ModelResponse], None], ModelRequestContext]]:
+) -> Generator[tuple[Callable[[ModelResponse], None], ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
     Shared between `Instrumentation.wrap_model_request` (agent flow) and

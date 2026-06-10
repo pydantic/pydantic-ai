@@ -9,7 +9,7 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
-    Iterator,
+    Generator,
     Sequence,
 )
 from concurrent.futures import Executor
@@ -641,7 +641,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
@@ -1167,7 +1167,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             self._infer_name(inspect.currentframe())
 
         @asynccontextmanager
-        async def run_stream_events_context() -> AsyncIterator[
+        async def run_stream_events_context() -> AsyncGenerator[
             AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]
         ]:
             send_stream, receive_stream = anyio.create_memory_object_stream[
@@ -1295,7 +1295,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then returns an
@@ -1407,7 +1407,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
@@ -1453,7 +1453,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    def parallel_tool_call_execution_mode(mode: tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
+    def parallel_tool_call_execution_mode(mode: tool_manager.ParallelExecutionMode = 'parallel') -> Generator[None]:
         """Set the parallel execution mode during the context.
 
         Args:
@@ -1467,7 +1467,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    def using_thread_executor(executor: Executor) -> Iterator[None]:
+    def using_thread_executor(executor: Executor) -> Generator[None]:
         """Use a custom executor for running sync functions in threads during the context.
 
         By default, sync tool functions and other sync callbacks are run in threads using

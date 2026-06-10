@@ -5,7 +5,7 @@ import dataclasses
 import inspect
 from asyncio import Task
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -60,6 +60,7 @@ __all__ = (
     'capture_run_messages',
     'HistoryProcessor',
     'resolve_conversation_id',
+    'process_tool_calls',
 )
 
 
@@ -622,7 +623,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def stream(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
-    ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
+    ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
         assert not self._did_stream, 'stream() should only be called once per node'
 
         try:
@@ -1111,7 +1112,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     @asynccontextmanager
     async def stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[AsyncIterator[_messages.HandleResponseEvent]]:
+    ) -> AsyncGenerator[AsyncIterator[_messages.HandleResponseEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
         stream = self._run_stream(ctx)
         yield stream
@@ -1544,7 +1545,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 
 
 @contextmanager
-def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
+def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
     """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
     Useful when a run may raise an exception, see [model errors](../agent.md#model-errors) for more information.

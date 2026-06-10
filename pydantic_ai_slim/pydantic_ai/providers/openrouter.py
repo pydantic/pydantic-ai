@@ -33,6 +33,27 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+class OpenRouterModelProfile(OpenAIModelProfile, total=False):
+    """Profile for models used with OpenRouterModel.
+
+    ALL FIELDS MUST BE `openrouter_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    openrouter_supports_cache_control: bool
+    """Whether the downstream provider supports explicit `cache_control` breakpoints via OpenRouter."""
+    openrouter_supports_cache_ttl: bool
+    """Whether the downstream provider supports TTL in `cache_control`."""
+    openrouter_supports_tool_cache: bool
+    """Whether the downstream provider supports `cache_control` on tool definitions."""
+    openrouter_supports_dynamic_instruction_cache: bool
+    """Whether instruction cache boundaries can exclude later dynamic instruction blocks."""
+    openrouter_max_cache_points: int | None
+    """Maximum number of `cache_control` breakpoints the downstream provider allows per request.
+
+    Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
+    from messages (newest kept first). `None` means no limit."""
+
+
 class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
     """Legacy Google JSON schema transformer for OpenRouter compatibility.
 
@@ -124,30 +145,45 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        provider, model_name = model_name.split('/', 1)
+        # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
+        # alias marker before using the provider prefix for profile selection.
+        provider, model_name = model_name.removeprefix('~').split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
             if provider == 'anthropic':
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
+        # Cache capability flags are set on the gateway layer based on the downstream provider.
+        # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
+        # coincide with `supports_anthropic_cache` today: they model independent OpenRouter cache
+        # capabilities that merely happen to line up on the current Anthropic-only provider set, so a
+        # future non-Anthropic downstream can enable any of them independently without re-coupling them.
+        supports_cache_control = provider in ('anthropic', 'google')
+        supports_anthropic_cache = provider == 'anthropic'
+
         # Three-layer merge:
         # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
         #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
         # 2. Upstream profile — model-specific traits from the lab's profile function.
         # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
-        #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field). OpenRouter accepts
-        #    `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
+        #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
+        #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
         #    setting is always forwarded regardless of the upstream model's own thinking support.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
-            OpenAIModelProfile(
+            OpenRouterModelProfile(
                 openai_chat_send_back_thinking_parts='field',
                 openai_chat_thinking_field='reasoning',
                 openai_chat_supports_file_urls=True,
                 openai_chat_supports_web_search=True,
                 supports_thinking=True,
+                openrouter_supports_cache_control=supports_cache_control,
+                openrouter_supports_cache_ttl=supports_anthropic_cache,
+                openrouter_supports_tool_cache=supports_anthropic_cache,
+                openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,
+                openrouter_max_cache_points=4 if supports_anthropic_cache else None,
             ),
         )
 

@@ -185,6 +185,75 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'expected_flags'),
+    [
+        # Anthropic: full cache support, TTL, tool-definition caching, dynamic-instruction split, 4-breakpoint cap.
+        (
+            'anthropic/claude-sonnet-4.6',
+            {
+                'openrouter_supports_cache_control': True,
+                'openrouter_supports_cache_ttl': True,
+                'openrouter_supports_tool_cache': True,
+                'openrouter_supports_dynamic_instruction_cache': True,
+                'openrouter_max_cache_points': 4,
+            },
+        ),
+        # Google: cache_control only — no TTL, no tool caching, no dynamic-instruction split, no cap.
+        (
+            'google/gemini-2.5-flash',
+            {
+                'openrouter_supports_cache_control': True,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+            },
+        ),
+        # Unsupported downstream provider: no cache support at all.
+        (
+            'openai/gpt-5-mini',
+            {
+                'openrouter_supports_cache_control': False,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+            },
+        ),
+        # `~provider` latest-alias models resolve to the same downstream cache capabilities.
+        (
+            '~anthropic/claude-sonnet-latest',
+            {
+                'openrouter_supports_cache_control': True,
+                'openrouter_supports_cache_ttl': True,
+                'openrouter_supports_tool_cache': True,
+                'openrouter_supports_dynamic_instruction_cache': True,
+                'openrouter_max_cache_points': 4,
+            },
+        ),
+        (
+            '~google/gemini-pro-latest',
+            {
+                'openrouter_supports_cache_control': True,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+            },
+        ),
+    ],
+)
+def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_flags: dict[str, object]) -> None:
+    """Cache capability flags are derived from the downstream provider, not model-name matching."""
+    provider = OpenRouterProvider(api_key='api-key')
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+
+    actual = {flag: value for flag, value in profile.items() if flag in expected_flags}
+    assert actual == expected_flags
+
+
 def test_openrouter_google_json_schema_transformer():
     """Test _OpenRouterGoogleJsonSchemaTransformer covers all transformation cases."""
     schema = {

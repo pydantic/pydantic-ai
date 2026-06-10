@@ -976,7 +976,7 @@ async def _run_task(
 
     if retry:
         # import from pydantic_ai.retries to trigger more descriptive import error if tenacity is missing
-        from pydantic_ai.retries import retry as tenacity_retry
+        from pydantic_ai.retries import retry as tenacity_retry  # pyright: ignore[reportPrivateImportUsage]
 
         _run_once = tenacity_retry(**retry)(_run_once)
 
