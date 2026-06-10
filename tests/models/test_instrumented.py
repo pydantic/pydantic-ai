@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -2648,12 +2649,7 @@ def test_model_request_parameters_attributes_strips_internal_tool_fields() -> No
     )
 
     result = model_request_parameters_attributes(params)
-    serialized = result['model_request_parameters']
-
-    # Parse the JSON to verify structured stripping
-    import json
-
-    data = json.loads(serialized)
+    data = json.loads(result['model_request_parameters'])
     fat_tool = next(t for t in data['function_tools'] if t['name'] == 'fat_tool')
     output_fat = next(t for t in data['output_tools'] if t['name'] == 'output_fat')
     slim_tool = next(t for t in data['function_tools'] if t['name'] == 'slim_tool')
