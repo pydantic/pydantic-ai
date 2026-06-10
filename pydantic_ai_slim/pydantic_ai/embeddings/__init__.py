@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -224,7 +224,7 @@ class Embedder:
         self,
         *,
         model: EmbeddingModel | KnownEmbeddingModelName | str | _utils.Unset = _utils.UNSET,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override the embedding model.
 
         Useful for testing or dynamically switching models.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
@@ -292,7 +292,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             return super().toolsets
 
     @contextmanager
-    def _dbos_overrides(self) -> Iterator[None]:
+    def _dbos_overrides(self) -> Generator[None]:
         # Override with DBOSModel and DBOSMCPServer in the toolsets.
         # Use the configured parallel execution mode for deterministic event ordering during DBOS replay.
         with (
@@ -655,7 +655,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
-    ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
 
         Example:
@@ -932,7 +932,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
-    ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then returns an
@@ -1066,7 +1066,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
