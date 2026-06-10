@@ -41,15 +41,8 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     recording confirms DeepSeek accepts the empty `reasoning_content` the fix sends. The
     deterministic mapping guard is in
     `test_openai.py::test_deepseek_reasoning_field_on_synthetic_tool_search_turn`.
-
-    Recording notes (for whoever records the cassette):
-
-    - Needs a real `DEEPSEEK_API_KEY` and `--record-mode=rewrite` (see `.claude/skills/testing-skill`).
-    - `model_name` must support tool calling AND think (emit `reasoning_content`); the issue used a
-      `deepseek-v4-*` SKU, so swap if `deepseek-reasoner` doesn't reproduce it.
     """
-    model_name = 'deepseek-reasoner'
-    model = OpenAIChatModel(model_name, provider=DeepSeekProvider(api_key=deepseek_api_key))
+    model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
 
     def roll_dice() -> str:
         """Roll a six-sided die and return the result."""
