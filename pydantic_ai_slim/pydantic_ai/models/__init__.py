@@ -1323,11 +1323,9 @@ class StreamedResponse(ABC):
         `close_stream()` itself raises.
 
         Skips `close_stream()` when the stream was already fully consumed
-        (`self._finished` is `True`): there is no live connection left to tear
-        down. `get()` reports a finished stream as `'complete'` regardless of
-        `_cancelled`, so a defensive `cancel()` after a successful run records
-        the flag without downgrading `response.state` to `'interrupted'`
-        (see [issue #5782](https://github.com/pydantic/pydantic-ai/issues/5782)).
+        (`self._finished` is `True`), since there is no live connection to
+        tear down. `get()` checks `_finished` before `_cancelled`, so a
+        finished stream stays `'complete'` even after `cancel()`.
         """
         if self.cancelled:
             return
