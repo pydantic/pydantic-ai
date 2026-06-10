@@ -2644,6 +2644,9 @@ async def test_set_tool_metadata_skips_framework_tools():
     def tool_a(x: int) -> int:
         return x
 
+    # Sanity-check the user tool is a normal, callable function.
+    assert tool_a(1) == 1
+
     framework_def = ToolDefinition(
         name='load_capability',
         description='Load a capability',
