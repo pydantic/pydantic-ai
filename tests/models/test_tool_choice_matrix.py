@@ -8,6 +8,7 @@ Tests verify that the correct tool_choice value is sent to each provider's API.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -39,6 +40,8 @@ with try_import() as anthropic_available:
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
+
+    GoogleModelFactory = Callable[..., GoogleModel]
 
 with try_import() as bedrock_available:
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -487,14 +490,16 @@ async def test_tool_choice_matrix(
 @pytest.mark.filterwarnings(
     'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
 )
-async def test_google_native_tool_only_web_search_completes(allow_model_requests: None, gemini_api_key: str):
+async def test_google_native_tool_only_web_search_completes(
+    allow_model_requests: None, google_model: GoogleModelFactory
+):
     """A native-tool-only request must reach the live API and return an answer.
 
     Pinned to a Gemini 2.5 model on purpose: that is the line the empty `function_calling_config`
     actually breaks. Gemini 3+ sets `include_server_side_tool_invocations` and the API tolerates the
     empty config there, so a Gemini 3 model would pass with or without the fix and prove nothing.
     """
-    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    m = google_model('gemini-2.5-flash')
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco right now?')

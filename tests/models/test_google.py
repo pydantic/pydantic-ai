@@ -327,7 +327,6 @@ async def test_google_model_structured_output(allow_model_requests: None, google
 
 async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
     # provider built with a custom base_url, which the model factory can't express
-    # ast-grep-ignore: prefer-model-factory
     provider = GoogleProvider(api_key=gemini_api_key, base_url='https://generativelanguage.googleapis.com')
     model = GoogleModel('gemini-2.0-flash', provider=provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
@@ -5730,7 +5729,6 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
     custom_timeout = 120
     custom_http_client = HttpxAsyncClient(timeout=Timeout(custom_timeout))
     # provider built with a custom http_client for provider-level timeout access; the model factory can't express this
-    # ast-grep-ignore: prefer-model-factory
     provider = GoogleProvider(api_key=gemini_api_key, http_client=custom_http_client)
 
     http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]

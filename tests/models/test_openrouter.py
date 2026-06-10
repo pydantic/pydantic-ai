@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import datetime
 from collections.abc import Callable, Sequence
+from enum import Enum
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
@@ -720,6 +723,42 @@ async def test_openrouter_no_openrouter_details(openrouter_model: OpenRouterMode
     )
 
 
+# Module-scope so the tool-parameter annotations below resolve via `get_type_hints()` under
+# `from __future__ import annotations` (function-local classes wouldn't be visible there).
+class _LevelType(str, Enum):
+    ground = 'ground'
+    basement = 'basement'
+    floor = 'floor'
+    attic = 'attic'
+
+
+class _SpaceType(str, Enum):
+    entryway = 'entryway'
+    living_room = 'living-room'
+    kitchen = 'kitchen'
+    bedroom = 'bedroom'
+    bathroom = 'bathroom'
+    garage = 'garage'
+
+
+class _InsertLevelArg(BaseModel):
+    level_name: str
+    level_type: _LevelType
+
+
+class _SpaceArg(BaseModel):
+    space_name: str
+    space_type: _SpaceType
+
+
+class _InsertedLevel(BaseModel):
+    """Result of inserting a level."""
+
+    level_name: str
+    level_type: _LevelType
+    space_count: int
+
+
 async def test_openrouter_google_nested_schema(
     allow_model_requests: None, openrouter_model: OpenRouterModelFactory
 ) -> None:
@@ -728,42 +767,11 @@ async def test_openrouter_google_nested_schema(
     This verifies the fix for https://github.com/pydantic/pydantic-ai/issues/3617
     where OpenRouter's translation layer didn't support modern JSON Schema features.
     """
-    from enum import Enum
-
-    class LevelType(str, Enum):
-        ground = 'ground'
-        basement = 'basement'
-        floor = 'floor'
-        attic = 'attic'
-
-    class SpaceType(str, Enum):
-        entryway = 'entryway'
-        living_room = 'living-room'
-        kitchen = 'kitchen'
-        bedroom = 'bedroom'
-        bathroom = 'bathroom'
-        garage = 'garage'
-
-    class InsertLevelArg(BaseModel):
-        level_name: str
-        level_type: LevelType
-
-    class SpaceArg(BaseModel):
-        space_name: str
-        space_type: SpaceType
-
-    class InsertedLevel(BaseModel):
-        """Result of inserting a level."""
-
-        level_name: str
-        level_type: LevelType
-        space_count: int
-
     model = openrouter_model('google/gemini-2.5-flash')
-    agent: Agent[None, InsertedLevel] = Agent(model, output_type=InsertedLevel)
+    agent: Agent[None, _InsertedLevel] = Agent(model, output_type=_InsertedLevel)
 
     @agent.tool_plain
-    def insert_level_with_spaces(level: InsertLevelArg | None, spaces: list[SpaceArg]) -> str:
+    def insert_level_with_spaces(level: _InsertLevelArg | None, spaces: list[_SpaceArg]) -> str:
         """Insert a level with its spaces."""
         return f'Inserted level {level} with {len(spaces)} spaces'
 
@@ -780,7 +788,7 @@ async def test_openrouter_google_nested_schema(
         ]
     )
 
-    assert result.output.level_type == LevelType.ground
+    assert result.output.level_type == _LevelType.ground
     assert result.output.space_count == 3
 
 
