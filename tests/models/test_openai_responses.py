@@ -12090,7 +12090,7 @@ async def test_provider_name_mismatch_in_tool_return_raises_user_error(allow_mod
             "Expected `provider_name` to be `'openai'`."
         ),
     ):
-        await model._map_tool_return_output(part)
+        await model._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_provider_name_match_in_tool_return_passes(allow_model_requests: None) -> None:
@@ -12106,8 +12106,8 @@ async def test_provider_name_match_in_tool_return_passes(allow_model_requests: N
         ],
     )
 
-    result = await model._map_tool_return_output(part)
+    result = await model._map_tool_return_output(part)  # pyright: ignore[reportPrivateUsage]
     assert isinstance(result, list)
     file_params = [item for item in result if item.get('type') == 'input_file']
     assert len(file_params) == 1
-    assert file_params[0]['file_id'] == 'file-abc123'
+    assert file_params[0]['file_id'] == 'file-abc123'  # pyright: ignore[reportTypedDictNotRequiredAccess, reportGeneralTypeIssues]
