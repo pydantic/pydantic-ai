@@ -4393,6 +4393,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
                         ),
                         BetaMessageIterationUsage(
                             type='message',
+                            model='claude-sonnet-4-5',
                             input_tokens=23,
                             output_tokens=1,
                             cache_creation_input_tokens=0,
@@ -4526,6 +4527,7 @@ def test_streaming_usage_with_compaction():
                     ),
                     BetaMessageIterationUsage(
                         type='message',
+                        model='claude-sonnet-4-5',
                         input_tokens=23,
                         output_tokens=1,
                         cache_creation_input_tokens=0,
