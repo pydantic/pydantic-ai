@@ -64,9 +64,9 @@ CASES = [
         provider='groq',
         model_name='qwen/qwen3-32b',
         thinking=False,
-        extra_body={'service_tier': 'auto'},
+        extra_body={'service_tier': 'on_demand'},
         # The user's own `extra_body` must survive the merge that injects `reasoning_effort='none'`.
-        present={'reasoning_effort': 'none', 'service_tier': 'auto'},
+        present={'reasoning_effort': 'none', 'service_tier': 'on_demand'},
         absent=('reasoning_format',),
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '167'
+      - '196'
       content-type:
       - application/json
       host:
@@ -21,7 +21,7 @@ interactions:
       model: qwen/qwen3-32b
       n: 1
       reasoning_effort: none
-      service_tier: auto
+      service_tier: on_demand
       stream: false
     uri: https://api.groq.com/openai/v1/chat/completions
   response:
@@ -50,24 +50,24 @@ interactions:
         message:
           content: '4'
           role: assistant
-      created: 1780977000
-      id: chatcmpl-edb73230-690a-42f5-94e5-aa811b704037
+      created: 1781101094
+      id: chatcmpl-6e65c291-4c1f-48b0-99c9-b16e6f5fb01e
       model: qwen/qwen3-32b
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_d58dbe76cd
+      system_fingerprint: fp_2bfcc54d36
       usage:
-        completion_time: 0.006010232
+        completion_time: 0.006467518
         completion_tokens: 2
-        prompt_time: 0.000927438
+        prompt_time: 0.001168801
         prompt_tokens: 25
-        queue_time: 0.104937516
-        total_time: 0.00693767
+        queue_time: 0.560257657
+        total_time: 0.007636319
         total_tokens: 27
       usage_breakdown: null
       x_groq:
-        id: req_01ktn80r80fh9886wxp4y10k31
-        seed: 1624623898
+        id: req_01ktrybrsaeyqr9ebz4cns60jc
+        seed: 906186382
     status:
       code: 200
       message: OK
