@@ -1134,6 +1134,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tool_defs = model_request_parameters.tool_defs
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        supports_forced_tool_choice = AnthropicModelProfile.from_profile(
+            self.profile
+        ).anthropic_supports_forced_tool_choice
 
         tool_choice: BetaToolChoiceParam
 
@@ -1142,18 +1145,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_choice = {'type': 'auto'} if resolved_tool_choice == 'auto' else {'type': 'none'}
         elif resolved_tool_choice == 'required':
             supports = _support_tool_forcing(
-                model_settings, model_request_parameters, resolved_tool_choice, "tool_choice='required'"
+                model_settings,
+                model_request_parameters,
+                resolved_tool_choice,
+                "tool_choice='required'",
+                supports_forced_tool_choice=supports_forced_tool_choice,
             )
             tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(model_settings, model_request_parameters, resolved_tool_choice)
+            supports = _support_tool_forcing(
+                model_settings,
+                model_request_parameters,
+                resolved_tool_choice,
+                supports_forced_tool_choice=supports_forced_tool_choice,
+            )
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
                 else:
-                    # Forcing not supported (e.g. thinking enabled): filter so the model can only
-                    # see the requested tool, since `auto` alone wouldn't restrict the choice.
+                    # Forcing not supported (thinking enabled, or a model that rejects it outright):
+                    # filter so the model can only see the requested tool, since `auto` alone
+                    # wouldn't restrict the choice.
                     # Breaks caching, but Anthropic doesn't support limiting tools via API arg.
                     tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                     tool_choice = {'type': 'auto'}
@@ -2757,11 +2770,14 @@ def _support_tool_forcing(
     model_request_parameters: ModelRequestParameters,
     resolved_tool_choice: ResolvedToolChoice,
     context: str = 'forcing specific tools',
+    *,
+    supports_forced_tool_choice: bool = True,
 ) -> bool:
-    """Some `tool_choice` settings aren't compatible with thinking mode in Anthropic.
+    """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
-    Only 'auto' and 'none' are compatible with thinking mode. But we only raise an error if the user explicitly set those.
-    Otherwise the value may come from the `tool_choice` resolution logic, in which case we fall back softly.
+    Thinking mode rejects forcing, and some models (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
+    We only raise an error if the user explicitly set a forcing value; a forcing value that came
+    from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
     # Mirror the dual-check pattern from prepare_request(); also check params.thinking
@@ -2773,11 +2789,13 @@ def _support_tool_forcing(
         elif model_settings.get('thinking'):
             thinking_enabled = True
 
-    if not thinking_enabled:
+    if supports_forced_tool_choice and not thinking_enabled:
         return True
 
     explicit_choice = model_settings.get('tool_choice')
     if explicit_choice == 'required' or isinstance(explicit_choice, list):
+        if not supports_forced_tool_choice:
+            raise UserError(f"Anthropic does not support {context} for this model. Use `tool_choice='auto'`.")
         raise UserError(
             f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
         )
