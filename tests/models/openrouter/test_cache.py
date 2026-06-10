@@ -36,7 +36,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 
 if TYPE_CHECKING:
-    from .conftest import OpenRouterModelFactory
+    from ..conftest import OpenRouterModelFactory
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
