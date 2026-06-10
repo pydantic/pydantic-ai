@@ -1,5 +1,5 @@
 import datetime
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
@@ -49,6 +49,8 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
+    OpenRouterModelFactory = Callable[..., OpenRouterModel]
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
@@ -56,9 +58,8 @@ pytestmark = [
 ]
 
 
-async def test_openrouter_with_preset(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.5-flash-lite', provider=provider)
+async def test_openrouter_with_preset(allow_model_requests: None, openrouter_model: OpenRouterModelFactory) -> None:
+    model = openrouter_model('google/gemini-2.5-flash-lite')
     settings = OpenRouterModelSettings(openrouter_preset='@preset/comedian')
     response = await model_request(model, [ModelRequest.user_text_prompt('Trains')], model_settings=settings)
     text_part = cast(TextPart, response.parts[0])
@@ -71,9 +72,10 @@ Because it felt like their relationship was going nowhere.\
     )
 
 
-async def test_openrouter_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+async def test_openrouter_with_native_options(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
+) -> None:
+    model = openrouter_model('google/gemini-2.0-flash-exp:free')
     # These specific settings will force OpenRouter to use the fallback model, since Gemini is not available via the xAI provider.
     settings = OpenRouterModelSettings(
         openrouter_models=['x-ai/grok-4'],
@@ -94,9 +96,10 @@ What can I help you with today?\
     assert response.provider_details['finish_reason'] == 'stop'
 
 
-async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+async def test_openrouter_stream_with_native_options(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
+) -> None:
+    model = openrouter_model('google/gemini-2.0-flash-exp:free')
     # These specific settings will force OpenRouter to use the fallback model, since Gemini is not available via the xAI provider.
     settings = OpenRouterModelSettings(
         openrouter_models=['x-ai/grok-4'],
@@ -129,11 +132,11 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
         assert stream.finish_reason == snapshot('stop')
 
 
-async def test_openrouter_stream_with_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel(
+async def test_openrouter_stream_with_reasoning(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
+) -> None:
+    model = openrouter_model(
         'openai/o3',
-        provider=provider,
         settings=OpenRouterModelSettings(openrouter_reasoning={'effort': 'high'}),
     )
 
@@ -161,9 +164,8 @@ async def test_openrouter_stream_with_reasoning(allow_model_requests: None, open
         assert thinking_part_end.signature is not None
 
 
-async def test_openrouter_stream_error(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('minimax/minimax-m2:free', provider=provider)
+async def test_openrouter_stream_error(allow_model_requests: None, openrouter_model: OpenRouterModelFactory) -> None:
+    model = openrouter_model('minimax/minimax-m2:free')
     settings = OpenRouterModelSettings(max_tokens=10)
 
     with pytest.raises(ModelHTTPError):
@@ -173,9 +175,7 @@ async def test_openrouter_stream_error(allow_model_requests: None, openrouter_ap
             _ = [chunk async for chunk in stream]
 
 
-async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-
+async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_model: OpenRouterModelFactory) -> None:
     class Divide(BaseModel):
         """Divide two numbers."""
 
@@ -183,7 +183,7 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
         denominator: float
         on_inf: Literal['error', 'infinity'] = 'infinity'
 
-    model = OpenRouterModel('mistralai/mistral-small', provider=provider)
+    model = openrouter_model('mistralai/mistral-small')
     response = await model_request(
         model,
         [ModelRequest.user_text_prompt('What is 123 / 456?')],
@@ -225,13 +225,12 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
     )
 
 
-async def test_openrouter_with_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
+async def test_openrouter_with_reasoning(allow_model_requests: None, openrouter_model: OpenRouterModelFactory) -> None:
     request = ModelRequest.user_text_prompt(
         "What was the impact of Voltaire's writings on modern french culture? Think about your answer."
     )
 
-    model = OpenRouterModel('z-ai/glm-4.6', provider=provider)
+    model = openrouter_model('z-ai/glm-4.6')
     response = await model_request(model, [request])
 
     assert len(response.parts) == 2
@@ -243,9 +242,10 @@ async def test_openrouter_with_reasoning(allow_model_requests: None, openrouter_
     assert thinking_part.signature is None
 
 
-async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
+async def test_openrouter_preserve_reasoning_block(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
+) -> None:
+    model = openrouter_model('openai/gpt-5-mini')
 
     messages: Sequence[ModelMessage] = []
     messages.append(ModelRequest.user_text_prompt('Hello!'))
@@ -281,13 +281,12 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     assert reasoning_encrypted['format'] == 'openai-responses-v1'
 
 
-async def test_openrouter_thinking_only_response_mapping() -> None:
+async def test_openrouter_thinking_only_response_mapping(openrouter_model: OpenRouterModelFactory) -> None:
     """A `ModelResponse` containing only OpenRouter `ThinkingPart`s still produces an assistant
     message carrying `reasoning_details`, even though the base class would skip emitting any
     message for an otherwise-empty response.
     """
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
+    model = openrouter_model('openai/gpt-5-mini')
 
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello!')]),
@@ -322,9 +321,8 @@ async def test_openrouter_thinking_only_response_mapping() -> None:
     ]
 
 
-async def test_openrouter_video_url_mapping() -> None:
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+async def test_openrouter_video_url_mapping(openrouter_model: OpenRouterModelFactory) -> None:
+    model = openrouter_model('google/gemini-3-flash-preview')
 
     messages = [
         ModelRequest(
@@ -348,10 +346,9 @@ async def test_openrouter_video_url_mapping() -> None:
     assert content[1] == {'type': 'video_url', 'video_url': {'url': 'https://example.com/video.mp4'}}
 
 
-async def test_openrouter_binary_content_video_mapping() -> None:
+async def test_openrouter_binary_content_video_mapping(openrouter_model: OpenRouterModelFactory) -> None:
     """Test that `BinaryContent` with a video media type maps to a `video_url` part."""
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+    model = openrouter_model('google/gemini-3-flash-preview')
 
     binary_video = BinaryContent(data=b'video-bytes', media_type='video/mp4')
 
@@ -380,9 +377,8 @@ async def test_openrouter_binary_content_video_mapping() -> None:
     }
 
 
-async def test_openrouter_video_url_force_download() -> None:
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+async def test_openrouter_video_url_force_download(openrouter_model: OpenRouterModelFactory) -> None:
+    model = openrouter_model('google/gemini-3-flash-preview')
 
     with patch('pydantic_ai.models.openrouter.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {
@@ -418,10 +414,9 @@ async def test_openrouter_video_url_force_download() -> None:
         assert call_args[1]['type_format'] == 'extension'
 
 
-async def test_openrouter_video_url_no_force_download() -> None:
+async def test_openrouter_video_url_no_force_download(openrouter_model: OpenRouterModelFactory) -> None:
     """Test that `force_download=False` does not call `download_item` for `VideoUrl`."""
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+    model = openrouter_model('google/gemini-3-flash-preview')
 
     with patch('pydantic_ai.models.openrouter.download_item', new_callable=AsyncMock) as mock_download:
         messages = [
@@ -449,11 +444,10 @@ async def test_openrouter_video_url_no_force_download() -> None:
 
 
 async def test_openrouter_video_url_public_api(
-    allow_model_requests: None, openrouter_api_key: str
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
 ) -> None:  # pragma: lax no cover
     """Test `VideoUrl` support through the public `Agent.run` API."""
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    model = openrouter_model('google/gemini-2.5-flash')
     agent = Agent(model)
 
     result = await agent.run(
@@ -476,11 +470,10 @@ This video features a giant panda in an enclosure designed to resemble its natur
 
 
 async def test_openrouter_binary_content_video_public_api(
-    allow_model_requests: None, openrouter_api_key: str, video_content: BinaryContent, vcr: Cassette
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, video_content: BinaryContent, vcr: Cassette
 ) -> None:  # pragma: lax no cover
     """Test `BinaryContent` video support through the public `Agent.run` API."""
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    model = openrouter_model('google/gemini-2.5-flash')
     agent = Agent(model)
 
     result = await agent.run(['What is in this video? Answer in one short sentence.', video_content])
@@ -497,9 +490,8 @@ async def test_openrouter_binary_content_video_public_api(
     assert video_content_part['video_url']['url'].startswith('data:video/mp4;base64,')
 
 
-async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_model: OpenRouterModelFactory) -> None:
+    model = openrouter_model('google/gemini-2.0-flash-exp:free')
     agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Tell me a joke.')
@@ -508,9 +500,8 @@ async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_a
     )
 
 
-async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
+async def test_openrouter_usage(allow_model_requests: None, openrouter_model: OpenRouterModelFactory) -> None:
+    model = openrouter_model('openai/gpt-5-mini')
     agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
 
     result = await agent.run('Tell me about Venus')
@@ -540,9 +531,8 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
         assert key in last_message.provider_details
 
 
-async def test_openrouter_validate_non_json_response(openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+async def test_openrouter_validate_non_json_response(openrouter_model: OpenRouterModelFactory) -> None:
+    model = openrouter_model('google/gemini-2.0-flash-exp:free')
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         model._process_response('This is not JSON!')  # type: ignore[reportPrivateUsage]
@@ -552,9 +542,8 @@ async def test_openrouter_validate_non_json_response(openrouter_api_key: str) ->
     )
 
 
-async def test_openrouter_validate_error_response(openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+async def test_openrouter_validate_error_response(openrouter_model: OpenRouterModelFactory) -> None:
+    model = openrouter_model('google/gemini-2.0-flash-exp:free')
 
     choice = Choice.model_construct(
         index=0, message={'role': 'assistant'}, finish_reason='error', native_finish_reason='stop'
@@ -579,6 +568,8 @@ async def test_openrouter_with_provider_details_but_no_parent_details(openrouter
             openrouter_details = _map_openrouter_provider_details(response)
             return openrouter_details or None
 
+    # Constructs a custom OpenRouterModel subclass; the factory only builds OpenRouterModel.
+    # ast-grep-ignore: prefer-model-factory
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = TestOpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
 
@@ -599,9 +590,10 @@ async def test_openrouter_with_provider_details_but_no_parent_details(openrouter
     )
 
 
-async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-3.7-sonnet:thinking', provider=provider)
+async def test_openrouter_map_messages_reasoning(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
+) -> None:
+    model = openrouter_model('anthropic/claude-3.7-sonnet:thinking')
 
     user_message = ModelRequest.user_text_prompt('Who are you. Think about it.')
     response = await model_request(model, [user_message])
@@ -633,13 +625,13 @@ I'm designed to be conversational and to engage with users in a way that's helpf
     )
 
 
-async def test_openrouter_tool_optional_parameters(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-
+async def test_openrouter_tool_optional_parameters(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
+) -> None:
     class FindEducationContentFilters(BaseModel):
         title: str | None = None
 
-    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    model = openrouter_model('anthropic/claude-sonnet-4.5')
     response = await model_request(
         model,
         [ModelRequest.user_text_prompt('Can you find me any education content?')],
@@ -681,9 +673,10 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     )
 
 
-async def test_openrouter_streaming_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+async def test_openrouter_streaming_reasoning(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
+) -> None:
+    model = openrouter_model('anthropic/claude-sonnet-4.5')
     agent = Agent(
         model=model,
         model_settings=OpenRouterModelSettings(openrouter_reasoning={'enabled': True}),
@@ -705,12 +698,11 @@ async def test_openrouter_streaming_reasoning(allow_model_requests: None, openro
         )
 
 
-async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
+async def test_openrouter_no_openrouter_details(openrouter_model: OpenRouterModelFactory) -> None:
     """Test _process_provider_details when _map_openrouter_provider_details returns empty dict."""
     from unittest.mock import patch
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
+    model = openrouter_model('google/gemini-2.0-flash-exp:free')
 
     choice = Choice.model_construct(
         index=0, message={'role': 'assistant', 'content': 'test'}, finish_reason='stop', native_finish_reason='stop'
@@ -728,15 +720,15 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
     )
 
 
-async def test_openrouter_google_nested_schema(allow_model_requests: None, openrouter_api_key: str) -> None:
+async def test_openrouter_google_nested_schema(
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory
+) -> None:
     """Test that nested schemas with $defs/$ref work correctly with OpenRouter + Gemini.
 
     This verifies the fix for https://github.com/pydantic/pydantic-ai/issues/3617
     where OpenRouter's translation layer didn't support modern JSON Schema features.
     """
     from enum import Enum
-
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
 
     class LevelType(str, Enum):
         ground = 'ground'
@@ -767,7 +759,7 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
         level_type: LevelType
         space_count: int
 
-    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    model = openrouter_model('google/gemini-2.5-flash')
     agent: Agent[None, InsertedLevel] = Agent(model, output_type=InsertedLevel)
 
     @agent.tool_plain
@@ -793,7 +785,7 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
 
 async def test_openrouter_file_annotation(
-    allow_model_requests: None, openrouter_api_key: str, document_content: BinaryContent
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, document_content: BinaryContent
 ) -> None:
     """Test that file annotations from OpenRouter are handled correctly.
 
@@ -801,8 +793,7 @@ async def test_openrouter_file_annotation(
     annotations with type="file". This test ensures those annotations are
     parsed without validation errors.
     """
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-5.1-codex-mini', provider=provider)
+    model = openrouter_model('openai/gpt-5.1-codex-mini')
     agent = Agent(model)
 
     result = await agent.run(
@@ -817,7 +808,7 @@ async def test_openrouter_file_annotation(
     assert len(result.output) > 0
 
 
-async def test_openrouter_file_annotation_validation(openrouter_api_key: str) -> None:
+async def test_openrouter_file_annotation_validation(openrouter_model: OpenRouterModelFactory) -> None:
     """Test that file annotations from OpenRouter are correctly validated.
 
     This unit test verifies that responses containing type="file" annotations
@@ -825,8 +816,7 @@ async def test_openrouter_file_annotation_validation(openrouter_api_key: str) ->
     """
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    model = openrouter_model('openai/gpt-4.1-mini')
 
     message = ChatCompletionMessage.model_construct(
         role='assistant',
@@ -846,12 +836,11 @@ async def test_openrouter_file_annotation_validation(openrouter_api_key: str) ->
     assert text_part.content == 'Here is the summary of your file.'
 
 
-async def test_openrouter_url_citation_annotation_validation(openrouter_api_key: str) -> None:
+async def test_openrouter_url_citation_annotation_validation(openrouter_model: OpenRouterModelFactory) -> None:
     """Test that url_citation annotations from OpenRouter are correctly validated."""
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    model = openrouter_model('openai/gpt-4.1-mini')
 
     message = ChatCompletionMessage.model_construct(
         role='assistant',
@@ -874,12 +863,11 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
     assert text_part.content == 'According to the source, this is the answer.'
 
 
-async def test_openrouter_service_tier_completion(openrouter_api_key: str) -> None:
+async def test_openrouter_service_tier_completion(openrouter_model: OpenRouterModelFactory) -> None:
     """OpenRouter providers can return service_tier values outside the OpenAI Literal."""
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+    model = openrouter_model('google/gemini-2.5-flash')
 
     message = ChatCompletionMessage.model_construct(role='assistant', content='hi')
     choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
@@ -921,7 +909,7 @@ async def test_openrouter_service_tier_chunk() -> None:
 
 
 async def test_openrouter_document_url_no_force_download(
-    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """Test that OpenRouter passes DocumentUrl directly without downloading when force_download=False.
 
@@ -929,8 +917,7 @@ async def test_openrouter_document_url_no_force_download(
     supports base64-encoded data. This test verifies that when using OpenRouter, the URL
     is passed directly without being downloaded first.
     """
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    model = openrouter_model('openai/gpt-4.1-mini')
     agent = Agent(model)
 
     pdf_url = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
@@ -960,11 +947,10 @@ async def test_openrouter_supported_native_tools() -> None:
     assert WebSearchTool in supported
 
 
-async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) -> None:
+async def test_openrouter_web_search_prepare_request(openrouter_model: OpenRouterModelFactory) -> None:
     """Test that prepare_request injects web search plugins when WebSearchTool is present."""
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+    model = openrouter_model('openai/gpt-4.1')
 
     model_request_parameters = ModelRequestParameters(
         native_tools=[WebSearchTool(search_context_size='high')],
@@ -980,11 +966,10 @@ async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) ->
     assert extra_body['web_search_options'] == {'search_context_size': 'high'}
 
 
-async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) -> None:
+async def test_openrouter_no_web_search_without_tool(openrouter_model: OpenRouterModelFactory) -> None:
     """Test that no plugins are added when WebSearchTool is not present."""
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+    model = openrouter_model('openai/gpt-4.1')
 
     model_request_parameters = ModelRequestParameters()
 
@@ -1012,12 +997,13 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     assert extra_body['web_search_options'] == {'search_context_size': 'high'}
 
 
-async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
+async def test_openrouter_prepare_request_loop_with_non_websearch_first(
+    openrouter_model: OpenRouterModelFactory,
+) -> None:
     """Test prepare_request loop continuation when first tool is not WebSearchTool."""
     from unittest.mock import Mock
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+    model = openrouter_model('openai/gpt-4.1')
 
     non_web_tool = Mock(spec=[])
     web_tool = WebSearchTool(search_context_size='medium')
@@ -1036,13 +1022,12 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     assert extra_body['web_search_options'] == {'search_context_size': 'medium'}
 
 
-def test_openrouter_nested_provider_response() -> None:
+def test_openrouter_nested_provider_response(openrouter_model: OpenRouterModelFactory) -> None:
     """OpenRouter sometimes nests the real response inside the 'provider' dict.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
     """
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    model = openrouter_model('openai/gpt-4.1-mini')
 
     nested_completion = ChatCompletion.model_construct(
         id=None,
@@ -1080,10 +1065,9 @@ def test_openrouter_nested_provider_response() -> None:
     )
 
 
-def test_openrouter_nested_provider_null_name() -> None:
+def test_openrouter_nested_provider_null_name(openrouter_model: OpenRouterModelFactory) -> None:
     """Nested provider dict with provider=None falls back to 'unknown'."""
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    model = openrouter_model('openai/gpt-4.1-mini')
 
     completion = ChatCompletion.model_construct(
         id=None,
@@ -1120,10 +1104,9 @@ def test_openrouter_nested_provider_null_name() -> None:
     )
 
 
-def test_openrouter_provider_dict_without_choices_raises() -> None:
+def test_openrouter_provider_dict_without_choices_raises(openrouter_model: OpenRouterModelFactory) -> None:
     """Provider is a dict with no 'choices' key — no unwrap happens, validation fails."""
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    model = openrouter_model('openai/gpt-4.1-mini')
 
     completion = ChatCompletion.model_construct(
         id=None,
@@ -1138,13 +1121,12 @@ def test_openrouter_provider_dict_without_choices_raises() -> None:
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
 
 
-def test_openrouter_error_with_null_fields() -> None:
+def test_openrouter_error_with_null_fields(openrouter_model: OpenRouterModelFactory) -> None:
     """Error responses with null standard fields raise ModelHTTPError.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
     """
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    model = openrouter_model('openai/gpt-4.1-mini')
 
     error_completion = ChatCompletion.model_construct(
         id=None,
@@ -1164,10 +1146,9 @@ def test_openrouter_error_with_null_fields() -> None:
     assert 'Invalid request parameters' in str(exc_info.value)
 
 
-def test_openrouter_malformed_error_fallthrough() -> None:
+def test_openrouter_malformed_error_fallthrough(openrouter_model: OpenRouterModelFactory) -> None:
     """Malformed error data falls through to validation, surfacing as UnexpectedModelBehavior."""
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    model = openrouter_model('openai/gpt-4.1-mini')
 
     completion = ChatCompletion.model_construct(
         id=None,
@@ -1184,14 +1165,13 @@ def test_openrouter_malformed_error_fallthrough() -> None:
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
 
 
-def test_openrouter_error_with_metadata() -> None:
+def test_openrouter_error_with_metadata(openrouter_model: OpenRouterModelFactory) -> None:
     """Real-world error response with metadata field from #3994.
 
     OpenRouter returns error code 524 with extra metadata including the raw
     error and provider name. The extra fields should be ignored.
     """
-    provider = OpenRouterProvider(api_key='test-key')
-    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+    model = openrouter_model('google/gemini-3-flash-preview')
 
     completion = ChatCompletion.model_construct(
         id=None,
@@ -1218,14 +1198,13 @@ def test_openrouter_error_with_metadata() -> None:
 
 
 async def test_openrouter_thinking_false_profile_gated_model(
-    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """Hybrid model whose intrinsic profile reports `supports_thinking=False` —
     `thinking=False` still reaches the wire as `reasoning.effort='none'` because
     OpenRouter's provider profile carries `supports_thinking=True`. See
     `test_openrouter_with_reasoning` above for the default-on baseline on glm-4.6."""
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('z-ai/glm-4.6', provider=provider)
+    model = openrouter_model('z-ai/glm-4.6')
     settings = OpenRouterModelSettings(thinking=False)
 
     response = await model_request(
@@ -1239,15 +1218,14 @@ async def test_openrouter_thinking_false_profile_gated_model(
 
 
 async def test_openrouter_thinking_true_emits_effort_medium(
-    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """`thinking=True` is forwarded as `reasoning={'effort': 'medium', 'enabled': True}`.
 
     The explicit `enabled: True` matters for reasoning-optional OpenRouter routes
     (e.g. parts of `google/gemma-*`) that silently leave reasoning disabled when
     only `effort` is set. No-op for reasoning-by-default models."""
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    model = openrouter_model('anthropic/claude-sonnet-4.5')
     settings = OpenRouterModelSettings(thinking=True)
 
     response = await model_request(
@@ -1275,13 +1253,12 @@ async def test_openrouter_thinking_true_emits_effort_medium(
 
 
 async def test_openrouter_thinking_false_supports_thinking_model(
-    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """Reasoning model whose intrinsic profile reports `supports_thinking=True` —
     `thinking=False` reaches the wire as `reasoning.effort='none'` via the
     transformer's unified-emit path."""
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    model = openrouter_model('anthropic/claude-sonnet-4.5')
     settings = OpenRouterModelSettings(thinking=False)
 
     response = await model_request(
@@ -1295,7 +1272,7 @@ async def test_openrouter_thinking_false_supports_thinking_model(
 
 
 async def test_openrouter_thinking_high_emits_effort_high(
-    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+    allow_model_requests: None, openrouter_model: OpenRouterModelFactory, vcr: Cassette
 ) -> None:
     """`thinking='high'` is forwarded as `reasoning={'effort': 'high', 'enabled': True}`.
 
@@ -1303,8 +1280,7 @@ async def test_openrouter_thinking_high_emits_effort_high(
     `_OPENROUTER_EFFORT_MAP['high'] → 'high'` branch on the wire. Without this cassette
     the only wire-level effort value covered was `'medium'` (via `thinking=True`),
     leaving the `high`/`low`/`xhigh` branches unit-only."""
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    model = openrouter_model('anthropic/claude-sonnet-4.5')
     settings = OpenRouterModelSettings(thinking='high')
 
     await model_request(
@@ -1326,15 +1302,14 @@ async def test_openrouter_thinking_high_emits_effort_high(
 )
 async def test_eager_input_streaming_sent_to_openrouter(
     allow_model_requests: None,
-    openrouter_api_key: str,
+    openrouter_model: OpenRouterModelFactory,
     vcr: Cassette,
     model_name: str,
     eager_enabled: bool,
     expected_eager_key: bool,
 ) -> None:
     """`eager_input_streaming` should appear on the outgoing tool payload only when enabled AND routed to Anthropic."""
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel(model_name, provider=provider)
+    model = openrouter_model(model_name)
     my_tool = ToolDefinition(name='get_weather', description='Get weather for a city')
 
     await model_request(
