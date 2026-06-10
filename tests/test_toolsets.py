@@ -2628,12 +2628,13 @@ def test_set_tool_metadata_capability_with_dict_selector():
 
 
 async def test_set_tool_metadata_skips_framework_tools():
-    """SetToolMetadata must not apply metadata to framework-managed tools (tool_kind is not None).
+    """SetToolMetadata must not apply metadata to framework-managed tools.
 
-    Framework tools like `load_capability` (tool_kind='capability-load') are
-    managed by the framework and must remain callable by the model. Applying
-    code_mode or other per-user-tool metadata would hide them from the model
-    and break deferred capability loading.
+    A tool whose `ToolDefinition` carries a `tool_kind` (e.g. the framework-managed
+    tool-search tool) is owned by the framework. Merging `code_mode` or other
+    per-user-tool metadata onto it would change how it is surfaced to the model and
+    break framework behavior such as deferred capability loading, so the wrapper must
+    leave those definitions untouched while still tagging ordinary user tools.
     """
     from pydantic_ai.capabilities import SetToolMetadata
     from pydantic_ai.tools import ToolDefinition
@@ -2643,49 +2644,46 @@ async def test_set_tool_metadata_skips_framework_tools():
     def tool_a(x: int) -> int:
         return x
 
-    ts = FunctionToolset()
-    ts.add_function(tool_a)
-
-    # Simulate a framework tool with tool_kind set
     framework_def = ToolDefinition(
         name='load_capability',
         description='Load a capability',
-        parameters_json_schema={},
-        tool_kind='capability-load',
-    )
-    framework_tool = ToolsetTool(
-        toolset=ts,
-        tool_def=framework_def,
-        max_retries=1,
-        args_validator=None,  # type: ignore[arg-type]
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        tool_kind='tool-search',
     )
 
     class ToolsetWithFrameworkTool(FunctionToolset[None]):
-        async def get_tools(self, ctx: RunContext[None]):
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
             tools = await super().get_tools(ctx)
-            tools['load_capability'] = framework_tool
+            # Reuse the user tool's validator so the simulated framework tool is a
+            # fully-formed ToolsetTool; only its `tool_kind` marks it framework-managed.
+            base = tools['tool_a']
+            tools['load_capability'] = ToolsetTool(
+                toolset=self,
+                tool_def=framework_def,
+                max_retries=base.max_retries,
+                args_validator=base.args_validator,
+            )
             return tools
 
-    # Use `call_tools=[]` so TestModel inspects the tool definitions without
-    # invoking them. The simulated framework tool has `args_validator=None`,
-    # which would raise during argument validation if it were actually called.
-    test_model = TestModel(call_tools=[])
+    ts = ToolsetWithFrameworkTool()
+    ts.add_function(tool_a)
+
     cap = SetToolMetadata(tools='all', code_mode=True)
-    wrapped = cap.get_wrapper_toolset(ToolsetWithFrameworkTool())
-    agent = Agent(test_model, toolsets=[wrapped])
-    await agent.run('test')
+    wrapped = cap.get_wrapper_toolset(ts)
 
-    params = test_model.last_model_request_parameters
-    assert params is not None
+    # Inspect the prepared tool definitions directly: the wrapper's prepare function
+    # is where framework tools are skipped, so we don't need a full model round-trip.
+    tools = await wrapped.get_tools(build_run_context(None))
 
-    # Framework tool must NOT receive code_mode metadata
-    td_load = next(td for td in params.function_tools if td.name == 'load_capability')
-    assert td_load.metadata is None or td_load.metadata.get('code_mode') is None
-
-    # User tool SHOULD receive code_mode metadata
-    td_a = next(td for td in params.function_tools if td.name == 'tool_a')
+    # User tool should receive code_mode metadata.
+    td_a = tools['tool_a'].tool_def
     assert td_a.metadata is not None
     assert td_a.metadata['code_mode'] is True
+
+    # Framework tool (tool_kind set) must be left untouched.
+    td_load = tools['load_capability'].tool_def
+    assert td_load.metadata is None or 'code_mode' not in td_load.metadata
+    assert td_load.tool_kind == 'tool-search'
 
 
 async def test_custom_toolset_returning_plain_str_instructions():
