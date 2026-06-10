@@ -39,6 +39,7 @@ def test_outlines_provider() -> None:
         supports_tools=False,
         supports_json_schema_output=True,
         supports_json_object_output=True,
+        supports_inline_system_prompts=True,
         default_structured_output_mode='native',
         native_output_requires_schema_in_instructions=True,
         thinking_tags=('<think>', '</think>'),

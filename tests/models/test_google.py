@@ -550,6 +550,13 @@ async def test_google_model_top_p(allow_model_requests: None, google_provider: G
     assert result.output == snapshot('The capital of France is Paris.\n')
 
 
+async def test_google_model_top_k(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-3.1-flash-lite', provider=google_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_k': 40})
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is Paris.')
+
+
 async def test_google_model_thinking_config(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': False})
@@ -1054,8 +1061,8 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=17,
-                    output_tokens=533,
+                    input_tokens=136,
+                    output_tokens=414,
                     details={
                         'thoughts_tokens': 213,
                         'tool_use_prompt_tokens': 119,
@@ -1136,8 +1143,8 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=209,
-                    output_tokens=623,
+                    input_tokens=495,
+                    output_tokens=337,
                     details={
                         'thoughts_tokens': 131,
                         'tool_use_prompt_tokens': 286,
@@ -1204,8 +1211,8 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=17,
-                    output_tokens=755,
+                    input_tokens=119,
+                    output_tokens=653,
                     details={
                         'thoughts_tokens': 412,
                         'tool_use_prompt_tokens': 102,
@@ -1386,8 +1393,8 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=249,
-                    output_tokens=860,
+                    input_tokens=568,
+                    output_tokens=541,
                     details={
                         'thoughts_tokens': 301,
                         'tool_use_prompt_tokens': 319,
@@ -1471,8 +1478,8 @@ async def test_google_model_web_fetch_tool(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=32,
-                    output_tokens=2483,
+                    input_tokens=2427,
+                    output_tokens=88,
                     details={
                         'thoughts_tokens': 47,
                         'tool_use_prompt_tokens': 2395,
@@ -4334,8 +4341,8 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=15,
-                        output_tokens=585,
+                        input_tokens=303,
+                        output_tokens=297,
                         details={
                             'thoughts_tokens': 257,
                             'tool_use_prompt_tokens': 288,
@@ -4408,8 +4415,8 @@ Here are some key facts about the Eiffel Tower:
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=46,
-                        output_tokens=2709,
+                        input_tokens=1482,
+                        output_tokens=1273,
                         details={
                             'thoughts_tokens': 980,
                             'tool_use_prompt_tokens': 1436,
@@ -4512,8 +4519,8 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=15,
-                        output_tokens=1549,
+                        input_tokens=785,
+                        output_tokens=779,
                         details={
                             'thoughts_tokens': 742,
                             'tool_use_prompt_tokens': 770,
@@ -5604,6 +5611,33 @@ async def test_google_system_prompts_and_instructions_ordering(google_provider: 
     assert contents == snapshot([{'role': 'user', 'parts': [{'text': 'Hello'}]}])
 
 
+async def test_google_non_leading_system_prompt_wraps_as_user_message(google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')],
+        ),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Now be terse.'), UserPromptPart(content='what next?')],
+        ),
+    ]
+    prepared = m.prepare_messages(messages)
+    system_instruction, contents = await m._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert system_instruction == {'role': 'user', 'parts': [{'text': 'You are helpful.'}]}
+    contents_any = cast(list[Any], contents)
+    wrapped_texts = [
+        part['text']
+        for msg in contents_any
+        if msg['role'] == 'user'
+        for part in msg['parts']
+        if '<system>' in part.get('text', '')
+    ]
+    assert wrapped_texts == ['<system>Now be terse.</system>']
+
+
 async def test_google_stream_safety_filter(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):
@@ -6533,3 +6567,25 @@ async def test_google_model_gemini_3_5_flash(allow_model_requests: None, google_
             ),
         ]
     )
+
+
+async def test_google_top_k_propagation(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    model = GoogleModel('gemini-3.5-flash', provider=google_provider)
+
+    response = GenerateContentResponse(
+        candidates=[Candidate(content=Content(parts=[Part(text='Paris')], role='model'))],
+        response_id='1',
+        model_version='gemini-3.5-flash',
+    )
+
+    mock_generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model, model_settings={'top_k': 40})
+    await agent.run('test')
+
+    # Verify top_k was passed in the config
+    assert mock_generate.call_count == 1
+    _, kwargs = mock_generate.call_args
+    assert kwargs['config']['top_k'] == 40

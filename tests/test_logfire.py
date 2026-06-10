@@ -24,7 +24,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr
+from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics
 
 try:
     import logfire
@@ -59,7 +59,11 @@ class LogfireSummary:
             span_lookup[tid] = span_summary = SpanSummary(
                 id=id_counter, name=span['name'], message=span['attributes']['logfire.msg']
             )
-            self.attributes[id_counter] = span['attributes']
+            # `logfire.metrics` is a logfire-version-dependent span decoration (added in 4.3x): newer
+            # logfire attaches the aggregated `gen_ai.client.token.usage` metric to spans, older does not.
+            # Strip it so these assertions hold across the supported logfire range; the token usage itself
+            # is still covered by the stable `gen_ai.usage.*` attributes and `get_collected_metrics()`.
+            self.attributes[id_counter] = {k: v for k, v in span['attributes'].items() if k != 'logfire.metrics'}
             id_counter += 1
             if parent := span['parent']:
                 parent_span = span_lookup[(parent['trace_id'], parent['span_id'])]
@@ -535,6 +539,7 @@ def test_logfire(
                                 'tool_kind': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
+                                'capability_id': None,
                             }
                         ],
                         'native_tools': [],
@@ -927,6 +932,101 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('version', [2, 3])
+def test_prompted_output_schema_instructions_do_not_set_variable_instructions(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    version: Literal[2, 3],
+) -> None:
+    class City(BaseModel):
+        name: str
+        population: int
+
+    my_agent = Agent(
+        model=TestModel(custom_output_text='{"name":"Paris","population":2148000}'),
+        instructions='Be helpful',
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=version))],
+        output_type=PromptedOutput(City, template='Return JSON matching this schema:\n{schema}'),
+    )
+
+    result = my_agent.run_sync('Tell me about Paris')
+    assert result.output == snapshot(City(name='Paris', population=2148000))
+
+    summary = get_logfire_summary()
+    agent_run_attrs = summary.attributes[0]
+    assert 'Be helpful' in agent_run_attrs['gen_ai.system_instructions']
+    assert 'pydantic_ai.variable_instructions' not in agent_run_attrs
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [2, 3])
+def test_stable_instructions_across_tool_calls_do_not_set_variable_instructions(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    version: Literal[2, 3],
+) -> None:
+    @dataclass
+    class MyOutput:
+        content: str
+
+    my_agent = Agent(
+        model=TestModel(),
+        instructions='Be helpful',
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=version))],
+    )
+    instruction_calls = 0
+
+    @my_agent.tool_plain
+    def my_tool() -> str:
+        nonlocal instruction_calls
+        instruction_calls += 1
+        return 'tool result'
+
+    result = my_agent.run_sync('Hello', output_type=MyOutput)
+    assert result.output == MyOutput(content='a')
+    # Ensure multi-step execution occurred so instructions were compared across requests
+    assert instruction_calls >= 1
+
+    summary = get_logfire_summary()
+    assert 'pydantic_ai.variable_instructions' not in summary.attributes[0]
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [2, 3])
+def test_dynamic_instructions_toggling_from_none_sets_variable_instructions(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    version: Literal[2, 3],
+) -> None:
+    @dataclass
+    class MyOutput:
+        content: str
+
+    my_agent = Agent(
+        model=TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=version))],
+    )
+    instruction_calls = 0
+
+    @my_agent.instructions
+    def instructions(_: RunContext[None]) -> str | None:
+        nonlocal instruction_calls
+        instruction_calls += 1
+        if instruction_calls == 1:
+            return None
+        return 'This is a later step'
+
+    @my_agent.tool_plain
+    def my_tool() -> str:
+        return 'This is a tool call'
+
+    result = my_agent.run_sync('Hello', output_type=MyOutput)
+    assert result.output == MyOutput(content='a')
+    # Ensure multi-step execution occurred so instructions actually toggled
+    assert instruction_calls >= 2
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0]['pydantic_ai.variable_instructions'] is True
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('version', [2, 3])
 def test_instructions_with_structured_output_exclude_content_v2_v3(
     get_logfire_summary: Callable[[], LogfireSummary],
     version: Literal[2, 3],
@@ -1058,6 +1158,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'tool_kind': None,
                                 'return_schema': None,
                                 'include_return_schema': None,
+                                'capability_id': None,
                             }
                         ],
                         'prompted_output_template': None,
@@ -1152,7 +1253,7 @@ async def test_aggregated_usage_attribute_names(capfire: CaptureLogfire) -> None
 
     await agent.run('Hello')
 
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
 
     # Verify that agent run span uses aggregated_usage attribute names
     agent_run_span = next(s for s in spans if s['name'] == 'agent run')
@@ -1205,7 +1306,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
     assert traceparent == snapshot('00-00000000000000000000000000000001-0000000000000001-01')
     record_feedback(traceparent, 'factuality', 0.1, comment='the agent lied', extra={'foo': 'bar'})
 
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat test',
@@ -3400,7 +3501,7 @@ async def test_run_stream(
 
 def _get_tool_span(capfire: CaptureLogfire) -> dict[str, Any]:
     """Get the completed tool span from exported spans."""
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
     tool_span = next(
         s for s in spans if s['attributes'].get('logfire.span_type') == 'span' and 'tool' in s['name'].lower()
     )
@@ -3943,7 +4044,7 @@ def test_instrumentation_capability_template_description(
     result = agent.run_sync('Hello', deps=MyDeps(name='testing'))
     assert result.output == snapshot('success (no tool calls)')
 
-    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
     agent_span = spans[-1]  # outermost span is the agent run
     assert agent_span['attributes']['gen_ai.agent.description'] == snapshot('Agent for testing')
 

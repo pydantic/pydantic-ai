@@ -3,17 +3,16 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, cast, get_args, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
-from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -50,6 +49,7 @@ from ..native_tools import (
     WebFetchTool,
     WebSearchTool,
 )
+from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
@@ -177,10 +177,10 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
-_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
+_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = get_args(_GOOGLE_IMAGE_SIZE)
 
 _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
-_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
+_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
 # Accept both the current name (`google-cloud` / `google`) and the pre-v2 names
@@ -270,6 +270,16 @@ class GoogleModelSettings(ModelSettings, total=False):
     google_cached_content: str
     """The name of the cached content to use for the model.
 
+    When set, `system_instruction`, `tools`, and `tool_config` are omitted from
+    the outgoing request — the cached content resource owns those fields, and
+    both the Gemini API and Vertex AI reject requests that supply them
+    alongside `cached_content` (`400 INVALID_ARGUMENT`: "Tool config, tools and
+    system instruction should not be set in the request when using cached
+    content."). Any tools registered on the agent and any system prompt are
+    therefore ignored on requests that go through the cache; a `UserWarning`
+    is emitted whenever stripping actually drops a field so the mismatch is
+    discoverable.
+
     See <https://ai.google.dev/gemini-api/docs/caching> for more information.
     """
 
@@ -323,6 +333,31 @@ def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> 
         )
         return deprecated
     return None
+
+
+def _warn_on_cached_content_strips(
+    cached_content: str | None,
+    system_instruction: ContentDict | None,
+    tools: list[ToolDict] | None,
+) -> None:
+    """Emit a `UserWarning` when `google_cached_content` would strip a field that the caller populated."""
+    if not cached_content:
+        return
+    dropped: list[str] = []
+    if system_instruction is not None:
+        dropped.append('system_instruction')
+    if tools is not None:
+        dropped.extend(('tools', 'tool_config'))
+    if dropped:
+        names = ', '.join(f'`{n}`' for n in dropped)
+        warnings.warn(
+            f'`google_cached_content` is set; the cached content resource owns '
+            f'{names}, so these fields are stripped from the outgoing request '
+            f'and any agent instructions or registered tools are ignored. '
+            f'See https://ai.google.dev/gemini-api/docs/caching.',
+            UserWarning,
+            stacklevel=3,
+        )
 
 
 def _get_deprecated_google_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleCloudServiceTier | None:
@@ -564,6 +599,7 @@ class GoogleModel(Model[Client]):
                 generation_config=GenerationConfigDict(
                     temperature=generation_config.get('temperature'),
                     top_p=generation_config.get('top_p'),
+                    top_k=generation_config.get('top_k'),
                     max_output_tokens=generation_config.get('max_output_tokens'),
                     stop_sequences=generation_config.get('stop_sequences'),
                     presence_penalty=generation_config.get('presence_penalty'),
@@ -596,7 +632,7 @@ class GoogleModel(Model[Client]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -843,6 +879,12 @@ class GoogleModel(Model[Client]):
         if model_request_parameters.function_tools and not self.profile.supports_tools:
             raise UserError('Tools are not supported by this model.')
 
+        # `google_cached_content` will strip `tools` (and `tool_config` / `system_instruction`)
+        # below — resolve it up front so `prompted` output-mode sees the post-strip tool set
+        # and still enables JSON mode when the cache effectively leaves the request tool-less.
+        cached_content = model_settings.get('google_cached_content')
+        effective_tools = None if cached_content else tools
+
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
@@ -854,7 +896,7 @@ class GoogleModel(Model[Client]):
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
-        elif model_request_parameters.output_mode == 'prompted' and not tools:
+        elif model_request_parameters.output_mode == 'prompted' and not effective_tools:
             if not self.profile.supports_json_object_output:
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
@@ -883,11 +925,15 @@ class GoogleModel(Model[Client]):
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
 
+        # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
+        _warn_on_cached_content_strips(cached_content, system_instruction, tools)
+
         config = GenerateContentConfigDict(
             http_options=http_options,
-            system_instruction=system_instruction,
+            system_instruction=None if cached_content else system_instruction,
             temperature=model_settings.get('temperature'),
             top_p=model_settings.get('top_p'),
+            top_k=model_settings.get('top_k'),
             max_output_tokens=model_settings.get('max_tokens'),
             stop_sequences=model_settings.get('stop_sequences'),
             presence_penalty=model_settings.get('presence_penalty'),
@@ -897,9 +943,9 @@ class GoogleModel(Model[Client]):
             thinking_config=self._translate_thinking(model_settings, model_request_parameters),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
-            cached_content=model_settings.get('google_cached_content'),
-            tools=cast(ToolListUnionDict, tools),
-            tool_config=tool_config,
+            cached_content=cached_content,
+            tools=cast(ToolListUnionDict, effective_tools) if effective_tools is not None else None,
+            tool_config=None if cached_content else tool_config,
             response_mime_type=response_mime_type,
             response_json_schema=response_schema,
             response_modalities=modalities,
@@ -1612,7 +1658,7 @@ def _decode_inline_thought_signature(
     if not item.provider_details:
         return None
     if m.provider_name not in accepted_provider_names and item.provider_name not in accepted_provider_names:
-        return None  # pragma: no cover
+        return None
     raw = item.provider_details.get('thought_signature')
     if not raw:
         return None  # pragma: no cover

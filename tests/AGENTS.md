@@ -1,5 +1,13 @@
 # Testing Guidelines
 
+## Testing philosophy
+
+VCR + public-API tests are the default. We test through the public API the way a user would (`Agent(...)`, `agent.run(...)`) against real provider responses recorded as cassettes — provider APIs are the ultimate judge of whether the code is correct when run as intended, and that user-facing correctness is what we care about, not behavior in isolated units.
+
+Unit tests still earn their place — for internal behavior that is definitory and worth pinning against drift. That includes behavior you can't reach or reliably trigger through the public API (pre-request guards, defensive branches no real model produces), but also behavior a VCR test wouldn't actually protect: our cassette matchers aren't always sensitive to the request body, so a changed internal payload can still match an existing recording and pass green — a unit test asserting the internal shape directly is what catches that regression. Each unit test should still say why it isn't (or can't be) a VCR test.
+
+Recording cassettes needs provider API keys and isn't trivial, so contributors routinely under-test the real behavior — writing the VCR test a contributor couldn't is core maintainer work.
+
 ## Test File Structure
 
 ```python
@@ -69,6 +77,53 @@ async def test_feature(model: Model, stream: bool, request: pytest.FixtureReques
 
     assert output == expected
 ```
+
+Use the `EXPECTATIONS` dict only for a pure cartesian output lookup keyed by `(model, stream)`. For feature-centric files where cases are heterogeneous — different inputs, expectations, and xfails per case, all run through one minimal comprehensive test — use a `@dataclass Case` with sensible defaults plus per-case overrides:
+
+```python
+from dataclasses import dataclass, field
+
+import pytest
+from inline_snapshot import snapshot
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
+
+
+@dataclass(frozen=True)
+class Case:
+    id: str
+    model: str
+    prompt: str = 'hello'
+    instructions: str | None = None
+    expected_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+CASES = [
+    Case(
+        id='openai',
+        model='openai:gpt-5',
+        expected_messages=snapshot([...]),
+    ),
+    Case(
+        id='anthropic',
+        model='anthropic:claude-sonnet-4-5',
+        instructions='be terse',
+        expected_messages=snapshot([...]),
+        marks=(pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed'),),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in CASES])
+async def test_feature(case: Case):
+    agent = Agent(case.model, instructions=case.instructions)
+    result = await agent.run(case.prompt)
+    assert result.all_messages() == case.expected_messages
+```
+
+Each case carries its own snapshot (not the central test body), so a reviewer can read the cases top to bottom and check that every expectation is realistic.
 
 ## VCR Workflow
 
@@ -145,6 +200,8 @@ async def test_something(model: Model):
 - Ensure test assertions match test names and docstrings — tests without proper assertions or that verify opposite behavior create false positives
 - Test MCP against real `tests.mcp_server` instance, not mocks — extend test server with helper tools to expose runtime context (instructions, client info, session state)
 - Remove stale test docstrings, comments, and historical provider bug notes when behavior changes
+- Prefer `instructions=` over `system_prompt=` when the test doesn't specifically need the system-prompt code path — `instructions=` is the canonical entry point for non-system-prompt-specific behavior (cacheable prefix, persona priming, format guidance), and reserving `system_prompt=` for tests that exercise the system-prompt machinery keeps intent legible
+- Never reference line numbers in test docstrings or comments (`lines 872-873`, `L42`, `line 100`) — they go stale on the next edit to the referenced file. Describe the condition or behavior instead
 
 ## Directory Structure
 

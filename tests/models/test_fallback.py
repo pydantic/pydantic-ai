@@ -36,7 +36,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, strip_logfire_metrics, try_import
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -164,7 +164,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
             ),
         ]
     )
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat function:success_response:',
@@ -287,7 +287,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
         )
         assert result.is_complete
 
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat function::success_response_stream',
@@ -734,6 +734,7 @@ async def test_fallback_model_structured_output():
                         },
                         description='The final response which ends this conversation',
                         kind='output',
+                        defer_loading=False,
                     )
                 ],
                 allow_text_output=False,
@@ -924,7 +925,7 @@ Don't include any text or Markdown fencing before or after.
             ),
         ]
     )
-    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+    assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
                 'name': 'chat function:prompted_output_func:',

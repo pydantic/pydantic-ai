@@ -33,6 +33,9 @@ print(model_response.usage)
 
 _(This example is complete, it can be run "as is")_
 
+!!! note
+    Instructions are not cumulative across message history. If multiple [`ModelRequest`][pydantic_ai.messages.ModelRequest]s include [`instructions`][pydantic_ai.messages.ModelRequest.instructions], the direct API uses the most recent one.
+
 ## Advanced Example with Tool Calling
 
 You can also use the direct API to work with function/tool calling.
