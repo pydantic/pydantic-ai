@@ -413,12 +413,20 @@ def no_instrumentation_by_default():
 
 try:
     import logfire
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
     logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
+
+    _httpx_instrumentor = HTTPXClientInstrumentor()
 
     @pytest.fixture(autouse=True)
     def fresh_logfire():
         logfire.shutdown(flush=False)
+        # `test_examples.py` runs doc snippets that call the process-global `logfire.instrument_httpx()`,
+        # which patches httpx via OTel and is never torn down. Reset it so it can't leak request spans
+        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `test_temporal` snapshots).
+        if _httpx_instrumentor._is_instrumented_by_opentelemetry:  # pyright: ignore[reportPrivateUsage]
+            _httpx_instrumentor.uninstrument()
 
 except ImportError:
     pass

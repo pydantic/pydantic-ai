@@ -1680,11 +1680,17 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         elif isinstance(item, VideoUrl):
             return await self._map_video_url_item(item)
         elif isinstance(item, UploadedFile):
-            # Verify provider matches
             if item.provider_name != self.system:
                 raise UserError(
                     f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIChatModel. '
                     f'Expected `provider_name` to be `{self.system!r}`.'
+                )
+            if item.media_type.startswith('image/'):
+                # Chat Completions can only reference an uploaded file as a document `file` part;
+                # `image_url` parts take a URL/data URI, not a `file_id`, so images can't be referenced by id.
+                raise UserError(
+                    'Referencing an uploaded image by `file_id` is not supported by OpenAIChatModel. '
+                    'Use `ImageUrl` or `BinaryContent` for images, or use `OpenAIResponsesModel`.'
                 )
             return File(
                 file=FileFile(file_id=item.file_id),
@@ -3107,12 +3113,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
                             f'Expected `provider_name` to be `{self.system!r}`.'
                         )
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_id=item.file_id,
-                        )
-                    )
+                    content.append(OpenAIResponsesModel._map_uploaded_file_to_response_content(item))  # pyright: ignore[reportArgumentType]
                 elif isinstance(item, CachePoint):
                     pass
                 elif is_multi_modal_content(item):
@@ -3120,6 +3121,24 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
         return responses.EasyInputMessageParam(role='user', content=content)
+
+    @staticmethod
+    def _map_uploaded_file_to_response_content(
+        item: UploadedFile,
+    ) -> ResponseInputImageContentParam | ResponseInputFileContentParam:
+        """Map an `UploadedFile` to its OpenAI Responses API content param.
+
+        Image uploads (an `image/*` media type) map to `input_image`, carrying `detail` from
+        `vendor_metadata` (default `'auto'`); everything else maps to `input_file`. Opaque OpenAI
+        Files-API ids (e.g. `file-...`) report `application/octet-stream`, so an image referenced by
+        such an id without an explicit `image/*` media type also maps to `input_file`.
+        """
+        if item.media_type.startswith('image/'):
+            detail: Literal['auto', 'low', 'high'] = 'auto'
+            if metadata := item.vendor_metadata:
+                detail = metadata.get('detail', 'auto')
+            return ResponseInputImageContentParam(type='input_image', file_id=item.file_id, detail=detail)
+        return ResponseInputFileContentParam(type='input_file', file_id=item.file_id)
 
     @staticmethod
     async def _map_file_to_response_content(
@@ -3194,12 +3213,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         for item in part.content_items(mode='str'):
             if isinstance(item, UploadedFile):
-                output.append(
-                    ResponseInputFileContentParam(
-                        type='input_file',
-                        file_id=item.file_id,
-                    )
-                )
+                output.append(OpenAIResponsesModel._map_uploaded_file_to_response_content(item))
             elif is_multi_modal_content(item):
                 output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
             elif isinstance(item, str):  # pragma: no branch
