@@ -13,9 +13,9 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
-    cast,
 )
 
+from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from ... import ExternalToolset, ToolDefinition
@@ -233,6 +233,10 @@ def _interrupt_id_to_tool_call_id(interrupt_id: str) -> str:
     return interrupt_id[len(INTERRUPT_ID_PREFIX) :]
 
 
+_dict_adapter = TypeAdapter(dict[str, Any])
+"""Narrows an `Any`-typed JSON object (`ResumeEntry.payload`, `RunAgentInput.state`) to `dict[str, Any]`."""
+
+
 def _payload_dict(raw: Any) -> dict[str, Any]:
     """Coerce a `ResumeEntry.payload` (typed `Optional[Any]` in ag-ui-protocol) into a typed dict.
 
@@ -241,7 +245,7 @@ def _payload_dict(raw: Any) -> dict[str, Any]:
     fall through to the unapproved/default path.
     """
     if isinstance(raw, dict):
-        return cast('dict[str, Any]', raw)
+        return _dict_adapter.validate_python(raw)
     return {}
 
 
@@ -264,7 +268,7 @@ def _resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
     if payload.get('approved') is True:
         edited_args = payload.get('editedArgs')
         if isinstance(edited_args, dict):
-            return ToolApproved(override_args=cast('dict[str, Any]', edited_args))
+            return ToolApproved(override_args=_dict_adapter.validate_python(edited_args))
         return ToolApproved()
 
     denial_message = payload.get('reason')
@@ -361,13 +365,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def state(self) -> dict[str, Any] | None:
         """Frontend state from the AG-UI run input."""
         state = self.run_input.state
-        if state is None:
+        if not isinstance(state, Mapping) or not state:
             return None
 
-        if isinstance(state, Mapping) and not state:
-            return None
-
-        return cast('dict[str, Any]', state)
+        return _dict_adapter.validate_python(state)
 
     @cached_property
     def conversation_id(self) -> str | None:
