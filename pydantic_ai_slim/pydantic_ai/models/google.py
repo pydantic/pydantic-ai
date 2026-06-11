@@ -1933,6 +1933,12 @@ def _metadata_as_usage(
         details=details,
     )
 
+    # `extract` derives the typed token fields from the raw `usage_metadata`, not from the merged
+    # `details` above, so a typed field that a later cumulative chunk dropped stays zeroed even when
+    # `details` retained it. Backfill those fields from the usage accumulated so far. (Anthropic's
+    # `_map_usage` re-extracts from its merged details instead, because its genai-prices mapping
+    # reads the same keys it stores in `details`; Google's mapping reads the raw API keys, so the
+    # merged `details` cannot reconstruct the typed fields here.)
     if existing_usage:
         for token_field in fields(new_usage):
             if token_field.name != 'details' and not getattr(new_usage, token_field.name):
