@@ -390,8 +390,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
                             # The call and return metadata are combined in the output part.
                             # So we extract and return them to the respective parts
-
-                            # TODO: I am going to need handling for tool search too but skipping for now
                             call_meta = return_meta = {}
                             has_tool_output = isinstance(
                                 part,

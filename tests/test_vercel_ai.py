@@ -12,6 +12,9 @@ from unittest.mock import Mock
 import pytest
 
 from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai._deferred_capabilities import (
+    parse_loaded_capabilities,
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import NativeTool
@@ -25,6 +28,8 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -8704,3 +8709,43 @@ async def test_denied_builtin_tool_round_trip():
             )
         ]
     )
+
+
+async def test_roundtrip_load_capability():
+    messages = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(
+                    tool_call_id='load-foobar',
+                    args={'id': 'foobar'},
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(
+                    tool_call_id='load-foobar',
+                    content={'instructions': '# Foo Bar'},
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert loaded == snapshot(
+        [
+            ModelResponse(
+                parts=[LoadCapabilityCallPart(args={'id': 'foobar'}, tool_call_id='load-foobar')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(
+                        content={'instructions': '# Foo Bar'}, tool_call_id='load-foobar', timestamp=IsDatetime()
+                    )
+                ]
+            ),
+        ]
+    )
+    assert parse_loaded_capabilities(loaded) == {'foobar'}
