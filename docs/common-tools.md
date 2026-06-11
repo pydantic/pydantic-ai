@@ -209,6 +209,83 @@ Here are some recent papers about transformer architectures from arxiv.org:
 """
 ```
 
+## Bocha Search Tool
+
+!!! info
+    Bocha is a paid service, but they have free credits to explore their product.
+
+    You need to [sign up for an account](https://open.bochaai.com/) and get an API key to use the Bocha search tool.
+
+The Bocha search tool allows you to search the web for up-to-date information and returns source-linked results.
+
+### Usage
+
+Here's an example of how you can use the Bocha search tool with an agent:
+
+```py {title="bocha_search.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.bocha import bocha_search_tool
+
+api_key = os.getenv('BOCHA_SEARCH_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[bocha_search_tool(api_key)],
+    instructions='Search Bocha for the given query and return the results with links.',
+)
+
+result = agent.run_sync('Tell me the top news in the GenAI world, give me links.')
+print(result.output)
+```
+
+### Configuring Parameters
+
+The `bocha_search_tool` factory accepts optional parameters that control search behavior. `count` is developer-controlled and never appears in the LLM tool schema. Other parameters, when provided, are fixed for all searches and hidden from the LLM's tool schema. Parameters left unset remain available for the LLM to set per-call.
+
+For example, you can lock in `count` and `include_domains` at tool creation time while still letting the LLM control `freshness` and `exclude_domains`:
+
+```py {title="bocha_domain_filtering.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.bocha import bocha_search_tool
+
+api_key = os.getenv('BOCHA_SEARCH_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[bocha_search_tool(api_key, count=5, include_domains=['arxiv.org'])],
+    instructions='Search for information and return the results.',
+)
+
+result = agent.run_sync('Find recent papers about transformer architectures')
+print(result.output)
+```
+
+!!! tip "Automatic fallback via WebSearch capability"
+    You can also use [`bocha_search_tool`][pydantic_ai.common_tools.bocha.bocha_search_tool] as a local
+    fallback for the [`WebSearch`][pydantic_ai.capabilities.WebSearch] capability:
+
+    ```py {title="bocha_web_search_capability.py" test="skip"}
+    import os
+
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import WebSearch
+    from pydantic_ai.common_tools.bocha import bocha_search_tool
+
+    api_key = os.getenv('BOCHA_SEARCH_API_KEY')
+    assert api_key is not None
+
+    agent = Agent(
+        'openai:gpt-5.2',
+        capabilities=[WebSearch(local=bocha_search_tool(api_key))],
+    )
+    ```
+
 ## Exa Search Tool
 
 !!! info
