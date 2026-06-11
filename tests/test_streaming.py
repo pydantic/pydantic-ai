@@ -32,6 +32,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
+    ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -2940,49 +2941,32 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
     assert stream.metadata == {'source': 'run-context'}
 
 
-async def test_agent_stream_text_output_preserves_text_before_trailing_native_tool_metadata() -> None:
-    response = ModelResponse(
-        parts=[
-            TextPart('final answer'),
-            NativeToolCallPart(
-                tool_name='web_search',
-                args={'queries': ['query']},
-                tool_call_id='web-search-call',
-                provider_name='test',
-            ),
-            NativeToolReturnPart(
-                tool_name='web_search',
-                content=[{'uri': 'https://example.com', 'title': 'Example'}],
-                tool_call_id='web-search-call',
-                provider_name='test',
-            ),
-        ],
-        model_name='test',
-    )
-
-    assert await _make_text_output_agent_stream(response).validate_response_output(response) == 'final answer'
-
-
-async def test_agent_stream_text_output_resets_text_before_native_tool_call_with_later_text() -> None:
-    response = ModelResponse(
-        parts=[
-            TextPart('pre-tool text'),
-            NativeToolCallPart(
-                tool_name='web_search',
-                args={'queries': ['query']},
-                tool_call_id='web-search-call',
-                provider_name='test',
-            ),
-            NativeToolReturnPart(
-                tool_name='web_search',
-                content=[{'uri': 'https://example.com', 'title': 'Example'}],
-                tool_call_id='web-search-call',
-                provider_name='test',
-            ),
-            TextPart('final answer'),
-        ],
-        model_name='test',
-    )
+@pytest.mark.parametrize(
+    ('leading_text', 'trailing_text'),
+    [
+        pytest.param('final answer', None, id='trailing-native-pair-preserves-prior-text'),
+        pytest.param('pre-tool text', 'final answer', id='later-text-resets-text-before-native-pair'),
+    ],
+)
+async def test_agent_stream_text_output_with_native_tool_parts(leading_text: str, trailing_text: str | None) -> None:
+    parts: list[ModelResponsePart] = [
+        TextPart(leading_text),
+        NativeToolCallPart(
+            tool_name='web_search',
+            args={'queries': ['query']},
+            tool_call_id='web-search-call',
+            provider_name='test',
+        ),
+        NativeToolReturnPart(
+            tool_name='web_search',
+            content=[{'uri': 'https://example.com', 'title': 'Example'}],
+            tool_call_id='web-search-call',
+            provider_name='test',
+        ),
+    ]
+    if trailing_text is not None:
+        parts.append(TextPart(trailing_text))
+    response = ModelResponse(parts=parts, model_name='test')
 
     assert await _make_text_output_agent_stream(response).validate_response_output(response) == 'final answer'
 
