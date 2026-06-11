@@ -831,11 +831,9 @@ class StreamedResponse(ABC):
         """
         if self.cancelled:
             return
-        self._cancelled = True
-        # _finished is checked before _cancelled in get(), so a finished
-        # stream stays complete even after cancel().
         if self._finished:
             return
+        self._cancelled = True
         await self.close_stream()
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:

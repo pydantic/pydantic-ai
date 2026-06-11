@@ -4695,10 +4695,11 @@ async def test_run_stream_cancel_after_complete():
         await result.get_output()
         assert result.is_complete
         assert result.response.state == 'complete'
-        # A defensive cancel() after the stream is fully consumed records the
-        # flag but must not downgrade response.state to 'interrupted'.
+        # A defensive cancel() after the stream is fully consumed is a no-op:
+        # _finished is checked before _cancelled in cancel(), so the state
+        # stays 'complete' and no connection teardown is attempted.
         await result.cancel()
-        assert result.cancelled
+        assert not result.cancelled
         assert result.response.state == 'complete'
 
 
