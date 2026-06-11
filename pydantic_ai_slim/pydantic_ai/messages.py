@@ -1356,10 +1356,8 @@ class ToolReturnPart(BaseToolReturnPart):
         if kind is None:
             return part
         narrower = _TOOL_RETURN_NARROWERS.get(kind)
-        if narrower is None:
-            return part
         try:
-            return narrower(part)
+            return narrower(part) if narrower else part
         except pydantic.ValidationError:
             return part
 
@@ -1408,10 +1406,8 @@ class NativeToolReturnPart(BaseToolReturnPart):
         if kind is None:
             return part
         narrower = _NATIVE_RETURN_NARROWERS.get(kind)
-        if narrower is None:
-            return part
         try:
-            return narrower(part)
+            return narrower(part) if narrower else part
         except pydantic.ValidationError:
             return part
 
@@ -1910,10 +1906,8 @@ class ToolCallPart(BaseToolCallPart):
         if kind is None:
             return part
         narrower = _TOOL_CALL_NARROWERS.get(kind)
-        if narrower is None:
-            return part
         try:
-            return narrower(part)
+            return narrower(part) if narrower else part
         except pydantic.ValidationError:
             return part
 
@@ -1979,10 +1973,8 @@ class NativeToolCallPart(BaseToolCallPart):
         if kind is None:
             return part
         narrower = _NATIVE_CALL_NARROWERS.get(kind)
-        if narrower is None:
-            return part
         try:
-            return narrower(part)
+            return narrower(part) if narrower else part
         except pydantic.ValidationError:
             return part
 

@@ -35,6 +35,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -68,6 +70,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
@@ -8785,3 +8788,33 @@ async def test_roundtrip_load_capability_invalid_args():
     loaded = VercelAIAdapter.load_messages(ui_messages)
 
     assert parse_loaded_capabilities(loaded) == set()
+
+
+async def test_roundtrip_native_tool_search():
+    """Native tool-search parts keep their typed identity through dump/load.
+
+    The combined builtin metadata nests `tool_kind` under `call_meta`/`return_meta`,
+    so the load side must read it from there, not only from the top level. The typed
+    identity is what `parse_discovered_tools` dispatches on to restore discovered
+    tools when a conversation resumes.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(tool_call_id='search-1', args={'queries': ['refund']}),
+                NativeToolSearchReturnPart(
+                    tool_call_id='search-1',
+                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+
+    assert parse_discovered_tools(loaded) == {'refund_tool'}
+    # `parse_discovered_tools` dispatches on `NativeToolSearchReturnPart`, so a non-empty
+    # result proves the return part kept its typed identity through the roundtrip. The
+    # call part's identity matters to Anthropic history replay, so pin it as well.
+    assert isinstance(loaded[0].parts[0], NativeToolSearchCallPart)
