@@ -1621,7 +1621,7 @@ async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
 class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
     @property
     def _cache_tools(self) -> bool:
-        return False
+        return False  # pragma: no cover
 
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
