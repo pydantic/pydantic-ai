@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
@@ -17,7 +18,8 @@ with try_import() as imports_successful:
         CerebrasModelSettings,
         _cerebras_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.providers.cerebras import CerebrasProvider
+
+    CerebrasModelFactory = Callable[..., CerebrasModel]
 
 
 pytestmark = [
@@ -27,22 +29,20 @@ pytestmark = [
 ]
 
 
-async def test_cerebras_model_simple(allow_model_requests: None, cerebras_api_key: str):
+async def test_cerebras_model_simple(allow_model_requests: None, cerebras_model: CerebrasModelFactory):
     """Test basic Cerebras model functionality."""
-    provider = CerebrasProvider(api_key=cerebras_api_key)
-    model = CerebrasModel('llama-3.3-70b', provider=provider)
+    model = cerebras_model('llama-3.3-70b')
     agent = Agent(model=model)
     result = await agent.run('What is 2 + 2?')
     assert '4' in result.output
 
 
-async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str):
+async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_model: CerebrasModelFactory):
     """Test that cerebras_disable_reasoning setting is properly transformed to extra_body.
 
     Note: disable_reasoning is only supported on reasoning models: zai-glm-4.6 and gpt-oss-120b.
     """
-    provider = CerebrasProvider(api_key=cerebras_api_key)
-    model = CerebrasModel('zai-glm-4.6', provider=provider)
+    model = cerebras_model('zai-glm-4.6')
 
     settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
     response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
@@ -52,7 +52,7 @@ async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, ce
 
 
 async def test_cerebras_thinking_part_survives_multiturn(
-    allow_model_requests: None, cerebras_api_key: str, vcr: Cassette
+    allow_model_requests: None, cerebras_model: CerebrasModelFactory, vcr: Cassette
 ):
     """A reasoning model's `ThinkingPart` survives a 2-turn round-trip on Cerebras.
 
@@ -60,8 +60,7 @@ async def test_cerebras_thinking_part_survives_multiturn(
     structured item the API consumes). This locks that the turn-1 part is preserved verbatim in the message
     history across turns and replayed on the second request's wire body as the assistant `reasoning` field.
     """
-    provider = CerebrasProvider(api_key=cerebras_api_key)
-    model = CerebrasModel('gpt-oss-120b', provider=provider)
+    model = cerebras_model('gpt-oss-120b')
     agent = Agent(model=model)
 
     result1 = await agent.run('What is 2 + 2? Think briefly first.')

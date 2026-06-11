@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -72,6 +72,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 
+    GroqModelFactory = Callable[..., GroqModel]
+
     MockChatCompletion = chat.ChatCompletion | Exception
     MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
 
@@ -89,6 +91,8 @@ pytestmark = [
 
 
 def test_init():
+    # provider-init unit test; the provider/client/api-key is the assertion target
+    # ast-grep-ignore: prefer-model-factory
     provider = GroqProvider(api_key='foobar')
     m = GroqModel('llama-3.3-70b-versatile', provider=provider)
     assert m.client is provider.client
@@ -634,14 +638,14 @@ async def test_no_delta(allow_model_requests: None):
         assert result.is_complete
 
 
-async def test_extra_headers(allow_model_requests: None, groq_api_key: str):
+async def test_extra_headers(allow_model_requests: None, groq_model: GroqModelFactory):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))
+    m = groq_model('llama-3.3-70b-versatile')
     agent = Agent(m, model_settings=GroqModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
     await agent.run('hello')
 
 
-async def test_map_text_content_input(allow_model_requests: None, groq_api_key: str):
+async def test_map_text_content_input(allow_model_requests: None, groq_model: GroqModelFactory):
     part = UserPromptPart(
         content=[
             'Hi',
@@ -651,7 +655,7 @@ async def test_map_text_content_input(allow_model_requests: None, groq_api_key: 
             ),
         ]
     )
-    m = await GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
+    m = await groq_model('llama-3.3-70b-versatile')._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
     assert m == snapshot(
         {
             'role': 'user',
@@ -663,8 +667,8 @@ async def test_map_text_content_input(allow_model_requests: None, groq_api_key: 
     )
 
 
-async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+async def test_image_url_input(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('meta-llama/llama-4-scout-17b-16e-instruct')
     agent = Agent(m)
 
     result = await agent.run(
@@ -679,9 +683,9 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
 
 
 async def test_image_as_binary_content_tool_response(
-    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
+    allow_model_requests: None, groq_model: GroqModelFactory, image_content: BinaryContent
 ):
-    m = GroqModel('meta-llama/llama-4-maverick-17b-128e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    m = groq_model('meta-llama/llama-4-maverick-17b-128e-instruct')
     agent = Agent(m)
 
     @agent.tool_plain
@@ -773,9 +777,9 @@ async def test_uploaded_file_input(allow_model_requests: None):
 
 
 async def test_image_as_binary_content_input(
-    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
+    allow_model_requests: None, groq_model: GroqModelFactory, image_content: BinaryContent
 ) -> None:
-    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    m = groq_model('meta-llama/llama-4-scout-17b-16e-instruct')
     agent = Agent(m)
 
     result = await agent.run(['What is the name of this fruit?', image_content])
@@ -817,6 +821,8 @@ def test_model_connection_error(allow_model_requests: None) -> None:
 
 
 async def test_init_with_provider():
+    # provider-init unit test; the provider/client/api-key is the assertion target
+    # ast-grep-ignore: prefer-model-factory
     provider = GroqProvider(api_key='api-key')
     model = GroqModel('llama3-8b-8192', provider=provider)
     assert model.model_name == 'llama3-8b-8192'
@@ -830,8 +836,8 @@ async def test_init_with_provider_string():
         assert model.client is not None
 
 
-async def test_groq_model_instructions(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))
+async def test_groq_model_instructions(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('llama-3.3-70b-versatile')
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run('What is the capital of France?')
@@ -864,8 +870,8 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
     )
 
 
-async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
+async def test_groq_model_web_search_tool(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('compound-beta')
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
@@ -1139,8 +1145,8 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
     )
 
 
-async def test_groq_model_web_search_tool_stream(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
+async def test_groq_model_web_search_tool_stream(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('compound-beta')
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
@@ -2050,8 +2056,8 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
     )
 
 
-async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('deepseek-r1-distill-llama-70b', provider=GroqProvider(api_key=groq_api_key))
+async def test_groq_model_thinking_part(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('deepseek-r1-distill-llama-70b')
     settings = GroqModelSettings(groq_reasoning_format='raw')
     agent = Agent(m, instructions='You are a chef.', model_settings=settings)
 
@@ -2146,8 +2152,8 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
     )
 
 
-async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('deepseek-r1-distill-llama-70b', provider=GroqProvider(api_key=groq_api_key))
+async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('deepseek-r1-distill-llama-70b')
     settings = GroqModelSettings(groq_reasoning_format='raw')
     agent = Agent(m, instructions='You are a chef.', model_settings=settings)
 
@@ -5454,8 +5460,8 @@ By following these steps, you can create authentic Argentinian alfajores that sh
     )
 
 
-async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+async def test_tool_use_failed_error(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('openai/gpt-oss-120b')
     agent = Agent(m, instructions='Be concise. Never use pretty double quotes, just regular ones.')
 
     @agent.tool_plain
@@ -5582,8 +5588,8 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
     )
 
 
-async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('openai/gpt-oss-120b')
     agent = Agent(m, instructions='Be concise. Never use pretty double quotes, just regular ones.')
 
     @agent.tool_plain
@@ -5719,8 +5725,8 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
     )
 
 
-async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('openai/gpt-oss-120b')
     agent = Agent(
         m,
         instructions='Be concise. Never use pretty double quotes, just regular ones.',
@@ -5816,8 +5822,8 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
     )
 
 
-async def test_tool_use_failed_error_streaming_with_text(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+async def test_tool_use_failed_error_streaming_with_text(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('openai/gpt-oss-120b')
     agent = Agent(
         m,
         instructions='Be concise. Never use pretty double quotes, just regular ones.',
@@ -5927,8 +5933,8 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
     )
 
 
-async def test_tool_regular_error(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('non-existent', provider=GroqProvider(api_key=groq_api_key))
+async def test_tool_regular_error(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('non-existent')
     agent = Agent(m)
 
     with pytest.raises(
@@ -5937,8 +5943,8 @@ async def test_tool_regular_error(allow_model_requests: None, groq_api_key: str)
         await agent.run('hello')
 
 
-async def test_groq_native_output(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+async def test_groq_native_output(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('openai/gpt-oss-120b')
 
     class CityLocation(BaseModel):
         """A city and its country."""
@@ -5989,8 +5995,8 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
     )
 
 
-async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: str):
-    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+async def test_groq_prompted_output(allow_model_requests: None, groq_model: GroqModelFactory):
+    m = groq_model('openai/gpt-oss-120b')
 
     class CityLocation(BaseModel):
         city: str

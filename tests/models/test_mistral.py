@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
@@ -69,10 +69,12 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.mistral import MistralProvider
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     MockChatCompletion = MistralChatCompletionResponse | Exception
     MockCompletionEvent = MistralCompletionEvent | Exception
+
+    MistralModelFactory = Callable[..., MistralModel]
+    OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral or openai not installed'),
@@ -197,6 +199,8 @@ def func_chunk(
 
 
 def test_init():
+    # provider-init unit test; the provider/client/api-key is the assertion target
+    # ast-grep-ignore: prefer-model-factory
     provider = MistralProvider(api_key='foobar')
     m = MistralModel('mistral-large-latest', provider=provider)
     assert m.client is provider.client
@@ -1962,6 +1966,8 @@ def test_generate_user_output_format_complex(mistral_api_key: str):
             'prop_unrecognized_type': {'type': 'customSomething'},
         }
     }
+    # constructs with model-level `json_mode_schema_prompt=` the factory doesn't forward
+    # ast-grep-ignore: prefer-model-factory
     m = MistralModel('', json_mode_schema_prompt='{schema}', provider=MistralProvider(api_key=mistral_api_key))
     result = m._generate_user_output_format([schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == (
@@ -1979,6 +1985,8 @@ def test_generate_user_output_format_complex(mistral_api_key: str):
 
 def test_generate_user_output_format_multiple(mistral_api_key: str):
     schema = {'properties': {'prop_anyOf': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}}}
+    # constructs with model-level `json_mode_schema_prompt=` the factory doesn't forward
+    # ast-grep-ignore: prefer-model-factory
     m = MistralModel('', json_mode_schema_prompt='{schema}', provider=MistralProvider(api_key=mistral_api_key))
     result = m._generate_user_output_format([schema, schema])  # pyright: ignore[reportPrivateUsage]
     assert result.content == "[{'prop_anyOf': 'Optional[str]'}, {'prop_anyOf': 'Optional[str]'}]"
@@ -2078,9 +2086,9 @@ def test_validate_required_json_schema(desc: str, schema: dict[str, Any], data: 
 
 @pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
-    allow_model_requests: None, mistral_api_key: str, image_content: BinaryContent
+    allow_model_requests: None, mistral_model: MistralModelFactory, image_content: BinaryContent
 ):
-    m = MistralModel('pixtral-12b-latest', provider=MistralProvider(api_key=mistral_api_key))
+    m = mistral_model('pixtral-12b-latest')
     agent = Agent(m)
 
     @agent.tool_plain
@@ -2464,8 +2472,12 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
 
 
 @pytest.mark.vcr()
-async def test_mistral_model_thinking_part(allow_model_requests: None, openai_api_key: str, mistral_api_key: str):
-    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_mistral_model_thinking_part(
+    allow_model_requests: None,
+    openai_responses_model: OpenAIResponsesModelFactory,
+    mistral_model: MistralModelFactory,
+):
+    openai_model = openai_responses_model('o3-mini')
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
     agent = Agent(openai_model, model_settings=settings)
 
@@ -2519,10 +2531,10 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
         ]
     )
 
-    mistral_model = MistralModel('magistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
+    mistral = mistral_model('magistral-medium-latest')
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
-        model=mistral_model,
+        model=mistral,
         message_history=result.all_messages(),
     )
     assert result.new_messages() == snapshot(
@@ -2562,8 +2574,8 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
 
 
 @pytest.mark.vcr()
-async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mistral_api_key: str):
-    model = MistralModel('magistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
+async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mistral_model: MistralModelFactory):
+    model = mistral_model('magistral-medium-latest')
     agent = Agent(model)
 
     async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
@@ -2636,6 +2648,8 @@ async def test_image_url_force_download() -> None:
     """Test that force_download=True calls download_item for ImageUrl in MistralModel."""
     from unittest.mock import AsyncMock, patch
 
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -2672,6 +2686,8 @@ async def test_image_url_no_force_download() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in MistralModel."""
     from unittest.mock import AsyncMock, patch
 
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -2701,6 +2717,8 @@ async def test_document_url_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl PDF in MistralModel."""
     from unittest.mock import AsyncMock, patch
 
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:
@@ -2737,6 +2755,8 @@ async def test_document_url_no_force_download() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl PDF in MistralModel."""
     from unittest.mock import AsyncMock, patch
 
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.mistral.download_item', new_callable=AsyncMock) as mock_download:

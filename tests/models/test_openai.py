@@ -105,6 +105,8 @@ with try_import() as imports_successful:
     MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
 
     GoogleModelFactory = Callable[..., GoogleModel]
+    OpenAIChatModelFactory = Callable[..., OpenAIChatModel]
+    OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -114,6 +116,8 @@ pytestmark = [
 
 
 def test_init():
+    # provider-init unit test; the provider/client/api-key is the assertion target
+    # ast-grep-ignore: prefer-model-factory
     provider = OpenAIProvider(api_key='foobar')
     m = OpenAIChatModel('gpt-4o', provider=provider)
     assert m.base_url == 'https://api.openai.com/v1/'
@@ -988,8 +992,8 @@ async def test_merge_leading_system_messages_disabled_by_default(allow_model_req
     ]
 
 
-async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIChatModel('o1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    model = openai_chat_model('o1-mini')
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
     result = await agent.run("What's the capital of France?")
@@ -999,7 +1003,12 @@ async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api
 async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None, openai_api_key: str):
     profile = ModelProfile(supports_tools=False)
     model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role='user'
+        'o1-mini',
+        profile=profile,
+        # constructs with deprecated `system_prompt_role=` the factory doesn't forward
+        # ast-grep-ignore: prefer-model-factory
+        provider=OpenAIProvider(api_key=openai_api_key),
+        system_prompt_role='user',
     )
     profile = OpenAIModelProfile.from_profile(model.profile)
     assert profile.openai_system_prompt_role == 'user'
@@ -1013,7 +1022,11 @@ async def test_openai_o1_mini_system_role(
     openai_api_key: str,
 ) -> None:
     model = OpenAIChatModel(  # type: ignore[reportDeprecated]
-        'o1-mini', provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role=system_prompt_role
+        'o1-mini',
+        # constructs with deprecated `system_prompt_role=` the factory doesn't forward
+        # ast-grep-ignore: prefer-model-factory
+        provider=OpenAIProvider(api_key=openai_api_key),
+        system_prompt_role=system_prompt_role,
     )
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
 
@@ -1093,10 +1106,9 @@ async def test_image_url_input(allow_model_requests: None):
 
 
 async def test_image_url_input_force_download(
-    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory, disable_ssrf_protection_for_vcr: None
 ):
-    provider = OpenAIProvider(api_key=openai_api_key)
-    m = OpenAIChatModel('gpt-4.1-nano', provider=provider)
+    m = openai_chat_model('gpt-4.1-nano')
     agent = Agent(m)
 
     result = await agent.run(
@@ -1112,10 +1124,11 @@ async def test_image_url_input_force_download(
 
 
 async def test_image_url_input_force_download_response_api(
-    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+    allow_model_requests: None,
+    openai_responses_model: OpenAIResponsesModelFactory,
+    disable_ssrf_protection_for_vcr: None,
 ):
-    provider = OpenAIProvider(api_key=openai_api_key)
-    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    m = openai_responses_model('gpt-4.1-nano')
     agent = Agent(m)
 
     result = await agent.run(
@@ -1131,9 +1144,9 @@ async def test_image_url_input_force_download_response_api(
 
 
 async def test_openai_audio_url_input(
-    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory, disable_ssrf_protection_for_vcr: None
 ):
-    m = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o-audio-preview')
     agent = Agent(m)
 
     result = await agent.run(['Hello', AudioUrl(url='https://cdn.openai.com/API/docs/audio/alloy.wav')])
@@ -1158,9 +1171,9 @@ async def test_openai_audio_url_input(
 
 
 async def test_document_url_input(
-    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory, disable_ssrf_protection_for_vcr: None
 ):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
@@ -1169,10 +1182,11 @@ async def test_document_url_input(
     assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
 
 
-async def test_document_url_input_response_api(allow_model_requests: None, openai_api_key: str):
+async def test_document_url_input_response_api(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test DocumentUrl with Responses API sends URL directly (default behavior)."""
-    provider = OpenAIProvider(api_key=openai_api_key)
-    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    m = openai_responses_model('gpt-4.1-nano')
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
@@ -1182,11 +1196,12 @@ async def test_document_url_input_response_api(allow_model_requests: None, opena
 
 
 async def test_document_url_input_force_download_response_api(
-    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+    allow_model_requests: None,
+    openai_responses_model: OpenAIResponsesModelFactory,
+    disable_ssrf_protection_for_vcr: None,
 ):
     """Test DocumentUrl with force_download=True downloads and sends as file_data."""
-    provider = OpenAIProvider(api_key=openai_api_key)
-    m = OpenAIResponsesModel('gpt-4.1-nano', provider=provider)
+    m = openai_responses_model('gpt-4.1-nano')
     agent = Agent(m)
 
     document_url = DocumentUrl(
@@ -1200,6 +1215,8 @@ async def test_document_url_input_force_download_response_api(
 
 async def test_image_url_force_download_chat() -> None:
     """Test that force_download=True calls download_item for ImageUrl in OpenAIChatModel."""
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1233,6 +1250,8 @@ async def test_image_url_force_download_chat() -> None:
 
 async def test_image_url_no_force_download_chat() -> None:
     """Test that force_download=False does not call download_item for ImageUrl in OpenAIChatModel."""
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1260,6 +1279,8 @@ async def test_image_url_no_force_download_chat() -> None:
 
 async def test_document_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for DocumentUrl in OpenAIResponsesModel."""
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1293,6 +1314,8 @@ async def test_document_url_force_download_responses() -> None:
 
 async def test_document_url_no_force_download_responses() -> None:
     """Test that force_download=False does not call download_item for DocumentUrl in OpenAIResponsesModel."""
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1320,6 +1343,8 @@ async def test_document_url_no_force_download_responses() -> None:
 
 async def test_audio_url_force_download_responses() -> None:
     """Test that force_download=True calls download_item for AudioUrl in OpenAIResponsesModel."""
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIResponsesModel('gpt-4.5-nano', provider=OpenAIProvider(api_key='test-key'))
 
     with patch('pydantic_ai.models.openai.download_item', new_callable=AsyncMock) as mock_download:
@@ -1352,8 +1377,8 @@ async def test_audio_url_force_download_responses() -> None:
 
 
 @pytest.mark.vcr()
-async def test_image_url_tool_response(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_image_url_tool_response(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1444,9 +1469,9 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
 
 
 async def test_image_as_binary_content_input(
-    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+    allow_model_requests: None, image_content: BinaryContent, openai_chat_model: OpenAIChatModelFactory
 ):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
 
     result = await agent.run(['What fruit is in the image?', image_content])
@@ -1454,9 +1479,9 @@ async def test_image_as_binary_content_input(
 
 
 async def test_audio_as_binary_content_input(
-    allow_model_requests: None, audio_content: BinaryContent, openai_api_key: str
+    allow_model_requests: None, audio_content: BinaryContent, openai_chat_model: OpenAIChatModelFactory
 ):
-    m = OpenAIChatModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o-audio-preview')
     agent = Agent(m)
 
     result = await agent.run(['Whose name is mentioned in the audio?', audio_content])
@@ -1479,9 +1504,9 @@ async def test_audio_as_binary_content_input(
 
 
 async def test_document_as_binary_content_input(
-    allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
+    allow_model_requests: None, document_content: BinaryContent, openai_chat_model: OpenAIChatModelFactory
 ):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
 
     result = await agent.run(['What is the main content on this document?', document_content])
@@ -1489,9 +1514,9 @@ async def test_document_as_binary_content_input(
 
 
 async def test_text_document_url_input(
-    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory, disable_ssrf_protection_for_vcr: None
 ):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://www.w3.org/TR/2003/REC-PNG-20031110/iso_8859-1.txt')
@@ -1503,9 +1528,9 @@ async def test_text_document_url_input(
 
 
 async def test_text_document_as_binary_content_input(
-    allow_model_requests: None, text_document_content: BinaryContent, openai_api_key: str
+    allow_model_requests: None, text_document_content: BinaryContent, openai_chat_model: OpenAIChatModelFactory
 ):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
 
     result = await agent.run(['What is the main content on this document?', text_document_content])
@@ -1514,11 +1539,13 @@ async def test_text_document_as_binary_content_input(
     )
 
 
-async def test_yaml_document_as_binary_content_input(allow_model_requests: None, openai_api_key: str):
+async def test_yaml_document_as_binary_content_input(
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory
+):
     yaml_content = BinaryContent(
         data=b'version: "3"\nservices:\n  web:\n    image: nginx', media_type='application/yaml'
     )
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
 
     result = await agent.run(['What type of configuration is this?', yaml_content])
@@ -1573,9 +1600,11 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
     )
 
 
-async def test_x_yaml_document_as_binary_content_input(allow_model_requests: None, openai_api_key: str):
+async def test_x_yaml_document_as_binary_content_input(
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory
+):
     x_yaml_content = BinaryContent(data=b'name: test\nversion: 1.0.0', media_type='application/x-yaml')
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
 
     result = await agent.run(['What does this YAML describe?', x_yaml_content])
@@ -1647,10 +1676,10 @@ Each of these interpretations would depend on the broader context in which this 
 
 
 async def test_yaml_document_url_input(
-    allow_model_requests: None, openai_api_key: str, disable_ssrf_protection_for_vcr: None
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory, disable_ssrf_protection_for_vcr: None
 ):
     """Test that YAML files are treated as text-like and get inlined (not sent as file attachments)."""
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
     document_url = DocumentUrl(url='https://raw.githubusercontent.com/pydantic/pydantic-ai/main/mkdocs.yml')
 
@@ -1713,6 +1742,8 @@ def test_is_text_like_media_type():
 
 
 async def test_video_url_not_supported(allow_model_requests: None):
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     agent = Agent(m)
     with pytest.raises(NotImplementedError, match='VideoUrl is not supported in OpenAI Chat Completions user prompts'):
@@ -1738,6 +1769,8 @@ async def test_document_input_not_supported(
 ) -> None:
     m = OpenAIChatModel(
         'gpt-4o',
+        # constructs with model-level `profile=` the factory doesn't forward
+        # ast-grep-ignore: prefer-model-factory
         provider=OpenAIProvider(api_key='test'),
         profile=OpenAIModelProfile(openai_chat_supports_document_input=False),
     )
@@ -1751,9 +1784,9 @@ async def test_document_input_not_supported(
 
 
 async def test_document_as_binary_content_input_with_tool(
-    allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
+    allow_model_requests: None, document_content: BinaryContent, openai_chat_model: OpenAIChatModelFactory
 ):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m)
 
     @agent.tool_plain
@@ -1869,6 +1902,8 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
 
 
 async def test_text_content_input(allow_model_requests: None):
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
     res = await m._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
         part=UserPromptPart(content=['hello', TextContent(content='world', metadata={'id': 1})])
@@ -1924,8 +1959,10 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
 
 
 @pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])
-async def test_max_completion_tokens(allow_model_requests: None, model_name: str, openai_api_key: str):
-    m = OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
+async def test_max_completion_tokens(
+    allow_model_requests: None, model_name: str, openai_chat_model: OpenAIChatModelFactory
+):
+    m = openai_chat_model(model_name)
     agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
 
     result = await agent.run('hello')
@@ -1933,10 +1970,10 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
 
 
 async def test_multiple_agent_tool_calls(
-    allow_model_requests: None, google_model: GoogleModelFactory, openai_api_key: str
+    allow_model_requests: None, google_model: GoogleModelFactory, openai_chat_model: OpenAIChatModelFactory
 ):
     gemini_model = google_model('gemini-2.0-flash-exp')
-    openai_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    openai_model = openai_chat_model('gpt-4o-mini')
 
     agent = Agent(model=gemini_model)
 
@@ -1963,10 +2000,12 @@ async def test_multiple_agent_tool_calls(
     assert result.output == snapshot('The capital of England is London.')
 
 
-async def test_message_history_can_start_with_model_response(allow_model_requests: None, openai_api_key: str):
+async def test_message_history_can_start_with_model_response(
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory
+):
     """Test that an agent run with message_history starting with ModelResponse is executed correctly."""
 
-    openai_model = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    openai_model = openai_chat_model('gpt-4.1-mini')
 
     message_history = [ModelResponse(parts=[TextPart('Where do you want to go today?')])]
 
@@ -2021,9 +2060,9 @@ async def test_message_history_can_start_with_model_response(allow_model_request
     )
 
 
-async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
+async def test_extra_headers(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m, model_settings=OpenAIChatModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
     await agent.run('hello')
 
@@ -2058,10 +2097,10 @@ async def test_openai_store_true(allow_model_requests: None):
     assert kwargs.get('store') is True
 
 
-async def test_user_id(allow_model_requests: None, openai_api_key: str):
+async def test_user_id(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
     # This test doesn't do anything, it's just here to ensure that calls with `user` don't cause errors, including type.
     # Since we use VCR, creating tests with an `httpx.Transport` is not possible.
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m, model_settings=OpenAIChatModelSettings(openai_user='user_id'))
     await agent.run('hello')
 
@@ -2870,8 +2909,8 @@ def test_native_output_strict_mode(allow_model_requests: None):
     assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is False
 
 
-async def test_openai_instructions(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_instructions(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('gpt-4o')
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run('What is the capital of France?')
@@ -2913,8 +2952,10 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
     )
 
 
-async def test_openai_model_without_system_prompt(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_model_without_system_prompt(
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory
+):
+    m = openai_chat_model('o3-mini')
     agent = Agent(m, system_prompt='You are a potato.')
     result = await agent.run()
     assert result.output == snapshot(
@@ -2922,8 +2963,10 @@ async def test_openai_model_without_system_prompt(allow_model_requests: None, op
     )
 
 
-async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_instructions_with_tool_calls_keep_instructions(
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory
+):
+    m = openai_chat_model('gpt-4.1-mini')
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     @agent.tool_plain
@@ -3005,9 +3048,12 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
     )
 
 
-async def test_openai_model_thinking_part(allow_model_requests: None, openai_api_key: str):
-    provider = OpenAIProvider(api_key=openai_api_key)
-    responses_model = OpenAIResponsesModel('o3-mini', provider=provider)
+async def test_openai_model_thinking_part(
+    allow_model_requests: None,
+    openai_chat_model: OpenAIChatModelFactory,
+    openai_responses_model: OpenAIResponsesModelFactory,
+):
+    responses_model = openai_responses_model('o3-mini')
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
     agent = Agent(responses_model, model_settings=settings)
 
@@ -3058,7 +3104,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
 
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
-        model=OpenAIChatModel('o3-mini', provider=provider),
+        model=openai_chat_model('o3-mini'),
         message_history=result.all_messages(),
     )
     assert result.new_messages() == snapshot(
@@ -3139,11 +3185,10 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
     ]
 
 
-async def test_openai_instructions_with_responses_logprobs(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel(
-        'gpt-4o-mini',
-        provider=OpenAIProvider(api_key=openai_api_key),
-    )
+async def test_openai_instructions_with_responses_logprobs(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-4o-mini')
     agent = Agent(m, instructions='You are a helpful assistant.')
     result = await agent.run(
         'What is the capital of Minas Gerais?',
@@ -3173,11 +3218,10 @@ async def test_openai_instructions_with_responses_logprobs(allow_model_requests:
     ]
 
 
-async def test_openai_instructions_with_responses_logprobs_streaming(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel(
-        'gpt-4o-mini',
-        provider=OpenAIProvider(api_key=openai_api_key),
-    )
+async def test_openai_instructions_with_responses_logprobs_streaming(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-4o-mini')
     agent = Agent(m, instructions='You are a helpful assistant.')
     events = [
         event
@@ -3211,8 +3255,10 @@ async def test_openai_instructions_with_responses_logprobs_streaming(allow_model
     assert cast(Any, part_end_events[0].part).provider_details['logprobs'] == first_logprob
 
 
-async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_web_search_tool_model_not_supported(
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory
+):
+    m = openai_chat_model('gpt-4o')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -3226,8 +3272,8 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         await agent.run('What day is today?')
 
 
-async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_web_search_tool(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('gpt-4o-search-preview')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -3238,8 +3284,10 @@ async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key
     assert result.output == snapshot('May 14, 2025, 8:51:29 AM ')
 
 
-async def test_openai_web_search_tool_with_user_location(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_web_search_tool_with_user_location(
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory
+):
+    m = openai_chat_model('gpt-4o-search-preview')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -3265,8 +3313,8 @@ Dagvoorspelling:
 """)
 
 
-async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('o3-mini')
     agent = Agent(m, model_settings=OpenAIChatModelSettings(temperature=0.5))
     with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
         result = await agent.run('What is the capital of Mexico?')
@@ -3276,6 +3324,8 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
 
 
 def test_openai_model_profile():
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
     assert isinstance(m.profile, OpenAIModelProfile)
 
@@ -3283,6 +3333,8 @@ def test_openai_model_profile():
 def test_openai_model_profile_custom():
     m = OpenAIChatModel(
         'gpt-4o',
+        # constructs with model-level `profile=` the factory doesn't forward
+        # ast-grep-ignore: prefer-model-factory
         provider=OpenAIProvider(api_key='foobar'),
         profile=ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer),
     )
@@ -3291,6 +3343,8 @@ def test_openai_model_profile_custom():
 
     m = OpenAIChatModel(
         'gpt-4o',
+        # constructs with model-level `profile=` the factory doesn't forward
+        # ast-grep-ignore: prefer-model-factory
         provider=OpenAIProvider(api_key='foobar'),
         profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False),
     )
@@ -3302,10 +3356,14 @@ def test_openai_model_profile_function():
     def model_profile(model_name: str) -> ModelProfile:
         return ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer if model_name == 'gpt-4o' else None)
 
+    # constructs with model-level `profile=` the factory doesn't forward
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
     assert isinstance(m.profile, ModelProfile)
     assert m.profile.json_schema_transformer is InlineDefsJsonSchemaTransformer
 
+    # constructs with model-level `profile=` the factory doesn't forward
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key='foobar'), profile=model_profile)
     assert isinstance(m.profile, ModelProfile)
     assert m.profile.json_schema_transformer is None
@@ -3337,6 +3395,8 @@ def test_model_profile_strict_not_supported():
         strict=True,
     )
 
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
     tool_param = m._map_tool_definition(my_tool, model_settings)  # type: ignore[reportPrivateUsage]
 
@@ -3355,6 +3415,8 @@ def test_model_profile_strict_not_supported():
     # Some models don't support strict tool definitions
     m = OpenAIChatModel(
         'gpt-4o',
+        # constructs with model-level `profile=` the factory doesn't forward
+        # ast-grep-ignore: prefer-model-factory
         provider=OpenAIProvider(api_key='foobar'),
         profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(openai_model_profile('gpt-4o')),
     )
@@ -3414,8 +3476,8 @@ def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
     )
 
 
-async def test_openai_tool_output(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_tool_output(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('gpt-4o')
 
     class CityLocation(BaseModel):
         city: str
@@ -3529,8 +3591,8 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
     )
 
 
-async def test_openai_text_output_function(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_text_output_function(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('gpt-4o')
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -3626,8 +3688,8 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
     )
 
 
-async def test_openai_native_output(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_native_output(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('gpt-4o')
 
     class CityLocation(BaseModel):
         """A city and its country."""
@@ -3726,8 +3788,10 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
     )
 
 
-async def test_openai_responses_native_output_decimal_strict(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_native_output_decimal_strict(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-5.4-mini')
 
     class Payment(BaseModel):
         amount: Decimal
@@ -3738,8 +3802,8 @@ async def test_openai_responses_native_output_decimal_strict(allow_model_request
     assert result.output == snapshot(Payment(amount=Decimal('12.34')))
 
 
-async def test_openai_native_output_multiple(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_native_output_multiple(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('gpt-4o')
 
     class CityLocation(BaseModel):
         city: str
@@ -3844,8 +3908,8 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
     )
 
 
-async def test_openai_prompted_output(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_prompted_output(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('gpt-4o')
 
     class CityLocation(BaseModel):
         city: str
@@ -3942,8 +4006,8 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
     )
 
 
-async def test_openai_prompted_output_multiple(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_prompted_output_multiple(allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory):
+    m = openai_chat_model('gpt-4o')
 
     class CityLocation(BaseModel):
         city: str
@@ -4241,8 +4305,10 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
-async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_model_settings_temperature_ignored_on_gpt_5(
+    allow_model_requests: None, openai_chat_model: OpenAIChatModelFactory
+):
+    m = openai_chat_model('gpt-5')
     agent = Agent(m)
 
     with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
@@ -4287,6 +4353,8 @@ async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_mod
 
 
 async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
+    # generic OpenAIChatModel against the Cerebras endpoint; cross-provider interop, not the dedicated CerebrasModel factory
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)
 
@@ -4299,6 +4367,8 @@ async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests:
         city: str
         country: str
 
+    # generic OpenAIChatModel against the Cerebras endpoint; cross-provider interop, not the dedicated CerebrasModel factory
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('qwen-3-coder-480b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m, output_type=Location)
 
@@ -4307,6 +4377,8 @@ async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests:
 
 
 async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None, cerebras_api_key: str):
+    # generic OpenAIChatModel against the Cerebras endpoint; cross-provider interop, not the dedicated CerebrasModel factory
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIChatModel('gpt-oss-120b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(m)
 
@@ -4318,6 +4390,8 @@ def test_deprecated_openai_model(openai_api_key: str):
     with pytest.warns(DeprecationWarning):
         from pydantic_ai.models.openai import OpenAIModel  # type: ignore[reportDeprecated]
 
+        # decoupled provider feeds the deprecated `OpenAIModel` alias under test; the factory builds the non-deprecated class
+        # ast-grep-ignore: prefer-model-factory
         provider = OpenAIProvider(api_key=openai_api_key)
         OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
 
@@ -4340,6 +4414,8 @@ async def test_cache_point_filtering(allow_model_requests: None):
 
 async def test_cache_point_filtering_responses_model():
     """Test that CachePoint is filtered out in OpenAI Responses API requests."""
+    # non-VCR unit test with a fixed key; exercises internals without a recorded request
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='test-key'))
 
     # Test the instance method directly to ensure CachePoint filtering

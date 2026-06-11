@@ -121,6 +121,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
     GoogleModelFactory = Callable[..., GoogleModel]
+    OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -1929,6 +1930,8 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
 async def test_google_model_thinking_part_from_other_model(
     allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
 ):
+    # cross-model test in the google suite builds an OpenAIResponsesModel; the openai factory fixture isn't reachable here
+    # ast-grep-ignore: prefer-model-factory
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-5', provider=provider)
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
@@ -4929,9 +4932,9 @@ async def test_map_user_prompt_with_text_content(mocker: MockerFixture, google_m
 
 
 async def test_thinking_with_tool_calls_from_other_model(
-    allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
+    allow_model_requests: None, google_provider: GoogleProvider, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    openai_model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    openai_model = openai_responses_model('gpt-5')
 
     class CityLocation(BaseModel):
         city: str

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -52,7 +52,14 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.providers.cohere import CohereProvider
 
+    CohereModelFactory = Callable[..., CohereModel]
+
     MockChatResponse = ChatResponse | Exception
+
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+
+    OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
@@ -61,6 +68,8 @@ pytestmark = [
 
 
 def test_init():
+    # provider-init unit test; the provider/client/api-key is the assertion target
+    # ast-grep-ignore: prefer-model-factory
     provider = CohereProvider(api_key='foobar')
     m = CohereModel('command-r7b-12-2024', provider=provider)
     assert m.client is provider.client
@@ -501,16 +510,16 @@ def test_model_non_http_error(allow_model_requests: None) -> None:
 
 
 @pytest.mark.vcr()
-async def test_request_simple_success_with_vcr(allow_model_requests: None, co_api_key: str):
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+async def test_request_simple_success_with_vcr(allow_model_requests: None, cohere_model: CohereModelFactory):
+    m = cohere_model('command-r7b-12-2024')
     agent = Agent(m)
     result = await agent.run('hello')
     assert result.output == snapshot('Hello! How can I assist you today?')
 
 
 @pytest.mark.vcr()
-async def test_cohere_model_instructions(allow_model_requests: None, co_api_key: str):
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+async def test_cohere_model_instructions(allow_model_requests: None, cohere_model: CohereModelFactory):
+    m = cohere_model('command-r7b-12-2024')
 
     def simple_instructions(ctx: RunContext):
         return 'You are a helpful assistant.'
@@ -550,16 +559,17 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
 
 
 @pytest.mark.vcr()
-async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key: str, openai_api_key: str):
+async def test_cohere_model_thinking_part(
+    allow_model_requests: None, cohere_model: CohereModelFactory, openai_responses_model: OpenAIResponsesModelFactory
+):
     with try_import() as imports_successful:
-        from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-        from pydantic_ai.providers.openai import OpenAIProvider
+        from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
     if not imports_successful():  # pragma: no cover
         pytest.skip('OpenAI is not installed')
 
-    openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    co_model = CohereModel('command-a-reasoning-08-2025', provider=CohereProvider(api_key=co_api_key))
+    openai_model = openai_responses_model('o3-mini')
+    co_model = cohere_model('command-a-reasoning-08-2025')
     agent = Agent(openai_model)
 
     # We call OpenAI to get the thinking parts, because Google disabled the thoughts in the API.
@@ -658,8 +668,8 @@ async def test_cohere_model_top_k(allow_model_requests: None):
     assert chat_kwargs['k'] == 50
 
 
-async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+async def test_cohere_model_builtin_tools(allow_model_requests: None, cohere_model: CohereModelFactory):
+    m = cohere_model('command-r7b-12-2024')
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
     with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('Hello')

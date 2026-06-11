@@ -144,6 +144,7 @@ with try_import() as imports_successful:
     MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
     AnthropicModelFactory = Callable[..., AnthropicModel]
+    OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
 
 with try_import() as google_imports_successful:
     from pydantic_ai.models.google import GoogleModel
@@ -3385,6 +3386,8 @@ I'm Claude, an AI assistant created by Anthropic to be helpful, harmless, and ho
 async def test_anthropic_model_thinking_part_from_other_model(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, openai_api_key: str
 ):
+    # cross-model test in the anthropic suite builds an OpenAIResponsesModel; the openai factory fixture isn't reachable here
+    # ast-grep-ignore: prefer-model-factory
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-5', provider=provider)
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
@@ -8047,12 +8050,11 @@ async def test_anthropic_code_execution_tool_version_setting(
 
 
 async def test_anthropic_server_tool_pass_history_to_another_provider(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, openai_api_key: str
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    openai_responses_model: OpenAIResponsesModelFactory,
 ):
-    from pydantic_ai.models.openai import OpenAIResponsesModel
-    from pydantic_ai.providers.openai import OpenAIProvider
-
-    openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    openai_model = openai_responses_model('gpt-4.1')
     anthropic = anthropic_model('claude-sonnet-4-5')
     agent = Agent(anthropic, capabilities=[NativeTool(WebSearchTool())])
 

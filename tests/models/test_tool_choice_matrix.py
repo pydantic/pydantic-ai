@@ -159,16 +159,24 @@ def create_model(
 ) -> Model:
     model_name = MODEL_CONFIGS[provider][0]
     if provider == 'openai':
+        # `create_model` is a module-level cross-provider dispatch helper; a plain function can't receive fixtures
+        # ast-grep-ignore: prefer-model-factory
         return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
     elif provider == 'openai_responses':
+        # `create_model` is a module-level cross-provider dispatch helper; a plain function can't receive fixtures
+        # ast-grep-ignore: prefer-model-factory
         return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
     elif provider == 'anthropic':
         # cross-provider helper dispatching over an api_keys dict; a plain function, not a pytest fixture, so it can't use the `*_model` factory fixtures
         # ast-grep-ignore: prefer-model-factory
         return AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_keys['anthropic']))
     elif provider == 'groq':
+        # `create_model` is a module-level cross-provider dispatch helper; a plain function can't receive fixtures
+        # ast-grep-ignore: prefer-model-factory
         return GroqModel(model_name, provider=GroqProvider(api_key=api_keys['groq']))
     elif provider == 'mistral':
+        # `create_model` is a module-level cross-provider dispatch helper; a plain function can't receive fixtures
+        # ast-grep-ignore: prefer-model-factory
         return MistralModel(model_name, provider=MistralProvider(api_key=api_keys['mistral']))
     elif provider == 'google':
         # cross-provider helper dispatching over an api_keys dict; a plain function, not a pytest fixture, so it can't use the `*_model` factory fixtures

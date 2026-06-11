@@ -89,6 +89,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
     AnthropicModelFactory = Callable[..., AnthropicModel]
+    OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -133,8 +134,10 @@ def test_openai_responses_model(env: TestEnv):
     assert model.client.api_key == 'test'
 
 
-async def test_openai_responses_model_simple_response(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_model_simple_response(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-4o')
     agent = Agent(model=model)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
@@ -404,8 +407,10 @@ async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_m
     )
 
 
-async def test_openai_responses_model_simple_response_with_tool_call(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_model_simple_response_with_tool_call(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-4o')
 
     agent = Agent(model=model)
 
@@ -417,8 +422,10 @@ async def test_openai_responses_model_simple_response_with_tool_call(allow_model
     assert result.output == snapshot('The capital of PotatoLand is Potato City.')
 
 
-async def test_openai_responses_output_type(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_output_type(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-4o')
 
     class MyOutput(TypedDict):
         name: str
@@ -429,8 +436,10 @@ async def test_openai_responses_output_type(allow_model_requests: None, openai_a
     assert result.output == snapshot({'name': 'Brazil', 'age': 2023})
 
 
-async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_reasoning_effort(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('o3-mini')
     agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_effort='low'))
     result = await agent.run(
         'Explain me how to cook uruguayan alfajor. Do not send whitespaces at the end of the lines.'
@@ -476,8 +485,10 @@ async def test_openai_responses_reasoning_effort(allow_model_requests: None, ope
     )
 
 
-async def test_openai_responses_reasoning_generate_summary(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('computer-use-preview', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_reasoning_generate_summary(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('computer-use-preview')
     agent = Agent(
         model=model,
         model_settings=OpenAIResponsesModelSettings(
@@ -500,15 +511,19 @@ Always follow local traffic rules and be cautious, even when crossing at a cross
 """)
 
 
-async def test_openai_responses_system_prompt(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_system_prompt(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-4o')
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
 
 
-async def test_openai_responses_model_retry(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_model_retry(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-4o')
     agent = Agent(model=model)
 
     @agent.tool_plain
@@ -613,9 +628,9 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
 
 
 async def test_image_as_binary_content_input(
-    allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
+    allow_model_requests: None, image_content: BinaryContent, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_responses_model('gpt-4o')
     agent = Agent(m)
 
     result = await agent.run(['What fruit is in the image?', image_content])
@@ -623,9 +638,9 @@ async def test_image_as_binary_content_input(
 
 
 async def test_openai_responses_audio_as_binary_content_input(
-    allow_model_requests: None, audio_content: BinaryContent, openai_api_key: str
+    allow_model_requests: None, audio_content: BinaryContent, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_responses_model('gpt-4o')
     agent = Agent(m)
 
     with pytest.raises(NotImplementedError):
@@ -633,17 +648,19 @@ async def test_openai_responses_audio_as_binary_content_input(
 
 
 async def test_openai_responses_document_as_binary_content_input(
-    allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
+    allow_model_requests: None, document_content: BinaryContent, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_responses_model('gpt-4o')
     agent = Agent(m)
 
     result = await agent.run(['What is in the document?', document_content])
     assert result.output == snapshot('The document contains the text "Dummy PDF file."')
 
 
-async def test_openai_responses_document_url_input(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_document_url_input(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-4o')
     agent = Agent(m)
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
@@ -654,8 +671,10 @@ async def test_openai_responses_document_url_input(allow_model_requests: None, o
     )
 
 
-async def test_openai_responses_text_document_url_input(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_text_document_url_input(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-4o')
     agent = Agent(m)
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
@@ -666,8 +685,10 @@ async def test_openai_responses_text_document_url_input(allow_model_requests: No
     )
 
 
-async def test_openai_responses_image_url_input(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_image_url_input(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-4o')
     agent = Agent(m)
 
     result = await agent.run(
@@ -679,8 +700,8 @@ async def test_openai_responses_image_url_input(allow_model_requests: None, open
     assert result.output == snapshot("Hello! I see you've shared an image of a potato. How can I assist you today?")
 
 
-async def test_openai_responses_stream(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_stream(allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory):
+    model = openai_responses_model('gpt-4o')
     agent = Agent(model=model)
 
     @agent.tool_plain
@@ -718,11 +739,13 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
     assert output_text == snapshot(['The capital of France is Paris.'])
 
 
-async def test_openai_include_raw_annotations_streaming(allow_model_requests: None, openai_api_key: str):
+async def test_openai_include_raw_annotations_streaming(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     prompt = 'What is the tallest mountain in Alberta? Provide one sentence with a citation.'
     instructions = 'Use web search and include citations in your answer.'
 
-    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5.2')
     agent = Agent(model, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
 
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
@@ -750,7 +773,7 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
         }
     )
 
-    model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    model2 = openai_responses_model('gpt-5.2')
     agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
     events2 = [event async for event in agent2.run_stream_events(prompt)]
     assert not any(
@@ -769,7 +792,7 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
         for event in events2
     )
 
-    model3 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    model3 = openai_responses_model('gpt-5.2')
     agent3 = Agent(model3, instructions='Answer directly.')
     settings3 = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
     events3 = [event async for event in agent3.run_stream_events('What is 2+2?', model_settings=settings3)]
@@ -790,9 +813,11 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     )
 
 
-async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_model_http_error(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Set temperature to -1 to trigger an error, given only values between 0 and 1 are allowed."""
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4o')
     agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(temperature=-1))
 
     with pytest.raises(ModelHTTPError):
@@ -800,8 +825,10 @@ async def test_openai_responses_model_http_error(allow_model_requests: None, ope
             ...  # pragma: lax no cover
 
 
-async def test_openai_responses_model_builtin_tools_web_search(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_model_builtin_tools_web_search(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-5')
     settings = OpenAIResponsesModelSettings(openai_native_tools=[{'type': 'web_search'}])
     agent = Agent(model=model, model_settings=settings)
     result = await agent.run('Give me the top 3 news in the world today')
@@ -982,8 +1009,10 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
     )
 
 
-async def test_openai_responses_model_instructions(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_model_instructions(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-4o')
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run('What is the capital of France?')
@@ -1022,8 +1051,10 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
     )
 
 
-async def test_openai_responses_model_web_search_tool(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_model_web_search_tool(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-5')
     agent = Agent(m, instructions='You are a helpful assistant.', capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What is the weather in San Francisco today?')
@@ -1165,9 +1196,9 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
 
 
 async def test_openai_responses_model_web_search_tool_with_user_location(
-    allow_model_requests: None, openai_api_key: str
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_responses_model('gpt-5')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -1245,9 +1276,9 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
 
 
 async def test_openai_responses_model_web_search_tool_with_allowed_domains(
-    allow_model_requests: None, openai_api_key: str
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_responses_model('gpt-5')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -1394,9 +1425,9 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
 
 
 async def test_openai_responses_model_web_search_tool_with_invalid_region(
-    allow_model_requests: None, openai_api_key: str
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    m = openai_responses_model('gpt-5')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -1472,8 +1503,10 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
     )
 
 
-async def test_openai_responses_model_web_search_tool_stream(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_model_web_search_tool_stream(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-5')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -1938,6 +1971,8 @@ def test_model_profile_strict_not_supported():
         strict=True,
     )
 
+    # provider-init unit test; the provider/client/api-key is the assertion target
+    # ast-grep-ignore: prefer-model-factory
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
     tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
@@ -1954,6 +1989,8 @@ def test_model_profile_strict_not_supported():
     # Some models don't support strict tool definitions
     m = OpenAIResponsesModel(
         'gpt-4o',
+        # constructs with model-level `profile=` the factory doesn't forward
+        # ast-grep-ignore: prefer-model-factory
         provider=OpenAIProvider(api_key='foobar'),
         profile=replace(openai_model_profile('gpt-4o'), openai_supports_strict_tool_definition=False),
     )
@@ -1970,8 +2007,10 @@ def test_model_profile_strict_not_supported():
     )
 
 
-async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_reasoning_model_with_temperature(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('o3-mini')
     agent = Agent(m, model_settings=OpenAIResponsesModelSettings(temperature=0.5))
     with pytest.warns(UserWarning, match='Sampling parameters.*temperature.*not supported when reasoning is enabled'):
         result = await agent.run('What is the capital of Mexico?')
@@ -1980,15 +2019,15 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
     )
 
 
-async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-5-pro', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_gpt5_pro(allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory):
+    m = openai_responses_model('gpt-5-pro')
     agent = Agent(m)
     result = await agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('Mexico City (Ciudad de México).')
 
 
-async def test_tool_output(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_tool_output(allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory):
+    m = openai_responses_model('gpt-4o')
 
     class CityLocation(BaseModel):
         city: str
@@ -2094,8 +2133,8 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-async def test_text_output_function(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_text_output_function(allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory):
+    m = openai_responses_model('gpt-4o')
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -2185,8 +2224,8 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
     )
 
 
-async def test_native_output(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_native_output(allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory):
+    m = openai_responses_model('gpt-4o')
 
     class CityLocation(BaseModel):
         """A city and its country."""
@@ -2279,8 +2318,8 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-async def test_native_output_multiple(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_native_output_multiple(allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory):
+    m = openai_responses_model('gpt-4o')
 
     class CityLocation(BaseModel):
         city: str
@@ -2375,8 +2414,8 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
     )
 
 
-async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_prompted_output(allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory):
+    m = openai_responses_model('gpt-4o')
 
     class CityLocation(BaseModel):
         city: str
@@ -2467,8 +2506,10 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
     )
 
 
-async def test_prompted_output_multiple(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_prompted_output_multiple(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-4o')
 
     class CityLocation(BaseModel):
         city: str
@@ -2576,9 +2617,11 @@ async def test_openai_responses_verbosity(allow_model_requests: None, openai_api
     assert result.output == snapshot('4')
 
 
-async def test_openai_previous_response_id(allow_model_requests: None, openai_api_key: str):
+async def test_openai_previous_response_id(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test if previous responses are detected via previous_response_id in settings"""
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model)
     result = await agent.run('The secret key is sesame')
     settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # type: ignore
@@ -2586,7 +2629,9 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     assert result.output == snapshot('sesame')
 
 
-async def test_openai_previous_response_id_auto_mode(allow_model_requests: None, openai_api_key: str):
+async def test_openai_previous_response_id_auto_mode(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test if invalid previous response id is ignored when history contains non-OpenAI responses"""
     history = [
         ModelRequest(
@@ -2621,14 +2666,16 @@ async def test_openai_previous_response_id_auto_mode(allow_model_requests: None,
         ),
     ]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model)
     settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
     result = await agent.run('what is the first secret key', message_history=history, model_settings=settings)
     assert result.output == snapshot('sesame')
 
 
-async def test_openai_previous_response_id_mixed_model_history(allow_model_requests: None, openai_api_key: str):
+async def test_openai_previous_response_id_mixed_model_history(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test if invalid previous response id is ignored when history contains non-OpenAI responses"""
     history = [
         ModelRequest(
@@ -2655,7 +2702,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
         ),
     ]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # type: ignore
     assert not previous_response_id
     assert messages == snapshot(
@@ -2674,7 +2721,9 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
     )
 
 
-async def test_openai_previous_response_id_same_model_history(allow_model_requests: None, openai_api_key: str):
+async def test_openai_previous_response_id_same_model_history(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test if message history is trimmed when model responses are from same model"""
     history = [
         ModelRequest(
@@ -2716,7 +2765,7 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
         ),
     ]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # type: ignore
     assert previous_response_id == 'resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b'
     assert messages == snapshot(
@@ -2726,17 +2775,21 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     )
 
 
-async def test_openai_previous_response_id_concrete_seed_without_history(openai_api_key: str):
+async def test_openai_previous_response_id_concrete_seed_without_history(
+    openai_responses_model: OpenAIResponsesModelFactory,
+):
     """A concrete seed is used as-is when there is no prior response in the history."""
     history = [ModelRequest(parts=[UserPromptPart(content='Continue')])]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
     assert previous_response_id == 'resp_seed_from_prior_turn'
     assert messages is history
 
 
-async def test_openai_previous_response_id_concrete_seed_overridden_by_history(openai_api_key: str):
+async def test_openai_previous_response_id_concrete_seed_overridden_by_history(
+    openai_responses_model: OpenAIResponsesModelFactory,
+):
     """When the history contains a same-provider response, it overrides the concrete seed.
 
     Regression test for the retry/continuation bug in https://github.com/pydantic/pydantic-ai/issues/5113:
@@ -2754,7 +2807,7 @@ async def test_openai_previous_response_id_concrete_seed_overridden_by_history(o
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content='ok', tool_call_id='tc_1')]),
     ]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
     assert previous_response_id == 'resp_from_first_call'
     assert messages == snapshot(
@@ -2766,7 +2819,9 @@ async def test_openai_previous_response_id_concrete_seed_overridden_by_history(o
     )
 
 
-async def test_openai_previous_response_id_concrete_seed_with_mixed_provider_history(openai_api_key: str):
+async def test_openai_previous_response_id_concrete_seed_with_mixed_provider_history(
+    openai_responses_model: OpenAIResponsesModelFactory,
+):
     """Responses from other providers don't override the concrete seed."""
     history = [
         ModelRequest(parts=[UserPromptPart(content='Q')]),
@@ -2779,13 +2834,15 @@ async def test_openai_previous_response_id_concrete_seed_with_mixed_provider_his
         ModelRequest(parts=[UserPromptPart(content='Follow-up')]),
     ]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
     assert previous_response_id == 'resp_seed_from_prior_turn'
     assert messages is history
 
 
-async def test_openai_previous_response_id_concrete_seed_broken_by_compaction(openai_api_key: str):
+async def test_openai_previous_response_id_concrete_seed_broken_by_compaction(
+    openai_responses_model: OpenAIResponsesModelFactory,
+):
     """A compaction in the tail is a hard chain boundary even with a concrete seed.
 
     Crossing a compaction would re-inject the context that the compaction was meant
@@ -2803,13 +2860,15 @@ async def test_openai_previous_response_id_concrete_seed_broken_by_compaction(op
         ModelRequest(parts=[UserPromptPart(content='continue after compaction')]),
     ]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
     assert previous_response_id is None
     assert messages is history
 
 
-async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_key: str):
+async def test_openai_previous_response_id_auto_broken_by_compaction(
+    openai_responses_model: OpenAIResponsesModelFactory,
+):
     """`'auto'` also breaks the chain at compaction, matching the concrete-seed behavior."""
     history = [
         ModelResponse(
@@ -2822,13 +2881,13 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
         ModelRequest(parts=[UserPromptPart(content='continue after compaction')]),
     ]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     previous_response_id, messages = model._resolve_previous_response_id('auto', history)  # type: ignore
     assert previous_response_id is None
     assert messages is history
 
 
-async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
+async def test_openai_previous_response_id_unset_never_chains(openai_responses_model: OpenAIResponsesModelFactory):
     """No opt-in means no auto-chaining, even when the history contains a chainable response."""
     history = [
         ModelRequest(parts=[UserPromptPart(content='Q')]),
@@ -2841,14 +2900,14 @@ async def test_openai_previous_response_id_unset_never_chains(openai_api_key: st
         ModelRequest(parts=[UserPromptPart(content='Follow-up')]),
     ]
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     previous_response_id, messages = model._resolve_previous_response_id(None, history)  # type: ignore
     assert previous_response_id is None
     assert messages is history
 
 
 async def test_openai_previous_response_id_seed_auto_chains_through_retries(
-    allow_model_requests: None, openai_api_key: str
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
 ):
     """Regression test for https://github.com/pydantic/pydantic-ai/issues/5113.
 
@@ -2857,7 +2916,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
     `ModelRetry` retries), auto-chaining takes over so we chain to the latest stored
     response instead of re-sending the same static seed and duplicating stored state.
     """
-    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4.1')
     agent = Agent(model=model, retries={'tools': 3, 'output': 3})
 
     attempts: list[str] = []
@@ -3111,8 +3170,10 @@ async def test_openai_conversation_id_preserves_mismatched_history(allow_model_r
         assert response.provider_details['conversation_id'] == conversation_id
 
 
-async def test_openai_conversation_id_auto_without_history(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_conversation_id_auto_without_history(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-4.1')
     agent = Agent(model=model, instructions='Follow the user instructions exactly.')
 
     result = await agent.run(
@@ -3152,9 +3213,9 @@ async def test_openai_conversation_id_tool_call_continuation(allow_model_request
 
 
 async def test_openai_conversation_id_conflicts_with_previous_response_id(
-    allow_model_requests: None, openai_api_key: str
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4.1')
     agent = Agent(model=model)
 
     with pytest.raises(
@@ -3242,8 +3303,10 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
     )
 
 
-async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_model_thinking_part(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-5')
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
     agent = Agent(m, model_settings=settings)
 
@@ -3382,7 +3445,9 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
 
 
 async def test_openai_responses_thinking_part_from_other_model(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, openai_api_key: str
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    openai_responses_model: OpenAIResponsesModelFactory,
 ):
     m = anthropic_model(
         'claude-sonnet-4-6',
@@ -3438,9 +3503,8 @@ async def test_openai_responses_thinking_part_from_other_model(
 
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
-        model=OpenAIResponsesModel(
+        model=openai_responses_model(
             'gpt-5',
-            provider=OpenAIProvider(api_key=openai_api_key),
             settings=OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed'),
         ),
         message_history=result.all_messages(),
@@ -3515,9 +3579,10 @@ async def test_openai_responses_thinking_part_from_other_model(
     )
 
 
-async def test_openai_responses_thinking_part_iter(allow_model_requests: None, openai_api_key: str):
-    provider = OpenAIProvider(api_key=openai_api_key)
-    responses_model = OpenAIResponsesModel('o3-mini', provider=provider)
+async def test_openai_responses_thinking_part_iter(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    responses_model = openai_responses_model('o3-mini')
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
     agent = Agent(responses_model, model_settings=settings)
 
@@ -3589,11 +3654,11 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
     )
 
 
-async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: None, openai_api_key: str):
-    provider = OpenAIProvider(api_key=openai_api_key)
-    m = OpenAIResponsesModel(
-        model_name='gpt-5',
-        provider=provider,
+async def test_openai_responses_thinking_with_tool_calls(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model(
+        'gpt-5',
         settings=OpenAIResponsesModelSettings(openai_reasoning_summary='detailed', openai_reasoning_effort='low'),
     )
     agent = Agent(model=m)
@@ -3887,8 +3952,10 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
     )
 
 
-async def test_openai_responses_thinking_with_modified_history(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_thinking_with_modified_history(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-5')
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='detailed')
     agent = Agent(m, model_settings=settings)
 
@@ -4003,11 +4070,11 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
     )
 
 
-async def test_openai_responses_thinking_with_code_execution_tool(allow_model_requests: None, openai_api_key: str):
-    provider = OpenAIProvider(api_key=openai_api_key)
-    m = OpenAIResponsesModel(
-        model_name='gpt-5',
-        provider=provider,
+async def test_openai_responses_thinking_with_code_execution_tool(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model(
+        'gpt-5',
         settings=OpenAIResponsesModelSettings(
             openai_reasoning_summary='detailed',
             openai_reasoning_effort='low',
@@ -4140,12 +4207,10 @@ If you intended different grouping with parentheses, let me know.\
 
 
 async def test_openai_responses_thinking_with_code_execution_tool_stream(
-    allow_model_requests: None, openai_api_key: str
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    provider = OpenAIProvider(api_key=openai_api_key)
-    m = OpenAIResponsesModel(
-        model_name='gpt-5',
-        provider=provider,
+    m = openai_responses_model(
+        'gpt-5',
         settings=OpenAIResponsesModelSettings(openai_reasoning_summary='detailed', openai_reasoning_effort='low'),
     )
     agent = Agent(model=m, capabilities=[NativeTool(CodeExecutionTool())])
@@ -5588,12 +5653,14 @@ I\
     )
 
 
-async def test_openai_responses_streaming_usage(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_streaming_usage(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     class Result(BaseModel):
         result: int
 
     agent = Agent(
-        model=OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key)),
+        model=openai_responses_model('gpt-5'),
         model_settings=OpenAIResponsesModelSettings(
             openai_reasoning_effort='low',
             openai_service_tier='flex',
@@ -5622,8 +5689,10 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
     )
 
 
-async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_non_reasoning_model_no_item_ids(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-4.1')
     agent = Agent(model)
 
     @agent.tool_plain
@@ -5738,10 +5807,11 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
     )
 
 
-async def test_openai_responses_code_execution_return_image(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel(
+async def test_openai_responses_code_execution_return_image(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model(
         'gpt-5',
-        provider=OpenAIProvider(api_key=openai_api_key),
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
@@ -5995,10 +6065,11 @@ If you want different colors or a holographic gradient background, tell me your 
     )
 
 
-async def test_openai_responses_code_execution_return_image_stream(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel(
+async def test_openai_responses_code_execution_return_image_stream(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model(
         'gpt-5',
-        provider=OpenAIProvider(api_key=openai_api_key),
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
@@ -7492,8 +7563,10 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
     )
 
 
-async def test_openai_responses_image_generation(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_image_generation(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model, output_type=BinaryImage)
 
     result = await agent.run('Generate an image of an axolotl.')
@@ -7641,8 +7714,10 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
     )
 
 
-async def test_openai_responses_image_generation_stream(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_image_generation_stream(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-5')
     agent = Agent(model, output_type=BinaryImage)
 
     async with agent.run_stream('Generate an image of an axolotl') as result:
@@ -7822,9 +7897,9 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
 
 
 async def test_openai_responses_image_generation_tool_without_image_output(
-    allow_model_requests: None, openai_api_key: str
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
 ):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
 
     agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
 
@@ -7961,8 +8036,10 @@ async def test_openai_responses_image_generation_tool_without_image_output(
     )
 
 
-async def test_openai_responses_image_or_text_output(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_image_or_text_output(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model, output_type=str | BinaryImage)
 
     result = await agent.run('Tell me a two-sentence story about an axolotl.')
@@ -7972,8 +8049,10 @@ async def test_openai_responses_image_or_text_output(allow_model_requests: None,
     assert result.output == snapshot(IsInstance(BinaryImage))
 
 
-async def test_openai_responses_image_and_text_output(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_image_and_text_output(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
 
     result = await agent.run('Tell me a two-sentence story about an axolotl with an illustration.')
@@ -7981,12 +8060,14 @@ async def test_openai_responses_image_and_text_output(allow_model_requests: None
     assert result.response.files == snapshot([IsInstance(BinaryImage)])
 
 
-async def test_openai_responses_image_generation_with_tool_output(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_image_generation_with_tool_output(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     class Animal(BaseModel):
         species: str
         name: str
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())], output_type=Animal)
 
     result = await agent.run('Generate an image of an axolotl.')
@@ -8111,12 +8192,14 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
     )
 
 
-async def test_openai_responses_image_generation_with_native_output(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_image_generation_with_native_output(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     class Animal(BaseModel):
         species: str
         name: str
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())], output_type=NativeOutput(Animal))
 
     result = await agent.run('Generate an image of an axolotl.')
@@ -8188,12 +8271,14 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
     )
 
 
-async def test_openai_responses_image_generation_with_prompted_output(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_image_generation_with_prompted_output(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     class Animal(BaseModel):
         species: str
         name: str
 
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())], output_type=PromptedOutput(Animal))
 
     result = await agent.run('Generate an image of an axolotl.')
@@ -8265,8 +8350,10 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
     )
 
 
-async def test_openai_responses_image_generation_with_tools(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_image_generation_with_tools(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model, output_type=BinaryImage)
 
     @agent.tool_plain
@@ -8377,8 +8464,10 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
     )
 
 
-async def test_openai_responses_multiple_images(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_multiple_images(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-5')
     agent = Agent(model=model, output_type=BinaryImage)
 
     result = await agent.run('Generate two separate images of axolotls.')
@@ -8475,8 +8564,10 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
     )
 
 
-async def test_openai_responses_image_generation_jpeg(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_image_generation_jpeg(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    model = openai_responses_model('gpt-5')
     agent = Agent(
         model=model, capabilities=[NativeTool(ImageGenerationTool(output_format='jpeg'))], output_type=BinaryImage
     )
@@ -8549,8 +8640,10 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
     )
 
 
-async def test_openai_responses_history_with_combined_tool_call_id(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_history_with_combined_tool_call_id(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('gpt-5')
 
     class CityLocation(BaseModel):
         city: str
@@ -8784,11 +8877,10 @@ async def test_openai_responses_mcp_call_replays_empty_tool_args(allow_model_req
     )
 
 
-async def test_openai_responses_model_mcp_server_tool(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel(
-        'o4-mini',
-        provider=OpenAIProvider(api_key=openai_api_key),
-    )
+async def test_openai_responses_model_mcp_server_tool(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('o4-mini')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -9012,8 +9104,10 @@ The monorepo is organized into these main packages:  \n\
     )
 
 
-async def test_openai_responses_model_mcp_server_tool_stream(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('o4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_openai_responses_model_mcp_server_tool_stream(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('o4-mini')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -9426,11 +9520,10 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
     )
 
 
-async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel(
-        'o4-mini',
-        provider=OpenAIProvider(api_key=openai_api_key),
-    )
+async def test_openai_responses_model_mcp_server_tool_with_connector(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
+    m = openai_responses_model('o4-mini')
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
@@ -9633,6 +9726,8 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
 async def test_openai_responses_requires_function_call_status_none(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel(
         'gpt-5',
+        # constructs with model-level `profile=` the factory doesn't forward
+        # ast-grep-ignore: prefer-model-factory
         provider=OpenAIProvider(api_key=openai_api_key),
         profile=replace(openai_model_profile('gpt-5'), openai_responses_requires_function_call_status_none=True),
     )
@@ -10794,9 +10889,9 @@ async def test_openai_responses_model_file_search_tool_with_results(
 
 async def test_openai_responses_runs_with_instructions_only(
     allow_model_requests: None,
-    openai_api_key: str,
+    openai_responses_model: OpenAIResponsesModelFactory,
 ):
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4o')
     agent = Agent(model=model, instructions='Generate a short article about artificial intelligence in 3 sentences.')
 
     # Run with only instructions, no explicit input messages
@@ -10959,8 +11054,8 @@ async def test_openai_responses_system_prompt_role(
     ]
 
 
-async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key: str):
-    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_reasoning_summary_auto(allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory):
+    model = openai_responses_model('gpt-5.2')
     agent = Agent(model, instructions='You are a helpful coding assistant.')
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='auto')
 
@@ -10975,8 +11070,10 @@ I need to respond with a Python function for calculating the factorial. The user
 """)
 
 
-async def test_responses_count_tokens(allow_model_requests: None, openai_api_key: str) -> None:
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_responses_count_tokens(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+) -> None:
+    model = openai_responses_model('gpt-4.1-mini')
 
     result = await model.count_tokens(
         [ModelRequest(parts=[], instructions='Follow the system instructions.')],
@@ -10987,15 +11084,19 @@ async def test_responses_count_tokens(allow_model_requests: None, openai_api_key
     assert result.input_tokens == snapshot(16)
 
 
-async def test_responses_count_tokens_no_messages(allow_model_requests: None, openai_api_key: str) -> None:
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_responses_count_tokens_no_messages(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+) -> None:
+    model = openai_responses_model('gpt-4.1-mini')
 
     with pytest.raises(UserError, match='Cannot count tokens without any messages or a previous response ID'):
         await model.count_tokens([], None, ModelRequestParameters())
 
 
-async def test_responses_count_tokens_with_tools(allow_model_requests: None, openai_api_key: str) -> None:
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_responses_count_tokens_with_tools(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+) -> None:
+    model = openai_responses_model('gpt-4.1-mini')
 
     tool_def = ToolDefinition(
         name='get_weather',
@@ -11011,8 +11112,10 @@ async def test_responses_count_tokens_with_tools(allow_model_requests: None, ope
     assert result.input_tokens == snapshot(51)
 
 
-async def test_responses_usage_limit_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_responses_usage_limit_exceeded(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+) -> None:
+    model = openai_responses_model('gpt-4.1-mini')
     agent = Agent(model)
 
     with pytest.raises(
@@ -11025,8 +11128,10 @@ async def test_responses_usage_limit_exceeded(allow_model_requests: None, openai
         )
 
 
-async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, openai_api_key: str) -> None:
-    model = OpenAIResponsesModel('gpt-4.1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+async def test_responses_usage_limit_not_exceeded(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+) -> None:
+    model = openai_responses_model('gpt-4.1-mini')
     agent = Agent(model)
 
     result = await agent.run(
@@ -11068,12 +11173,14 @@ async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, op
     )
 
 
-async def test_openai_include_raw_annotations_non_streaming(allow_model_requests: None, openai_api_key: str):
+async def test_openai_include_raw_annotations_non_streaming(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test that text annotations are included in provider_details when the setting is enabled."""
     prompt = 'What is the tallest mountain in Alberta? Provide one sentence with a citation.'
     instructions = 'Use web search and include citations in your answer.'
 
-    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5.2')
     agent = Agent(model, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
 
     # Test with annotations enabled
@@ -11103,7 +11210,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     assert text_part.provider_details and 'annotations' in text_part.provider_details
 
     # Test with annotations disabled (default)
-    model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    model2 = openai_responses_model('gpt-5.2')
     agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
     result2 = await agent2.run(prompt)
 
@@ -11498,9 +11605,11 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
     )
 
 
-async def test_openai_responses_text_content_input(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_text_content_input(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test that text content in ModelRequest is correctly mapped to OpenAI messages."""
-    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5.2')
     m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
         part=UserPromptPart(content=['test', TextContent(content='test2', metadata={'key': 'value'})])
     )
@@ -11509,11 +11618,13 @@ async def test_openai_responses_text_content_input(allow_model_requests: None, o
     )
 
 
-async def test_openai_responses_compact_messages(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_compact_messages(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test OpenAI compaction: multi-turn conversation compacted via OpenAICompaction capability."""
     from pydantic_ai.models.openai import OpenAICompaction
 
-    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4o-mini')
     agent = Agent(
         model=model,
         instructions='You are a helpful math assistant. Give short answers.',
@@ -11547,7 +11658,9 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     assert 'encrypted_content' in compaction.provider_details
 
 
-async def test_openai_responses_compact_stateful_mode_stream(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_compact_stateful_mode_stream(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Streaming variant: `ResponseCompactionItem` is handled in `_get_event_iterator`.
 
     Validates that a `PartStartEvent` is emitted for the `CompactionPart` during streaming
@@ -11556,7 +11669,7 @@ async def test_openai_responses_compact_stateful_mode_stream(allow_model_request
     from pydantic_ai import AgentRunResultEvent
     from pydantic_ai.models.openai import OpenAICompaction
 
-    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4.1')
     agent = Agent(
         model=model,
         capabilities=[OpenAICompaction(token_threshold=1000)],
@@ -11599,11 +11712,13 @@ async def test_openai_responses_compact_stateful_mode_stream(allow_model_request
     assert 'encrypted_content' in (compaction_parts[0].provider_details or {})
 
 
-async def test_openai_responses_compact_messages_direct(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_compact_messages_direct(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test OpenAI compact_messages method directly with ModelRequestContext."""
     from pydantic_ai.models import ModelRequestContext
 
-    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4o-mini')
     agent = Agent(
         model=model,
         instructions='You are a helpful assistant.',
@@ -11634,11 +11749,13 @@ async def test_openai_responses_compact_messages_direct(allow_model_requests: No
     assert compacted.usage.input_tokens > 0
 
 
-async def test_openai_responses_compact_with_auto_previous_response_id(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_compact_with_auto_previous_response_id(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test compact_messages with openai_previous_response_id='auto'."""
     from pydantic_ai.models import ModelRequestContext
 
-    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4o-mini')
     agent = Agent(model=model, instructions='You are a helpful assistant.')
 
     # Build up history with provider_response_id
@@ -11660,11 +11777,13 @@ async def test_openai_responses_compact_with_auto_previous_response_id(allow_mod
     assert isinstance(compacted.parts[0], CompactionPart)
 
 
-async def test_openai_responses_compact_with_instructions(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_compact_with_instructions(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Test compact_messages with custom instructions override."""
     from pydantic_ai.models import ModelRequestContext
 
-    model = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4o-mini')
     agent = Agent(model=model, instructions='You are a helpful assistant.')
 
     # Build up history
@@ -11687,7 +11806,7 @@ async def test_openai_responses_compact_with_instructions(allow_model_requests: 
 
 
 async def test_openai_responses_compact_with_auto_previous_response_id_chain(
-    allow_model_requests: None, openai_api_key: str
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
 ):
     """Agent with OpenAICompaction + openai_previous_response_id='auto' must continue working after compaction.
 
@@ -11698,7 +11817,7 @@ async def test_openai_responses_compact_with_auto_previous_response_id_chain(
     """
     from pydantic_ai.models.openai import OpenAICompaction
 
-    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4.1')
     agent = Agent(
         model=model,
         capabilities=[OpenAICompaction(message_count_threshold=3)],
@@ -11730,7 +11849,9 @@ async def test_openai_responses_compact_with_auto_previous_response_id_chain(
             assert msg.provider_response_id is not None
 
 
-async def test_openai_responses_compact_stateful_mode(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_compact_stateful_mode(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Stateful `OpenAICompaction` rides along on the regular /responses call.
 
     Sets `context_management: [{'type': 'compaction', ...}]` on the request. When
@@ -11741,7 +11862,7 @@ async def test_openai_responses_compact_stateful_mode(allow_model_requests: None
     """
     from pydantic_ai.models.openai import OpenAICompaction
 
-    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-4.1')
     agent = Agent(
         model=model,
         # 1000 is the lowest threshold OpenAI accepts; a handful of ~300-word turns crosses it.
@@ -12089,9 +12210,11 @@ async def test_openai_responses_phase_round_trip_without_item_id(allow_model_req
     )
 
 
-async def test_openai_responses_phase_live(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_phase_live(
+    allow_model_requests: None, openai_responses_model: OpenAIResponsesModelFactory
+):
     """Real cassette: gpt-5.5 sets `phase` on the preamble (commentary) and the final answer."""
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5.5')
     agent = Agent(
         model=model,
         instructions='Briefly narrate what you are about to do before calling each tool.',

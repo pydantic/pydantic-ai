@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 import pytest
@@ -23,7 +24,8 @@ from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.deepseek import DeepSeekProvider
+
+    DeepSeekModelFactory = Callable[..., OpenAIChatModel]
 
 
 pytestmark = [
@@ -33,7 +35,9 @@ pytestmark = [
 ]
 
 
-async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: None, deepseek_api_key: str):
+async def test_deepseek_deferred_capability_with_thinking(
+    allow_model_requests: None, deepseek_model: DeepSeekModelFactory
+):
     """Regression test for #5829: real-API check that deferred capabilities work on a DeepSeek thinking model.
 
     Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn with
@@ -42,7 +46,7 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     deterministic mapping guard is in
     `test_openai.py::test_field_mode_thinking_backfill_on_synthetic_tool_search_turn`.
     """
-    model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
+    model = deepseek_model('deepseek-reasoner')
 
     def roll_dice() -> str:
         """Roll a six-sided die and return the result."""
@@ -80,9 +84,8 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     )
 
 
-async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek_api_key: str):
-    deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
-    agent = Agent(model=deepseek_model)
+async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek_model: DeepSeekModelFactory):
+    agent = Agent(model=deepseek_model('deepseek-reasoner'))
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
@@ -123,9 +126,8 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
     )
 
 
-async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepseek_api_key: str):
-    deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
-    agent = Agent(model=deepseek_model)
+async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepseek_model: DeepSeekModelFactory):
+    agent = Agent(model=deepseek_model('deepseek-reasoner'))
 
     result: AgentRunResult | None = None
     async for event in agent.run_stream_events(user_prompt='How do I cross the street?'):

@@ -1649,7 +1649,11 @@ async def test_fallback_model_lifecycle_closes_sub_model_clients():
     Regression test for PR #4421 (provider lifecycle management).
     https://github.com/pydantic/pydantic-ai/pull/4421
     """
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider1 = OpenAIProvider(api_key='test-key-1')
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider2 = OpenAIProvider(api_key='test-key-2')
     model1 = OpenAIChatModel('gpt-4o', provider=provider1)
     model2 = OpenAIChatModel('gpt-4o', provider=provider2)
@@ -1672,7 +1676,11 @@ async def test_fallback_model_lifecycle_via_agent():
     Regression test for PR #4421 (provider lifecycle management).
     https://github.com/pydantic/pydantic-ai/pull/4421
     """
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider1 = OpenAIProvider(api_key='test-key-1')
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider2 = OpenAIProvider(api_key='test-key-2')
     model1 = OpenAIChatModel('gpt-4o', provider=provider1)
     model2 = OpenAIChatModel('gpt-4o', provider=provider2)
@@ -1696,7 +1704,11 @@ async def test_fallback_model_reentrant_lifecycle():
     Regression test for PR #4421 (provider lifecycle management).
     https://github.com/pydantic/pydantic-ai/pull/4421
     """
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider1 = OpenAIProvider(api_key='test-key-1')
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider2 = OpenAIProvider(api_key='test-key-2')
     model1 = OpenAIChatModel('gpt-4o', provider=provider1)
     model2 = OpenAIChatModel('gpt-4o', provider=provider2)
@@ -1724,7 +1736,11 @@ async def test_fallback_model_instrumented_lifecycle():
     Regression test for PR #4421 (provider lifecycle management).
     https://github.com/pydantic/pydantic-ai/pull/4421
     """
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider1 = OpenAIProvider(api_key='test-key-1')
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider2 = OpenAIProvider(api_key='test-key-2')
     model1 = OpenAIChatModel('gpt-4o', provider=provider1)
     model2 = OpenAIChatModel('gpt-4o', provider=provider2)
@@ -1763,7 +1779,11 @@ async def test_fallback_model_concurrent_entry():
             await self.wrapped.__aenter__()
             return self
 
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider1 = OpenAIProvider(api_key='test-key-1')
+    # provider-lifecycle test asserts on each provider's own http client; the distinct providers must stay addressable
+    # ast-grep-ignore: prefer-model-factory
     provider2 = OpenAIProvider(api_key='test-key-2')
     model1 = SlowEnterModel(OpenAIChatModel('gpt-4o', provider=provider1))
     model2 = SlowEnterModel(OpenAIChatModel('gpt-4o', provider=provider2))

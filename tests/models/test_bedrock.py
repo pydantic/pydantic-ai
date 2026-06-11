@@ -2172,6 +2172,8 @@ If you have a question you'd like to discuss or need assistance with something, 
 async def test_bedrock_model_thinking_part_from_other_model(
     allow_model_requests: None, bedrock_provider: BedrockProvider, openai_api_key: str
 ):
+    # cross-model test in the bedrock suite builds an OpenAIResponsesModel; the openai factory fixture isn't reachable here
+    # ast-grep-ignore: prefer-model-factory
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel('gpt-5', provider=provider)
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')

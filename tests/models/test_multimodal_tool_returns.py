@@ -49,6 +49,8 @@ with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
+    OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
+
 with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -72,6 +74,8 @@ with try_import() as groq_available:
 with try_import() as mistral_available:
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
+
+    MistralModelFactory = Callable[..., MistralModel]
 
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
@@ -292,12 +296,20 @@ def create_model(
         assert vertex_provider is not None
         return GoogleModel(model_name, provider=vertex_provider)
     elif provider == 'openai_chat':
+        # cross-provider helper dispatching over an api_keys dict; a plain function, not a pytest fixture, so it can't use the `*_model` factory fixtures
+        # ast-grep-ignore: prefer-model-factory
         return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
     elif provider == 'openai_responses':
+        # cross-provider helper dispatching over an api_keys dict; a plain function, not a pytest fixture, so it can't use the `*_model` factory fixtures
+        # ast-grep-ignore: prefer-model-factory
         return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=api_keys['openai']))
     elif provider == 'groq':
+        # cross-provider helper dispatching over an api_keys dict; a plain function, not a pytest fixture, so it can't use the `*_model` factory fixtures
+        # ast-grep-ignore: prefer-model-factory
         return GroqModel(model_name, provider=GroqProvider(api_key=api_keys['groq']))
     elif provider == 'mistral':
+        # cross-provider helper dispatching over an api_keys dict; a plain function, not a pytest fixture, so it can't use the `*_model` factory fixtures
+        # ast-grep-ignore: prefer-model-factory
         return MistralModel(model_name, provider=MistralProvider(api_key=api_keys['mistral']))
     elif provider == 'xai':
         assert xai_provider is not None
@@ -737,7 +749,7 @@ async def test_model_sees_multiple_images(
 
 @pytest.mark.skipif(not openai_available(), reason='openai dependencies not installed')
 async def test_vendor_metadata_detail(
-    openai_api_key: str,
+    openai_responses_model: OpenAIResponsesModelFactory,
     assets_path: Path,
     allow_model_requests: None,
     cassette_ctx: CassetteContext,
@@ -747,7 +759,7 @@ async def test_vendor_metadata_detail(
     Covers `BinaryImage`, `ImageUrl`, and an image `UploadedFile` — the last referenced by `file_id`
     and mapped to an `input_image` part that must carry its `detail`.
     """
-    model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    model = openai_responses_model('gpt-5-mini')
     image_binary = BinaryImage(
         data=assets_path.joinpath('kiwi.jpg').read_bytes(),
         media_type='image/jpeg',
@@ -810,11 +822,11 @@ async def test_text_plain_document_anthropic(
 
 @pytest.mark.skipif(not mistral_available(), reason='mistral dependencies not installed')
 async def test_non_pdf_document_url_error(
-    mistral_api_key: str,
+    mistral_model: MistralModelFactory,
     allow_model_requests: None,
 ):
     """Test that Mistral raises NotImplementedError for non-PDF DocumentUrl in tool returns."""
-    model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
+    model = mistral_model('mistral-medium-latest')
     agent: Agent[None, str] = Agent(model)
 
     @agent.tool_plain

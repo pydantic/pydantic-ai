@@ -39,12 +39,12 @@ with try_import() as imports_successful:
 
 with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     GoogleModelFactory = Callable[..., GoogleModel]
+    AnthropicModelFactory = Callable[..., AnthropicModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
@@ -444,15 +444,15 @@ print(f"Time in Utrecht: {now}")
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 async def test_receive_history_from_another_provider(
-    allow_model_requests: None, anthropic_api_key: str, google_model: GoogleModelFactory
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    google_model: GoogleModelFactory,
 ):
-    # The `anthropic_model` factory fixture lives in tests/models/anthropic/, not reachable from this google test dir
-    # ast-grep-ignore: prefer-model-factory
-    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic = anthropic_model('claude-sonnet-4-0')
     google = google_model('gemini-3-flash-preview')
     agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
-    result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
+    result = await agent.run('How much is 3 * 12390?', model=anthropic)
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [[UserPromptPart], [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart]]
     )
