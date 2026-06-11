@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,7 +66,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         await self._append_save(EndSnapshot(state=state, result=end))
 
     @asynccontextmanager
-    async def record_run(self, snapshot_id: str) -> AsyncIterator[None]:
+    async def record_run(self, snapshot_id: str) -> AsyncGenerator[None]:
         async with self._lock():
             snapshots = await self.load_all()
             try:
@@ -147,7 +147,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
             await self._save(snapshots)
 
     @asynccontextmanager
-    async def _lock(self, *, timeout: float = 1.0) -> AsyncIterator[None]:
+    async def _lock(self, *, timeout: float = 1.0) -> AsyncGenerator[None]:
         """Lock a file by checking and writing a `.pydantic-graph-persistence-lock` to it.
 
         Args:
