@@ -7,6 +7,7 @@ import os
 import random
 import tempfile
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import date, timezone
 from decimal import Decimal
 from typing import Any, cast
@@ -4306,62 +4307,74 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
     return streamed_response.usage
 
 
-async def test_gemini_streamed_response_usage_retains_cached_tokens_across_chunks():
-    """Gemini streams usage as cumulative snapshots, but a gateway/proxy can report
-    `cached_content_token_count` on an earlier chunk and omit it on a later one (#5205).
+@dataclass
+class _UsageRetentionCase:
+    id: str
+    chunks: list[GenerateContentResponse]
+    expected: RequestUsage
 
-    This is a deterministic unit test rather than a VCR test because the direct Gemini APIs
-    (GLA and Vertex) always carry `cached_content_token_count` on the final usage chunk, so a
-    real recording would pass even without the cross-chunk merge.
+
+_USAGE_RETENTION_CASES = [
+    _UsageRetentionCase(
+        id='cached_tokens_dropped_by_later_chunk',
+        chunks=[
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(cached=None, candidates=10, text='lo'),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=10,
+                details={'cached_content_tokens': 16365},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='metadata_dropped_by_later_chunk',
+        chunks=[
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo', with_metadata=False),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=5,
+                details={'cached_content_tokens': 16365},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='details_only_fields_dropped_by_later_chunk',
+        chunks=[
+            _usage_chunk(cached=16365, thoughts=100, candidates=5, text='hel'),
+            _usage_chunk(cached=None, thoughts=None, candidates=10, text='lo'),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=10,
+                details={'cached_content_tokens': 16365, 'thoughts_tokens': 100},
+            )
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _USAGE_RETENTION_CASES])
+async def test_gemini_streamed_response_usage_retained_across_chunks(case: _UsageRetentionCase):
+    """Gemini streams usage as cumulative snapshots, but a later chunk can drop a field an earlier one
+    carried (#5205): a gateway/proxy omits `cached_content_token_count`, a Vertex-direct stream omits
+    `usage_metadata` entirely, or a `details`-only field like `thoughts_tokens` disappears. The
+    accumulated usage must survive instead of resetting to zero.
+
+    These are deterministic unit tests rather than VCR tests because the direct Gemini APIs (GLA and
+    Vertex) always carry the field on the final usage chunk, so a real recording would pass even
+    without the cross-chunk merge.
     """
-    chunks = [_usage_chunk(cached=16365, candidates=5, text='hel'), _usage_chunk(cached=None, candidates=10, text='lo')]
-
-    assert await _stream_gemini_usage(chunks) == snapshot(
-        RequestUsage(
-            input_tokens=20025,
-            cache_read_tokens=16365,
-            output_tokens=10,
-            details={'cached_content_tokens': 16365},
-        )
-    )
-
-
-async def test_gemini_streamed_response_usage_retained_when_later_chunk_drops_metadata():
-    """A Vertex-direct stream delivers `usage_metadata` on an earlier chunk and can omit it entirely
-    on a later one (#5205); the accumulated usage must survive instead of resetting to zero.
-    """
-    chunks = [
-        _usage_chunk(cached=16365, candidates=5, text='hel'),
-        _usage_chunk(candidates=0, text='lo', with_metadata=False),
-    ]
-
-    assert await _stream_gemini_usage(chunks) == snapshot(
-        RequestUsage(
-            input_tokens=20025,
-            cache_read_tokens=16365,
-            output_tokens=5,
-            details={'cached_content_tokens': 16365},
-        )
-    )
-
-
-async def test_gemini_streamed_response_usage_retains_details_only_fields_across_chunks():
-    """`thoughts_tokens` has no typed `RequestUsage` field, so it survives a later chunk dropping it
-    via the `details` union rather than the typed-field backfill (#5205).
-    """
-    chunks = [
-        _usage_chunk(cached=16365, thoughts=100, candidates=5, text='hel'),
-        _usage_chunk(cached=None, thoughts=None, candidates=10, text='lo'),
-    ]
-
-    assert await _stream_gemini_usage(chunks) == snapshot(
-        RequestUsage(
-            input_tokens=20025,
-            cache_read_tokens=16365,
-            output_tokens=10,
-            details={'cached_content_tokens': 16365, 'thoughts_tokens': 100},
-        )
-    )
+    assert await _stream_gemini_usage(case.chunks) == case.expected
 
 
 async def _cleanup_file_search_store(store: Any, client: Any) -> None:  # pragma: lax no cover

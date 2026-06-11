@@ -1939,6 +1939,9 @@ def _metadata_as_usage(
     # `_map_usage` re-extracts from its merged details instead, because its genai-prices mapping
     # reads the same keys it stores in `details`; Google's mapping reads the raw API keys, so the
     # merged `details` cannot reconstruct the typed fields here.)
+    # A later-chunk 0 is treated as "dropped, restore the earlier value", which is safe only because
+    # Gemini `usage_metadata` is cumulative/monotonic so a real 0 never overwrites a prior non-zero;
+    # a provider whose streamed usage is non-cumulative could not reuse this backfill as-is.
     if existing_usage:
         for token_field in fields(new_usage):
             if token_field.name != 'details' and not getattr(new_usage, token_field.name):
