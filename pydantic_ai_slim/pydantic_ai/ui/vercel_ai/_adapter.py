@@ -35,6 +35,7 @@ from ...messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolPartKind,
     ToolReturnPart,
     UploadedFile,
     UploadedFileProviderName,
@@ -384,6 +385,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         part_id = provider_meta.get('id')
                         provider_name = provider_meta.get('provider_name')
                         provider_details = provider_meta.get('provider_details')
+                        tool_kind = _load_tool_kind(provider_meta)
 
                         if builtin_tool:
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
@@ -442,19 +444,29 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 )
                         else:
                             builder.add(
-                                ToolCallPart(
-                                    tool_name=tool_name,
-                                    tool_call_id=tool_call_id,
-                                    args=args,
-                                    id=part_id,
-                                    provider_name=provider_name,
-                                    provider_details=provider_details,
+                                _narrow_tool_call(
+                                    ToolCallPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        args=args,
+                                        id=part_id,
+                                        provider_name=provider_name,
+                                        provider_details=provider_details,
+                                    ),
+                                    tool_kind,
                                 )
                             )
 
                             if part.state == 'output-available':
                                 builder.add(
-                                    ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
+                                    _narrow_tool_return(
+                                        ToolReturnPart(
+                                            tool_name=tool_name,
+                                            tool_call_id=tool_call_id,
+                                            content=part.output,
+                                        ),
+                                        tool_kind,
+                                    )
                                 )
                             elif part.state == 'output-error':
                                 builder.add(
@@ -700,7 +712,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
         call_provider_metadata = dump_provider_metadata(
-            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            id=part.id,
+            provider_name=part.provider_name,
+            provider_details=part.provider_details,
+            tool_kind=part.tool_kind,
         )
         tool_type = f'tool-{part.tool_name}'
         ui_parts: list[UIMessagePart] = []
@@ -918,6 +933,27 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _load_tool_kind(provider_meta: dict[str, Any]) -> ToolPartKind | None:
+    tool_kind = provider_meta.get('tool_kind')
+    if tool_kind in ('tool-search', 'capability-load'):
+        return tool_kind
+    return None
+
+
+def _narrow_tool_call(part: ToolCallPart, tool_kind: ToolPartKind | None) -> ToolCallPart:
+    try:
+        return ToolCallPart.narrow_type(part, tool_kind=tool_kind)
+    except ValueError:
+        return part
+
+
+def _narrow_tool_return(part: ToolReturnPart, tool_kind: ToolPartKind | None) -> ToolReturnPart:
+    try:
+        return ToolReturnPart.narrow_type(part, tool_kind=tool_kind)
+    except ValueError:
+        return part
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:

@@ -54,11 +54,13 @@ from pydantic_ai import (
     VideoUrl,
     capture_run_messages,
 )
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import LoadCapabilityCallPart, LoadCapabilityReturnPart
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -1597,6 +1599,72 @@ def test_dump_load_roundtrip_tools() -> None:
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
+
+
+def test_dump_load_roundtrip_preserves_loaded_capabilities() -> None:
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(
+                    tool_call_id='load-foobar',
+                    args={'id': 'foobar'},
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(
+                    tool_call_id='load-foobar',
+                    content={'instructions': '# Foo Bar'},
+                )
+            ]
+        ),
+    ]
+
+    assert parse_loaded_capabilities(original) == {'foobar'}
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+
+    assert parse_loaded_capabilities(reloaded) == {'foobar'}
+    assert isinstance(reloaded[0], ModelResponse)
+    assert isinstance(reloaded[0].parts[0], LoadCapabilityCallPart)
+    assert isinstance(reloaded[1], ModelRequest)
+    assert isinstance(reloaded[1].parts[0], LoadCapabilityReturnPart)
+
+
+def test_dump_load_roundtrip_preserves_user_load_capability_tool() -> None:
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='load_capability',
+                    tool_call_id='user-load',
+                    args={'id': 'not-a-framework-capability'},
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='load_capability',
+                    tool_call_id='user-load',
+                    content={'instructions': '# Not Framework Managed'},
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+
+    assert parse_loaded_capabilities(reloaded) == set()
+    assert isinstance(reloaded[0], ModelResponse)
+    assert isinstance(reloaded[0].parts[0], ToolCallPart)
+    assert not isinstance(reloaded[0].parts[0], LoadCapabilityCallPart)
+    assert isinstance(reloaded[1], ModelRequest)
+    assert isinstance(reloaded[1].parts[0], ToolReturnPart)
+    assert not isinstance(reloaded[1].parts[0], LoadCapabilityReturnPart)
 
 
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:

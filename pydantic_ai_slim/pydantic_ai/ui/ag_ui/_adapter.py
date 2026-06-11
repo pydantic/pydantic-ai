@@ -39,6 +39,7 @@ from ...messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolPartKind,
     ToolReturnPart,
     UploadedFile,
     UserContent,
@@ -307,7 +308,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:  # noqa: C901
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
-        tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
+        tool_calls: dict[str, tuple[str, ToolPartKind | None]] = {}
         for msg in messages:
             match msg:
                 case UserMessage(content=content):
@@ -371,7 +372,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         for tool_call in tool_calls_list:
                             tool_call_id = tool_call.id
                             tool_name = tool_call.function.name
-                            tool_calls[tool_call_id] = tool_name
+                            tool_kind = _load_tool_kind(tool_call.encrypted_value)
+                            tool_calls[tool_call_id] = (tool_name, tool_kind)
 
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                                 _, provider_name, original_id = tool_call_id.split('|', 2)
@@ -385,17 +387,21 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 )
                             else:
                                 builder.add(
-                                    ToolCallPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        args=tool_call.function.arguments,
+                                    _narrow_tool_call(
+                                        ToolCallPart(
+                                            tool_name=tool_name,
+                                            tool_call_id=tool_call_id,
+                                            args=tool_call.function.arguments,
+                                        ),
+                                        tool_kind,
                                     )
                                 )
                 case ToolMessage() as tool_msg:
                     tool_call_id = tool_msg.tool_call_id
-                    tool_name = tool_calls.get(tool_call_id)
-                    if tool_name is None:  # pragma: no cover
+                    tool_call_info = tool_calls.get(tool_call_id)
+                    if tool_call_info is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
+                    tool_name, tool_kind = tool_call_info
 
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                         _, provider_name, original_id = tool_call_id.split('|', 2)
@@ -414,11 +420,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
                     else:
+                        content: Any = tool_msg.content
+                        if tool_kind is not None:
+                            try:
+                                content = json.loads(content)
+                            except json.JSONDecodeError:
+                                pass
                         builder.add(
-                            ToolReturnPart(
-                                tool_name=tool_name,
-                                content=tool_msg.content,
-                                tool_call_id=tool_call_id,
+                            _narrow_tool_return(
+                                ToolReturnPart(
+                                    tool_name=tool_name,
+                                    content=content,
+                                    tool_call_id=tool_call_id,
+                                ),
+                                tool_kind,
                             )
                         )
 
@@ -633,6 +648,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=part.tool_call_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                        encrypted_value=_dump_tool_kind(part.tool_kind),
                     )
                 )
             elif isinstance(part, NativeToolCallPart):
@@ -734,3 +750,39 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 assert_never(msg)
 
         return result
+
+
+def _dump_tool_kind(tool_kind: ToolPartKind | None) -> str | None:
+    if tool_kind is None:
+        return None
+    return json.dumps({'tool_kind': tool_kind})
+
+
+def _load_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
+    if encrypted_value is None:
+        return None
+    try:
+        value = json.loads(encrypted_value)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, dict):
+        return None
+    metadata = cast(dict[str, Any], value)
+    tool_kind = metadata.get('tool_kind')
+    if tool_kind in ('tool-search', 'capability-load'):
+        return tool_kind
+    return None
+
+
+def _narrow_tool_call(part: ToolCallPart, tool_kind: ToolPartKind | None) -> ToolCallPart:
+    try:
+        return ToolCallPart.narrow_type(part, tool_kind=tool_kind)
+    except ValueError:
+        return part
+
+
+def _narrow_tool_return(part: ToolReturnPart, tool_kind: ToolPartKind | None) -> ToolReturnPart:
+    try:
+        return ToolReturnPart.narrow_type(part, tool_kind=tool_kind)
+    except ValueError:
+        return part
