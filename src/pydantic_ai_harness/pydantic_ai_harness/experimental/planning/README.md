@@ -1,5 +1,24 @@
 # Planning
 
+> [!WARNING]
+> **Experimental.** This capability lives under `pydantic_ai_harness.experimental` and may
+> change or be removed in any release, without a deprecation period. Import it from the
+> experimental path -- there is no top-level export:
+>
+> ```python
+> from pydantic_ai_harness.experimental.planning import Planning
+> ```
+>
+> Importing any experimental capability emits a `HarnessExperimentalWarning`. Silence **all**
+> harness experimental warnings with a single filter (no per-capability lines needed):
+>
+> ```python
+> import warnings
+> from pydantic_ai_harness.experimental import HarnessExperimentalWarning
+>
+> warnings.filterwarnings('ignore', category=HarnessExperimentalWarning)
+> ```
+
 Give an agent a structured, self-updating task plan -- without ever invalidating the prompt cache.
 
 ## The problem

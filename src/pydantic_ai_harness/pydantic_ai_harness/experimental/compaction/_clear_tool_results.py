@@ -1,4 +1,4 @@
-"""`ClearToolResults` — zero-cost in-place clearing of old tool results."""
+"""`ClearToolResults` -- zero-cost in-place clearing of old tool results."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     calls remain paired with their (now-blanked) results, so the history stays valid.
     No LLM calls are made.
 
-    This is the cheap first tier of compaction — tool results typically dominate
+    This is the cheap first tier of compaction -- tool results typically dominate
     context, and the agent can re-run a tool if it needs the data again.
 
     Cache tradeoff: clearing rewrites message content, which invalidates the provider's

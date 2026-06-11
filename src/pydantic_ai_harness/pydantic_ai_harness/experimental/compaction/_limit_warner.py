@@ -1,4 +1,4 @@
-"""`LimitWarner` — injects warnings as the run approaches configured limits."""
+"""`LimitWarner` -- injects warnings as the run approaches configured limits."""
 
 from __future__ import annotations
 

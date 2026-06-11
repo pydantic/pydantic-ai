@@ -1,4 +1,4 @@
-"""`SummarizingCompaction` — LLM-powered summarization of older messages."""
+"""`SummarizingCompaction` -- LLM-powered summarization of older messages."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ The user's overall goal and any standing constraints or preferences.
 Choices made and the reasoning, so they are not relitigated.
 
 ## Artifacts
-Files, paths, identifiers, commands, and APIs touched — quote exact names.
+Files, paths, identifiers, commands, and APIs touched -- quote exact names.
 
 ## Current state
 What is done and what is in progress right now.
@@ -55,7 +55,7 @@ The immediate actions still required to finish the task.
 ## Open questions
 Unresolved questions or blockers.
 
-Focus on results, not a replay of completed actions.  Respond ONLY with the summary — no \
+Focus on results, not a replay of completed actions.  Respond ONLY with the summary -- no \
 preamble, no markdown fences.
 
 <messages>
@@ -140,8 +140,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     summarized using a dedicated model call and replaced with a compact, structured
     summary message, preserving recent context and tool-call integrity.
 
-    This is the expensive tier — summarization turns input tokens into (pricier) output
-    tokens — so it is best used behind cheaper passes (see `TieredCompaction`).
+    This is the expensive tier -- summarization turns input tokens into (pricier) output
+    tokens -- so it is best used behind cheaper passes (see `TieredCompaction`).
 
     The summary call's usage is folded into the parent run's usage (it counts as a real
     request), so cost accounting stays honest; note this also increments the run's request

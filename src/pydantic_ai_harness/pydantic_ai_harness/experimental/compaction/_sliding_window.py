@@ -1,4 +1,4 @@
-"""`SlidingWindow` — zero-cost trimming of the oldest messages."""
+"""`SlidingWindow` -- zero-cost trimming of the oldest messages."""
 
 from __future__ import annotations
 

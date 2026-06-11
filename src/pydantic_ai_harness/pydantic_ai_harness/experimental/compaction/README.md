@@ -3,7 +3,7 @@
 > [!WARNING]
 > **Experimental.** These capabilities live under `pydantic_ai_harness.experimental` and may
 > change or be removed in any release, without a deprecation period. Import them from the
-> experimental path — there is no top-level export:
+> experimental path -- there is no top-level export:
 >
 > ```python
 > from pydantic_ai_harness.experimental.compaction import TieredCompaction
@@ -24,7 +24,7 @@ window. Each is a Pydantic AI `Capability` that runs in the `before_model_reques
 **persist** into the run's message history, so a trim/clear/summary carries forward to later
 steps (it is not recomputed from the full history every turn).
 
-All strategies preserve tool-call / tool-return **pairing** — core does not validate this, and a
+All strategies preserve tool-call / tool-return **pairing** -- core does not validate this, and a
 provider rejects an orphaned pair. The zero-LLM strategies never call a model.
 
 ## The menu
@@ -48,9 +48,9 @@ near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens
 ## Cost: why summarization is the last resort
 
 Summarization turns input tokens into output tokens, which are billed at a premium and generated
-serially — so it is genuinely expensive. The zero-LLM strategies touch only the cheaper input side.
+serially -- so it is genuinely expensive. The zero-LLM strategies touch only the cheaper input side.
 The field consensus (Anthropic, OpenCode, Letta) is to clear/dedupe first and summarize only when
-that is not enough — which is exactly what `TieredCompaction` encodes:
+that is not enough -- which is exactly what `TieredCompaction` encodes:
 
 ```python
 from pydantic_ai import Agent
@@ -77,14 +77,14 @@ agent = Agent(
 ```
 
 A tier inside `TieredCompaction` is driven directly by the orchestrator, which re-measures after each
-and stops once under `target_tokens` — so a tier's own `max_*` trigger is irrelevant there (set it to
+and stops once under `target_tokens` -- so a tier's own `max_*` trigger is irrelevant there (set it to
 anything valid). Any object with `async def compact(messages, ctx) -> list[ModelMessage]`
 (`CompactionStrategy`) can be a tier, so you can plug in your own.
 
 ## Cache tradeoff (read before using `ClearToolResults`)
 
 Clearing or deduplicating rewrites message content, which invalidates the provider's prompt cache
-from the edit point onward — the next request pays a cache-write. Use `ClearToolResults`'
+from the edit point onward -- the next request pays a cache-write. Use `ClearToolResults`'
 `min_clear_tokens` to skip clearing that reclaims too little to be worth busting the cache.
 
 ## Model inheritance
@@ -94,8 +94,8 @@ running agent's model. No token caps are imposed on the summary call.
 
 ## Usage accounting
 
-The summary call is a real request to the model, so its full usage — tokens **and** the request
-itself — is folded into the run's `ctx.usage`. This is deliberate: it keeps cost honest, keeps the
+The summary call is a real request to the model, so its full usage -- tokens **and** the request
+itself -- is folded into the run's `ctx.usage`. This is deliberate: it keeps cost honest, keeps the
 request count consistent (a model request that didn't count as one would be the surprise), and lets a
 `UsageLimits` request limit catch a runaway compaction. A run-request / iteration limiter will
 therefore see compaction calls among its requests.
@@ -120,5 +120,5 @@ def my_file_key(call: ToolCallPart) -> str | None:
 ## Out of scope
 
 These strategies compress or drop context *inside* the window. Moving large tool outputs *out* of the
-window — overflowing them to a file the agent (or a subagent) can query on demand — is a separate
+window -- overflowing them to a file the agent (or a subagent) can query on demand -- is a separate
 capability, not lossy truncation. Prefer it over capping individual tool outputs.

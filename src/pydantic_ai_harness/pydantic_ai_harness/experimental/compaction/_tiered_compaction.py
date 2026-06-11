@@ -1,4 +1,4 @@
-"""`TieredCompaction` — escalation orchestrator over a sequence of strategies."""
+"""`TieredCompaction` -- escalation orchestrator over a sequence of strategies."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
     tool results, deduplicate reads, then summarize) so the expensive summarization tier is
     only reached when the cheap passes cannot reclaim enough.
 
-    Each tier's own trigger is bypassed — `TieredCompaction` drives the tiers directly via
+    Each tier's own trigger is bypassed -- `TieredCompaction` drives the tiers directly via
     their ``compact`` method and decides when to stop.
 
     Example:

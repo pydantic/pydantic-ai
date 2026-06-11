@@ -1,4 +1,4 @@
-"""Pydantic AI capability library."""
+"""The batteries for your Pydantic AI agent -- the official capability library."""
 
 from typing import TYPE_CHECKING
 
@@ -8,7 +8,12 @@ if TYPE_CHECKING:
     from .logfire import ManagedPrompt
     from .shell import Shell
 
-__all__ = ['CodeMode', 'FileSystem', 'ManagedPrompt', 'Shell']
+__all__ = [
+    'CodeMode',
+    'FileSystem',
+    'ManagedPrompt',
+    'Shell',
+]
 
 
 def __getattr__(name: str) -> object:

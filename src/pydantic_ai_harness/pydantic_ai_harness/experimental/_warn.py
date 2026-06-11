@@ -28,7 +28,7 @@ _SILENCE_HINT = (
 def warn_experimental(feature: str) -> None:
     """Emit a `HarnessExperimentalWarning` for *feature*, including how to silence all of them.
 
-    One filter silences the whole category — every experimental capability — so users never
+    One filter silences the whole category (every experimental capability), so users never
     need a suppression line per capability.
     """
     warnings.warn(

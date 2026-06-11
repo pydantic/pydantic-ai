@@ -28,6 +28,7 @@ classifiers = [
     'Typing :: Typed',
 ]
 dependencies = [
+    "httpx>=0.28.1",
     'pydantic-ai-slim>=1.95.1',
 ]
 
@@ -71,6 +72,7 @@ dev = [
     'inline-snapshot>=0.32.5',
     'pydantic-ai-slim[spec]>=1.95.1',
     "pytest-examples>=0.0.18",
+    "pytest-recording>=0.13.4",
 ]
 lint = [
     'ruff>=0.14',

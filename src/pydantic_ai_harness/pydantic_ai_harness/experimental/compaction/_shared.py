@@ -1,7 +1,7 @@
 """Shared utilities for the compaction capabilities.
 
 Token estimation, the `CompactionStrategy` protocol, tool-pair-safe cutoff logic, first-user
-preservation, and in-place tool-result clearing — anything used by more than one capability.
+preservation, and in-place tool-result clearing -- anything used by more than one capability.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ class CompactionStrategy(Protocol[AgentDepsT]):
 
 
 # ---------------------------------------------------------------------------
-# Safe cutoff logic — preserves tool-call / tool-return pairs
+# Safe cutoff logic -- preserves tool-call / tool-return pairs
 # ---------------------------------------------------------------------------
 
 _TOOL_PAIR_SEARCH_RANGE = 5

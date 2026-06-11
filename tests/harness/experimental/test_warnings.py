@@ -33,3 +33,9 @@ class TestExperimentalWarning:
         module = importlib.import_module('pydantic_ai_harness.experimental.compaction')
         with pytest.warns(HarnessExperimentalWarning):
             importlib.reload(module)
+
+    @pytest.mark.parametrize('feature', ['step_persistence', 'media'])
+    def test_importing_step_persistence_or_media_warns(self, feature: str):
+        module = importlib.import_module(f'pydantic_ai_harness.experimental.{feature}')
+        with pytest.warns(HarnessExperimentalWarning, match=feature):
+            importlib.reload(module)

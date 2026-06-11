@@ -1,4 +1,4 @@
-"""`DeduplicateFileReads` — zero-cost in-place clearing of superseded file reads."""
+"""`DeduplicateFileReads` -- zero-cost in-place clearing of superseded file reads."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
     earlier reads are blanked with a placeholder.  Tool-call pairing is preserved.  No LLM
     calls are made.
 
-    File identity is supplied by the ``file_key`` seam — given a ``ToolCallPart`` it returns
+    File identity is supplied by the ``file_key`` seam -- given a ``ToolCallPart`` it returns
     a stable key for the file being read, or ``None`` if the call is not a file read.  There
     is no default: file-read identification is agent-specific, and a wrong guess would drop
     live data.
