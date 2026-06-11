@@ -829,9 +829,13 @@ class StreamedResponse(ABC):
         raised when the underlying connection is torn down, even if
         `close_stream()` itself raises.
         """
-        if self.cancelled or self._finished:
+        if self.cancelled:
             return
         self._cancelled = True
+        # A stream that finished naturally stays 'complete': get() checks _finished
+        # before _cancelled, and there's no live connection left to tear down.
+        if self._finished:
+            return
         await self.close_stream()
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
