@@ -6,7 +6,7 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import Mock
 
 import pytest
@@ -17,7 +17,7 @@ from pydantic_ai._deferred_capabilities import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
@@ -1864,6 +1864,91 @@ async def test_run_stream_tool_call():
             '[DONE]',
         ]
     )
+
+
+@pytest.mark.parametrize('sdk_version', [5, 6])
+async def test_run_stream_load_capability_tool_kind_metadata(sdk_version: Literal[5, 6]):
+    """Streaming chunks for a `load_capability` call carry `tool_kind` in their metadata.
+
+    The client-side `useChat` assembles its `UIMessage` from these chunks (never from
+    `dump_messages`), so without the discriminator here, persisted streaming histories
+    would reload as plain parts and `parse_loaded_capabilities()` would be empty on resume.
+    The client reads the call metadata from `tool-input-available`; `tool-input-start` also
+    carries it on v6, while v5 strips it at encoding (the v5 protocol has no slot for it).
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "refunds"}', tool_call_id='load-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        capabilities=[
+            Capability[None](
+                id='refunds',
+                description='Refund tools.',
+                instructions='Refund instructions.',
+                defer_loading=True,
+            )
+        ],
+    )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Help me with a refund')])],
+    )
+
+    adapter = VercelAIAdapter(agent, request, sdk_version=sdk_version)
+    events: list[dict[str, Any] | str] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    expectations: dict[int, list[dict[str, Any]]] = {
+        5: [
+            {'type': 'tool-input-start', 'toolCallId': 'load-1', 'toolName': 'load_capability'},
+            {'type': 'tool-input-delta', 'toolCallId': 'load-1', 'inputTextDelta': '{"id": "refunds"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'load-1',
+                'toolName': 'load_capability',
+                'input': {'id': 'refunds'},
+                'providerMetadata': {'pydantic_ai': {'tool_kind': 'capability-load'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'load-1',
+                'output': {'instructions': 'Refund instructions.'},
+            },
+        ],
+        6: [
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'load-1',
+                'toolName': 'load_capability',
+                'providerMetadata': {'pydantic_ai': {'tool_kind': 'capability-load'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'load-1', 'inputTextDelta': '{"id": "refunds"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'load-1',
+                'toolName': 'load_capability',
+                'input': {'id': 'refunds'},
+                'providerMetadata': {'pydantic_ai': {'tool_kind': 'capability-load'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'load-1',
+                'output': {'instructions': 'Refund instructions.'},
+            },
+        ],
+    }
+    tool_events = [e for e in events if isinstance(e, dict) and e['type'].startswith('tool-')]
+    assert tool_events == expectations[sdk_version]
 
 
 async def test_run_stream_tool_metadata_single_chunk():
