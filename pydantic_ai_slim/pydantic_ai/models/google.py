@@ -3,17 +3,16 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Hashable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Hashable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, cast, get_args, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
-from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -50,6 +49,7 @@ from ..native_tools import (
     WebFetchTool,
     WebSearchTool,
 )
+from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
@@ -177,10 +177,10 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
-_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
+_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = get_args(_GOOGLE_IMAGE_SIZE)
 
 _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
-_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
+_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
 # Accept both the current name (`google-cloud` / `google`) and the pre-v2 names
@@ -632,7 +632,7 @@ class GoogleModel(Model[Client]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -760,10 +760,18 @@ class GoogleModel(Model[Client]):
         else:
             tool_choice_mode = resolved_tool_choice
 
-        function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_config_modes[tool_choice_mode]}
-        if allowed_function_names:
-            function_calling_config['allowed_function_names'] = allowed_function_names
-        tool_config = ToolConfigDict(function_calling_config=function_calling_config)
+        tool_config = ToolConfigDict()
+        # A `function_calling_config` only governs function tools. Gemini rejects one that has no
+        # `function_declarations` to apply to ('Function calling config is set without function_declarations'),
+        # which happens when only native tools (e.g. web search) are configured, so only set it when there
+        # are function tools.
+        if tool_defs:
+            function_calling_config: FunctionCallingConfigDict = {
+                'mode': function_calling_config_modes[tool_choice_mode]
+            }
+            if allowed_function_names:
+                function_calling_config['allowed_function_names'] = allowed_function_names
+            tool_config['function_calling_config'] = function_calling_config
 
         # `include_server_side_tool_invocations` makes Gemini emit explicit `tool_call`/`tool_response`
         # parts for WebSearchTool, WebFetchTool, FileSearchTool. Pre-Gemini-3 models reject the field
@@ -784,7 +792,7 @@ class GoogleModel(Model[Client]):
         if not tools:
             return None, None, image_config
 
-        return tools, tool_config, image_config
+        return tools, tool_config or None, image_config
 
     @overload
     async def _generate_content(

@@ -4,12 +4,20 @@ import base64
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Callable,
+    Generator,
+    Iterable,
+    Sequence,
+)
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, cast, get_args, overload
 
 from httpx import Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -18,7 +26,7 @@ from typing_extensions import Never, assert_never, deprecated
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._instrumentation import get_instructions
-from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
+from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import (
@@ -80,6 +88,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
+from ..output import OutputObjectDefinition
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
@@ -172,7 +181,7 @@ except ImportError as _import_error:
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
@@ -267,7 +276,7 @@ _OPENAI_ASPECT_RATIO_TO_SIZE: dict[ImageAspectRatio, Literal['1024x1024', '1024x
 }
 
 _OPENAI_IMAGE_SIZE = Literal['auto', '1024x1024', '1024x1536', '1536x1024']
-_OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = _utils.get_args(_OPENAI_IMAGE_SIZE)
+_OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZE)
 
 
 class _ChatCompletion(chat.ChatCompletion):
@@ -929,7 +938,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -971,7 +980,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         web_search_options = self._get_web_search_options(model_request_parameters)
         profile = OpenAIModelProfile.from_profile(self.profile)
 
-        openai_messages = await self._map_messages(messages, model_request_parameters)
+        openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -1434,20 +1443,46 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
     async def _map_messages(
-        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+        self,
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        *,
+        model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        # DeepSeek-style `'field'` providers 400 on a tool-calling assistant turn that omits their
+        # thinking field while the run is reasoning. The framework-synthesized deferred-capability
+        # tool-search turn is the common trigger (it carries no thinking), but the backfill below
+        # deliberately covers any such turn missing the field. Resolve the field name to set empty below.
+        thinking_active = any(
+            isinstance(part, ThinkingPart)
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+        )
+        backfill_field = (
+            profile.openai_chat_thinking_field
+            if thinking_active and profile.openai_chat_send_back_thinking_parts == 'field'
+            else None
+        )
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
                 if (mapped := self._map_model_response(message)) is not None:
+                    if (
+                        backfill_field
+                        and mapped['role'] == 'assistant'
+                        and mapped.get('tool_calls')
+                        and backfill_field not in mapped
+                    ):
+                        mapped[backfill_field] = ''
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
-        profile = OpenAIModelProfile.from_profile(self.profile)
         system_prompt_role = profile.openai_system_prompt_role or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
@@ -1667,11 +1702,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         elif isinstance(item, VideoUrl):
             return await self._map_video_url_item(item)
         elif isinstance(item, UploadedFile):
-            # Verify provider matches
-            if item.provider_name != self.system:
+            self._validate_uploaded_file_provider(item)
+            if item.media_type.startswith('image/'):
+                # Chat Completions can only reference an uploaded file as a document `file` part;
+                # `image_url` parts take a URL/data URI, not a `file_id`, so images can't be referenced by id.
                 raise UserError(
-                    f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIChatModel. '
-                    f'Expected `provider_name` to be `{self.system!r}`.'
+                    'Referencing an uploaded image by `file_id` is not supported by OpenAIChatModel. '
+                    'Use `ImageUrl` or `BinaryContent` for images, or use `OpenAIResponsesModel`.'
                 )
             return File(
                 file=FileFile(file_id=item.file_id),
@@ -1683,6 +1720,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         else:
             assert_never(item)
 
+    async def _map_user_prompt_content_item(
+        self, item: UserContent, content: list[ChatCompletionContentPartParam]
+    ) -> None:
+        """Map a single user-prompt content item onto the outgoing `content` list.
+
+        Stable protected hook: subclasses override this to intercept user-prompt content items
+        before the default mapping (e.g. `OpenRouterModel` translates `CachePoint` into a
+        `cache_control` breakpoint on the preceding part).
+        """
+        mapped_item = await self._map_content_item(item)
+        if mapped_item is not None:
+            content.append(mapped_item)
+
     async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
@@ -1690,9 +1740,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         else:
             content = []
             for item in part.content:
-                mapped_item = await self._map_content_item(item)
-                if mapped_item is not None:
-                    content.append(mapped_item)
+                await self._map_user_prompt_content_item(item, content)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
     def _raise_document_input_not_supported_error(self) -> Never:
@@ -1971,7 +2019,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -3078,17 +3126,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     text = item if isinstance(item, str) else item.content
                     content.append(responses.ResponseInputTextParam(text=text, type='input_text'))
                 elif isinstance(item, UploadedFile):
-                    if item.provider_name != self.system:
-                        raise UserError(
-                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
-                            f'Expected `provider_name` to be `{self.system!r}`.'
-                        )
-                    content.append(
-                        responses.ResponseInputFileParam(
-                            type='input_file',
-                            file_id=item.file_id,
-                        )
-                    )
+                    content.append(self._map_uploaded_file_to_response_content(item))  # pyright: ignore[reportArgumentType]
                 elif isinstance(item, CachePoint):
                     pass
                 elif is_multi_modal_content(item):
@@ -3096,6 +3134,27 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
         return responses.EasyInputMessageParam(role='user', content=content)
+
+    def _map_uploaded_file_to_response_content(
+        self,
+        item: UploadedFile,
+    ) -> ResponseInputImageContentParam | ResponseInputFileContentParam:
+        """Map an `UploadedFile` to its OpenAI Responses API content param.
+
+        Raises `UserError` if the file was uploaded to a different provider (`provider_name != self.system`).
+
+        Image uploads (an `image/*` media type) map to `input_image`, carrying `detail` from
+        `vendor_metadata` (default `'auto'`); everything else maps to `input_file`. Opaque OpenAI
+        Files-API ids (e.g. `file-...`) report `application/octet-stream`, so an image referenced by
+        such an id without an explicit `image/*` media type also maps to `input_file`.
+        """
+        self._validate_uploaded_file_provider(item)
+        if item.media_type.startswith('image/'):
+            detail: Literal['auto', 'low', 'high'] = 'auto'
+            if metadata := item.vendor_metadata:
+                detail = metadata.get('detail', 'auto')
+            return ResponseInputImageContentParam(type='input_image', file_id=item.file_id, detail=detail)
+        return ResponseInputFileContentParam(type='input_file', file_id=item.file_id)
 
     @staticmethod
     async def _map_file_to_response_content(
@@ -3153,8 +3212,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             raise NotImplementedError(f'VideoUrl is not supported in OpenAI Responses {context}')
 
-    @staticmethod
     async def _map_tool_return_output(
+        self,
         part: ToolReturnPart,
     ) -> str | list[ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam]:
         """Map a `ToolReturnPart` to OpenAI Responses API output format, supporting multimodal content.
@@ -3170,12 +3229,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         for item in part.content_items(mode='str'):
             if isinstance(item, UploadedFile):
-                output.append(
-                    ResponseInputFileContentParam(
-                        type='input_file',
-                        file_id=item.file_id,
-                    )
-                )
+                output.append(self._map_uploaded_file_to_response_content(item))
             elif is_multi_modal_content(item):
                 output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
             elif isinstance(item, str):  # pragma: no branch

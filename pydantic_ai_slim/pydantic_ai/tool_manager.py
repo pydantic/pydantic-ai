@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -94,7 +94,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     @classmethod
     @contextmanager
-    def parallel_execution_mode(cls, mode: ParallelExecutionMode = 'parallel') -> Iterator[None]:
+    def parallel_execution_mode(cls, mode: ParallelExecutionMode = 'parallel') -> Generator[None]:
         """Set the parallel execution mode during the context.
 
         Args:
@@ -112,7 +112,7 @@ class ToolManager(Generic[AgentDepsT]):
     @classmethod
     @contextmanager
     @deprecated('Use `parallel_execution_mode("sequential")` instead.')
-    def sequential_tool_calls(cls) -> Iterator[None]:
+    def sequential_tool_calls(cls) -> Generator[None]:
         """Run tool calls sequentially during the context."""
         with cls.parallel_execution_mode('sequential'):
             yield

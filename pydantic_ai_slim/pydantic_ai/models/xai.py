@@ -2,7 +2,7 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,7 +11,6 @@ from typing import Any, Literal, cast
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, _utils
-from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
@@ -52,6 +51,7 @@ from ..models import (
     download_item,
 )
 from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
+from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
 from ..profiles.grok import GrokModelProfile, GrokReasoningEffort
 from ..providers import Provider, infer_provider
@@ -76,7 +76,7 @@ except ImportError as _import_error:
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except grpc.RpcError as e:
@@ -623,11 +623,7 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported in xAI user prompts')
             elif isinstance(item, UploadedFile):
-                if item.provider_name != self.system:
-                    raise UserError(
-                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with XaiModel. '
-                        f'Expected `provider_name` to be `{self.system!r}`.'
-                    )
+                self._validate_uploaded_file_provider(item)
                 content_items.append(file(item.file_id))
             elif isinstance(item, CachePoint):
                 # xAI doesn't support prompt caching via CachePoint, so we filter it out
@@ -796,7 +792,7 @@ class XaiModel(Model[AsyncClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         """Make a streaming request to the xAI model."""
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
