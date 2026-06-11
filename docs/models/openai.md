@@ -770,6 +770,33 @@ print(result.output)
 ...
 ```
 
+!!! warning "Strict OpenAI-compatible backends and multiple system messages"
+    Some OpenAI-compatible backends served through LiteLLM (notably vLLM) reject a request that
+    contains more than one leading `system` message, with `System message must be at the beginning`.
+    Pydantic AI can emit multiple system messages — for example when agent `instructions` are combined
+    with [`PromptedOutput`][pydantic_ai.output.PromptedOutput], which adds its own output-format
+    instruction as a separate system message. If your backend is strict, set
+    `openai_chat_supports_multiple_system_messages=False` on the
+    [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] so the leading system
+    messages are merged into one:
+
+    ```python {test="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+
+    model = OpenAIChatModel(
+        'my-vllm-model',
+        provider=LiteLLMProvider(api_base='<api-base-url>', api_key='<api-key>'),
+        profile=OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+            openai_chat_supports_multiple_system_messages=False,
+        ),
+    )
+    agent = Agent(model)
+    ```
+
 ### Nebius AI Studio
 
 Go to [Nebius AI Studio](https://studio.nebius.com/) and create an API key.
