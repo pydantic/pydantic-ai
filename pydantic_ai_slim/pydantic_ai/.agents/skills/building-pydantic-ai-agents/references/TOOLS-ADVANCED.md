@@ -85,7 +85,7 @@ def read_file(path: str) -> str:
 
 The failure is recorded in message history as a `ToolReturnPart` with `outcome='failed'` (using the provider's native error field where one exists) and traced as an error in telemetry.
 
-`ToolFailed` can also be raised from an `args_validator` (see below) and from tool validation/execution hooks — same semantics, useful for converting a third-party exception into a failed result in one place instead of per tool. MCP servers expose the same retry-vs-failed choice via `tool_error_behavior`.
+`ToolFailed` can also be raised from an `args_validator` (see below) and from tool validation/execution hooks — same semantics, useful for converting a third-party exception into a failed result in one place instead of per tool. MCP servers expose the same retry-vs-failed choice via `tool_error_behavior`. For deferred tools, a `ToolFailed` instance can be supplied as a `DeferredToolResults.calls` value to report an external execution failure, just like `ModelRetry` requests a retry from there.
 
 ## Validate or Require Approval Before Tool Execution
 

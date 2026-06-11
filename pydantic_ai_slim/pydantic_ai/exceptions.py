@@ -92,6 +92,30 @@ class ToolFailed(Exception):
         self.message = message
         super().__init__(message)
 
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, self.__class__) and other.message == self.message
+
+    def __hash__(self) -> int:
+        return hash((self.__class__, self.message))
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> core_schema.CoreSchema:
+        """Pydantic core schema to allow `ToolFailed` to be (de)serialized."""
+        schema = core_schema.typed_dict_schema(
+            {
+                'message': core_schema.typed_dict_field(core_schema.str_schema()),
+                'kind': core_schema.typed_dict_field(core_schema.literal_schema(['tool-failed'])),
+            }
+        )
+        return core_schema.no_info_after_validator_function(
+            lambda dct: ToolFailed(dct['message']),
+            schema,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda x: {'message': x.message, 'kind': 'tool-failed'},
+                return_schema=schema,
+            ),
+        )
+
 
 class CallDeferred(Exception):
     """Exception to raise when a tool call should be deferred.

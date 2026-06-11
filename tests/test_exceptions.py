@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import ModelRetry
+from pydantic_ai import ModelRetry, ToolFailed
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -31,6 +31,7 @@ from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
     'exc_factory',
     [
         lambda: ModelRetry('test'),
+        lambda: ToolFailed('test'),
         lambda: CallDeferred(),
         lambda: ApprovalRequired(),
         lambda: UserError('test'),
@@ -44,6 +45,7 @@ from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
     ],
     ids=[
         'ModelRetry',
+        'ToolFailed',
         'CallDeferred',
         'ApprovalRequired',
         'UserError',
@@ -75,6 +77,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
     'exc_factory,check_attrs',
     [
         (lambda: ModelRetry('retry msg'), {'message': 'retry msg'}),
+        (lambda: ToolFailed('failed msg'), {'message': 'failed msg'}),
         (lambda: CallDeferred(), {'metadata': None}),
         (lambda: CallDeferred({'key': 'value'}), {'metadata': {'key': 'value'}}),
         (lambda: ApprovalRequired(), {'metadata': None}),
@@ -99,6 +102,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
     ],
     ids=[
         'ModelRetry',
+        'ToolFailed',
         'CallDeferred-no-metadata',
         'CallDeferred-with-metadata',
         'ApprovalRequired-no-metadata',

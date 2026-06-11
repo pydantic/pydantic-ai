@@ -2624,6 +2624,7 @@ def test_deferred_tool_results_serializable():
                 content='The tool call was approved.',
                 metadata={'foo': 'bar'},
             ),
+            'tool-failed': ToolFailed('The tool failed.'),
             'model-retry': ModelRetry('The tool call was denied.'),
             'retry-prompt-part': RetryPromptPart(
                 content='The tool call was denied.',
@@ -2650,6 +2651,7 @@ def test_deferred_tool_results_serializable():
                     'metadata': {'foo': 'bar'},
                     'kind': 'tool-return',
                 },
+                'tool-failed': {'message': 'The tool failed.', 'kind': 'tool-failed'},
                 'model-retry': {'message': 'The tool call was denied.', 'kind': 'model-retry'},
                 'retry-prompt-part': {
                     'content': 'The tool call was denied.',
@@ -2671,6 +2673,49 @@ def test_deferred_tool_results_serializable():
     )
     deserialized = results_ta.validate_python(serialized)
     assert deserialized == results
+
+
+def test_deferred_tool_call_result_tool_failed():
+    """A `ToolFailed` in `DeferredToolResults.calls` reaches the model as a failed tool return, not a retry or a success."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('buy', {'fruit': 'apple'}, tool_call_id='buy_apple')])
+        else:
+            return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def buy(fruit: str):
+        raise CallDeferred
+
+    result = agent.run_sync('Buy me an apple')
+    assert result.output == snapshot(
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple')])
+    )
+
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(calls={'buy_apple': ToolFailed('The store is closed')}),
+    )
+    assert result.output == snapshot('Done!')
+    assert result.all_messages()[-2] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='buy',
+                    content='The store is closed',
+                    tool_call_id='buy_apple',
+                    timestamp=IsDatetime(),
+                    outcome='failed',
+                )
+            ],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
 
 
 def test_tool_metadata():

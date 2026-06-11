@@ -20019,6 +20019,55 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
     assert captured_result.metadata == {'k': 'v'}
 
 
+async def test_deferred_tool_handler_via_handle_call_tool_failed():
+    """Per-call path: handler-supplied `ToolFailed` raises `ToolFailedError`, matching a tool that raises `ToolFailed` in-process."""
+    from pydantic_ai.exceptions import CallDeferred, ToolFailed, ToolFailedError
+    from pydantic_ai.toolsets import FunctionToolset
+
+    inner_toolset = FunctionToolset()
+
+    @inner_toolset.tool_plain
+    def inner_tool() -> str:
+        raise CallDeferred
+
+    async def handle_deferred(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={call.tool_call_id: ToolFailed('backend unavailable') for call in requests.calls}
+        )
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('caller_tool', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('final')])
+
+    agent = Agent(
+        FunctionModel(llm),
+        toolsets=[inner_toolset],
+        capabilities=[HandleDeferredToolCalls(handler=handle_deferred)],
+    )
+
+    captured_error: Any = None
+
+    @agent.tool
+    async def caller_tool(ctx: RunContext[None]) -> str:
+        nonlocal captured_error
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart(tool_name='inner_tool', args={}, tool_call_id='inner_1'),
+            )
+        except ToolFailedError as e:
+            captured_error = e
+        return 'done'
+
+    await agent.run('go')
+    assert captured_error is not None
+    assert captured_error.tool_failed.tool_name == 'inner_tool'
+    assert captured_error.tool_failed.tool_call_id == 'inner_1'
+    assert captured_error.tool_failed.content == 'backend unavailable'
+    assert captured_error.tool_failed.outcome == 'failed'
+
+
 def test_deferred_tool_handler_serialization_name():
     """HandleDeferredToolCalls is not spec-constructible."""
     assert HandleDeferredToolCalls.get_serialization_name() is None

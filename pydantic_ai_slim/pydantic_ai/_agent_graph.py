@@ -2013,6 +2013,14 @@ async def _call_tool(
                 tool_call_id=call.tool_call_id,
                 outcome='denied',
             ), None
+        elif isinstance(tool_call_result, exceptions.ToolFailed):
+            m = _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content=tool_call_result.message,
+                tool_call_id=call.tool_call_id,
+                outcome='failed',
+            )
+            raise ToolFailedError(m)
         elif isinstance(tool_call_result, exceptions.ModelRetry):
             m = _messages.RetryPromptPart(
                 content=tool_call_result.message,

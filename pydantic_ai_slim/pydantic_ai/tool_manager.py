@@ -919,8 +919,10 @@ class ToolManager(Generic[AgentDepsT]):
             ToolRetryError: Handler requested a retry via `ModelRetry` or `RetryPromptPart`,
                 or the approved tool re-raised `ModelRetry` (only when
                 `wrap_validation_errors=True`).
-            ValidationError / ModelRetry: When `wrap_validation_errors=False` and the
-                approved tool's re-validation fails or its body raises `ModelRetry`.
+            ToolFailedError: Handler reported a failure via `ToolFailed`, or the approved
+                tool raised `ToolFailed` (only when `wrap_validation_errors=True`).
+            ValidationError / ModelRetry / ToolFailed: When `wrap_validation_errors=False` and the
+                approved tool's re-validation fails or its body raises `ModelRetry` or `ToolFailed`.
             CallDeferred / ApprovalRequired: Handler couldn't resolve the call, or the
                 approved tool re-raised a deferral.
         """
@@ -944,6 +946,8 @@ class ToolManager(Generic[AgentDepsT]):
             # `isinstance`-check the result of `handle_call` to distinguish a denial
             # from a successful tool return.
             return tool_call_result
+        if isinstance(tool_call_result, ToolFailed):
+            raise self._wrap_error_as_failed(call.tool_name, call, tool_call_result)
         if isinstance(tool_call_result, ToolApproved):
             validate_call = call
             if tool_call_result.override_args is not None:
