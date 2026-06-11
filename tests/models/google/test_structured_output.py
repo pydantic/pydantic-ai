@@ -12,7 +12,7 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import BaseModel
@@ -35,7 +35,7 @@ from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsDatetime, IsInstance, IsStr, try_import
+from ...conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
@@ -314,7 +314,24 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',
-                        content=cast(Any, IsInstance(list)),
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'sa.gov',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFF4PwGuaGjMwNhXmTR-G70ouVXbBl1mnLZd-29a_CzaOqM5mo0iAi0gyvC5-GwFpFJZ8q7plWwNrQpo-kNxw4O63YINk1cHU50yRIDxsgZmpCpZ5FkoKoZIY258AEjgBskhpuF9YWmyugfah3CAXfgPAqJUwZp_SyoNr8odaTlTFGzWYIFBEZlA7PBNF7S89nUQYcTj4Rul37cDqPErBwdkWoGbGU07W00pKYyR871kNQ=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'vynmsa.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFLfmA7EXzJ69I6opwqAjMgKy1RKFs9m6_CiliD8vtRYa3rT1w-fCjcvdNSnPM7b8JQUzikPl7s50ez4WH-L57CT-Sh7vQnOPHb3IC0htL8zVirFMW6epPnYg2wupE-WKaINzcq7p0M_-3z3g==',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'worldatlas.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEFngnpSiw5XJ4FSl6NAGsIsDLHvhhQUtmiBni3jUANKRbOUkuk1Sh-E6RgHWXR4ojmkTCsS5VDnWYuHElCz8x00NuBOZxG4vcMcrMLhLrjyRxQWAFS6_mjuyNFcxpQIhMEHNXLZpQBzLZmmkoSHDmxCDTaWxo2pfOzQkyrzeGn',
+                            },
+                            {'domain': None, 'title': None, 'uri': 'https://www.google.com/search?q=time+in+Mexico'},
+                        ],
                         tool_call_id='d6vd9r5q',
                         timestamp=IsDatetime(),
                         provider_name='google',
@@ -671,7 +688,29 @@ async def test_native_output_with_function_and_builtin_tools(
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',
-                        content=cast(Any, IsInstance(list)),
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'travel.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGFUMay4cprshyySs0beFNWou1TkT_Pmgbu282OIgNll9dulfoZ9bRpaw0YxsTOrCKGg7erhVHvYfdeCKB0iLNoGESwuc5HBJcbD2mTUJRzUE9Kv2EfrU0Ci3_9Ez_5wLLOd54md7eScK6oMTYOpVOE0RONLBuUN7biO--WVHW_20-1GhEQHkJzyo2JoBggVH9bz1qCBAFWqvUY',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'hugequiz.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEt1FftgHSP1syPUrH7vnAkcoYEkFfUffsmPEtYyRzkFsAS1ygXLM-7r_IH9PMihmPgUlBqPXYFRSGUUOwZyEJtoTy-2g5KPVV6Sr05kL212NAU_d4_lyhzzU0c6V40isZ3ZLiztO11f3FcpqY=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'vynmsa.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQExNjGIQ-7yd8m-3_HGIGIW_w6ZpCiVXkzjvKfP91T26h_lEgcozkeYbo5YPSa0RZgHl60z4R5ZdPWGoN4FFEF2QWkWVHhkqOtuIqLX8ip7PI-DJvxbbVn5Lr4x6eJY3Qk_KO5_7MW_6iilBA==',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'worldatlas.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHK-wsORH0Obxbz4622eK-fxic9cokhn2Wx9fXx7GZCNubctEutYIrM_wwIp0GCbEeR9XcJUWKYjbZiZxUXyAO0HgWMIekh5V9me-PnvVqQcqKttpBPUTMl-nZ5onyGopEwxgwoMlsZkJm3j7f5jdpJOku3uqAy1eivAvMXKcq6',
+                            },
+                            {'domain': None, 'title': None, 'uri': 'https://www.google.com/search?q=time+in+Mexico'},
+                        ],
                         tool_call_id='ccnih13d',
                         timestamp=IsDatetime(),
                         provider_name='google',
@@ -736,7 +775,24 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
                     ),
                     NativeToolReturnPart(
                         tool_name='web_search',
-                        content=cast(Any, IsInstance(list)),
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'sa.gov',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHxaMv-GdgCK-W3NgGOcJM8An2wHcQRQVxif1aN4C_NokfytNVHtIY40vkJhscfGyDWvJXcHC--UfQES4HOQRJY2EeMYe9Xb7RXltWBkeJ4SmcoBo4opx0f7_V_ZEwUOAXLXvSixcpBxizGtKaIwgUmARRb06ZucRlgynQfzeVxvI-3OPZ4HxBpvUXSkTER1SAuaibv6rXya9E1zkNM39lW1hb2cJ3wzHSODbmxeK_tZpGa',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'vynmsa.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFT4AK2D_NX8OThMFYHwYtz8QbQVVcNNGZvoJT05u2NJ7fxeQpI_PALP4ZGTNpMiSh5eilkxjtQUUEDsv7jJsorUZhXPTnHeM-RZUNkUIyn4ALiFGa7RQNHVmNW2ey3KSz6YkOzTnAaVn4Nb_Y=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'worldatlas.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEhIeQoP2DKtnk9ijOTTp8pbA3q_n-BH70orGFr7LBQEmzlYwGSiZF9XNrzbj8jvhrW2lUbC9bFMK7C6zkty8DFxwh7qIAmCSF6zK33a2Zm4wI751PC0RLBRFQYHIDkEaC_REp3G4kXjO5MZEVBT1b7glE8ye-S9eMRDP2wOSxZxw==',
+                            },
+                            {'domain': None, 'title': None, 'uri': 'https://www.google.com/search?q=time+in+Mexico'},
+                        ],
                         tool_call_id='0yzlft9k',
                         timestamp=IsDatetime(),
                         provider_name='google',
