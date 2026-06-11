@@ -4840,9 +4840,9 @@ async def test_run_finished_no_outcome_on_legacy_version() -> None:
 async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: pytest.MonkeyPatch) -> None:
     """When the installed ag-ui-protocol SDK predates interrupts, `after_stream` emits a bare
     `RUN_FINISHED` with no `outcome` field — even on a modern negotiated version. This is the
-    import-gated path (`_HAS_INTERRUPTS` is False), distinct from the version-gated path.
+    import-gated path (`HAS_INTERRUPTS` is False), distinct from the version-gated path.
     """
-    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream._HAS_INTERRUPTS', False)
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream.HAS_INTERRUPTS', False)
     agent = Agent(model=FunctionModel(stream_function=simple_stream))
     events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
 
@@ -5085,7 +5085,7 @@ async def test_deferred_tool_results_none_when_sdk_lacks_interrupts(monkeypatch:
     """When the installed ag-ui-protocol SDK predates interrupts, `resume[]` is ignored entirely
     (`deferred_tool_results` returns `None`) so the old SDK path stays byte-for-byte unchanged.
     """
-    monkeypatch.setattr('pydantic_ai.ui.ag_ui._adapter._HAS_INTERRUPTS', False)
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._adapter.HAS_INTERRUPTS', False)
     agent = Agent(model=TestModel())
     run_input = RunAgentInput(
         thread_id=uuid_str(),
