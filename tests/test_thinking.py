@@ -501,7 +501,7 @@ class TestGroqThinkingTranslation:
         settings: ModelSettings = {}
 
         model = FunctionModel(_echo)
-        result = GroqModel._translate_thinking(model, settings, params)
+        result = GroqModel._translate_thinking(model, settings, params, False)
         assert result == 'parsed'
 
     def test_thinking_high(self):
@@ -510,7 +510,7 @@ class TestGroqThinkingTranslation:
         settings: ModelSettings = {}
 
         model = FunctionModel(_echo)
-        result = GroqModel._translate_thinking(model, settings, params)
+        result = GroqModel._translate_thinking(model, settings, params, False)
         assert result == 'parsed'
 
     def test_thinking_false(self):
@@ -519,7 +519,7 @@ class TestGroqThinkingTranslation:
         settings: ModelSettings = {}
 
         model = FunctionModel(_echo)
-        result = GroqModel._translate_thinking(model, settings, params)
+        result = GroqModel._translate_thinking(model, settings, params, False)
         assert result == 'hidden'
 
     def test_thinking_none(self):
@@ -527,7 +527,7 @@ class TestGroqThinkingTranslation:
         settings: ModelSettings = {}
 
         model = FunctionModel(_echo)
-        result = GroqModel._translate_thinking(model, settings, params)
+        result = GroqModel._translate_thinking(model, settings, params, False)
         assert result is groq_NOT_GIVEN
 
     def test_provider_specific_takes_precedence(self):
@@ -535,7 +535,7 @@ class TestGroqThinkingTranslation:
         settings = {'groq_reasoning_format': 'raw'}
 
         model = FunctionModel(_echo)
-        result = GroqModel._translate_thinking(model, settings, params)
+        result = GroqModel._translate_thinking(model, settings, params, False)
         assert result == 'raw'
 
 
@@ -1295,7 +1295,7 @@ class TestCrossProviderPortability:
         assert result == 'high'
 
         # Groq: effort silently ignored, just enables
-        result = GroqModel._translate_thinking(FunctionModel(_echo, profile=thinking_profile), settings, params)
+        result = GroqModel._translate_thinking(FunctionModel(_echo, profile=thinking_profile), settings, params, False)
         assert result == 'parsed'
 
     def test_unsupported_models_silently_dropped_via_prepare_request(self):

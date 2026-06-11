@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -266,13 +266,18 @@ class GroqModel(Model[AsyncGroq]):
         self,
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
+        disable_via_effort: bool,
     ) -> Literal['hidden', 'raw', 'parsed'] | NotGiven:
         """Get reasoning format, falling back to unified thinking when provider-specific setting is not set."""
         if fmt := model_settings.get('groq_reasoning_format'):
             return fmt
         thinking = model_request_parameters.thinking
         if thinking is False:
-            # Groq has no true disable; 'hidden' suppresses reasoning output
+            if disable_via_effort:
+                # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
+                # so no reasoning format is needed.
+                return NOT_GIVEN
+            # Other reasoning models have no true disable; 'hidden' only suppresses reasoning output.
             return 'hidden'
         if thinking is not None:
             return 'parsed'
@@ -324,6 +329,25 @@ class GroqModel(Model[AsyncGroq]):
 
         extra_headers = model_settings.get('extra_headers', {})
         extra_headers.setdefault('User-Agent', get_user_agent())
+
+        # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`); `_translate_thinking`
+        # then omits `reasoning_format`. The flag is computed once and shared with `_translate_thinking` so the two
+        # stay aligned for the default path. An explicit `groq_reasoning_format` does still ride alongside
+        # `reasoning_effort='none'` on the wire (it short-circuits `_translate_thinking`), but Groq accepts the pair
+        # (HTTP 200) and lets `reasoning_effort='none'` win — reasoning is disabled and the format is ignored.
+        groq_profile = GroqModelProfile.from_profile(self.profile)
+        disable_via_effort = model_request_parameters.thinking is False and groq_profile.groq_supports_reasoning_disable
+
+        extra_body = model_settings.get('extra_body')
+        if disable_via_effort:
+            # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
+            # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.
+            merged_extra_body: dict[str, object] = {}
+            if isinstance(extra_body, Mapping):
+                merged_extra_body.update(extra_body)  # pyright: ignore[reportUnknownArgumentType]
+            merged_extra_body['reasoning_effort'] = 'none'
+            extra_body = merged_extra_body
+
         with _map_api_errors(self.model_name):
             return await self.client.chat.completions.create(
                 model=self._model_name,
@@ -341,11 +365,11 @@ class GroqModel(Model[AsyncGroq]):
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 seed=model_settings.get('seed', NOT_GIVEN),
                 presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
-                reasoning_format=self._translate_thinking(model_settings, model_request_parameters),
+                reasoning_format=self._translate_thinking(model_settings, model_request_parameters, disable_via_effort),
                 frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+                extra_body=extra_body,
             )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
