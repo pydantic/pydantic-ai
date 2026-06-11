@@ -6,7 +6,7 @@ import json
 import os
 import random
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import date, timezone
 from decimal import Decimal
@@ -4310,14 +4310,17 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
 @dataclass
 class _UsageRetentionCase:
     id: str
-    chunks: list[GenerateContentResponse]
+    # A factory rather than a built list: the chunks construct google.genai types, which are only
+    # importable when the `google` extra is installed. Building them at collection time would raise
+    # `NameError` in jobs without the extra (where this test is skipped anyway).
+    make_chunks: Callable[[], list[GenerateContentResponse]]
     expected: RequestUsage
 
 
 _USAGE_RETENTION_CASES = [
     _UsageRetentionCase(
         id='cached_tokens_dropped_by_later_chunk',
-        chunks=[
+        make_chunks=lambda: [
             _usage_chunk(cached=16365, candidates=5, text='hel'),
             _usage_chunk(cached=None, candidates=10, text='lo'),
         ],
@@ -4332,7 +4335,7 @@ _USAGE_RETENTION_CASES = [
     ),
     _UsageRetentionCase(
         id='metadata_dropped_by_later_chunk',
-        chunks=[
+        make_chunks=lambda: [
             _usage_chunk(cached=16365, candidates=5, text='hel'),
             _usage_chunk(candidates=0, text='lo', with_metadata=False),
         ],
@@ -4347,7 +4350,7 @@ _USAGE_RETENTION_CASES = [
     ),
     _UsageRetentionCase(
         id='details_only_fields_dropped_by_later_chunk',
-        chunks=[
+        make_chunks=lambda: [
             _usage_chunk(cached=16365, thoughts=100, candidates=5, text='hel'),
             _usage_chunk(cached=None, thoughts=None, candidates=10, text='lo'),
         ],
@@ -4374,7 +4377,7 @@ async def test_gemini_streamed_response_usage_retained_across_chunks(case: _Usag
     Vertex) always carry the field on the final usage chunk, so a real recording would pass even
     without the cross-chunk merge.
     """
-    assert await _stream_gemini_usage(case.chunks) == case.expected
+    assert await _stream_gemini_usage(case.make_chunks()) == case.expected
 
 
 async def _cleanup_file_search_store(store: Any, client: Any) -> None:  # pragma: lax no cover
