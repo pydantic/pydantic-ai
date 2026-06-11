@@ -384,11 +384,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         part_id = provider_meta.get('id')
                         provider_name = provider_meta.get('provider_name')
                         provider_details = provider_meta.get('provider_details')
+                        tool_kind = provider_meta.get('tool_kind')
 
                         if builtin_tool:
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
                             # The call and return metadata are combined in the output part.
                             # So we extract and return them to the respective parts
+
+                            # TODO: I am going to need handling for tool search too but skipping for now
                             call_meta = return_meta = {}
                             has_tool_output = isinstance(
                                 part,
@@ -406,13 +409,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
 
                             builder.add(
-                                NativeToolCallPart(
-                                    tool_name=tool_name,
-                                    tool_call_id=tool_call_id,
-                                    args=args,
-                                    id=call_meta.get('id') or part_id,
-                                    provider_name=call_meta.get('provider_name') or provider_name,
-                                    provider_details=call_meta.get('provider_details') or provider_details,
+                                NativeToolCallPart.narrow_type(
+                                    NativeToolCallPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        args=args,
+                                        id=call_meta.get('id') or part_id,
+                                        provider_name=call_meta.get('provider_name') or provider_name,
+                                        provider_details=call_meta.get('provider_details') or provider_details,
+                                        tool_kind=tool_kind,
+                                    )
                                 )
                             )
 
@@ -431,47 +437,66 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     )
                                     outcome = 'success'
                                 builder.add(
-                                    NativeToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=output,
-                                        provider_name=return_meta.get('provider_name') or provider_name,
-                                        provider_details=return_meta.get('provider_details') or provider_details,
-                                        outcome=outcome,
+                                    NativeToolReturnPart.narrow_type(
+                                        NativeToolReturnPart(
+                                            tool_name=tool_name,
+                                            tool_call_id=tool_call_id,
+                                            content=output,
+                                            provider_name=return_meta.get('provider_name') or provider_name,
+                                            provider_details=return_meta.get('provider_details') or provider_details,
+                                            outcome=outcome,
+                                            tool_kind=tool_kind,
+                                        )
                                     )
                                 )
                         else:
                             builder.add(
-                                ToolCallPart(
-                                    tool_name=tool_name,
-                                    tool_call_id=tool_call_id,
-                                    args=args,
-                                    id=part_id,
-                                    provider_name=provider_name,
-                                    provider_details=provider_details,
+                                ToolCallPart.narrow_type(
+                                    ToolCallPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        args=args,
+                                        id=part_id,
+                                        provider_name=provider_name,
+                                        provider_details=provider_details,
+                                        tool_kind=tool_kind,
+                                    )
                                 )
                             )
 
                             if part.state == 'output-available':
                                 builder.add(
-                                    ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
+                                    ToolReturnPart.narrow_type(
+                                        ToolReturnPart(
+                                            tool_name=tool_name,
+                                            tool_call_id=tool_call_id,
+                                            content=part.output,
+                                            tool_kind=tool_kind,
+                                        )
+                                    )
                                 )
                             elif part.state == 'output-error':
                                 builder.add(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=part.error_text,
-                                        outcome='failed',
+                                    ToolReturnPart.narrow_type(
+                                        ToolReturnPart(
+                                            tool_name=tool_name,
+                                            tool_call_id=tool_call_id,
+                                            content=part.error_text,
+                                            outcome='failed',
+                                            tool_kind=tool_kind,
+                                        )
                                     )
                                 )
                             elif part.state == 'output-denied':
                                 builder.add(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=_denial_reason(part),
-                                        outcome='denied',
+                                    ToolReturnPart.narrow_type(
+                                        ToolReturnPart(
+                                            tool_name=tool_name,
+                                            tool_call_id=tool_call_id,
+                                            content=_denial_reason(part),
+                                            outcome='denied',
+                                            tool_kind=tool_kind,
+                                        )
                                     )
                                 )
                     elif isinstance(part, DataUIPart):  # pragma: no cover
@@ -700,7 +725,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
         call_provider_metadata = dump_provider_metadata(
-            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            id=part.id,
+            provider_name=part.provider_name,
+            provider_details=part.provider_details,
+            tool_kind=part.tool_kind,
         )
         tool_type = f'tool-{part.tool_name}'
         ui_parts: list[UIMessagePart] = []
