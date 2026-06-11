@@ -34,6 +34,36 @@ with try_import() as openrouter_imports_successful:
 
     OpenRouterModelFactory = Callable[..., OpenRouterModel]
 
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.cerebras import CerebrasModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    OpenAIChatModelFactory = Callable[..., OpenAIChatModel]
+    OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
+    DeepSeekModelFactory = Callable[..., OpenAIChatModel]
+    CerebrasModelFactory = Callable[..., CerebrasModel]
+
+with try_import() as groq_imports_successful:
+    from pydantic_ai.models.groq import GroqModel
+    from pydantic_ai.providers.groq import GroqProvider
+
+    GroqModelFactory = Callable[..., GroqModel]
+
+with try_import() as mistral_imports_successful:
+    from pydantic_ai.models.mistral import MistralModel
+    from pydantic_ai.providers.mistral import MistralProvider
+
+    MistralModelFactory = Callable[..., MistralModel]
+
+with try_import() as cohere_imports_successful:
+    from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.providers.cohere import CohereProvider
+
+    CohereModelFactory = Callable[..., CohereModel]
+
 
 @pytest.fixture
 def google_model(gemini_api_key: str) -> GoogleModelFactory:
@@ -89,6 +119,95 @@ def openrouter_model(openrouter_api_key: str) -> OpenRouterModelFactory:
         return OpenRouterModel(
             model_name, provider=OpenRouterProvider(api_key=api_key or openrouter_api_key), settings=settings
         )
+
+    return _create_model
+
+
+@pytest.fixture
+def openai_chat_model(openai_api_key: str) -> OpenAIChatModelFactory:
+    """Factory to create OpenAI Chat Completions models. Used by VCR-recorded integration tests."""
+
+    @cache
+    def _create_model(model_name: str, api_key: str | None = None) -> OpenAIChatModel:
+        return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key=api_key or openai_api_key))
+
+    return _create_model
+
+
+@pytest.fixture
+def openai_responses_model(openai_api_key: str) -> OpenAIResponsesModelFactory:
+    """Factory to create OpenAI Responses API models. Used by VCR-recorded integration tests."""
+
+    @cache
+    def _cached(model_name: str, api_key: str | None = None) -> OpenAIResponsesModel:
+        return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=api_key or openai_api_key))
+
+    def _create_model(
+        model_name: str, *, settings: ModelSettings | None = None, api_key: str | None = None
+    ) -> OpenAIResponsesModel:
+        if settings is None:
+            return _cached(model_name, api_key)
+        return OpenAIResponsesModel(
+            model_name, provider=OpenAIProvider(api_key=api_key or openai_api_key), settings=settings
+        )
+
+    return _create_model
+
+
+@pytest.fixture
+def deepseek_model(deepseek_api_key: str) -> DeepSeekModelFactory:
+    """Factory to create DeepSeek models (an `OpenAIChatModel` on the DeepSeek provider).
+
+    Used by VCR-recorded integration tests.
+    """
+
+    @cache
+    def _create_model(model_name: str, api_key: str | None = None) -> OpenAIChatModel:
+        return OpenAIChatModel(model_name, provider=DeepSeekProvider(api_key=api_key or deepseek_api_key))
+
+    return _create_model
+
+
+@pytest.fixture
+def cerebras_model(cerebras_api_key: str) -> CerebrasModelFactory:
+    """Factory to create Cerebras models. Used by VCR-recorded integration tests."""
+
+    @cache
+    def _create_model(model_name: str, api_key: str | None = None) -> CerebrasModel:
+        return CerebrasModel(model_name, provider=CerebrasProvider(api_key=api_key or cerebras_api_key))
+
+    return _create_model
+
+
+@pytest.fixture
+def groq_model(groq_api_key: str) -> GroqModelFactory:
+    """Factory to create Groq models. Used by VCR-recorded integration tests."""
+
+    @cache
+    def _create_model(model_name: str, api_key: str | None = None) -> GroqModel:
+        return GroqModel(model_name, provider=GroqProvider(api_key=api_key or groq_api_key))
+
+    return _create_model
+
+
+@pytest.fixture
+def mistral_model(mistral_api_key: str) -> MistralModelFactory:
+    """Factory to create Mistral models. Used by VCR-recorded integration tests."""
+
+    @cache
+    def _create_model(model_name: str, api_key: str | None = None) -> MistralModel:
+        return MistralModel(model_name, provider=MistralProvider(api_key=api_key or mistral_api_key))
+
+    return _create_model
+
+
+@pytest.fixture
+def cohere_model(co_api_key: str) -> CohereModelFactory:
+    """Factory to create Cohere models. Used by VCR-recorded integration tests."""
+
+    @cache
+    def _create_model(model_name: str, api_key: str | None = None) -> CohereModel:
+        return CohereModel(model_name, provider=CohereProvider(api_key=api_key or co_api_key))
 
     return _create_model
 

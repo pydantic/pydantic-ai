@@ -3,11 +3,12 @@ language: python
 severity: error
 message: >-
   Use the matching `<provider>_model` factory fixture from tests/models/conftest.py
-  (`google_model`, `anthropic_model`, `openrouter_model`) instead of hand-building
-  `Provider(api_key=...)` + `Model(...)`. The factory centralizes api-key wiring for
-  VCR integration tests. If you genuinely need a one-off provider (custom
-  base_url/http_client, a non-default api_key, or a custom client), add
-  `# ast-grep-ignore` with a short reason.
+  (`google_model`, `anthropic_model`, `openrouter_model`, `openai_chat_model`,
+  `openai_responses_model`, `groq_model`, `mistral_model`, `cohere_model`,
+  `deepseek_model`, `cerebras_model`) instead of hand-building `Provider(api_key=...)`
+  + `Model(...)`. The factory centralizes api-key wiring for VCR integration tests.
+  If you genuinely need a one-off provider (custom base_url/http_client, a non-default
+  api_key, or a custom client), add `# ast-grep-ignore` with a short reason.
 files:
   - 'tests/models/**'
 ignores:
@@ -17,3 +18,9 @@ rule:
     - pattern: GoogleProvider(api_key=$$$)
     - pattern: AnthropicProvider(api_key=$$$)
     - pattern: OpenRouterProvider(api_key=$$$)
+    - pattern: OpenAIProvider(api_key=$$$)
+    - pattern: GroqProvider(api_key=$$$)
+    - pattern: MistralProvider(api_key=$$$)
+    - pattern: CohereProvider(api_key=$$$)
+    - pattern: DeepSeekProvider(api_key=$$$)
+    - pattern: CerebrasProvider(api_key=$$$)
