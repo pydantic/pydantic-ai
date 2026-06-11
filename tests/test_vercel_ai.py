@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -8749,3 +8750,33 @@ async def test_roundtrip_load_capability():
         ]
     )
     assert parse_loaded_capabilities(loaded) == {'foobar'}
+
+
+async def test_roundtrip_load_capability_invalid_args():
+    """A load_capability call with invalid args must degrade on reload, not crash."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(
+                    tool_call_id='load-foobar',
+                    args='{"name": "foobar"}',
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='load_capability',
+                    tool_call_id='load-foobar',
+                    content='Field required: id',
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+
+    assert parse_loaded_capabilities(loaded) == set()
+
+    ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(loaded))
