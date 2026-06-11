@@ -4263,6 +4263,57 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
 
 
+async def test_gemini_streamed_response_usage_retains_cached_tokens_across_chunks():
+    """Gemini streams usage as cumulative snapshots, but a gateway/proxy can report
+    `cached_content_token_count` on an earlier chunk and omit it on a later one (#5205).
+
+    This is a deterministic unit test rather than a VCR test because the direct Gemini APIs
+    (GLA and Vertex) always carry `cached_content_token_count` on the final usage chunk, so a
+    real recording would pass even without the cross-chunk merge.
+    """
+
+    def _chunk(*, cached: int | None, candidates: int, text: str) -> GenerateContentResponse:
+        return GenerateContentResponse.model_validate(
+            {
+                'response_id': 'resp-1',
+                'model_version': 'gemini-test',
+                'usage_metadata': GenerateContentResponseUsageMetadata(
+                    prompt_token_count=20025,
+                    candidates_token_count=candidates,
+                    cached_content_token_count=cached,
+                ),
+                'candidates': [{'content': {'role': 'model', 'parts': [{'text': text}]}}],
+            }
+        )
+
+    chunks = [_chunk(cached=16365, candidates=5, text='hel'), _chunk(cached=None, candidates=10, text='lo')]
+
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        for chunk in chunks:
+            yield chunk
+
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(response_iterator())),
+        _timestamp=IsDatetime(),
+        _provider_name='google',
+        _provider_url='',
+    )
+
+    async for _ in streamed_response._get_event_iterator():  # pyright: ignore[reportPrivateUsage]
+        pass
+
+    assert streamed_response.usage == snapshot(
+        RequestUsage(
+            input_tokens=20025,
+            cache_read_tokens=16365,
+            output_tokens=10,
+            details={'cached_content_tokens': 16365},
+        )
+    )
+
+
 async def _cleanup_file_search_store(store: Any, client: Any) -> None:  # pragma: lax no cover
     """Helper function to clean up a file search store if it exists."""
     if store is not None and store.name is not None:
