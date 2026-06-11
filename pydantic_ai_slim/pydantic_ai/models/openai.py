@@ -1451,16 +1451,38 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        # DeepSeek-style `'field'` providers 400 on a tool-calling assistant turn that omits their
+        # thinking field while the run is reasoning. The framework-synthesized deferred-capability
+        # tool-search turn is the common trigger (it carries no thinking), but the backfill below
+        # deliberately covers any such turn missing the field. Resolve the field name to set empty below.
+        thinking_active = any(
+            isinstance(part, ThinkingPart)
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+        )
+        backfill_field = (
+            profile.openai_chat_thinking_field
+            if thinking_active and profile.openai_chat_send_back_thinking_parts == 'field'
+            else None
+        )
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
                 if (mapped := self._map_model_response(message)) is not None:
+                    if (
+                        backfill_field
+                        and mapped['role'] == 'assistant'
+                        and mapped.get('tool_calls')
+                        and backfill_field not in mapped
+                    ):
+                        mapped[backfill_field] = ''
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
-        profile = OpenAIModelProfile.from_profile(self.profile)
         system_prompt_role = profile.openai_system_prompt_role or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
