@@ -17,8 +17,10 @@ from pydantic import BaseModel
 from typing_extensions import assert_never
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
@@ -468,3 +470,23 @@ async def test_tool_choice_matrix(
         # `tool_choice='none'` + output tool with no direct output resolves to ('required', {final_result}),
         # which now skips the tool_defs filter (cache preservation) — the function tool stays in the wire payload.
         assert get_bedrock_tool_names_from_cassette(vcr) == ['get_weather', 'final_result']
+
+
+# Standalone (outside the `(provider, scenario)` matrix): a native-tool-only request has no
+# function tools, so it doesn't map to any `tool_choice` scenario. It proves the live API accepts
+# the request once the empty `function_calling_config` is dropped — on the buggy code it 400s
+# before any response, so the cassette could only be recorded with the fix in place.
+@pytest.mark.skipif(not google_available(), reason='google not installed')
+async def test_google_native_tool_only_web_search_completes(allow_model_requests: None, gemini_api_key: str):
+    """A native-tool-only request must reach the live API and return an answer.
+
+    Pinned to a Gemini 2.5 model on purpose: that is the line the empty `function_calling_config`
+    actually breaks. Gemini 3+ sets `include_server_side_tool_invocations` and the API tolerates the
+    empty config there, so a Gemini 3 model would pass with or without the fix and prove nothing.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
+
+    result = await agent.run('What is the weather in San Francisco right now?')
+
+    assert result.output

@@ -38,10 +38,12 @@ KnownEmbeddingModelName = TypeAliasType(
     Literal[
         'google-cloud:gemini-embedding-001',
         'google-cloud:gemini-embedding-2-preview',
+        'google-cloud:gemini-embedding-2',
         'google-cloud:text-embedding-005',
         'google-cloud:text-multilingual-embedding-002',
         'google:gemini-embedding-001',
         'google:gemini-embedding-2-preview',
+        'google:gemini-embedding-2',
         'openai:text-embedding-ada-002',
         'openai:text-embedding-3-small',
         'openai:text-embedding-3-large',

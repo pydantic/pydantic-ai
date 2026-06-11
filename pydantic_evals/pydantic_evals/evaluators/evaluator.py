@@ -4,8 +4,9 @@ import inspect
 from abc import abstractmethod
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, cast
+from typing import Annotated, Any, Generic, cast
 
+from pydantic import Field
 from typing_extensions import TypeVar
 
 from .._utils import get_event_loop
@@ -23,10 +24,10 @@ __all__ = (
     'EvaluatorSpec',
 )
 
-EvaluationScalar = bool | int | float | str
+EvaluationScalar = bool | int | Annotated[float, Field(allow_inf_nan=False)] | str
 """The most primitive output allowed as an output from an Evaluator.
 
-`int` and `float` are treated as scores, `str` as labels, and `bool` as assertions.
+`int` and finite `float` are treated as scores, `str` as labels, and `bool` as assertions.
 """
 
 

@@ -859,21 +859,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         # Anthropic docs: https://platform.claude.com/docs/en/api/messages-count-tokens
         # The `count_tokens` endpoint rejects server-side tools (`web_search`, `code_execution`,
-        # `web_fetch`, `tool_search`) and the `mcp_servers` param with a 400, so omit them. This
-        # undercounts the prompt by those tools' definitions, but it's the only way to get a count
-        # until Anthropic supports them. Client-side tools like `MemoryTool` are accepted and
-        # contribute real tokens, so keep them for an accurate count.
+        # `web_fetch`, `tool_search`) and the `mcp_servers` param with a 400, so restrict the wire
+        # `tools` list to client-side tools like `MemoryTool`, which are accepted and contribute
+        # real tokens. This undercounts the prompt by the server tools' definitions, but it's the
+        # only way to get a count until Anthropic supports them.
         # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
-        model_request_parameters = replace(
+        count_tokens_parameters = replace(
             model_request_parameters,
             native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
         )
 
         # standalone function to make it easier to override
-        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
-        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
+        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, count_tokens_parameters)
+        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
+        # Map messages with the UNMODIFIED params so `tool_search_active` stays True and tool-search
+        # replay history renders the same `tool_reference` wire shape as `/v1/messages`; those
+        # references point at `function_tools`, which aren't stripped here, so they stay valid.
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
@@ -1272,11 +1275,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
                         for item in request_part.content_items(mode='str'):
                             if isinstance(item, UploadedFile):
-                                if item.provider_name != self.system:
-                                    raise UserError(
-                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
-                                        f'Expected `provider_name` to be `{self.system!r}`.'
-                                    )
+                                self._validate_uploaded_file_provider(item)
                                 if item.media_type.startswith('image/'):
                                     tool_result_content.append(
                                         BetaImageBlockParam(
@@ -1910,11 +1909,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, UploadedFile):
-                    if item.provider_name != self.system:
-                        raise UserError(
-                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
-                            f'Expected `provider_name` to be `{self.system!r}`.'
-                        )
+                    self._validate_uploaded_file_provider(item)
                     if item.media_type.startswith('image/'):
                         yield BetaImageBlockParam(
                             source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),

@@ -1137,6 +1137,7 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
         'lightonai/DenseOn': 768,
         'gemini-embedding-001': 3072,
         'gemini-embedding-2-preview': 3072,
+        'gemini-embedding-2': 3072,
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)

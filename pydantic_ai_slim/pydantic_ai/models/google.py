@@ -694,10 +694,18 @@ class GoogleModel(Model[Client]):
         else:
             tool_choice_mode = resolved_tool_choice
 
-        function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_config_modes[tool_choice_mode]}
-        if allowed_function_names:
-            function_calling_config['allowed_function_names'] = allowed_function_names
-        tool_config = ToolConfigDict(function_calling_config=function_calling_config)
+        tool_config = ToolConfigDict()
+        # A `function_calling_config` only governs function tools. Gemini rejects one that has no
+        # `function_declarations` to apply to ('Function calling config is set without function_declarations'),
+        # which happens when only native tools (e.g. web search) are configured, so only set it when there
+        # are function tools.
+        if tool_defs:
+            function_calling_config: FunctionCallingConfigDict = {
+                'mode': function_calling_config_modes[tool_choice_mode]
+            }
+            if allowed_function_names:
+                function_calling_config['allowed_function_names'] = allowed_function_names
+            tool_config['function_calling_config'] = function_calling_config
 
         # `include_server_side_tool_invocations` makes Gemini emit explicit `tool_call`/`tool_response`
         # parts for WebSearchTool, WebFetchTool, FileSearchTool. Pre-Gemini-3 models reject the field
@@ -718,7 +726,7 @@ class GoogleModel(Model[Client]):
         if not tools:
             return None, None, image_config
 
-        return tools, tool_config, image_config
+        return tools, tool_config or None, image_config
 
     @overload
     async def _generate_content(

@@ -155,3 +155,36 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.get('supports_inline_system_prompts', False) is True
+
+
+def test_groq_provider_model_profile_reasoning_flags():
+    """`GroqProvider.model_profile` overlays Groq's reasoning flags onto every family profile.
+
+    Unit (not VCR): the overlay resolves profile flags read at request-build time, and the cassette
+    matcher isn't sensitive to which flags resolved — so a regression that flips a reasoning model
+    back to non-reasoning (or vice versa) would still match an existing recording. A direct profile
+    assertion is what catches it.
+    """
+    provider = GroqProvider(groq_client=AsyncGroq(api_key='api-key'))
+
+    # qwen3 (current): reasons, and can truly disable via `reasoning_effort='none'`.
+    qwen3_profile = provider.model_profile('qwen/qwen3-32b')
+    assert qwen3_profile is not None
+    assert qwen3_profile.get('supports_thinking', False) is True
+    assert qwen3_profile.get('thinking_always_enabled', False) is False
+    assert qwen3_profile.get('groq_supports_reasoning_disable', False) is True
+
+    # Legacy reasoning models route through generic family profiles that don't flag reasoning; the
+    # overlay restores it. They reason always-on (no true disable).
+    for model_name in ('qwen-qwq-32b', 'llama-4-maverick'):
+        legacy_profile = provider.model_profile(model_name)
+        assert legacy_profile is not None, model_name
+        assert legacy_profile.get('supports_thinking', False) is True, model_name
+        assert legacy_profile.get('thinking_always_enabled', False) is True, model_name
+        assert legacy_profile.get('groq_supports_reasoning_disable', False) is False, model_name
+
+    # Non-reasoning model: the overlay leaves it untouched.
+    plain_profile = provider.model_profile('llama-3.1-8b-instant')
+    assert plain_profile is not None
+    assert plain_profile.get('supports_thinking', False) is False
+    assert plain_profile.get('thinking_always_enabled', False) is False

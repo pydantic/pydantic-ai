@@ -206,11 +206,15 @@ def _user_content_to_input(
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
     """UI adapter for the Agent-User Interaction (AG-UI) protocol.
 
-    When [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is `True`,
-    agent-generated files and uploaded files are stored as
-    [activity messages](https://docs.ag-ui.com/concepts/activities) during `dump_messages`
-    and restored during `load_messages`, enabling full round-trip fidelity. When `False`
-    (the default), they are dropped. If your AG-UI frontend uses activities, be aware that
+    [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] (inherited from
+    `UIAdapter`, default `False`) gates two behaviors. On the way in, client-submitted
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped during
+    `sanitize_messages` unless it is `True`, since the server resolves them with its own
+    credentials; only set it when the frontend is trusted. On the way out and back in, when
+    `True`, agent-generated files and uploaded files are stored as
+    [activity messages](https://docs.ag-ui.com/concepts/messages) during `dump_messages`
+    and restored during `load_messages`, enabling full round-trip fidelity. When `False`,
+    they are dropped. If your AG-UI frontend uses activities, be aware that
     `pydantic_ai_*` activity types are reserved for internal round-trip use and should be
     ignored by frontend activity handlers.
     """

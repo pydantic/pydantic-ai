@@ -952,6 +952,7 @@ def test_groq_moonshotai_kimi():
     profile = GroqProvider.model_profile('moonshotai/kimi-k2-0905')
     assert _normalize(profile) == snapshot(
         {
+            'groq_supports_reasoning_disable': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'ignore_streamed_leading_whitespace': True,
@@ -965,7 +966,13 @@ def test_groq_meta_llama4_maverick():
     """Special-cased Llama 4 Maverick gets `supports_json_object_output=True` overlay."""
     profile = GroqProvider.model_profile('llama-4-maverick-17b-128e-instruct')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_inline_system_prompts': True}
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+        }
     )
 
 
@@ -974,7 +981,11 @@ def test_groq_meta_llama3_no_overlay():
     """Older Llama models don't get the structured-output overlay."""
     profile = GroqProvider.model_profile('llama-3.3-70b-versatile')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_inline_system_prompts': True}
+        {
+            'groq_supports_reasoning_disable': False,
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+        }
     )
 
 
@@ -985,6 +996,7 @@ def test_groq_deepseek():
         {
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
         }

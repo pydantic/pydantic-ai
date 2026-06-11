@@ -243,6 +243,9 @@ If desired, this marker class can be used alongside one or more [`ToolOutput`](#
 
 Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
+!!! note
+    When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does **not** apply the `TextOutput` function. To stream the value it produces, use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] instead. See [Streaming Text](#streaming-text) for details.
+
 ```python {title="text_output_function.py"}
 from pydantic_ai import Agent, TextOutput
 
@@ -795,6 +798,9 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 !!! warning "Output message not included in `messages`"
     The final output message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
     see [Messages and chat history](message-history.md) for more information.
+
+!!! note "`stream_text()` skips `TextOutput` functions"
+    [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does **not** apply [`TextOutput`](#text-output) functions. With `delta=False` it applies [output validators](#output-validator-functions) to each accumulated text snapshot, so a validator can transform what's yielded; with `delta=True` it yields the raw text deltas and skips validators. To stream the value produced by your `TextOutput` function, use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] instead.
 
 ### Streaming Structured Output
 

@@ -71,12 +71,16 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'openai_service_tier',
         )
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
+        # gpt-oss reasons unconditionally on Cerebras: `disable_reasoning=True` is rejected with a 400,
+        # so `thinking=False` must be silently ignored rather than emitted. zai-glm-4.6 can still disable.
+        is_always_on_reasoning = model_name_lower.startswith('gpt-oss')
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
             OpenAIModelProfile(
                 openai_unsupported_model_settings=unsupported_model_settings,
                 supports_thinking=is_reasoning,
+                thinking_always_enabled=is_always_on_reasoning,
             ),
         )
 

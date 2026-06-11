@@ -335,6 +335,11 @@ class TextOutput(Generic[OutputDataT]):
     print(result.output)
     #> ['Albert', 'Einstein', 'was', 'a', 'German-born', 'theoretical', 'physicist.']
     ```
+
+    !!! note
+        When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does not apply the
+        wrapped function. Use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] to stream
+        the value it produces.
     """
 
     output_function: TextOutputFunc[OutputDataT]

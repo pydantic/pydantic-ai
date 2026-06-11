@@ -950,11 +950,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                         for item in part.content_items(mode=content_mode):
                             if isinstance(item, UploadedFile):
-                                if item.provider_name != self.system:
-                                    raise UserError(
-                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
-                                        f'Expected `provider_name` to be `{self.system!r}`.'
-                                    )
+                                self._validate_uploaded_file_provider(item)
                                 if not item.file_id.startswith('s3://'):
                                     raise UserError(
                                         f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
@@ -1230,11 +1226,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 elif isinstance(item, AudioUrl):
                     raise NotImplementedError('AudioUrl is not supported in Bedrock user prompts')
                 elif isinstance(item, UploadedFile):
-                    if item.provider_name != self.system:
-                        raise UserError(
-                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
-                            f'Expected `provider_name` to be `{self.system!r}`.'
-                        )
+                    self._validate_uploaded_file_provider(item)
                     if not item.file_id.startswith('s3://'):
                         raise UserError(
                             f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
