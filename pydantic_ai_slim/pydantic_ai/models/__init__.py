@@ -829,9 +829,7 @@ class StreamedResponse(ABC):
         raised when the underlying connection is torn down, even if
         `close_stream()` itself raises.
         """
-        if self.cancelled:
-            return
-        if self._finished:
+        if self.cancelled or self._finished:
             return
         self._cancelled = True
         await self.close_stream()
