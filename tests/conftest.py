@@ -21,6 +21,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
+from vcr.record_mode import RecordMode
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
@@ -75,6 +76,9 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 if TYPE_CHECKING:
     from typing import TypeVar
+
+    from pluggy import Result
+    from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
@@ -460,11 +464,13 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     vcr.register_matcher('method', method_matcher)
     vcr.register_matcher('path', path_matcher)
 
-    def scrub_aws_account_id(request: vcr_request.Request) -> vcr_request.Request:
+    def scrub_request(request: vcr_request.Request) -> vcr_request.Request | None:
+        if request.host == 'oauth2.googleapis.com' and request.path == '/token':
+            return None
         request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
         return request
 
-    vcr.before_record_request = scrub_aws_account_id
+    vcr.before_record_request = scrub_request
 
     # Normalize Bedrock hostnames to ignore region differences
     # e.g., bedrock-runtime.us-east-1.amazonaws.com == bedrock-runtime.us-east-2.amazonaws.com
@@ -496,6 +502,20 @@ def pytest_addoption(parser: Any) -> None:
         default=False,
         help='Run live gateway smoke tests that make real paid model requests.',
     )
+    parser.addoption(
+        '--strict-vcr-cassette-usage',
+        action='store_true',
+        help='Fail when a loaded VCR cassette has no interactions played, not only when playback leaves a stale tail.',
+    )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, Result[pytest.TestReport], None]:
+    outcome = yield
+    report = outcome.get_result()
+    setattr(item, f'rep_{report.when}', report)
 
 
 @pytest.fixture(autouse=True)
@@ -523,6 +543,34 @@ def vcr_config():
         'filter_headers': ['authorization', 'x-api-key', 'cookie'],
         'decode_compressed_response': True,
     }
+
+
+def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
+    if vcr.play_count == 0 and not strict_usage:
+        return
+
+    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
+    if unused_indexes:
+        pytest.fail(
+            f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
+            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
+        )
+
+
+@pytest.fixture(autouse=True)
+def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    if vcr is None or vcr.record_mode != RecordMode.NONE or vcr.all_played:
+        return
+
+    strict_usage = bool(request.config.getoption('--strict-vcr-cassette-usage'))
+    check_vcr_cassette_usage(vcr, strict_usage)
 
 
 _HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
