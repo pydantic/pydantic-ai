@@ -110,15 +110,6 @@ def setup_logfire_instrumentation() -> Iterator[None]:
     yield
 
 
-@pytest.fixture(autouse=True)
-def _clear_mcp_tool_cache() -> None:
-    """Clear cached tool defs on module-level DBOSMCPServer instances between tests."""
-    for agent in (complex_dbos_agent, seq_complex_dbos_agent):
-        for toolset in agent.toolsets:
-            if isinstance(toolset, DBOSMCPServer):
-                toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
-
-
 @contextmanager
 def workflow_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
     """Helper for asserting that a DBOS workflow fails with the expected error."""
@@ -1628,6 +1619,10 @@ async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
 
 
 class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
+    @property
+    def _cache_tools(self) -> bool:
+        return False
+
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[int]:
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 
@@ -1687,15 +1682,15 @@ def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():
 
 
 async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
-    """When `_cached_tool_defs` is populated, `DBOSMCPToolset.get_tools` skips the step and returns from cache."""
+    """When the run's tool-defs cache is populated, `DBOSMCPToolset.get_tools` returns from it without invoking the step."""
     from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
 
     inner = MCPToolset('https://example.com/mcp', id='cache_return_test')
     wrapper = DBOSMCPToolset(inner, step_name_prefix='cache_return_test', step_config={})
-    wrapper._cached_tool_defs = {  # pyright: ignore[reportPrivateUsage]
+    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    run_context.tool_defs_cache['cache_return_test'] = {
         'foo': ToolDefinition(name='foo', parameters_json_schema={'type': 'object'}),
     }
-    run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
 
     tools = await wrapper.get_tools(run_context)
     assert list(tools.keys()) == ['foo']

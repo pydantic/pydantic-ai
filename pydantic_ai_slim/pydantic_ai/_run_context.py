@@ -112,6 +112,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages — don't append directly.
     """
 
+    tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
+    """Internal: per-run cache of tool definitions, keyed by toolset `id`.
+
+    Read and written by durable-execution toolset wrappers (Temporal/DBOS) so a toolset's tool
+    definitions are fetched at most once per run rather than before every model request. It lives
+    on the run — recreated for each agent run and reconstructed identically on durable replay /
+    recovery — not on the process-shared toolset instance, so whether a wrapper schedules its
+    `get_tools` activity/step depends only on the run's own history and stays replay-deterministic.
+    """
+
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
     """The tool manager for the current run step.
 

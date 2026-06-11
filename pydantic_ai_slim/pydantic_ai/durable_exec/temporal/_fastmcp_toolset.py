@@ -39,6 +39,11 @@ class TemporalFastMCPToolset(TemporalMCPToolsetBase[AgentDepsT]):
             agent=agent,
         )
 
+    @property
+    def _cache_tools(self) -> bool:
+        # `FastMCPToolset` has no `cache_tools` setting, so tool defs are fetched every step.
+        return False
+
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
         assert isinstance(self.wrapped, FastMCPToolset)
         return self.wrapped.tool_for_tool_def(tool_def)
