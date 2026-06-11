@@ -119,6 +119,8 @@
 - Use `make install` to regenerate lock files (e.g., `uv.lock`) after dependency changes — Ensures reproducible builds and keeps lock file diffs minimal. Update the package manager (uv, npm, pip-tools) to latest first and start from clean state. If diffs are unexpectedly large, reset to base branch and regenerate to isolate actual changes — prevents spurious conflicts and version drift.
 <!-- rule:717 -->
 - Override profile properties in model/provider classes, not in shared profile functions — Prevents provider-specific logic from leaking into shared utilities like `anthropic_model_profile()` that multiple providers (OpenAI, Bedrock, etc.) depend on — keeps profiles reusable and avoids cross-provider bugs
+<!-- rule:-3 -->
+- Check `pydantic_ai/_utils.py` for an existing shared helper or typeguard before writing a new one — it's the canonical home for cross-module utilities (e.g. `is_str_dict` narrows `Any` to `dict[str, Any]`, `is_set` for `Unset` sentinels, `guard_tool_call_id`) — Prevents duplicating helpers that already exist and keeps narrowing/validation logic consistent across the package
 
 ## Topic Guides
 
