@@ -415,7 +415,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         id=call_meta.get('id') or part_id,
                                         provider_name=call_meta.get('provider_name') or provider_name,
                                         provider_details=call_meta.get('provider_details') or provider_details,
-                                        tool_kind=tool_kind,
+                                        tool_kind=call_meta.get('tool_kind') or tool_kind,
                                     )
                                 )
                             )
@@ -443,7 +443,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                             provider_name=return_meta.get('provider_name') or provider_name,
                                             provider_details=return_meta.get('provider_details') or provider_details,
                                             outcome=outcome,
-                                            tool_kind=tool_kind,
+                                            tool_kind=return_meta.get('tool_kind') or tool_kind,
                                         )
                                     )
                                 )
@@ -481,7 +481,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                             tool_call_id=tool_call_id,
                                             content=part.error_text,
                                             outcome='failed',
-                                            tool_kind=tool_kind,
                                         )
                                     )
                                 )
@@ -493,7 +492,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                             tool_call_id=tool_call_id,
                                             content=_denial_reason(part),
                                             outcome='denied',
-                                            tool_kind=tool_kind,
                                         )
                                     )
                                 )
@@ -587,7 +585,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     ui_parts[-1].text += part.content
                 else:
                     provider_metadata = dump_provider_metadata(
-                        id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                        id=part.id,
+                        provider_name=part.provider_name,
+                        provider_details=part.provider_details,
                     )
                     ui_parts.append(TextUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
             elif isinstance(part, ThinkingPart):
@@ -625,11 +625,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         id=part.id,
                         provider_name=part.provider_name,
                         provider_details=part.provider_details,
+                        tool_kind=part.tool_kind,
                     )
                     return_meta = dump_provider_metadata(
                         wrapper_key=None,
                         provider_name=builtin_return.provider_name,
                         provider_details=builtin_return.provider_details,
+                        tool_kind=builtin_return.tool_kind,
                     )
                     combined_provider_meta = cls._dump_builtin_tool_meta(call_meta, return_meta)
 
@@ -677,7 +679,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
                 else:
                     call_provider_metadata = dump_provider_metadata(
-                        id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                        id=part.id,
+                        provider_name=part.provider_name,
+                        provider_details=part.provider_details,
+                        tool_kind=part.tool_kind,
                     )
                     # No result found → the tool call is deferred (awaiting approval or external result).
                     # On v6, emit `approval-requested` so the frontend can render approve/reject buttons on reload.
