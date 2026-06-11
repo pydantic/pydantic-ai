@@ -2905,6 +2905,56 @@ async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
     assert 'reports: Report tools.' in final_instructions
 
 
+async def test_load_capability_invalid_dict_args_recovers_via_retry() -> None:
+    """Schema-violating dict args from the model must produce a retry, not crash the run.
+
+    Providers like Anthropic (non-streaming) and Google deliver tool args as parsed
+    dicts. A dict that doesn't match `LoadCapabilityArgs` fails the typed-subclass
+    validation when the response is narrowed — promotion must be best-effort (leave
+    the part plain) so the args validator at execution time can send the model a
+    retry as designed. Reproduces a live crash with `claude-haiku-4-5` coerced into
+    sending `{"name": ...}` instead of `{"id": ...}`.
+    """
+    calls = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'name': 'refunds'})])
+        if calls == 2:
+            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'refunds'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            Capability[None](
+                id='refunds',
+                description='Refund tools.',
+                instructions='Refund instructions.',
+                defer_loading=True,
+            )
+        ],
+    )
+
+    result = await agent.run('hi')
+    assert result.output == 'done'
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='hi', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='load_capability', args={'name': 'refunds'}, tool_call_id='load-refunds')]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='load_capability', args={'id': 'refunds'}, tool_call_id='load-refunds')]
+            ),
+            ModelResponse(parts=[TextPart(content='done')]),
+        ]
+    )
+
+
 @pytest.mark.parametrize(
     'args,expected_id',
     [

@@ -406,6 +406,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             if has_tool_output:
                                 call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
 
+                            # The `tool_kind` claim comes from client-supplied metadata, so it's passed
+                            # to the best-effort `narrow_type` rather than set on the part directly:
+                            # if the data doesn't validate against the claimed typed subclass, the
+                            # part stays plain and claim-free.
                             builder.add(
                                 NativeToolCallPart.narrow_type(
                                     NativeToolCallPart(
@@ -415,8 +419,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         id=call_meta.get('id') or part_id,
                                         provider_name=call_meta.get('provider_name') or provider_name,
                                         provider_details=call_meta.get('provider_details') or provider_details,
-                                        tool_kind=call_meta.get('tool_kind') or tool_kind,
-                                    )
+                                    ),
+                                    tool_kind=call_meta.get('tool_kind') or tool_kind,
                                 )
                             )
 
@@ -443,8 +447,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                             provider_name=return_meta.get('provider_name') or provider_name,
                                             provider_details=return_meta.get('provider_details') or provider_details,
                                             outcome=outcome,
-                                            tool_kind=return_meta.get('tool_kind') or tool_kind,
-                                        )
+                                        ),
+                                        tool_kind=return_meta.get('tool_kind') or tool_kind,
                                     )
                                 )
                         else:
@@ -457,8 +461,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         id=part_id,
                                         provider_name=provider_name,
                                         provider_details=provider_details,
-                                        tool_kind=tool_kind,
-                                    )
+                                    ),
+                                    tool_kind=tool_kind,
                                 )
                             )
 
@@ -469,30 +473,29 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                             tool_name=tool_name,
                                             tool_call_id=tool_call_id,
                                             content=part.output,
-                                            tool_kind=tool_kind,
-                                        )
+                                        ),
+                                        tool_kind=tool_kind,
                                     )
                                 )
+                            # Error/denied returns deliberately carry no `tool_kind`: typed return
+                            # subclasses only ever wrap successful, shape-valid content, and readers
+                            # like `parse_loaded_capabilities` treat their presence as proof of success.
                             elif part.state == 'output-error':
                                 builder.add(
-                                    ToolReturnPart.narrow_type(
-                                        ToolReturnPart(
-                                            tool_name=tool_name,
-                                            tool_call_id=tool_call_id,
-                                            content=part.error_text,
-                                            outcome='failed',
-                                        )
+                                    ToolReturnPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        content=part.error_text,
+                                        outcome='failed',
                                     )
                                 )
                             elif part.state == 'output-denied':
                                 builder.add(
-                                    ToolReturnPart.narrow_type(
-                                        ToolReturnPart(
-                                            tool_name=tool_name,
-                                            tool_call_id=tool_call_id,
-                                            content=_denial_reason(part),
-                                            outcome='denied',
-                                        )
+                                    ToolReturnPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        content=_denial_reason(part),
+                                        outcome='denied',
                                     )
                                 )
                     elif isinstance(part, DataUIPart):  # pragma: no cover

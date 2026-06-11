@@ -1610,3 +1610,24 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     response = part.model_response()
     assert '"input": 42' in response
     assert '"name"' in response
+
+
+def test_narrow_type_returns_input_unchanged_on_invalid_data():
+    """Promotion is best-effort: data that doesn't validate against the typed subclass's
+    shape leaves the part un-narrowed instead of raising.
+
+    Not reachable as a unit through one public flow: each part class's lenient branch sits
+    behind a different producer (dict-args providers for calls, UI adapters for returns),
+    so the four classes are pinned directly here.
+    """
+    call = ToolCallPart(tool_name='load_capability', args={'name': 'oops'})
+    assert ToolCallPart.narrow_type(call, tool_kind='capability-load') is call
+
+    tool_return = ToolReturnPart(tool_name='load_capability', tool_call_id='c1', content='error text')
+    assert ToolReturnPart.narrow_type(tool_return, tool_kind='capability-load') is tool_return
+
+    native_call = NativeToolCallPart(tool_name='tool_search', args={'bad': 1})
+    assert NativeToolCallPart.narrow_type(native_call, tool_kind='tool-search') is native_call
+
+    native_return = NativeToolReturnPart(tool_name='tool_search', tool_call_id='c2', content='oops')
+    assert NativeToolReturnPart.narrow_type(native_return, tool_kind='tool-search') is native_return

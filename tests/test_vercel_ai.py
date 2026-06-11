@@ -31,7 +31,6 @@ from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
-    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -8772,11 +8771,17 @@ async def test_roundtrip_load_capability_invalid_args():
                 )
             ]
         ),
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(
+                    tool_call_id='load-foobar',
+                    args='{"id": "foobar"}',
+                )
+            ]
+        ),
     ]
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
     loaded = VercelAIAdapter.load_messages(ui_messages)
 
     assert parse_loaded_capabilities(loaded) == set()
-
-    ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(loaded))
