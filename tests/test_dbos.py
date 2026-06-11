@@ -1698,6 +1698,61 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
     assert tools['foo'].tool_def.name == 'foo'
 
 
+def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Two model steps: call an MCP tool on the first request, return text on the second.
+
+    Two model requests means `get_tools` runs twice on the MCP toolset within one run, so the
+    run-scoped cache (and whether it schedules a step each time) is exercised across recovery.
+    """
+    tool_returned = any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+    if tool_returned:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('get_weather_forecast', {'location': 'Mexico City'})])
+
+
+with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
+    mcp_replay_agent = Agent(
+        FunctionModel(_call_mcp_then_finish),
+        name='mcp_replay_agent',
+        toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp')],  # pyright: ignore[reportDeprecated]
+    )
+mcp_replay_dbos_agent = DBOSAgent(mcp_replay_agent)
+
+
+async def test_dbos_mcp_get_tools_recovery_deterministic(allow_model_requests: None, dbos: DBOS):
+    """#5875 regression: DBOS `get_tools` step scheduling must depend only on recorded history.
+
+    The run-scoped tool-defs cache collapses the per-request `get_tools` calls to a single step
+    within a run (the #4331 win), but that step must still be recorded in the same position when
+    the workflow is recovered. Forking the completed workflow re-executes its body while the
+    module-level wrapper's instance cache is warm from the first run: a process-shared cache skips
+    the `get_tools` step on the second execution, so recovery re-records a different step sequence
+    than history (the `DBOSUnexpectedStepError` nondeterminism class). The per-run cache (empty at
+    each execution start) reschedules `get_tools` in the same position, so recovery matches history.
+    """
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await mcp_replay_dbos_agent.run('hello')
+    assert result.output == snapshot('done')
+
+    get_tools_step = 'mcp_replay_agent__mcp_server__mcp.get_tools'
+    original_steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    # The run-scoped cache collapses both requests' `get_tools` calls to one recorded step, at the front.
+    assert original_steps.count(get_tools_step) == 1
+    assert original_steps[0] == get_tools_step
+
+    # Recover by forking the body past the recorded `get_tools` step, re-executing it while the
+    # module-level wrapper's process cache is warm from the first run. An instance-level cache would
+    # skip `get_tools` here, diverging from recorded history; the per-run cache reschedules it.
+    handle = await dbos.fork_workflow_async(wfid, 1)
+    forked_result = await handle.get_result()
+    assert forked_result.output == snapshot('done')
+
+    forked_steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(handle.get_workflow_id())]
+    assert forked_steps == original_steps
+
+
 with warnings.catch_warnings():
     warnings.filterwarnings('ignore', r'`FastMCPToolset` is deprecated', DeprecationWarning)
     fastmcp_agent = Agent(
