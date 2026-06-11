@@ -7,7 +7,7 @@ import uuid
 import warnings
 from base64 import b64decode
 from collections.abc import Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, replace
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -39,6 +39,7 @@ from ...messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolPartKind,
     ToolReturnPart,
     UploadedFile,
     UserContent,
@@ -77,7 +78,9 @@ try:
         REASONING_VERSION,
         UPLOADED_FILE_ACTIVITY_TYPE,
         parse_ag_ui_version,
+        parse_encrypted_tool_kind,
         thinking_encrypted_metadata,
+        tool_kind_encrypted_value,
     )
 except ImportError as e:
     raise ImportError(
@@ -308,6 +311,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
+        tool_kinds: dict[str, ToolPartKind] = {}  # Tool call ID to `tool_kind` claim mapping.
         for msg in messages:
             match msg:
                 case UserMessage(content=content):
@@ -373,22 +377,35 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_name = tool_call.function.name
                             tool_calls[tool_call_id] = tool_name
 
+                            # `getattr`: `encrypted_value` doesn't exist on ag-ui-protocol < 0.1.13.
+                            # The claim is client-supplied, so it goes through the best-effort
+                            # `narrow_type` rather than onto the part directly.
+                            tool_kind = parse_encrypted_tool_kind(getattr(tool_call, 'encrypted_value', None))
+                            if tool_kind is not None:
+                                tool_kinds[tool_call_id] = tool_kind
+
                             if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                                 _, provider_name, original_id = tool_call_id.split('|', 2)
                                 builder.add(
-                                    NativeToolCallPart(
-                                        tool_name=tool_name,
-                                        args=tool_call.function.arguments,
-                                        tool_call_id=original_id,
-                                        provider_name=provider_name,
+                                    NativeToolCallPart.narrow_type(
+                                        NativeToolCallPart(
+                                            tool_name=tool_name,
+                                            args=tool_call.function.arguments,
+                                            tool_call_id=original_id,
+                                            provider_name=provider_name,
+                                        ),
+                                        tool_kind=tool_kind,
                                     )
                                 )
                             else:
                                 builder.add(
-                                    ToolCallPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        args=tool_call.function.arguments,
+                                    ToolCallPart.narrow_type(
+                                        ToolCallPart(
+                                            tool_name=tool_name,
+                                            tool_call_id=tool_call_id,
+                                            args=tool_call.function.arguments,
+                                        ),
+                                        tool_kind=tool_kind,
                                     )
                                 )
                 case ToolMessage() as tool_msg:
@@ -396,6 +413,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     tool_name = tool_calls.get(tool_call_id)
                     if tool_name is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
+
+                    # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
+                    # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
+                    # results stay untyped — typed return parts imply success to their readers.
+                    tool_kind = None
+                    if tool_msg.error is None:
+                        tool_kind = parse_encrypted_tool_kind(
+                            getattr(tool_msg, 'encrypted_value', None)
+                        ) or tool_kinds.get(tool_call_id)
 
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                         _, provider_name, original_id = tool_call_id.split('|', 2)
@@ -406,21 +432,34 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             except json.JSONDecodeError:
                                 pass
                         builder.add(
-                            NativeToolReturnPart(
-                                tool_name=tool_name,
-                                content=content,
-                                tool_call_id=original_id,
-                                provider_name=provider_name,
+                            NativeToolReturnPart.narrow_type(
+                                NativeToolReturnPart(
+                                    tool_name=tool_name,
+                                    content=content,
+                                    tool_call_id=original_id,
+                                    provider_name=provider_name,
+                                ),
+                                tool_kind=tool_kind,
                             )
                         )
                     else:
-                        builder.add(
-                            ToolReturnPart(
-                                tool_name=tool_name,
-                                content=tool_msg.content,
-                                tool_call_id=tool_call_id,
-                            )
+                        return_part = ToolReturnPart(
+                            tool_name=tool_name,
+                            content=tool_msg.content,
+                            tool_call_id=tool_call_id,
                         )
+                        if tool_kind is not None:
+                            # Typed return shapes are structured, so attempt promotion on parsed
+                            # content; on failure (`narrow_type` returns its input unchanged) keep
+                            # the string-content part so a degraded load matches a claim-free one.
+                            try:
+                                candidate = replace(return_part, content=json.loads(tool_msg.content))
+                            except json.JSONDecodeError:
+                                candidate = return_part
+                            narrowed = ToolReturnPart.narrow_type(candidate, tool_kind=tool_kind)
+                            if narrowed is not candidate:
+                                return_part = narrowed
+                        builder.add(return_part)
 
                 case ReasoningMessage() as reasoning_msg:
                     try:
@@ -500,6 +539,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ) -> list[Message]:
         """Convert a `ModelRequest` into AG-UI messages."""
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
+        # `ToolMessage.encrypted_value` arrived with the reasoning spec (0.1.13).
+        use_reasoning = parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION
         result: list[Message] = []
         system_content: list[str] = []
         user_content: list[
@@ -548,6 +589,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         content=part.model_response_str(),
                         tool_call_id=part.tool_call_id,
+                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_reasoning else None,
                     )
                 )
             elif isinstance(part, RetryPromptPart):
@@ -592,6 +634,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_calls_list: list[ToolCall] = []
         tool_messages: list[ToolMessage] = []
 
+        # The reasoning spec (0.1.13) also added `encrypted_value` to ToolCall/ToolMessage.
+        use_reasoning = parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION
+
         builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)}
 
         def flush() -> None:
@@ -616,7 +661,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     flush()
                 text_content.append(part.content)
             elif isinstance(part, ThinkingPart):
-                if parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION:
+                if use_reasoning:
                     from ag_ui.core import ReasoningMessage
 
                     flush()
@@ -633,6 +678,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=part.tool_call_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_reasoning else None,
                     )
                 )
             elif isinstance(part, NativeToolCallPart):
@@ -641,6 +687,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=prefixed_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_reasoning else None,
                     )
                 )
                 if builtin_return := builtin_returns.get(part.tool_call_id):
@@ -649,6 +696,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=builtin_return.model_response_str(),
                             tool_call_id=prefixed_id,
+                            encrypted_value=tool_kind_encrypted_value(builtin_return.tool_kind)
+                            if use_reasoning
+                            else None,
                         )
                     )
             elif isinstance(part, NativeToolReturnPart):
@@ -702,6 +752,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
+        - `tool_kind` is lost when `ag_ui_version < '0.1.13'` (no `encrypted_value` field), so
+          typed tool parts reload as their base classes.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.

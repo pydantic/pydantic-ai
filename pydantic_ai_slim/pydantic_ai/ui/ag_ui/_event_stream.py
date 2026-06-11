@@ -30,7 +30,13 @@ from ...output import OutputDataT
 from ...tools import AgentDepsT
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 from .._event_stream import describe_file
-from ._utils import BUILTIN_TOOL_CALL_ID_PREFIX, DEFAULT_AG_UI_VERSION, REASONING_VERSION, parse_ag_ui_version
+from ._utils import (
+    BUILTIN_TOOL_CALL_ID_PREFIX,
+    DEFAULT_AG_UI_VERSION,
+    REASONING_VERSION,
+    parse_ag_ui_version,
+    tool_kind_encrypted_value,
+)
 
 try:
     from ag_ui.core import (
@@ -207,6 +213,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield ToolCallStartEvent(
             tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=parent_message_id
         )
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(part.tool_kind)):
+            # Clients echo this back as `ToolCall.encrypted_value`, so `tool_kind` survives
+            # streaming-built histories. The event is 0.1.13+, hence the gated import.
+            from ag_ui.core import ReasoningEncryptedValueEvent
+
+            yield ReasoningEncryptedValueEvent(
+                subtype='tool-call', entity_id=tool_call_id, encrypted_value=encrypted_value
+            )
         if part.args:
             yield ToolCallArgsEvent(tool_call_id=tool_call_id, delta=part.args_as_json_str())
 

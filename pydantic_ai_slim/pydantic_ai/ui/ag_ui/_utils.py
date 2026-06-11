@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import re
-from typing import Any, Final
+from typing import Any, Final, get_args
 
 from typing_extensions import Required, TypedDict
 
-from ...messages import ThinkingPart
+from ..._utils import is_str_dict
+from ...messages import ThinkingPart, ToolPartKind
 
 REASONING_VERSION = (0, 1, 13)
 """AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
@@ -96,3 +98,32 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
     if part.provider_details is not None:
         encrypted['provider_details'] = part.provider_details
     return encrypted
+
+
+_TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
+
+
+def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
+    """Pack a part's `tool_kind` into an AG-UI `encrypted_value` JSON blob.
+
+    A dict rather than a bare string so the format can carry more metadata later.
+    Callers gate on ag-ui-protocol >= 0.1.13, which added `encrypted_value`.
+    """
+    return json.dumps({'tool_kind': tool_kind}) if tool_kind is not None else None
+
+
+def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
+    """Read a `tool_kind` claim from an AG-UI `encrypted_value` blob.
+
+    Client-supplied data: anything but a JSON dict with a known `ToolPartKind` reads as `None`.
+    """
+    if not encrypted_value:
+        return None
+    try:
+        data = json.loads(encrypted_value)
+    except json.JSONDecodeError:
+        return None
+    if not is_str_dict(data):
+        return None
+    kind = data.get('tool_kind')
+    return next((k for k in _TOOL_PART_KINDS if k == kind), None)
