@@ -1,3 +1,4 @@
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
@@ -47,6 +48,24 @@ GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 """Possible Google embeddings model names."""
 
 
+GoogleEmbeddingTask = Literal[
+    'search result',
+    'question answering',
+    'fact checking',
+    'code retrieval',
+    'classification',
+    'clustering',
+    'sentence similarity',
+    'raw',
+]
+"""..."""
+
+_SYMMETRIC_TASKS: frozenset[GoogleEmbeddingTask] = frozenset({'classification', 'clustering', 'sentence similarity'})
+
+# The only model that conditions on a task via a text prefix rather than the `task_type` field.
+_TASK_PREFIX_MODEL = 'gemini-embedding-2'
+
+
 _MAX_INPUT_TOKENS: dict[GoogleEmbeddingModelName, int] = {
     'gemini-embedding-001': 2048,
     'gemini-embedding-2-preview': 8192,
@@ -64,6 +83,9 @@ class GoogleEmbeddingSettings(EmbeddingSettings, total=False):
     """
 
     # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+
+    google_task: GoogleEmbeddingTask
+    """..."""
 
     google_task_type: str
     """The task type for the embedding.
@@ -162,17 +184,48 @@ class GoogleEmbeddingModel(EmbeddingModel):
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(GoogleEmbeddingSettings, settings)
 
+        google_task = settings.get('google_task')
         google_task_type = settings.get('google_task_type')
-        if google_task_type is None:
-            google_task_type = 'RETRIEVAL_DOCUMENT' if input_type == 'document' else 'RETRIEVAL_QUERY'
 
-        config = EmbedContentConfig(
-            task_type=google_task_type,
-            output_dimensionality=settings.get('dimensions'),
-            title=settings.get('google_title'),
-        )
+        if self._model_name == _TASK_PREFIX_MODEL:
+            if google_task_type is not None:
+                warnings.warn(
+                    f'`google_task_type` is not supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
+                    'this model conditions on a task via the `google_task` text prefix instead.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            task = google_task if google_task is not None else 'search result'
+            if task == 'raw':
+                texts = inputs
+            elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
+                title = settings.get('google_title') or 'none'
+                texts = [f'title: {title} | text: {text}' for text in inputs]
+            else:
+                texts = [f'task: {task} | query: {text}' for text in inputs]
+            config = EmbedContentConfig(
+                task_type=None,
+                output_dimensionality=settings.get('dimensions'),
+                title=None,
+            )
+        else:
+            if google_task is not None:
+                warnings.warn(
+                    f'`google_task` is only supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
+                    f'`{self._model_name}` conditions on a task via the `google_task_type` setting instead.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            if google_task_type is None:
+                google_task_type = 'RETRIEVAL_DOCUMENT' if input_type == 'document' else 'RETRIEVAL_QUERY'
+            texts = inputs
+            config = EmbedContentConfig(
+                task_type=google_task_type,
+                output_dimensionality=settings.get('dimensions'),
+                title=settings.get('google_title'),
+            )
 
-        contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in inputs]
+        contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in texts]
 
         try:
             response = await self._client.aio.models.embed_content(
