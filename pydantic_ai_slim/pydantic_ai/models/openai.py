@@ -1680,11 +1680,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         elif isinstance(item, VideoUrl):
             return await self._map_video_url_item(item)
         elif isinstance(item, UploadedFile):
-            if item.provider_name != self.system:
-                raise UserError(
-                    f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIChatModel. '
-                    f'Expected `provider_name` to be `{self.system!r}`.'
-                )
+            self._validate_uploaded_file_provider(item)
             if item.media_type.startswith('image/'):
                 # Chat Completions can only reference an uploaded file as a document `file` part;
                 # `image_url` parts take a URL/data URI, not a `file_id`, so images can't be referenced by id.
@@ -3130,11 +3126,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Files-API ids (e.g. `file-...`) report `application/octet-stream`, so an image referenced by
         such an id without an explicit `image/*` media type also maps to `input_file`.
         """
-        if item.provider_name != self.system:
-            raise UserError(
-                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
-                f'Expected `provider_name` to be `{self.system!r}`.'
-            )
+        self._validate_uploaded_file_provider(item)
         if item.media_type.startswith('image/'):
             detail: Literal['auto', 'low', 'high'] = 'auto'
             if metadata := item.vendor_metadata:
