@@ -206,7 +206,7 @@ fallback_model = FallbackModel(openai_model, anthropic_model)
 
 agent = Agent(fallback_model)
 response = agent.run_sync('What is the capital of France?')
-print(response.data)
+print(response.output)
 #> Paris
 
 print(response.all_messages())
