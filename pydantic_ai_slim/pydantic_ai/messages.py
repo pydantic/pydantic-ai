@@ -778,6 +778,7 @@ class UploadedFile:
 
     Supported by:
     - `GoogleModel`: used as `video_metadata` for video files
+    - `OpenAIResponsesModel`: `UploadedFile.vendor_metadata['detail']` is used as `detail` setting for image files
     """
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
@@ -1152,6 +1153,11 @@ class BaseToolReturnPart:
     - `'success'`: The tool executed successfully.
     - `'failed'`: The tool raised an error during execution.
     - `'denied'`: The tool call was denied by the approval mechanism.
+
+    Only `'failed'` is mapped to a provider's native error channel (e.g. Anthropic `is_error`,
+    Bedrock `status='error'`). A denial is a deliberate policy block rather than a runtime error,
+    so it's sent as an ordinary result to avoid nudging the model to re-attempt a call that stays
+    blocked until the user approves it.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
