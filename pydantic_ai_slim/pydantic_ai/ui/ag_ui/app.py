@@ -95,8 +95,11 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         Args:
             agent: The agent to run.
             ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
-            preserve_file_data: Whether to preserve agent-generated files and uploaded files
-                in AG-UI message conversion. See [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data].
+            preserve_file_data: Whether to keep client-submitted `UploadedFile` parts (which the
+                server resolves with its own credentials, so only enable for trusted frontends) and
+                to round-trip agent-generated files and uploaded files through AG-UI message
+                conversion. Defaults to `False`, which drops both. See
+                [`UIAdapter.preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data].
 
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
                 no output validators since output validators would expect an argument that matches the agent's
