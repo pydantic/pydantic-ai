@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,11 +16,37 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
-from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
 from pydantic_ai_harness.shell._toolset import (
     ShellToolset,
     _is_interactive_command,
 )
+
+
+def _env_toolset(
+    shell_dir: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+    denied_env_patterns: Sequence[str] = (),
+) -> ShellToolset[None]:
+    """Build a ShellToolset wired for env-control tests, with safe defaults."""
+    return ShellToolset(
+        cwd=shell_dir,
+        allowed_commands=[],
+        denied_commands=[],
+        denied_operators=[],
+        default_timeout=10.0,
+        max_output_chars=50_000,
+        persist_cwd=False,
+        allow_interactive=False,
+        env=env,
+        denied_env_patterns=denied_env_patterns,
+    )
+
+
+def _read_env_var(name: str) -> str:
+    """Shell command that prints an env var's value, or ABSENT if unset."""
+    return f'{sys.executable} -c "import os; print(os.environ.get({name!r}, \'ABSENT\'))"'
 
 
 def _run_context() -> RunContext[None]:
@@ -1414,3 +1441,154 @@ class TestStopCommandAlreadyFinished:
         result = await ts.stop_command(command_id)
         assert '[stopped:' in result
         assert '[exit code:' not in result
+
+
+class TestResolveEnv:
+    """Unit coverage for the env-resolution branches."""
+
+    def test_inherits_when_unconfigured(self, shell_dir: Path) -> None:
+        # Neither env nor patterns set -> None, so the subprocess inherits.
+        assert _env_toolset(shell_dir)._resolve_env() is None
+
+    def test_explicit_env_replaces(self, shell_dir: Path) -> None:
+        resolved = _env_toolset(shell_dir, env={'FOO': 'bar'})._resolve_env()
+        assert resolved == {'FOO': 'bar'}
+
+    def test_explicit_empty_env_is_not_inheritance(self, shell_dir: Path) -> None:
+        # {} is a hard boundary (no vars), distinct from None (inherit all).
+        assert _env_toolset(shell_dir, env={})._resolve_env() == {}
+
+    def test_patterns_strip_from_inherited(self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('OPENAI_API_KEY', 'secret')
+        monkeypatch.setenv('SAFE_VAR', 'keep')
+        resolved = _env_toolset(shell_dir, denied_env_patterns=['OPENAI_*'])._resolve_env()
+        assert resolved is not None
+        assert 'OPENAI_API_KEY' not in resolved
+        assert resolved.get('SAFE_VAR') == 'keep'
+
+    def test_patterns_strip_from_explicit_env(self, shell_dir: Path) -> None:
+        resolved = _env_toolset(
+            shell_dir,
+            env={'OPENAI_API_KEY': 'secret', 'PATH': '/usr/bin'},
+            denied_env_patterns=['OPENAI_*'],
+        )._resolve_env()
+        assert resolved == {'PATH': '/usr/bin'}
+
+    def test_patterns_no_match_keeps_base(self, shell_dir: Path) -> None:
+        resolved = _env_toolset(
+            shell_dir,
+            env={'FOO': 'bar'},
+            denied_env_patterns=['OPENAI_*'],
+        )._resolve_env()
+        assert resolved == {'FOO': 'bar'}
+
+    def test_pattern_match_is_case_sensitive(self, shell_dir: Path) -> None:
+        # Env var names are case-sensitive on POSIX; lowercase must not match.
+        resolved = _env_toolset(
+            shell_dir,
+            env={'openai_api_key': 'secret'},
+            denied_env_patterns=['OPENAI_*'],
+        )._resolve_env()
+        assert resolved == {'openai_api_key': 'secret'}
+
+
+class TestEnvControlExecution:
+    """End-to-end: the resolved env actually reaches spawned subprocesses."""
+
+    async def test_explicit_env_seen_by_command(self, shell_dir: Path) -> None:
+        ts = _env_toolset(shell_dir, env={'MY_TOKEN': 'present', 'PATH': os.environ['PATH']})
+        result = await ts.run_command(_read_env_var('MY_TOKEN'))
+        assert 'present' in result
+
+    async def test_explicit_env_hides_inherited_secret(self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('OPENROUTER_API_KEY', 'leak-me')
+        ts = _env_toolset(shell_dir, env={'PATH': os.environ['PATH']})
+        result = await ts.run_command(_read_env_var('OPENROUTER_API_KEY'))
+        assert 'ABSENT' in result
+        assert 'leak-me' not in result
+
+    async def test_denied_pattern_strips_inherited_secret(
+        self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv('ANTHROPIC_API_KEY', 'leak-me')
+        ts = _env_toolset(shell_dir, denied_env_patterns=['ANTHROPIC_*'])
+        result = await ts.run_command(_read_env_var('ANTHROPIC_API_KEY'))
+        assert 'ABSENT' in result
+        assert 'leak-me' not in result
+
+    async def test_unstripped_inherited_var_still_visible(
+        self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A var not matched by any pattern is still inherited as before.
+        monkeypatch.setenv('HARNESS_KEEP', 'visible')
+        ts = _env_toolset(shell_dir, denied_env_patterns=['ANTHROPIC_*'])
+        result = await ts.run_command(_read_env_var('HARNESS_KEEP'))
+        assert 'visible' in result
+
+    async def test_default_inherits_parent_env(self, shell_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Backward compatible: with no env control, inherited vars pass through.
+        monkeypatch.setenv('HARNESS_INHERITED', 'yes')
+        ts = _env_toolset(shell_dir)
+        result = await ts.run_command(_read_env_var('HARNESS_INHERITED'))
+        assert 'yes' in result
+
+    async def test_env_and_patterns_compose_at_spawn(self, shell_dir: Path) -> None:
+        # Both set: a pattern strips a key from the explicit env, the rest survives.
+        ts = _env_toolset(
+            shell_dir,
+            env={'SECRET_KEY': 'leak-me', 'KEEP_VAR': 'kept', 'PATH': os.environ['PATH']},
+            denied_env_patterns=['SECRET_*'],
+        )
+        stripped = await ts.run_command(_read_env_var('SECRET_KEY'))
+        assert 'ABSENT' in stripped
+        assert 'leak-me' not in stripped
+        survived = await ts.run_command(_read_env_var('KEEP_VAR'))
+        assert 'kept' in survived
+
+    async def test_background_command_honors_env(self, shell_dir: Path) -> None:
+        ts = _env_toolset(shell_dir, env={'BG_TOKEN': 'bg-present', 'PATH': os.environ['PATH']})
+        start_result = await ts.start_command(_read_env_var('BG_TOKEN'))
+        command_id = _parse_command_id(start_result)
+        await anyio.sleep(0.5)
+        stop_result = await ts.stop_command(command_id)
+        assert 'bg-present' in stop_result
+
+
+class TestEnvControlPropagation:
+    """The capability and `for_run` carry env control through unchanged."""
+
+    async def test_for_run_propagates_env(self, shell_dir: Path) -> None:
+        ts = _env_toolset(shell_dir, env={'FOO': 'bar'}, denied_env_patterns=['OPENAI_*'])
+        run_ts = await ts.for_run(_run_context())
+        assert isinstance(run_ts, ShellToolset)
+        assert run_ts._resolve_env() == {'FOO': 'bar'}
+
+    def test_capability_defaults_inherit(self) -> None:
+        shell = Shell()
+        assert shell.env is None
+        assert list(shell.denied_env_patterns) == []
+
+    def test_capability_passes_env_to_toolset(self, tmp_path: Path) -> None:
+        shell = Shell(
+            cwd=tmp_path,
+            env={'FOO': 'bar'},
+            denied_env_patterns=['OPENAI_*'],
+        )
+        toolset = shell.get_toolset()
+        assert isinstance(toolset, ShellToolset)
+        assert toolset._resolve_env() == {'FOO': 'bar'}
+
+    def test_llm_pattern_constant_strips_provider_keys(self, tmp_path: Path) -> None:
+        shell = Shell(cwd=tmp_path, denied_env_patterns=list(LLM_API_KEY_ENV_PATTERNS))
+        toolset = shell.get_toolset()
+        assert isinstance(toolset, ShellToolset)
+        resolved = toolset._resolve_env()
+        assert resolved is not None
+        # None of the provider-credential prefixes survive.
+        leaked = {
+            name
+            for name in resolved
+            if name.startswith(('ANTHROPIC_', 'OPENAI_', 'OPENROUTER_', 'GEMINI_', 'GOOGLE_', 'GATEWAY_'))
+            or name == 'PYDANTIC_AI_GATEWAY_API_KEY'
+        }
+        assert leaked == set()

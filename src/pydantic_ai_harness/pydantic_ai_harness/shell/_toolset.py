@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import functools
 import os
 import re
@@ -10,7 +11,7 @@ import signal
 import subprocess
 import tempfile
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Concatenate, ParamSpec
 
@@ -102,6 +103,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         max_output_chars: int,
         persist_cwd: bool,
         allow_interactive: bool,
+        env: Mapping[str, str] | None = None,
+        denied_env_patterns: Sequence[str] = (),
     ) -> None:
         super().__init__()
         self._cwd = cwd.resolve()
@@ -115,6 +118,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         self._max_output_chars = max_output_chars
         self._persist_cwd = persist_cwd
         self._allow_interactive = allow_interactive
+        self._env = dict(env) if env is not None else None
+        self._denied_env_patterns = list(denied_env_patterns)
         self._background: dict[str, _BackgroundProcess] = {}
 
         if self._allowed_commands and self._denied_commands:
@@ -143,7 +148,30 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             max_output_chars=self._max_output_chars,
             persist_cwd=self._persist_cwd,
             allow_interactive=self._allow_interactive,
+            env=self._env,
+            denied_env_patterns=self._denied_env_patterns,
         )
+
+    def _resolve_env(self) -> dict[str, str] | None:
+        """Compute the environment passed to spawned subprocesses.
+
+        Returns `None` -- meaning the subprocess inherits the parent env -- only
+        when neither `env` nor `denied_env_patterns` is configured, so the
+        default behavior is unchanged. An explicit `env` replaces inheritance
+        entirely; `denied_env_patterns` then strips matching names (glob, via
+        `fnmatch`) from whichever base applies, so the two compose: patterns
+        filter an explicit `env` just as they filter the inherited environment.
+        """
+        if self._env is None and not self._denied_env_patterns:
+            return None
+        base = dict(self._env) if self._env is not None else dict(os.environ)
+        if not self._denied_env_patterns:
+            return base
+        return {
+            name: value
+            for name, value in base.items()
+            if not any(fnmatch.fnmatchcase(name, pattern) for pattern in self._denied_env_patterns)
+        }
 
     async def __aexit__(self, *args: Any) -> None:
         """Terminate all remaining background processes and clean up temp files."""
@@ -299,6 +327,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
+                env=self._resolve_env(),
             )
             stdout_chunks: list[bytes] = []
             stderr_chunks: list[bytes] = []
@@ -379,6 +408,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 stdout=stdout_file,
                 stderr=stderr_file,
                 start_new_session=True,
+                env=self._resolve_env(),
             )
         except BaseException:
             stdout_file.close()

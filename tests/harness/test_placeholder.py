@@ -27,6 +27,13 @@ def test_lazy_import_shell():
     assert hasattr(Shell, 'get_toolset')
 
 
+def test_lazy_import_llm_api_key_env_patterns():
+    from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS
+
+    assert isinstance(LLM_API_KEY_ENV_PATTERNS, tuple)
+    assert 'OPENAI_*' in LLM_API_KEY_ENV_PATTERNS
+
+
 def test_lazy_import_unknown():
     with pytest.raises(AttributeError, match='has no attribute'):
         pydantic_ai_harness.__getattr__('Nonexistent')

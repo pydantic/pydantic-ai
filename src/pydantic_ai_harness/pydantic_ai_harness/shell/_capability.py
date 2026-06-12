@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,6 +24,24 @@ _DEFAULT_DENIED_COMMANDS: list[str] = [
     'poweroff',
     'init',
 ]
+
+LLM_API_KEY_ENV_PATTERNS: tuple[str, ...] = (
+    'ANTHROPIC_*',
+    'GATEWAY_*',
+    'GEMINI_*',
+    'GOOGLE_*',
+    'OPENAI_*',
+    'OPENROUTER_*',
+    'PYDANTIC_AI_GATEWAY_API_KEY',
+)
+"""Glob patterns for common LLM provider credentials, for `denied_env_patterns`.
+
+Pass these when an agent runs untrusted commands that must not read the host's
+LLM API keys. Covers provider prefixes only -- not other host secrets, and the
+prefixes are coarse (`GOOGLE_*` also strips `GOOGLE_APPLICATION_CREDENTIALS`),
+so treat it as a starting point. Not a default: stripping env silently would
+break agents that rely on inherited credentials, so opt in explicitly.
+"""
 
 
 @dataclass
@@ -62,6 +80,26 @@ class Shell(AbstractCapability[AgentDepsT]):
     allow_interactive: bool = False
     """If True, allow interactive commands (vi, nano, ssh, etc.). Blocked by default."""
 
+    env: Mapping[str, str] | None = None
+    """Explicit environment for spawned subprocesses, replacing inheritance.
+
+    When `None` (default) the subprocess inherits the parent environment. Set
+    this to a fixed mapping to start subprocesses with exactly these variables
+    and nothing else -- a hard boundary that keeps host secrets (LLM API keys,
+    tokens) out of commands the agent runs.
+    """
+
+    denied_env_patterns: Sequence[str] = field(default_factory=list[str])
+    """Glob patterns for environment variable names to strip before spawning.
+
+    Follows the `denied_*` naming convention but matches by glob (`fnmatch`,
+    e.g. `OPENAI_*`), since env secrets cluster by prefix -- unlike
+    `denied_commands`, which matches executable names exactly. Names matching
+    any pattern are removed from the base environment; applied on top of `env`
+    when both are set, so patterns filter an explicit `env` too. See
+    `LLM_API_KEY_ENV_PATTERNS` for a ready-made provider-credential denylist.
+    """
+
     def get_toolset(self) -> AgentToolset[AgentDepsT]:
         """Build and return the shell toolset."""
         return ShellToolset[AgentDepsT](
@@ -73,4 +111,6 @@ class Shell(AbstractCapability[AgentDepsT]):
             max_output_chars=self.max_output_chars,
             persist_cwd=self.persist_cwd,
             allow_interactive=self.allow_interactive,
+            env=self.env,
+            denied_env_patterns=self.denied_env_patterns,
         )
