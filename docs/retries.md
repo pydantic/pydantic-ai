@@ -301,6 +301,31 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ```
 
+For privacy-sensitive workflows, the same pattern works with TrustedRouter:
+
+```python {title="trustedrouter_with_retries.py" requires="smart_retry_example.py"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+from smart_retry_example import create_retrying_client
+
+client = create_retrying_client()
+model = OpenAIChatModel(
+    'trustedrouter/zdr',
+    provider=OpenAIProvider(
+        base_url='https://api.trustedrouter.com/v1',
+        api_key=os.environ['TRUSTEDROUTER_API_KEY'],
+        http_client=client
+    )
+)
+agent = Agent(model)
+```
+
+TrustedRouter is an OpenAI-compatible, open-source attested router. It does not log prompts or outputs by default.
+
 ## Best Practices
 
 1. **Start Conservative**: Begin with a small number of retries (3-5) and reasonable wait times.
