@@ -367,7 +367,7 @@ async def test_bedrock_count_tokens_additional_model_requests_fields(
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
     assert result.input_tokens > 0
 
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = single_request_body(vcr)
     assert sent['input']['converse']['additionalModelRequestFields'] == {'anthropic_beta': ['context-1m-2025-08-07']}
 
 
