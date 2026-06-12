@@ -232,8 +232,9 @@ async def test_span_node_matches(span_tree: SpanTree):
 
 async def test_span_node_matches_json_attributes():
     """Test that has_attributes matches dict/list values stored as JSON strings by OTel."""
-    from pydantic_evals.otel.span_tree import SpanNode
     from datetime import datetime, timezone
+
+    from pydantic_evals.otel.span_tree import SpanNode
 
     node = SpanNode(
         name='test',
@@ -269,6 +270,7 @@ async def test_span_node_matches_json_attributes():
 
     # Non-JSON string with dict expected: graceful fallback to False
     assert not node.matches(SpanQuery(has_attributes={'not_json': {'key': 'val'}}))
+
 
 async def test_span_tree_repr(span_tree: SpanTree):
     assert repr(SpanTree()) == snapshot('<SpanTree />')
