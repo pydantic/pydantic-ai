@@ -1270,11 +1270,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
                         for item in request_part.content_items(mode='str'):
                             if isinstance(item, UploadedFile):
-                                if item.provider_name != self.system:
-                                    raise UserError(
-                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
-                                        f'Expected `provider_name` to be `{self.system!r}`.'
-                                    )
+                                self._validate_uploaded_file_provider(item)
                                 if item.media_type.startswith('image/'):
                                     tool_result_content.append(
                                         BetaImageBlockParam(
@@ -1908,11 +1904,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, UploadedFile):
-                    if item.provider_name != self.system:
-                        raise UserError(
-                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
-                            f'Expected `provider_name` to be `{self.system!r}`.'
-                        )
+                    self._validate_uploaded_file_provider(item)
                     if item.media_type.startswith('image/'):
                         yield BetaImageBlockParam(
                             source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
