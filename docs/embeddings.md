@@ -283,6 +283,26 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+#### Task Conditioning
+
+`gemini-embedding-2` is conditioned on the task you're embedding for by prepending a short task instruction to the input text, rather than through the [`google_task_type`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_task_type] field used by the other Google models. Pydantic AI builds this prefix for you via the `google_task` setting:
+
+```python {title="google_task.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingSettings
+
+embedder = Embedder(
+    'google:gemini-embedding-2',
+    settings=GoogleEmbeddingSettings(google_task='question answering'),
+)
+```
+
+`google_task` accepts the task names from Google's API: `'search result'`, `'question answering'`, `'fact checking'`, `'code retrieval'`, `'classification'`, `'clustering'`, and `'sentence similarity'`. For the retrieval-style (asymmetric) tasks, queries and documents are prefixed differently, so the same task applies to both sides of a pair; the remaining (symmetric) tasks prefix both inputs the same way.
+
+When you don't set `google_task`, `gemini-embedding-2` is conditioned as `'search result'`. Conditioning is on by default because Google recommends it for this model and it yields better retrieval performance than embedding raw text. To opt out and embed the text verbatim, pass `google_task='none'`.
+
+`google_task` only applies to `gemini-embedding-2`; on any other model it is ignored with a warning (those models condition via `google_task_type` instead). Conversely, `google_task_type` is ignored on `gemini-embedding-2`, since that model conditions through the text prefix.
+
 #### Google-Specific Settings
 
 Google models support additional settings via [`GoogleEmbeddingSettings`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings]:
