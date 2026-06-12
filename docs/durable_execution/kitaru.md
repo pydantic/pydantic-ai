@@ -10,6 +10,8 @@ For example, imagine an agent calls a model, gets a useful response, starts a to
 
 This is useful for long-running agents, human-in-the-loop workflows, and applications where a repeated model request or external API call would cost money, take time, or duplicate a side effect.
 
+When you call a `KitaruAgent`, your application still calls the underlying Pydantic AI agent. Kitaru starts or resumes a flow for that call. With the default `"calls"` checkpoint strategy, it records completed model requests, tool calls, MCP invocations, and human waits in Kitaru's checkpoint storage. On recovery, Kitaru runs the Python function again until it reaches an operation that already has a checkpoint, returns the saved result for that operation, and then continues from the first operation that has not completed.
+
 ## Durable Agent
 
 You can make a normal [`Agent`][pydantic_ai.agent.Agent] durable by wrapping it with `KitaruAgent` from `kitaru.adapters.pydantic_ai`. Install Kitaru separately from Pydantic AI:
@@ -45,7 +47,14 @@ result = durable_agent.run_sync('Summarize quantum error correction.')
 print(result.output)
 ```
 
-`KitaruAgent` exposes the usual run methods, including [`Agent.run`][pydantic_ai.agent.Agent.run] and [`Agent.run_sync`][pydantic_ai.agent.Agent.run_sync], while Kitaru persists recoverable work around the agent run.
+`KitaruAgent` does not replace the original agent object. With the default call-level checkpoint strategy, it delegates to that agent for the actual Pydantic AI run and records recoverable operations while the run is executing:
+
+* model requests;
+* Pydantic AI tool calls;
+* MCP tool calls;
+* `@hitl_tool` human waits.
+
+It exposes the usual run methods, including [`Agent.run`][pydantic_ai.agent.Agent.run] and [`Agent.run_sync`][pydantic_ai.agent.Agent.run_sync]. The original [`Agent`][pydantic_ai.agent.Agent] can still be used normally outside Kitaru.
 
 ## Production Flows
 
