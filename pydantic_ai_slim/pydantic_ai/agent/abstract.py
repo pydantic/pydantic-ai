@@ -757,6 +757,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
+                                if isinstance(event, _messages.ModelResponseResetEvent):
+                                    final_result_event = None
+                                    continue
                                 if isinstance(event, _messages.FinalResultEvent):
                                     final_result_event = event
                                     break
@@ -787,6 +790,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 by `StreamedRunResult._marked_completed`.
                                 """
                                 nonlocal final_result
+                                if stream._raw_stream_response.final_result_event is not None:  # pyright: ignore[reportPrivateUsage]
+                                    final_result_event = stream._raw_stream_response.final_result_event  # pyright: ignore[reportPrivateUsage]
+                                    final_result = FinalResult(
+                                        final_result.output,
+                                        final_result_event.tool_name,
+                                        final_result_event.tool_call_id,
+                                    )
                                 final_result = FinalResult(
                                     await stream.get_output(), final_result.tool_name, final_result.tool_call_id
                                 )
