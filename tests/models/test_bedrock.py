@@ -348,6 +348,29 @@ async def test_bedrock_inference_profile_count_tokens(
     assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
 
 
+async def test_bedrock_count_tokens_additional_model_requests_fields(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`count_tokens` forwards `bedrock_additional_model_requests_fields` to `input.converse`.
+
+    The `anthropic_beta: ['context-1m-2025-08-07']` header enables Claude's 1M context window;
+    without it, `count_tokens` rejects prompts over 200K tokens even though inference accepts them.
+    """
+    settings: BedrockModelSettings = {
+        'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
+    }
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
+    )
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
+
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['input']['converse']['additionalModelRequestFields'] == {'anthropic_beta': ['context-1m-2025-08-07']}
+
+
 async def test_bedrock_stream_non_http_error():
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
     model = _bedrock_model_with_client_error(error)
