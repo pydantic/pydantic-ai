@@ -5,7 +5,7 @@ import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, get_args, overload
 from uuid import uuid4
@@ -1934,18 +1934,19 @@ def _metadata_as_usage(
     )
 
     # `extract` derives the typed token fields from the raw `usage_metadata`, not from the merged
-    # `details` above, so a typed field that a later cumulative chunk dropped stays zeroed even when
-    # `details` retained it. Backfill those fields from the usage accumulated so far. (Anthropic's
-    # `_map_usage` re-extracts from its merged details instead, because its genai-prices mapping
-    # reads the same keys it stores in `details`; Google's mapping reads the raw API keys, so the
-    # merged `details` cannot reconstruct the typed fields here.)
-    # A later-chunk 0 is treated as "dropped, restore the earlier value", which is safe only because
-    # Gemini `usage_metadata` is cumulative/monotonic so a real 0 never overwrites a prior non-zero;
-    # a provider whose streamed usage is non-cumulative could not reuse this backfill as-is.
+    # `details`, so a field a later cumulative chunk dropped stays zeroed; backfill it from the usage
+    # so far. A later-chunk 0 means "dropped", safe only because Gemini usage_metadata is cumulative/
+    # monotonic (a real 0 never overwrites a prior non-zero). Unlike Anthropic's `_map_usage`, we can't
+    # re-extract from the merged `details`: Google's genai-prices mapping reads the raw API keys, not
+    # the keys stored in `details`, so `details` alone can't reconstruct the typed fields here.
     if existing_usage:
-        for token_field in fields(new_usage):
-            if token_field.name != 'details' and not getattr(new_usage, token_field.name):
-                setattr(new_usage, token_field.name, getattr(existing_usage, token_field.name))
+        new_usage.input_tokens = new_usage.input_tokens or existing_usage.input_tokens
+        new_usage.cache_write_tokens = new_usage.cache_write_tokens or existing_usage.cache_write_tokens
+        new_usage.cache_read_tokens = new_usage.cache_read_tokens or existing_usage.cache_read_tokens
+        new_usage.output_tokens = new_usage.output_tokens or existing_usage.output_tokens
+        new_usage.input_audio_tokens = new_usage.input_audio_tokens or existing_usage.input_audio_tokens
+        new_usage.cache_audio_read_tokens = new_usage.cache_audio_read_tokens or existing_usage.cache_audio_read_tokens
+        new_usage.output_audio_tokens = new_usage.output_audio_tokens or existing_usage.output_audio_tokens
 
     return new_usage
 
