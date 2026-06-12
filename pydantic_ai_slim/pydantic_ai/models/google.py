@@ -1707,7 +1707,7 @@ def _decode_inline_thought_signature(
         return None
     raw = item.provider_details.get('thought_signature')
     if not raw:
-        return None  # pragma: no cover
+        return None
     return base64.b64decode(raw)
 
 
