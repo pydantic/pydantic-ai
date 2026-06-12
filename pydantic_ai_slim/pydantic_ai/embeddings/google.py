@@ -58,7 +58,27 @@ GoogleEmbeddingTask = Literal[
     'sentence similarity',
     'none',
 ]
-"""..."""
+"""Task the embedding is optimized for, applied as a text prefix by `gemini-embedding-2`.
+
+Unlike other Google embedding models (which condition on the [`google_task_type`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_task_type]
+field), `gemini-embedding-2` is conditioned by prepending a task instruction to the input text.
+
+Asymmetric tasks prefix queries and documents differently, so the same task can be used for both
+sides of a retrieval pair:
+
+- `'search result'`: retrieval; find documents relevant to a search query (the default).
+- `'question answering'`: retrieval; find passages that answer a question.
+- `'fact checking'`: retrieval; find evidence that supports or refutes a claim.
+- `'code retrieval'`: retrieval; find code relevant to a natural-language query.
+
+Symmetric tasks prefix both inputs the same way, since both sides play the same role:
+
+- `'classification'`: assign inputs to predefined categories.
+- `'clustering'`: group inputs by similarity.
+- `'sentence similarity'`: measure semantic similarity between inputs.
+
+- `'none'`: embed the text verbatim, without any prefix.
+"""
 
 _SYMMETRIC_TASKS: frozenset[GoogleEmbeddingTask] = frozenset({'classification', 'clustering', 'sentence similarity'})
 
@@ -85,7 +105,18 @@ class GoogleEmbeddingSettings(EmbeddingSettings, total=False):
     # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     google_task: GoogleEmbeddingTask
-    """..."""
+    """Task to condition `gemini-embedding-2` on, applied as a text prefix.
+
+    Only supported by `gemini-embedding-2`; on other models it is ignored with a warning (they use
+    [`google_task_type`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_task_type] instead).
+    When unset on `gemini-embedding-2`, defaults to `'search result'`.
+
+    For asymmetric tasks the prefix depends on `input_type`: a `'query'` becomes `task: {task} | query: {text}`,
+    while a `'document'` becomes `title: {title} | text: {text}`, using
+    [`google_title`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_title] (or `none` when no
+    title is set). Symmetric tasks use the `task: {task} | query: {text}` form for both. `'none'` embeds the
+    text verbatim. See [`GoogleEmbeddingTask`][pydantic_ai.embeddings.google.GoogleEmbeddingTask] for the per-task semantics.
+    """
 
     google_task_type: str
     """The task type for the embedding.

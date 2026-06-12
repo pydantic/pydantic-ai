@@ -70,6 +70,7 @@ with try_import() as google_imports_successful:
         LatestGoogleVertexEmbeddingModelNames,
     )
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as voyageai_imports_successful:
     from pydantic_ai.embeddings.voyageai import (
@@ -1375,7 +1376,7 @@ async def test_google_task_prefix(case: _GoogleTaskPrefixCase, gemini_api_key: s
 )
 @pytest.mark.vcr
 async def test_google_task_prefix_vertex(
-    allow_model_requests: None, vertex_provider: GoogleProvider, monkeypatch: pytest.MonkeyPatch
+    allow_model_requests: None, vertex_provider: GoogleCloudProvider, monkeypatch: pytest.MonkeyPatch
 ):  # pragma: lax no cover
     """`google_task` builds the same `gemini-embedding-2` prefix against Google Cloud (Vertex) as against the Gemini API."""
     model = GoogleEmbeddingModel('gemini-embedding-2', provider=vertex_provider)
