@@ -336,9 +336,11 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a native tool reporting failure.
 
-!!! note "Non-streaming only"
-    Response-based fallback currently only works with non-streaming requests (`agent.run()` and `agent.run_sync()`).
-    For streaming requests (`agent.run_stream()`), only exception-based fallback is supported.
+!!! note "Streaming behavior"
+    Response-based fallback also works with streaming requests (`agent.run_stream()`). Streaming events are forwarded
+    as they arrive, so consumers may see events from a rejected model before fallback moves to the next model. When
+    that happens, the stream emits a [`ModelResponseResetEvent`][pydantic_ai.messages.ModelResponseResetEvent] to mark
+    the previous response as discarded before events from the next model continue.
 
 The `fallback_on` parameter accepts:
 
@@ -437,6 +439,11 @@ Pydantic AI is a Python agent framework for building production-grade LLM applic
 ```
 
 Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
+
+For streaming responses, handlers are evaluated after each model's stream completes. Programmatic text streaming
+resets accumulated text after a [`ModelResponseResetEvent`][pydantic_ai.messages.ModelResponseResetEvent], so following
+non-delta chunks are built from the next model's response rather than concatenated with the rejected response. Direct
+event consumers can handle the same event to discard or visually separate the rejected model's output.
 
 #### Combining Handlers
 
