@@ -3823,13 +3823,18 @@ async def test_google_vertexai_image_generation(
     assert result.output == snapshot(IsInstance(BinaryImage))
 
 
-async def test_google_httpx_client_is_not_closed(allow_model_requests: None, google_model: GoogleModelFactory):
+async def test_google_httpx_client_is_not_closed(allow_model_requests: None, gemini_api_key: str):
     # This should not raise any errors, see https://github.com/pydantic/pydantic-ai/issues/3242.
-    agent = Agent(google_model('gemini-2.5-flash-lite'))
+    # Each Agent must build its own GoogleProvider/httpx client: the bug only reproduces when a second
+    # provider is constructed (which closed the first's client), so the shared-instance factory can't
+    # express it. Inline construction + the ignore directives is required here.
+    # ast-grep-ignore: prefer-model-factory
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
 
-    agent = Agent(google_model('gemini-2.5-flash-lite'))
+    # ast-grep-ignore: prefer-model-factory
+    agent = Agent(GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=gemini_api_key)))
     result = await agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is **Mexico City**.')
 
