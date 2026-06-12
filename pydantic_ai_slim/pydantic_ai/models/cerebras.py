@@ -10,6 +10,7 @@ from typing_extensions import override
 
 from .._warnings import PydanticAIDeprecationWarning
 from ..profiles import ModelProfileSpec
+from ..profiles.openai import OpenAIModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
 from . import ModelRequestParameters
@@ -60,9 +61,11 @@ class CerebrasModelSettings(ModelSettings, total=False):
     cerebras_clear_thinking: bool
     """Whether Cerebras strips prior reasoning from earlier turns on multi-turn `zai`/GLM requests.
 
-    `True` (Cerebras's default) drops thinking from previous turns before the next request; `False`
+    `True` (Cerebras's API default) drops thinking from previous turns before the next request; `False`
     preserves it, which improves multi-turn coherence and prompt-cache hit rates at the cost of more
-    tokens. Only sent when explicitly set; otherwise Cerebras's default applies. GLM-specific setting.
+    tokens. Pydantic AI sends `False` by default for `zai`/GLM models (which replay prior reasoning as
+    `<think>` tags) so the replayed reasoning isn't stripped; set this explicitly to override.
+    GLM-specific setting.
     """
 
 
@@ -115,20 +118,32 @@ class CerebrasModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        # `'tags'` means we replay prior reasoning as `<think>` content (zai/GLM); Cerebras strips that
+        # by default, so the transform preserves it. See `_cerebras_settings_to_openai_settings`.
+        replays_thinking_as_tags = (
+            OpenAIModelProfile.from_profile(self.profile).openai_chat_send_back_thinking_parts == 'tags'
+        )
         new_settings = _cerebras_settings_to_openai_settings(
-            cast(CerebrasModelSettings, merged_settings or {}), customized_parameters
+            cast(CerebrasModelSettings, merged_settings or {}),
+            customized_parameters,
+            replays_thinking_as_tags=replays_thinking_as_tags,
         )
         return new_settings, customized_parameters
 
 
 def _cerebras_settings_to_openai_settings(
-    model_settings: CerebrasModelSettings, model_request_parameters: ModelRequestParameters
+    model_settings: CerebrasModelSettings,
+    model_request_parameters: ModelRequestParameters,
+    *,
+    replays_thinking_as_tags: bool = False,
 ) -> OpenAIChatModelSettings:
     """Transforms a 'CerebrasModelSettings' object into an 'OpenAIChatModelSettings' object.
 
     Args:
         model_settings: The 'CerebrasModelSettings' object to transform.
         model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
+        replays_thinking_as_tags: Whether prior reasoning is replayed as `<think>` content (zai/GLM).
+            When set, `clear_thinking` defaults to `False` so Cerebras doesn't strip the replayed reasoning.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -149,6 +164,10 @@ def _cerebras_settings_to_openai_settings(
 
     if (clear_thinking := model_settings.pop('cerebras_clear_thinking', None)) is not None:
         extra_body['clear_thinking'] = clear_thinking
+    elif replays_thinking_as_tags:
+        # zai/GLM replays prior reasoning as `<think>` content; Cerebras's default `clear_thinking=true`
+        # strips it before the model sees it, defeating the replay. Preserve it unless the user overrides.
+        extra_body['clear_thinking'] = False
 
     if extra_body:
         model_settings['extra_body'] = extra_body

@@ -57,6 +57,8 @@ async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, ce
     body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assert body.get('reasoning_effort') == 'none'
     assert 'disable_reasoning' not in body
+    # zai replays prior reasoning as `<think>` tags, so `clear_thinking=false` is injected by default.
+    assert body.get('clear_thinking') is False
 
 
 async def test_cerebras_thinking_part_survives_multiturn(
@@ -156,3 +158,28 @@ async def test_cerebras_settings_transformation():
 
     transformed_no_clear = _cerebras_settings_to_openai_settings(CerebrasModelSettings(), params)
     assert transformed_no_clear.get('extra_body') is None
+
+
+async def test_cerebras_clear_thinking_default_for_tags_path():
+    """`clear_thinking=False` is injected by default for `zai`/GLM (the `<think>`-replay path) so Cerebras
+    doesn't strip replayed reasoning; non-GLM models don't get it, and an explicit setting always wins."""
+    from pydantic_ai.models import ModelRequestParameters
+
+    params = ModelRequestParameters()
+
+    # zai/GLM replays prior reasoning as `<think>` tags → `clear_thinking=False` injected by default.
+    zai = CerebrasModel('zai-glm-4.7', provider=CerebrasProvider(api_key='mock-api-key'))
+    zai_settings, _ = zai.prepare_request(CerebrasModelSettings(), params)
+    assert zai_settings is not None
+    assert cast(dict[str, Any], zai_settings.get('extra_body', {})).get('clear_thinking') is False
+
+    # gpt-oss doesn't replay as tags → `clear_thinking` is not sent at all (GLM-specific param).
+    gpt_oss = CerebrasModel('gpt-oss-120b', provider=CerebrasProvider(api_key='mock-api-key'))
+    gpt_oss_settings, _ = gpt_oss.prepare_request(CerebrasModelSettings(), params)
+    assert gpt_oss_settings is not None
+    assert gpt_oss_settings.get('extra_body') is None
+
+    # An explicit `cerebras_clear_thinking` overrides the zai default.
+    zai_override, _ = zai.prepare_request(CerebrasModelSettings(cerebras_clear_thinking=True), params)
+    assert zai_override is not None
+    assert cast(dict[str, Any], zai_override.get('extra_body', {})).get('clear_thinking') is True

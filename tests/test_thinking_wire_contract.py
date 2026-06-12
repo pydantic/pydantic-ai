@@ -25,7 +25,7 @@ with try_import() as groq_imports:
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as cerebras_imports:
-    from pydantic_ai.models.cerebras import CerebrasModel, CerebrasModelSettings
+    from pydantic_ai.models.cerebras import CerebrasModel
     from pydantic_ai.providers.cerebras import CerebrasProvider
 
 if TYPE_CHECKING:
@@ -42,8 +42,6 @@ class WireCase:
     thinking: ThinkingLevel
     extra_body: dict[str, object] | None = None
     """User-supplied `extra_body` passed via `ModelSettings`, to exercise the disable-signal merge path."""
-    cerebras_clear_thinking: bool | None = None
-    """When set, passed via `CerebrasModelSettings` to assert it lands as `extra_body['clear_thinking']` on the wire."""
     present: dict[str, object] = field(default_factory=dict[str, object])
     """Keys that must appear in the request body with exactly these values."""
     absent: tuple[str, ...] = ()
@@ -73,24 +71,14 @@ CASES = [
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
-        id='cerebras-zai-disable',
-        provider='cerebras',
-        model_name='zai-glm-4.7',
-        thinking=False,
-        # GLM disables via the standard `reasoning_effort='none'`, not the upstream-deprecated
-        # `extra_body['disable_reasoning']`. https://inference-docs.cerebras.ai/resources/glm-47-migration
-        present={'reasoning_effort': 'none'},
-        absent=('disable_reasoning',),
-        marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
-    ),
-    WireCase(
         id='cerebras-zai-clear-thinking',
         provider='cerebras',
         model_name='zai-glm-4.7',
         thinking=False,
-        cerebras_clear_thinking=False,
-        # The `cerebras_clear_thinking` setting lands as `extra_body['clear_thinking']` and must survive
-        # alongside the injected `reasoning_effort='none'` disable signal.
+        # GLM disables via the standard `reasoning_effort='none'`, not the upstream-deprecated
+        # `extra_body['disable_reasoning']` (https://inference-docs.cerebras.ai/resources/glm-47-migration).
+        # `clear_thinking=false` is injected by default for the `zai` `<think>`-replay path so Cerebras
+        # doesn't strip replayed reasoning — no user setting needed.
         present={'reasoning_effort': 'none', 'clear_thinking': False},
         absent=('disable_reasoning',),
         marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
@@ -127,9 +115,7 @@ async def test_thinking_disable_wire_contract(
 ):
     """`thinking=False` produces the correct wire behavior: a true disable signal where the model supports it, and its absence where reasoning is always on."""
     model = _build_model(case, groq_api_key=groq_api_key, cerebras_api_key=cerebras_api_key)
-    settings: ModelSettings = ModelSettings(thinking=case.thinking)
-    if case.cerebras_clear_thinking is not None:
-        settings = CerebrasModelSettings(thinking=case.thinking, cerebras_clear_thinking=case.cerebras_clear_thinking)
+    settings = ModelSettings(thinking=case.thinking)
     if case.extra_body is not None:
         settings['extra_body'] = case.extra_body
     agent = Agent(model, model_settings=settings)
