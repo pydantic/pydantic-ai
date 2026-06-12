@@ -1315,10 +1315,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        if _has_text_part_after(message.parts, index):
+                        if _has_text_part_after(message.parts, index):  # pragma: no cover
                             # Text parts before a built-in tool call are essentially thoughts,
                             # not part of the final result output, so we reset the accumulated text.
-                            text = ''  # pragma: no cover
+                            text = ''
                 if text:
                     return text
         return None

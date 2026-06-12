@@ -38,6 +38,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
     FileSearchTool,
+    WebFetchTool,
     WebSearchTool,
 )
 from pydantic_ai.usage import RequestUsage
@@ -187,6 +188,55 @@ def test_content_model_response_drops_pyd_ai_synthesized_native_tool_ids():
     )
 
 
+def test_content_model_response_echoes_web_search_raw_tool_response():
+    """When the web-search return part carries the raw API response in `provider_details`
+    (because its `content` was replaced with grounding sources), the echo sends the raw
+    response back to the API, not the source list.
+    """
+    response = ModelResponse(
+        parts=[
+            NativeToolCallPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='web_search_call',
+                args={'queries': ['foo']},
+            ),
+            NativeToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                provider_name='google-gla',
+                tool_call_id='web_search_call',
+                content=[{'domain': None, 'title': 'Pydantic AI', 'uri': 'https://ai.pydantic.dev/'}],
+                provider_details={'raw_tool_response': {'search_suggestions': '<style>chip</style>'}},
+            ),
+            TextPart(content='hello'),
+        ],
+        provider_name='google-gla',
+    )
+
+    assert _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True) == snapshot(
+        {
+            'role': 'model',
+            'parts': [
+                {
+                    'tool_call': {
+                        'id': 'web_search_call',
+                        'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                        'args': {'queries': ['foo']},
+                    }
+                },
+                {
+                    'tool_response': {
+                        'id': 'web_search_call',
+                        'tool_type': ToolType.GOOGLE_SEARCH_WEB,
+                        'response': {'search_suggestions': '<style>chip</style>'},
+                    }
+                },
+                {'text': 'hello'},
+            ],
+        }
+    )
+
+
 @pytest.mark.parametrize('supports_tool_combination', [False, True])
 def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_tool_combination: bool):
     response = ModelResponse(
@@ -282,6 +332,23 @@ _GROUNDING_METADATA: dict[str, Any] = {
     'webSearchQueries': ['metadata query'],
     'groundingChunks': [{'web': {'uri': 'https://metadata.example/', 'title': 'Metadata source'}}],
 }
+
+_EXPLICIT_WEB_FETCH_PARTS: list[dict[str, Any]] = [
+    {
+        'toolCall': {
+            'id': 'web-fetch-call-1',
+            'toolType': 'URL_CONTEXT',
+            'args': {'urls': ['https://ai.pydantic.dev/']},
+        }
+    },
+    {
+        'toolResponse': {
+            'id': 'web-fetch-call-1',
+            'toolType': 'URL_CONTEXT',
+            'response': {'result': 'fetched'},
+        }
+    },
+]
 
 
 async def test_gemini_streamed_response_appends_web_search_grounding_metadata_after_text():
@@ -389,8 +456,7 @@ async def test_gemini_streamed_response_web_search_sources_are_extractable():
 
     sources: list[tuple[str, str]] = []
     for call_part, return_part in streamed_response.get().native_tool_calls:
-        if call_part.tool_name != WebSearchTool.kind:
-            continue
+        assert call_part.tool_name == WebSearchTool.kind
 
         content = return_part.content
         assert isinstance(content, list)
@@ -519,6 +585,85 @@ async def test_gemini_response_uses_grounding_sources_with_explicit_web_search_p
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_details={'raw_tool_response': {'search_suggestions': '<style>chip</style>'}},
+            ),
+        ]
+    )
+
+
+async def test_gemini_streamed_response_with_explicit_web_fetch_parts():
+    """Non-web-search native tool parts stream through without the web-search-specific
+    vendor-id and grounding-source handling.
+    """
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Fetched.'}]),
+            _generate_stream_response(
+                'stream-2',
+                parts=_EXPLICIT_WEB_FETCH_PARTS,
+                finish_reason=GoogleFinishReason.STOP,
+            ),
+        ],
+    )
+
+    async for _ in streamed_response:
+        pass
+
+    response = streamed_response.get()
+    assert response.parts == snapshot(
+        [
+            TextPart(content='Fetched.'),
+            NativeToolCallPart(
+                tool_name=WebFetchTool.kind,
+                args={'urls': ['https://ai.pydantic.dev/']},
+                tool_call_id='web-fetch-call-1',
+                provider_name='google',
+            ),
+            NativeToolReturnPart(
+                tool_name=WebFetchTool.kind,
+                content={'result': 'fetched'},
+                tool_call_id='web-fetch-call-1',
+                timestamp=IsDatetime(),
+                provider_name='google',
+            ),
+        ]
+    )
+
+
+async def test_gemini_response_with_explicit_web_fetch_parts():
+    raw_response = _generate_stream_response(
+        'response-1',
+        parts=_EXPLICIT_WEB_FETCH_PARTS,
+        finish_reason=GoogleFinishReason.STOP,
+    )
+    candidates = cast('list[Candidate]', raw_response.candidates)
+    candidate = candidates[0]
+    content = cast(Content, candidate.content)
+    parts = cast('list[Part]', content.parts)
+
+    response = _process_response_from_parts(
+        parts,
+        cast(Any, candidate.grounding_metadata),
+        'gemini-3-flash-preview',
+        'google',
+        'https://generativelanguage.googleapis.com/',
+        RequestUsage(),
+        raw_response.response_id,
+    )
+
+    assert response.parts == snapshot(
+        [
+            NativeToolCallPart(
+                tool_name=WebFetchTool.kind,
+                args={'urls': ['https://ai.pydantic.dev/']},
+                tool_call_id='web-fetch-call-1',
+                provider_name='google',
+            ),
+            NativeToolReturnPart(
+                tool_name=WebFetchTool.kind,
+                content={'result': 'fetched'},
+                tool_call_id='web-fetch-call-1',
+                timestamp=IsDatetime(),
+                provider_name='google',
             ),
         ]
     )
