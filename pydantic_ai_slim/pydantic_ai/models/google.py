@@ -1318,7 +1318,7 @@ class GeminiStreamedResponse(StreamedResponse):
             self.provider_details = {'timestamp': self._provider_timestamp}
         try:
             async for chunk in self._response:
-                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
+                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
 
                 if (
                     chunk.sdk_http_response
@@ -1886,10 +1886,15 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
     return f
 
 
-def _metadata_as_usage(response: GenerateContentResponse, provider: str, provider_url: str) -> usage.RequestUsage:
+def _metadata_as_usage(
+    response: GenerateContentResponse,
+    provider: str,
+    provider_url: str,
+    existing_usage: usage.RequestUsage | None = None,
+) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
-        return usage.RequestUsage()
+        return existing_usage or usage.RequestUsage()
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
@@ -1914,13 +1919,36 @@ def _metadata_as_usage(response: GenerateContentResponse, provider: str, provide
                 continue
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
 
-    return usage.RequestUsage.extract(
+    # Gemini streams usage as cumulative snapshots, but a field reported on an earlier chunk can be
+    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see #5205).
+    # Merge with the usage accumulated so far so those values survive instead of being overwritten with 0.
+    if existing_usage:
+        details = {**existing_usage.details, **details}
+
+    new_usage = usage.RequestUsage.extract(
         response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='google',
         details=details,
     )
+
+    # `extract` derives the typed token fields from the raw `usage_metadata`, not from the merged
+    # `details`, so a field a later cumulative chunk dropped stays zeroed; backfill it from the usage
+    # so far. A later-chunk 0 means "dropped", safe only because Gemini usage_metadata is cumulative/
+    # monotonic (a real 0 never overwrites a prior non-zero). Unlike Anthropic's `_map_usage`, we can't
+    # re-extract from the merged `details`: Google's genai-prices mapping reads the raw API keys, not
+    # the keys stored in `details`, so `details` alone can't reconstruct the typed fields here.
+    if existing_usage:
+        new_usage.input_tokens = new_usage.input_tokens or existing_usage.input_tokens
+        new_usage.cache_write_tokens = new_usage.cache_write_tokens or existing_usage.cache_write_tokens
+        new_usage.cache_read_tokens = new_usage.cache_read_tokens or existing_usage.cache_read_tokens
+        new_usage.output_tokens = new_usage.output_tokens or existing_usage.output_tokens
+        new_usage.input_audio_tokens = new_usage.input_audio_tokens or existing_usage.input_audio_tokens
+        new_usage.cache_audio_read_tokens = new_usage.cache_audio_read_tokens or existing_usage.cache_audio_read_tokens
+        new_usage.output_audio_tokens = new_usage.output_audio_tokens or existing_usage.output_audio_tokens
+
+    return new_usage
 
 
 def _map_executable_code(executable_code: ExecutableCode, provider_name: str, tool_call_id: str) -> NativeToolCallPart:
