@@ -99,6 +99,8 @@ async def test_cerebras_zai_reasoning_replayed_as_think_tags(
     be wrapped in `<think>` tags inside the assistant message content, so `CerebrasProvider.model_profile()` sets
     `openai_chat_send_back_thinking_parts='tags'` for `zai`. See https://inference-docs.cerebras.ai/capabilities/reasoning.
     """
+    # the dedicated `CerebrasModel` class is under test here; the `cerebras_model` factory builds the generic `OpenAIChatModel`
+    # ast-grep-ignore: prefer-model-factory
     provider = CerebrasProvider(api_key=cerebras_api_key)
     model = CerebrasModel('zai-glm-4.7', provider=provider)
     agent = Agent(model=model)

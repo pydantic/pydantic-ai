@@ -955,6 +955,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
     bedrock_provider: Any,
     anthropic_model: AnthropicModelFactory,
     google_model: GoogleModelFactory,
+    openai_responses_model: OpenAIResponsesModelFactory,
 ) -> None:
     """Test that invalid UploadedFile in a tool return raises UserError before the API call."""
     provider = case.provider
@@ -985,7 +986,7 @@ async def test_uploaded_file_validation_error_in_tool_return(
             ):
                 await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
     elif provider == 'openai_responses':
-        m_openai = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key='test-key'))
+        m_openai = openai_responses_model('gpt-5-mini')
         with pytest.raises(UserError, match=case.match):
             await m_openai._map_messages(messages, {}, params)  # pyright: ignore[reportPrivateUsage]
     else:
