@@ -3263,7 +3263,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
-            mcp_list_tools_call_ids: set[str] = set()
             mcp_list_tools_return_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
@@ -3272,22 +3271,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             async for chunk in self._response:
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
-                    # OpenAI Responses streaming may omit `output_item.done` for earlier
-                    # `mcp_list_tools` items when multiple MCP servers are present, while
-                    # the final completed response still contains their resolved payload.
-                    # Backfill only the missing call/result parts so streamed consumers
-                    # such as AG-UI do not leave those discovery calls permanently running.
+                    # Backfill mcp_list_tools results missing from streamed output_item.done events (see #5419).
                     for item in chunk.response.output:
-                        if isinstance(item, responses.response_output_item.McpListTools):
-                            call_part, return_part = _map_mcp_list_tools(item, self.provider_name)
-                            if item.id not in mcp_list_tools_call_ids:
-                                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=call_part)
-                                mcp_list_tools_call_ids.add(item.id)
-                            if item.id not in mcp_list_tools_return_ids:
-                                yield self._parts_manager.handle_part(
-                                    vendor_part_id=f'{item.id}-return', part=return_part
-                                )
-                                mcp_list_tools_return_ids.add(item.id)
+                        if (
+                            isinstance(item, responses.response_output_item.McpListTools)
+                            and item.id not in mcp_list_tools_return_ids
+                        ):
+                            _, return_part = _map_mcp_list_tools(item, self.provider_name)
+                            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                            mcp_list_tools_return_ids.add(item.id)
 
                     self._usage += self._map_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
@@ -3437,12 +3429,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
                     elif isinstance(chunk.item, responses.response_output_item.McpListTools):
-                        if chunk.item.id not in mcp_list_tools_call_ids:
-                            call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'{chunk.item.id}-call', part=call_part
-                            )
-                            mcp_list_tools_call_ids.add(chunk.item.id)
+                        call_part, _ = _map_mcp_list_tools(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item.id}-call', part=call_part)
                     elif isinstance(chunk.item, ResponseCompactionItem):
                         # Emit a PartStartEvent so UIs can render compaction in progress.
                         # The "done" event replaces this with the final encrypted_content.
@@ -3553,12 +3541,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
                     elif isinstance(chunk.item, responses.response_output_item.McpListTools):
-                        if chunk.item.id not in mcp_list_tools_return_ids:
-                            _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
-                            yield self._parts_manager.handle_part(
-                                vendor_part_id=f'{chunk.item.id}-return', part=return_part
-                            )
-                            mcp_list_tools_return_ids.add(chunk.item.id)
+                        _, return_part = _map_mcp_list_tools(chunk.item, self.provider_name)
+                        yield self._parts_manager.handle_part(
+                            vendor_part_id=f'{chunk.item.id}-return', part=return_part
+                        )
+                        mcp_list_tools_return_ids.add(chunk.item.id)
                     elif isinstance(chunk.item, ResponseCompactionItem):
                         # Replace the preliminary part from the "added" event with the
                         # final encrypted_content for round-tripping.
