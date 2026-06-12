@@ -29,7 +29,7 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.28.1",
-    'pydantic-ai-slim>=1.95.1',
+    "pydantic-ai-slim>=1.105.0",
 ]
 
 [project.optional-dependencies]
@@ -48,7 +48,7 @@ dbos = [
 ]
 logfire = [
     'logfire>=4.31.0',
-    'pydantic-ai-slim[spec]>=1.95.1',
+    "pydantic-ai-slim[spec]>=1.105.0",
 ]
 
 [project.urls]

@@ -12,6 +12,10 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+
+# Private import: pydantic-ai has no public way to tell capability-contributed
+# toolsets apart from the agent's own in `agent.toolsets`.
+from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import UsageLimits
 
 
@@ -48,6 +52,19 @@ class SubAgentLimits:
     exhausted), in place of the built-in default. Setting it also makes child
     failures soft: a child error returns this message as a normal tool result
     instead of raising a parent `ModelRetry`."""
+
+
+def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
+    """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
+    found = False
+
+    def visit(node: AbstractToolset[AgentDepsT]) -> None:
+        nonlocal found
+        if isinstance(node, CapabilityOwnedToolset):
+            found = True
+
+    toolset.apply(visit)
+    return found
 
 
 class SubAgentToolset(FunctionToolset[AgentDepsT]):
@@ -87,11 +104,31 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self.delegate_task, name=tool_name)
 
     def _inherited_toolsets(self, ctx: RunContext[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]] | None:
-        """The parent's toolsets, with the delegate tool filtered out (no recursion)."""
+        """The parent agent's own toolsets, excluding capability-contributed ones.
+
+        Capability toolsets are bound to capability instances registered in the
+        parent run; carrying them into the sub-agent's run (where their owner is
+        not registered) fails `CapabilityOwnedToolset`'s ownership resolution, and
+        the tools would arrive without the hooks and instructions that make them
+        work. Use `shared_capabilities` to share a capability with sub-agents.
+        The delegate tool itself is also filtered out by name, so delegation
+        cannot recurse. When this toolset was registered via the `SubAgents`
+        capability the capability filter already drops it; the name filter covers
+        direct registration in `Agent(toolsets=[...])`, where nothing wraps it in
+        `CapabilityOwnedToolset`.
+        """
         agent = ctx.agent
         if agent is None:  # pragma: no cover - the running agent is always set during a run
             return None
-        return [toolset.filtered(lambda _ctx, tool_def: tool_def.name != self._tool_name) for toolset in agent.toolsets]
+        # Capability toolsets surface as `CombinedToolset(CapabilityOwnedToolset(...))`
+        # entries, so ownership is detected by walking each tree. Only core's capability
+        # assembly constructs `CapabilityOwnedToolset`, so a tree containing one is
+        # capability-contributed in its entirety.
+        return [
+            toolset.filtered(lambda _ctx, tool_def: tool_def.name != self._tool_name)
+            for toolset in agent.toolsets
+            if not _is_capability_contributed(toolset)
+        ]
 
     def _budget_exhausted(self, ctx: RunContext[AgentDepsT], agent_name: str, max_calls: int) -> bool:
         """Increment this run's delegation count for `agent_name` and report whether it is over budget.

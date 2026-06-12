@@ -59,7 +59,7 @@ print(result.output)
 
 - **Deps are forwarded.** The parent run's `deps` are passed to each sub-agent, so sub-agents share the parent's `AgentDepsT` (enforced by the type signature -- every sub-agent is an `AbstractAgent[AgentDepsT, Any]`).
 - **Usage is shared by default.** The parent's `usage` is passed to each sub-agent run, so token usage aggregates and a parent `usage_limits` applies across the whole agent tree. Set `forward_usage=False` to give each sub-agent run its own accounting.
-- **Tools can be inherited.** With `inherit_tools=True`, the parent agent's tools are added to each sub-agent run (on top of the sub-agent's own). The delegate tool itself is filtered out, so a sub-agent can't recurse into further delegation. Off by default.
+- **Tools can be inherited.** With `inherit_tools=True`, the parent agent's own tools (registered directly or via `toolsets`) are added to each sub-agent run, on top of the sub-agent's own. Tools contributed by the parent's capabilities are not inherited: they are bound to capability instances registered in the parent run, and would arrive without the hooks and instructions they depend on. Use `shared_capabilities` to give sub-agents a capability. This also excludes the delegate tool itself, so a sub-agent can't recurse into further delegation. Off by default.
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
 - **Sub-agent events can be streamed.** Pass an `event_stream_handler` and it's forwarded to each sub-agent run, so the sub-agent's model-streaming and tool events surface to the caller (the handler receives the sub-agent's own `RunContext`).
 
@@ -112,7 +112,7 @@ SubAgents(
     agents={},             # Mapping[str, AbstractAgent[AgentDepsT, Any]] -- name -> agent
     descriptions=None,     # optional per-name description overrides for the prompt listing
     forward_usage=True,    # share the parent's usage with sub-agent runs
-    inherit_tools=False,   # expose the parent's tools to sub-agents (delegate tool excluded)
+    inherit_tools=False,   # expose the parent's own tools to sub-agents (capability tools excluded)
     shared_capabilities=(),# capabilities applied to every sub-agent run
     event_stream_handler=None,  # forwarded to each sub-agent run to stream its events
     tool_name='delegate_task',
