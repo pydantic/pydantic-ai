@@ -584,6 +584,11 @@ class BedrockConverseModel(Model[BaseClient]):
             'messages': bedrock_messages,
             'system': system_prompt,
         }
+        tool_config = self._map_tool_config(model_request_parameters, settings)
+        if tool_config:
+            converse['toolConfig'] = tool_config
+        tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
+        self._limit_cache_points(system_prompt, bedrock_messages, tools)
         if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
             converse['additionalModelRequestFields'] = additional_model_requests_fields
         params: CountTokensRequestTypeDef = {
