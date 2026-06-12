@@ -15,13 +15,20 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    FinalResultEvent,
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelProfile,
     ModelRequest,
     ModelResponse,
+    ModelResponseResetEvent,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolDefinition,
     UserPromptPart,
@@ -524,6 +531,32 @@ async def failure_response_stream(_model_messages: list[ModelMessage], _agent_in
 
 success_model_stream = FunctionModel(stream_function=success_response_stream)
 failure_model_stream = FunctionModel(stream_function=failure_response_stream)
+
+
+async def empty_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+    yield ' '
+
+
+async def partial_failure_response_stream(
+    _model_messages: list[ModelMessage], _agent_info: AgentInfo
+) -> AsyncIterator[str]:
+    yield 'bad '
+    raise ModelHTTPError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
+
+
+empty_model_stream = FunctionModel(stream_function=empty_response_stream)
+partial_failure_model_stream = FunctionModel(stream_function=partial_failure_response_stream)
+
+
+def reject_empty_text(response: ModelResponse) -> bool:
+    return not any(isinstance(part, TextPart) and part.content.strip() for part in response.parts)
+
+
+async def fallback_stream_events(fallback_model: FallbackModel) -> list[ModelResponseStreamEvent]:
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as stream:
+        return [event async for event in stream]
 
 
 async def test_first_success_streaming() -> None:
@@ -1336,6 +1369,95 @@ async def test_web_fetch_scenario() -> None:
 
     result = await agent.run('Summarize https://example.com')
     assert result.output == 'Successfully fetched and summarized the content'
+
+
+async def test_response_handler_streaming_happy_path_events() -> None:
+    fallback_model = FallbackModel(
+        success_model_stream,
+        failure_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    assert await fallback_stream_events(fallback_model) == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world')),
+            PartEndEvent(index=0, part=TextPart(content='hello world')),
+        ]
+    )
+
+
+async def test_response_handler_streaming_reject_accept_events() -> None:
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    assert await fallback_stream_events(fallback_model) == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content=' ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content=' ')),
+            ModelResponseResetEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content=' ')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::empty_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                    state='complete',
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world')),
+            PartEndEvent(index=0, part=TextPart(content='hello world')),
+        ]
+    )
+
+
+async def test_response_handler_streaming_mid_stream_exception_events() -> None:
+    fallback_model = FallbackModel(
+        partial_failure_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    assert await fallback_stream_events(fallback_model) == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='bad ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content='bad ')),
+            ModelResponseResetEvent(
+                response=ModelResponse(
+                    parts=[TextPart(content='bad ')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::partial_failure_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world')),
+            PartEndEvent(index=0, part=TextPart(content='hello world')),
+        ]
+    )
+
+
+async def test_response_handler_stream_text_resets_after_rejection() -> None:
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+    agent = Agent(model=fallback_model)
+
+    async with agent.run_stream('input') as result:
+        assert [chunk async for chunk in result.stream_text(debounce_by=None)] == snapshot(
+            [' ', 'hello ', 'hello world']
+        )
 
 
 def test_response_handler_sync() -> None:
