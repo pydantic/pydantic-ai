@@ -2,14 +2,52 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai.agent import AbstractAgent, EventStreamHandler
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.usage import UsageLimits
+
+
+@dataclass(frozen=True)
+class SubAgentLimits:
+    """Per-delegate run controls for one named sub-agent.
+
+    Every field is optional; an unset field leaves the corresponding behaviour
+    at the `SubAgents` default. Pass a mapping of sub-agent name to
+    `SubAgentLimits` as `SubAgents(limits=...)`.
+    """
+
+    usage_limits: UsageLimits | None = None
+    """Request/token budget for one delegation. When set, the child runs with
+    its own usage accounting so the budget counts only the child's own requests
+    and tokens (not the parent's or siblings'), even when `forward_usage=True`.
+    The tradeoff: that child's tokens no longer aggregate into the parent's
+    `usage`. Hitting this budget is a soft outcome (steering message), not a
+    run-stopping `UsageLimitExceeded`."""
+
+    timeout_seconds: float | None = None
+    """Wall-clock budget for one delegation. When the child exceeds it, the run
+    is cancelled and the parent gets a soft steering message instead of hanging
+    on the child."""
+
+    max_calls: int | None = None
+    """Maximum number of delegations to this sub-agent per parent run. Once
+    reached, further delegations return a soft budget-exhausted message without
+    running the child."""
+
+    on_failure: str | None = None
+    """Steering message returned to the parent for any soft degradation of this
+    delegate (timeout, child failure, usage budget reached, call budget
+    exhausted), in place of the built-in default. Setting it also makes child
+    failures soft: a child error returns this message as a normal tool result
+    instead of raising a parent `ModelRetry`."""
 
 
 class SubAgentToolset(FunctionToolset[AgentDepsT]):
@@ -20,7 +58,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     `deps` are forwarded; its `usage` is shared when enabled; its tools are
     inherited when enabled; any `shared_capabilities` are applied to every
     sub-agent run; and sub-agent events are streamed to `event_stream_handler`
-    when one is set.
+    when one is set. Per-delegate run controls come from `limits`.
     """
 
     def __init__(
@@ -32,6 +70,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         shared_capabilities: Sequence[AgentCapability[AgentDepsT]],
         event_stream_handler: EventStreamHandler[AgentDepsT] | None,
         tool_name: str,
+        limits: Mapping[str, SubAgentLimits],
+        call_counts: dict[str, dict[str, int]],
     ) -> None:
         super().__init__()
         self._agents: dict[str, AbstractAgent[AgentDepsT, Any]] = dict(agents)
@@ -40,6 +80,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         self._shared_capabilities = list(shared_capabilities)
         self._event_stream_handler = event_stream_handler
         self._tool_name = tool_name
+        self._limits = dict(limits)
+        # Run-scoped delegation counts, keyed by run_id then sub-agent name.
+        # Shared with the capability, which clears each run's entry in wrap_run.
+        self._call_counts = call_counts
         self.add_function(self.delegate_task, name=tool_name)
 
     def _inherited_toolsets(self, ctx: RunContext[AgentDepsT]) -> list[AbstractToolset[AgentDepsT]] | None:
@@ -48,6 +92,16 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if agent is None:  # pragma: no cover - the running agent is always set during a run
             return None
         return [toolset.filtered(lambda _ctx, tool_def: tool_def.name != self._tool_name) for toolset in agent.toolsets]
+
+    def _budget_exhausted(self, ctx: RunContext[AgentDepsT], agent_name: str, max_calls: int) -> bool:
+        """Increment this run's delegation count for `agent_name` and report whether it is over budget.
+
+        Runs synchronously before any await, so concurrent delegations in one run
+        count without a lock.
+        """
+        counts = self._call_counts.setdefault(ctx.run_id or '', {})
+        counts[agent_name] = counts.get(agent_name, 0) + 1
+        return counts[agent_name] > max_calls
 
     async def delegate_task(self, ctx: RunContext[AgentDepsT], agent_name: str, task: str) -> str:
         """Delegate a self-contained task to a named sub-agent and return its result.
@@ -65,20 +119,70 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if agent is None:
             available = ', '.join(sorted(self._agents))
             raise ModelRetry(f'Unknown sub-agent {agent_name!r}. Available sub-agents: {available}.')
+
+        limits = self._limits.get(agent_name)
+        if (
+            limits is not None
+            and limits.max_calls is not None
+            and self._budget_exhausted(ctx, agent_name, limits.max_calls)
+        ):
+            return self._steer(
+                limits,
+                f'Delegate budget for {agent_name!r} is exhausted for this run '
+                f'({limits.max_calls} call(s)). Synthesize from existing evidence and '
+                f'choose the next action; do not delegate to {agent_name!r} again.',
+            )
+
         toolsets = self._inherited_toolsets(ctx) if self._inherit_tools else None
         capabilities = self._shared_capabilities or None
-        usage = ctx.usage if self._forward_usage else None
+        usage_limits: UsageLimits | None
+        if limits is not None and limits.usage_limits is not None:
+            # Isolated accounting so the per-child budget counts only this child.
+            own_budget = True
+            usage = None
+            usage_limits = limits.usage_limits
+        else:
+            own_budget = False
+            usage = ctx.usage if self._forward_usage else None
+            usage_limits = None
+
+        run = agent.run(
+            task,
+            deps=ctx.deps,
+            usage=usage,
+            usage_limits=usage_limits,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            event_stream_handler=self._event_stream_handler,
+        )
+        timeout = limits.timeout_seconds if limits is not None else None
         try:
-            result = await agent.run(
-                task,
-                deps=ctx.deps,
-                usage=usage,
-                toolsets=toolsets,
-                capabilities=capabilities,
-                event_stream_handler=self._event_stream_handler,
+            result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
+        except asyncio.TimeoutError:
+            return self._steer(
+                limits,
+                f'Sub-agent {agent_name!r} exceeded its {timeout}s time budget. '
+                f'Treat this as a recoverable observation and decide from existing evidence.',
             )
+        except UsageLimitExceeded:
+            if own_budget:
+                return self._steer(
+                    limits,
+                    f'Sub-agent {agent_name!r} reached its usage budget. '
+                    f'Treat this as a recoverable observation and decide from existing evidence.',
+                )
+            # A shared/parent usage limit means the whole tree is out of budget.
+            raise
         except (ModelRetry, UnexpectedModelBehavior) as exc:
-            # Soft sub-agent failures come back to the parent as a retry it can
-            # react to; hard limits (e.g. UsageLimitExceeded) propagate.
+            if limits is not None and limits.on_failure is not None:
+                return limits.on_failure
+            # Soft sub-agent failures come back to the parent as a retry it can react to.
             raise ModelRetry(f'Sub-agent {agent_name!r} failed: {exc}') from exc
         return str(result.output)
+
+    @staticmethod
+    def _steer(limits: SubAgentLimits | None, default: str) -> str:
+        """A soft steering message: the delegate's `on_failure` override, else `default`."""
+        if limits is not None and limits.on_failure is not None:
+            return limits.on_failure
+        return default

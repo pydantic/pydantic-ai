@@ -2,8 +2,8 @@
 
 from pydantic_ai_harness.experimental._warn import warn_experimental
 from pydantic_ai_harness.experimental.subagents._capability import SubAgents
-from pydantic_ai_harness.experimental.subagents._toolset import SubAgentToolset
+from pydantic_ai_harness.experimental.subagents._toolset import SubAgentLimits, SubAgentToolset
 
 warn_experimental('subagents')
 
-__all__ = ['SubAgentToolset', 'SubAgents']
+__all__ = ['SubAgentLimits', 'SubAgentToolset', 'SubAgents']

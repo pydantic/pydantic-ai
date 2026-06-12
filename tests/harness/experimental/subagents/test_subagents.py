@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,8 +23,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.usage import UsageLimits
 
-from pydantic_ai_harness.experimental.subagents import SubAgents, SubAgentToolset
+from pydantic_ai_harness.experimental.subagents import SubAgentLimits, SubAgents, SubAgentToolset
 
 
 @dataclass
@@ -74,6 +76,35 @@ def _delegate_then_finish(agent_name: str, *, retries_before: int = 0) -> Functi
         return ModelResponse(parts=[TextPart('all done')])
 
     return FunctionModel(model_fn)
+
+
+def _delegate_n_then_finish(agent_name: str, n: int) -> FunctionModel:
+    """A parent model that delegates to `agent_name` `n` times, then replies with text."""
+    calls = {'n': 0}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls['n'] += 1
+        if calls['n'] <= n:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        'delegate_task', {'agent_name': agent_name, 'task': 't'}, tool_call_id=f'c{calls["n"]}'
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('all done')])
+
+    return FunctionModel(model_fn)
+
+
+def _delegate_returns(result: Any) -> list[str]:
+    """The `delegate_task` tool-return contents from a run result, in order."""
+    return [
+        str(part.content)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
+    ]
 
 
 class TestConstruction:
@@ -324,3 +355,233 @@ class TestDelegation:
         assert result.output == 'all done'
         assert captured['deps'] == 'PARENT'  # deps still forwarded
         assert captured['usage_is_parent'] is False  # usage isolated
+
+
+class TestRunControls:
+    async def test_usage_limits_isolate_child_accounting(self) -> None:
+        captured: dict[str, Any] = {}
+        parent_usage: dict[str, Any] = {}
+
+        worker = Agent(TestModel(custom_output_text='W'), name='worker')
+
+        @worker.instructions
+        def _capture(ctx: RunContext[None]) -> str:  # pyright: ignore[reportUnusedFunction]
+            captured['usage_is_parent'] = ctx.usage is parent_usage.get('usage')
+            return ''
+
+        parent: Agent[None, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[
+                SubAgents(
+                    agents={'worker': worker},
+                    limits={'worker': SubAgentLimits(usage_limits=UsageLimits(request_limit=5))},
+                )
+            ],
+        )
+
+        @parent.instructions
+        def _remember_usage(ctx: RunContext[None]) -> str:  # pyright: ignore[reportUnusedFunction]
+            parent_usage['usage'] = ctx.usage
+            return ''
+
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        # A per-child usage_limits forces isolated accounting even though forward_usage defaults to True.
+        assert captured['usage_is_parent'] is False
+
+    async def test_usage_budget_reached_is_soft(self) -> None:
+        counter = {'n': 0}
+
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            counter['n'] += 1
+            if counter['n'] == 1:
+                return ModelResponse(parts=[ToolCallPart('noop', {}, tool_call_id='n1')])
+            return ModelResponse(parts=[TextPart('done')])  # pragma: no cover - blocked by the request budget
+
+        worker = Agent(FunctionModel(worker_fn), name='worker')
+
+        @worker.tool_plain
+        def noop() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'x'
+
+        parent: Agent[None, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[
+                SubAgents(
+                    agents={'worker': worker},
+                    limits={'worker': SubAgentLimits(usage_limits=UsageLimits(request_limit=1))},
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        returns = _delegate_returns(result)
+        # The child's own budget being hit is recoverable, not a run-stopping UsageLimitExceeded.
+        assert len(returns) == 1
+        assert "Sub-agent 'worker' reached its usage budget" in returns[0]
+
+    async def test_shared_usage_limit_still_propagates(self) -> None:
+        # No per-child limit -> the child shares accounting and a parent-level usage
+        # limit remains a hard stop for the whole tree.
+        worker = Agent(TestModel(custom_output_text='W'), name='worker')
+        parent: Agent[None, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents={'worker': worker})],
+        )
+        with pytest.raises(UsageLimitExceeded):
+            await parent.run('go', usage_limits=UsageLimits(request_limit=1))
+
+    async def test_timeout_returns_soft_message(self) -> None:
+        async def slow_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            await asyncio.sleep(1)
+            return ModelResponse(parts=[TextPart('late')])  # pragma: no cover - cancelled by the timeout
+
+        worker = Agent(FunctionModel(slow_fn), name='worker')
+        parent: Agent[None, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[
+                SubAgents(
+                    agents={'worker': worker},
+                    limits={'worker': SubAgentLimits(timeout_seconds=0.01)},
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        returns = _delegate_returns(result)
+        assert len(returns) == 1
+        assert "Sub-agent 'worker' exceeded its 0.01s time budget" in returns[0]
+
+    async def test_max_calls_exhausted_returns_soft_and_skips_child(self) -> None:
+        runs = {'n': 0}
+
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            runs['n'] += 1
+            return ModelResponse(parts=[TextPart('W')])
+
+        worker = Agent(FunctionModel(worker_fn), name='worker')
+        parent: Agent[None, str] = Agent(
+            _delegate_n_then_finish('worker', 2),
+            capabilities=[SubAgents(agents={'worker': worker}, limits={'worker': SubAgentLimits(max_calls=1)})],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        returns = _delegate_returns(result)
+        assert len(returns) == 2
+        assert returns[0] == 'W'
+        assert "Delegate budget for 'worker' is exhausted" in returns[1]
+        assert runs['n'] == 1  # the over-budget delegation never ran the child
+
+    async def test_call_counts_reset_between_runs(self) -> None:
+        worker = Agent(TestModel(custom_output_text='W'), name='worker')
+        capability = SubAgents(agents={'worker': worker}, limits={'worker': SubAgentLimits(max_calls=1)})
+        # Two parents share the one capability (and its run-scoped count store); each
+        # gets a fresh delegate-once model so the second run actually delegates again.
+        first = await Agent(_delegate_then_finish('worker'), capabilities=[capability]).run('go')
+        second = await Agent(_delegate_then_finish('worker'), capabilities=[capability]).run('go')
+        # A fresh run starts the budget over: each delegation succeeds, none is exhausted.
+        assert _delegate_returns(first) == ['W']
+        assert _delegate_returns(second) == ['W']
+        # wrap_run clears each run's counts, so the store does not accumulate.
+        assert capability._call_counts == {}
+
+    async def test_on_failure_makes_child_failure_soft(self) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise UnexpectedModelBehavior('kaboom')
+
+        boomer = Agent(FunctionModel(boom), name='boomer')
+        parent: Agent[None, str] = Agent(
+            _delegate_then_finish('boomer'),
+            capabilities=[
+                SubAgents(
+                    agents={'boomer': boomer},
+                    limits={'boomer': SubAgentLimits(on_failure='steer: use existing evidence')},
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        # on_failure returns a normal tool result, so there is no RetryPrompt.
+        retries = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+        ]
+        assert retries == []
+        assert _delegate_returns(result) == ['steer: use existing evidence']
+
+    async def test_on_failure_overrides_default_steering(self) -> None:
+        worker = Agent(TestModel(custom_output_text='W'), name='worker')
+        parent: Agent[None, str] = Agent(
+            _delegate_n_then_finish('worker', 2),
+            capabilities=[
+                SubAgents(
+                    agents={'worker': worker},
+                    limits={'worker': SubAgentLimits(max_calls=1, on_failure='custom budget note')},
+                )
+            ],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        returns = _delegate_returns(result)
+        assert returns[1] == 'custom budget note'
+
+    async def test_limits_without_budget_run_normally(self) -> None:
+        # A limits entry with only an unrelated field set must not alter the happy path.
+        worker = Agent(TestModel(custom_output_text='W'), name='worker')
+        parent: Agent[None, str] = Agent(
+            _delegate_then_finish('worker'),
+            capabilities=[SubAgents(agents={'worker': worker}, limits={'worker': SubAgentLimits(timeout_seconds=30)})],
+        )
+        result = await parent.run('go')
+        assert _delegate_returns(result) == ['W']
+
+    async def test_max_calls_counts_parallel_delegations_in_one_step(self) -> None:
+        runs = {'n': 0}
+
+        def worker_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            runs['n'] += 1
+            return ModelResponse(parts=[TextPart('W')])
+
+        worker = Agent(FunctionModel(worker_fn), name='worker')
+
+        # Two delegations issued in a single parent model step run concurrently; the
+        # synchronous increment in _budget_exhausted must still cap them at max_calls=1.
+        step = {'n': 0}
+
+        def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            step['n'] += 1
+            if step['n'] == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart('delegate_task', {'agent_name': 'worker', 'task': 't'}, tool_call_id='a'),
+                        ToolCallPart('delegate_task', {'agent_name': 'worker', 'task': 't'}, tool_call_id='b'),
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('all done')])
+
+        parent: Agent[None, str] = Agent(
+            FunctionModel(parent_fn),
+            capabilities=[SubAgents(agents={'worker': worker}, limits={'worker': SubAgentLimits(max_calls=1)})],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        returns = _delegate_returns(result)
+        # Exactly one delegation ran the child; the other was over budget.
+        assert runs['n'] == 1
+        assert len(returns) == 2
+        assert 'W' in returns
+        assert any("Delegate budget for 'worker' is exhausted" in r for r in returns)
+
+
+class TestLimitsValidation:
+    def test_limits_key_not_in_agents_raises(self) -> None:
+        worker = Agent(TestModel(), name='worker')
+        with pytest.raises(ValueError, match='names sub-agents not in `agents`: ghost'):
+            SubAgents(agents={'worker': worker}, limits={'ghost': SubAgentLimits(max_calls=1)})
+
+    def test_limits_subset_of_agents_is_accepted(self) -> None:
+        worker = Agent(TestModel(), name='worker')
+        capability = SubAgents(agents={'worker': worker}, limits={'worker': SubAgentLimits(max_calls=1)})
+        assert 'worker' in capability.limits
