@@ -418,6 +418,32 @@ def test_add_usages():
     assert RunUsage() + RunUsage() == RunUsage()
 
 
+def test_incr_usage_tokens_output_audio_tokens():
+    """Test that output_audio_tokens is accumulated by _incr_usage_tokens (issue #5903).
+
+    _incr_usage_tokens previously omitted output_audio_tokens, so RunUsage.output_audio_tokens
+    stayed 0 even when individual RequestUsage values reported output audio tokens.
+    """
+    run_usage = RunUsage()
+    req1 = RequestUsage(input_tokens=10, output_tokens=20, input_audio_tokens=30, output_audio_tokens=40)
+    req2 = RequestUsage(input_tokens=5, output_tokens=15, input_audio_tokens=25, output_audio_tokens=35)
+
+    run_usage.incr(req1)
+    run_usage.incr(req2)
+
+    assert run_usage.input_tokens == 15
+    assert run_usage.output_tokens == 35
+    assert run_usage.input_audio_tokens == 55
+    assert run_usage.output_audio_tokens == 75
+
+    # Also verify via __add__ on RequestUsage
+    combined = req1 + req2
+    assert combined.input_tokens == 15
+    assert combined.output_tokens == 35
+    assert combined.input_audio_tokens == 55
+    assert combined.output_audio_tokens == 75
+
+
 def test_add_usages_with_none_detail_value():
     """Test that None values in details are skipped when incrementing usage."""
     usage = RunUsage(
