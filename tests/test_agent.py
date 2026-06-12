@@ -2368,6 +2368,10 @@ def test_output_type_union_text_fallback_invalid_data_retries():
 def test_output_type_union_text_fallback_invalid_kind_retries():
     """When the union envelope text carries a `kind` that doesn't match any allowed output type,
     the discriminated union fails to validate and the model is re-prompted.
+
+    The same validation guards `PromptedOutput`, the realistic route to an invalid `kind`: there
+    the envelope schema is only advertised in the prompt (its `const` discriminator is never
+    enforced by the provider), so a weaker model can plausibly flub the `kind` value.
     """
 
     calls = 0
