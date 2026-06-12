@@ -148,7 +148,7 @@ def _cerebras_settings_to_openai_settings(
     if extra_body:
         model_settings['extra_body'] = extra_body
 
-    openai_settings = OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
+    openai_settings = OpenAIChatModelSettings(**model_settings)  # pyright: ignore[reportCallIssue]
     if disable_reasoning:
         # Cerebras deprecated `extra_body['disable_reasoning']` on 2026-03-24 in favor of the standard
         # `reasoning_effort='none'`. https://inference-docs.cerebras.ai/resources/glm-47-migration

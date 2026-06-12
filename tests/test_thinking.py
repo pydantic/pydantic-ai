@@ -839,6 +839,14 @@ class TestCerebrasThinkingTranslation:
             result = _cerebras_settings_to_openai_settings(settings, params)
         assert result.get('openai_reasoning_effort') == 'none'
 
+    def test_disable_overrides_explicit_reasoning_effort(self):
+        """Disabling reasoning wins over an explicit `openai_reasoning_effort`, forcing `'none'`."""
+        settings: dict[str, Any] = {'cerebras_disable_reasoning': True, 'openai_reasoning_effort': 'low'}
+        params = ModelRequestParameters()
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`cerebras_disable_reasoning` is deprecated'):
+            result = _cerebras_settings_to_openai_settings(settings, params)
+        assert result.get('openai_reasoning_effort') == 'none'
+
     def test_explicit_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on Cerebras is passed through."""
         model = CerebrasModel.__new__(CerebrasModel)
