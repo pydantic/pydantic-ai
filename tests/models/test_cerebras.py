@@ -90,6 +90,35 @@ async def test_cerebras_thinking_part_survives_multiturn(
     assert any(m.get('reasoning') == turn1_thinking[0].content for m in assistant_messages)
 
 
+async def test_cerebras_zai_reasoning_replayed_as_think_tags(
+    allow_model_requests: None, cerebras_api_key: str, vcr: Cassette
+):
+    """GLM replays prior reasoning inside `<think>...</think>` tags in the assistant `content`, not a `reasoning` field.
+
+    Unlike gpt-oss (Harmony, replayed in the `reasoning` field), Cerebras GLM/Qwen require previous reasoning to
+    be wrapped in `<think>` tags inside the assistant message content, so `CerebrasProvider.model_profile()` sets
+    `openai_chat_send_back_thinking_parts='tags'` for `zai`. See https://inference-docs.cerebras.ai/capabilities/reasoning.
+    """
+    provider = CerebrasProvider(api_key=cerebras_api_key)
+    model = CerebrasModel('zai-glm-4.7', provider=provider)
+    agent = Agent(model=model)
+
+    result1 = await agent.run('What is 25 * 4? Think briefly first.')
+    turn1_response = next(m for m in reversed(result1.all_messages()) if isinstance(m, ModelResponse))
+    turn1_thinking = [p for p in turn1_response.parts if isinstance(p, ThinkingPart)]
+    assert turn1_thinking, 'expected a ThinkingPart on turn 1'
+
+    await agent.run('Now divide that by 2.', message_history=result1.all_messages())
+
+    turn2_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assistant_messages = [m for m in turn2_body['messages'] if m.get('role') == 'assistant']
+    start_tag, end_tag = model.profile.thinking_tags
+    assert any(
+        start_tag in (m.get('content') or '') and end_tag in (m.get('content') or '') for m in assistant_messages
+    ), 'expected prior reasoning wrapped in think tags in the assistant content'
+    assert all('reasoning' not in m for m in assistant_messages), 'reasoning must not be replayed in a separate field'
+
+
 async def test_cerebras_settings_transformation():
     """Test that CerebrasModelSettings are correctly transformed to OpenAIChatModelSettings."""
     from pydantic_ai.models import ModelRequestParameters

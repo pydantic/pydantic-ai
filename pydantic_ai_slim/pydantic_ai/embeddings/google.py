@@ -20,7 +20,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview']
+LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview', 'gemini-embedding-2']
 """Latest Gemini API embedding models.
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
@@ -30,6 +30,7 @@ for available models and their capabilities.
 LatestGoogleVertexEmbeddingModelNames = Literal[
     'gemini-embedding-001',
     'gemini-embedding-2-preview',
+    'gemini-embedding-2',
     'text-embedding-005',
     'text-multilingual-embedding-002',
 ]
@@ -49,6 +50,7 @@ GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 _MAX_INPUT_TOKENS: dict[GoogleEmbeddingModelName, int] = {
     'gemini-embedding-001': 2048,
     'gemini-embedding-2-preview': 8192,
+    'gemini-embedding-2': 8192,
     'text-embedding-005': 2048,
     'text-multilingual-embedding-002': 2048,
 }

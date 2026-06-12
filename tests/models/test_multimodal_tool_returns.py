@@ -937,6 +937,12 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
         uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-cloud'),
         match=r'UploadedFile for GoogleModel \(Google Cloud\) must use a GCS URI',
     ),
+    UploadedFileErrorCase(
+        id='openai_responses_wrong_provider',
+        provider='openai_responses',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google'),
+        match="provider_name='google'.*cannot be used with OpenAIResponsesModel",
+    ),
 ]
 
 
@@ -978,6 +984,10 @@ async def test_uploaded_file_validation_error_in_tool_return(
                 type(m_google), 'system', new_callable=lambda: property(lambda self: 'google-vertex')
             ):
                 await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
+    elif provider == 'openai_responses':
+        m_openai = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key='test-key'))
+        with pytest.raises(UserError, match=case.match):
+            await m_openai._map_messages(messages, {}, params)  # pyright: ignore[reportPrivateUsage]
     else:
         assert_never(provider)  # pyright: ignore[reportArgumentType]
 
