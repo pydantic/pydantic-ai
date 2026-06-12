@@ -1275,11 +1275,29 @@ _GOOGLE_TASK_PREFIX_CASES: list[_GoogleTaskPrefixCase] = (
             expected_task_type=None,
         ),
         _GoogleTaskPrefixCase(
-            id='raw-passthrough',
+            id='symmetric-sentence-similarity-ignores-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='sentence similarity', google_title='ignored'),
+            expected_texts=['task: sentence similarity | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-empty-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_title=''),
+            expected_texts=['title: none | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='none-passthrough',
             model_name='gemini-embedding-2',
             input_type='document',
             inputs=['title: custom | text: hello'],
-            settings=GoogleEmbeddingSettings(google_task='raw'),
+            settings=GoogleEmbeddingSettings(google_task='none'),
             expected_texts=['title: custom | text: hello'],
             expected_task_type=None,
         ),
@@ -1349,6 +1367,39 @@ async def test_google_task_prefix(case: _GoogleTaskPrefixCase, gemini_api_key: s
     assert captured['config'].task_type == case.expected_task_type
     assert captured['config'].title is None
     assert len(result.embeddings) == len(case.inputs)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.vcr
+async def test_google_task_prefix_vertex(
+    allow_model_requests: None, vertex_provider: GoogleProvider, monkeypatch: pytest.MonkeyPatch
+):  # pragma: lax no cover
+    """`google_task` builds the same `gemini-embedding-2` prefix against Google Cloud (Vertex) as against the Gemini API."""
+    model = GoogleEmbeddingModel('gemini-embedding-2', provider=vertex_provider)
+    embedder = Embedder(model)
+
+    captured: dict[str, Any] = {}
+    real_embed_content = vertex_provider.client.aio.models.embed_content
+
+    async def spy(**kwargs: Any) -> Any:
+        captured['contents'] = kwargs['contents']
+        captured['config'] = kwargs['config']
+        return await real_embed_content(**kwargs)
+
+    monkeypatch.setattr(vertex_provider.client.aio.models, 'embed_content', spy)
+
+    result = await embedder.embed_query(
+        'Hello, world!', settings=GoogleEmbeddingSettings(google_task='question answering')
+    )
+
+    sent_texts = [part.text for content in captured['contents'] for part in content.parts]
+    assert sent_texts == ['task: question answering | query: Hello, world!']
+    assert captured['config'].task_type is None
+    assert captured['config'].title is None
+    assert len(result.embeddings) == 1
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')

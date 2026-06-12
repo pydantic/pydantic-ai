@@ -56,7 +56,7 @@ GoogleEmbeddingTask = Literal[
     'classification',
     'clustering',
     'sentence similarity',
-    'raw',
+    'none',
 ]
 """..."""
 
@@ -196,7 +196,9 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     stacklevel=2,
                 )
             task = google_task if google_task is not None else 'search result'
-            if task == 'raw':
+            # `'none'` is the conventional no-conditioning sentinel (verbatim passthrough),
+            # consistent with VoyageAI's `voyageai_input_type` (#3856).
+            if task == 'none':
                 texts = inputs
             elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
                 title = settings.get('google_title') or 'none'
