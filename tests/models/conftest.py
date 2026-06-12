@@ -35,7 +35,6 @@ with try_import() as openrouter_imports_successful:
     OpenRouterModelFactory = Callable[..., OpenRouterModel]
 
 with try_import() as openai_imports_successful:
-    from pydantic_ai.models.cerebras import CerebrasModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
@@ -44,7 +43,7 @@ with try_import() as openai_imports_successful:
     OpenAIChatModelFactory = Callable[..., OpenAIChatModel]
     OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
     DeepSeekModelFactory = Callable[..., OpenAIChatModel]
-    CerebrasModelFactory = Callable[..., CerebrasModel]
+    CerebrasModelFactory = Callable[..., OpenAIChatModel]
 
 with try_import() as groq_imports_successful:
     from pydantic_ai.models.groq import GroqModel
@@ -170,11 +169,15 @@ def deepseek_model(deepseek_api_key: str) -> DeepSeekModelFactory:
 
 @pytest.fixture
 def cerebras_model(cerebras_api_key: str) -> CerebrasModelFactory:
-    """Factory to create Cerebras models. Used by VCR-recorded integration tests."""
+    """Factory for the generic `OpenAIChatModel` on the Cerebras provider (endpoint-interop tests).
+
+    The dedicated `CerebrasModel` class (with its settings transformation) is exercised inline in
+    `test_cerebras.py`; this factory wires the OpenAI-compatible chat model against the Cerebras endpoint.
+    """
 
     @cache
-    def _create_model(model_name: str, api_key: str | None = None) -> CerebrasModel:
-        return CerebrasModel(model_name, provider=CerebrasProvider(api_key=api_key or cerebras_api_key))
+    def _create_model(model_name: str, api_key: str | None = None) -> OpenAIChatModel:
+        return OpenAIChatModel(model_name, provider=CerebrasProvider(api_key=api_key or cerebras_api_key))
 
     return _create_model
 

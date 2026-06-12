@@ -97,7 +97,6 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.azure import AzureProvider
-    from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -107,6 +106,7 @@ with try_import() as imports_successful:
     GoogleModelFactory = Callable[..., GoogleModel]
     OpenAIChatModelFactory = Callable[..., OpenAIChatModel]
     OpenAIResponsesModelFactory = Callable[..., OpenAIResponsesModel]
+    CerebrasModelFactory = Callable[..., OpenAIChatModel]
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -4352,34 +4352,30 @@ async def test_openai_gpt_5_2_temperature_warns_when_reasoning_enabled(allow_mod
     assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]
 
 
-async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
-    # generic OpenAIChatModel against the Cerebras endpoint; cross-provider interop, not the dedicated CerebrasModel factory
-    # ast-grep-ignore: prefer-model-factory
-    m = OpenAIChatModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
+async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_model: CerebrasModelFactory):
+    m = cerebras_model('llama3.3-70b')
     agent = Agent(m)
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
 
 
-async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests: None, cerebras_api_key: str):
+async def test_openai_model_cerebras_provider_qwen_3_coder(
+    allow_model_requests: None, cerebras_model: CerebrasModelFactory
+):
     class Location(TypedDict):
         city: str
         country: str
 
-    # generic OpenAIChatModel against the Cerebras endpoint; cross-provider interop, not the dedicated CerebrasModel factory
-    # ast-grep-ignore: prefer-model-factory
-    m = OpenAIChatModel('qwen-3-coder-480b', provider=CerebrasProvider(api_key=cerebras_api_key))
+    m = cerebras_model('qwen-3-coder-480b')
     agent = Agent(m, output_type=Location)
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot({'city': 'Paris', 'country': 'France'})
 
 
-async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None, cerebras_api_key: str):
-    # generic OpenAIChatModel against the Cerebras endpoint; cross-provider interop, not the dedicated CerebrasModel factory
-    # ast-grep-ignore: prefer-model-factory
-    m = OpenAIChatModel('gpt-oss-120b', provider=CerebrasProvider(api_key=cerebras_api_key))
+async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None, cerebras_model: CerebrasModelFactory):
+    m = cerebras_model('gpt-oss-120b')
     agent = Agent(m)
 
     result = await agent.run('What is the capital of France?')

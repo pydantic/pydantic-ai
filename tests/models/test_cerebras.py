@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
@@ -18,8 +17,7 @@ with try_import() as imports_successful:
         CerebrasModelSettings,
         _cerebras_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
     )
-
-    CerebrasModelFactory = Callable[..., CerebrasModel]
+    from pydantic_ai.providers.cerebras import CerebrasProvider
 
 
 pytestmark = [
@@ -29,20 +27,24 @@ pytestmark = [
 ]
 
 
-async def test_cerebras_model_simple(allow_model_requests: None, cerebras_model: CerebrasModelFactory):
+async def test_cerebras_model_simple(allow_model_requests: None, cerebras_api_key: str):
     """Test basic Cerebras model functionality."""
-    model = cerebras_model('llama-3.3-70b')
+    # the dedicated `CerebrasModel` class is under test here; the `cerebras_model` factory builds the generic `OpenAIChatModel`
+    # ast-grep-ignore: prefer-model-factory
+    model = CerebrasModel('llama-3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(model=model)
     result = await agent.run('What is 2 + 2?')
     assert '4' in result.output
 
 
-async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_model: CerebrasModelFactory):
+async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str):
     """Test that cerebras_disable_reasoning setting is properly transformed to extra_body.
 
     Note: disable_reasoning is only supported on reasoning models: zai-glm-4.6 and gpt-oss-120b.
     """
-    model = cerebras_model('zai-glm-4.6')
+    # the dedicated `CerebrasModel` class is under test here; the `cerebras_model` factory builds the generic `OpenAIChatModel`
+    # ast-grep-ignore: prefer-model-factory
+    model = CerebrasModel('zai-glm-4.6', provider=CerebrasProvider(api_key=cerebras_api_key))
 
     settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
     response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
@@ -52,7 +54,7 @@ async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, ce
 
 
 async def test_cerebras_thinking_part_survives_multiturn(
-    allow_model_requests: None, cerebras_model: CerebrasModelFactory, vcr: Cassette
+    allow_model_requests: None, cerebras_api_key: str, vcr: Cassette
 ):
     """A reasoning model's `ThinkingPart` survives a 2-turn round-trip on Cerebras.
 
@@ -60,7 +62,9 @@ async def test_cerebras_thinking_part_survives_multiturn(
     structured item the API consumes). This locks that the turn-1 part is preserved verbatim in the message
     history across turns and replayed on the second request's wire body as the assistant `reasoning` field.
     """
-    model = cerebras_model('gpt-oss-120b')
+    # the dedicated `CerebrasModel` class is under test here; the `cerebras_model` factory builds the generic `OpenAIChatModel`
+    # ast-grep-ignore: prefer-model-factory
+    model = CerebrasModel('gpt-oss-120b', provider=CerebrasProvider(api_key=cerebras_api_key))
     agent = Agent(model=model)
 
     result1 = await agent.run('What is 2 + 2? Think briefly first.')
