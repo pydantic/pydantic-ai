@@ -2,11 +2,13 @@
 
 from __future__ import annotations as _annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from typing_extensions import override
 
+from .._warnings import PydanticAIDeprecationWarning
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -52,10 +54,11 @@ class CerebrasModelSettings(ModelSettings, total=False):
     cerebras_disable_reasoning: bool
     """Disable reasoning for the model.
 
-    This setting is only supported on reasoning models: `zai-glm-4.7` and `gpt-oss-120b`.
-
-    See [the Cerebras docs](https://inference-docs.cerebras.ai/resources/openai#passing-non-standard-parameters) for more details.
+    Deprecated: use the unified `thinking=False` setting instead.
     """
+
+    cerebras_clear_thinking: bool
+    """Set Cerebras's `clear_thinking` flag via `extra_body`."""
 
 
 @dataclass(init=False)
@@ -91,11 +94,11 @@ class CerebrasModel(OpenAIChatModel):
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> Any:
-        """Cerebras handles reasoning via extra_body['disable_reasoning'], not reasoning_effort."""
+        """Pass through an explicit `openai_reasoning_effort` (including the `'none'` injected to disable reasoning)."""
         from openai import omit
 
-        # Only pass through explicit openai_reasoning_effort if set; unified thinking
-        # is handled in _cerebras_settings_to_openai_settings via disable_reasoning.
+        # Disabling is injected as `openai_reasoning_effort='none'` in `_cerebras_settings_to_openai_settings`;
+        # other unified thinking levels are omitted because Cerebras reasons by default.
         if effort := model_settings.get('openai_reasoning_effort'):
             return effort
         return omit
@@ -127,14 +130,27 @@ def _cerebras_settings_to_openai_settings(
     """
     extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
 
-    if (disable_reasoning := model_settings.pop('cerebras_disable_reasoning', None)) is not None:
-        extra_body['disable_reasoning'] = disable_reasoning
-    elif model_request_parameters.thinking is False:
-        extra_body['disable_reasoning'] = True
-    elif model_request_parameters.thinking:
-        extra_body['disable_reasoning'] = False
+    disable_reasoning = model_settings.pop(
+        'cerebras_disable_reasoning', None
+    )  # TODO(v3): remove cerebras_disable_reasoning
+    if disable_reasoning is not None:
+        warnings.warn(
+            '`cerebras_disable_reasoning` is deprecated, use the unified `thinking=False` setting instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+    else:
+        disable_reasoning = model_request_parameters.thinking is False
+
+    if (clear_thinking := model_settings.pop('cerebras_clear_thinking', None)) is not None:
+        extra_body['clear_thinking'] = clear_thinking
 
     if extra_body:
         model_settings['extra_body'] = extra_body
 
-    return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
+    openai_settings = OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
+    if disable_reasoning:
+        # Cerebras deprecated `extra_body['disable_reasoning']` on 2026-03-24 in favor of the standard
+        # `reasoning_effort='none'`. https://inference-docs.cerebras.ai/resources/glm-47-migration
+        openai_settings['openai_reasoning_effort'] = 'none'
+    return openai_settings

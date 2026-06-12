@@ -12,6 +12,7 @@ from typing import Any, Literal
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import CAPABILITY_TYPES, Thinking
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
@@ -806,35 +807,37 @@ class TestOpenRouterThinkingTranslation:
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 class TestCerebrasThinkingTranslation:
-    """Test Cerebras unified thinking fallback."""
+    """Test Cerebras unified thinking fallback.
 
-    def test_thinking_false_sets_disable_reasoning(self):
+    Disabling is emitted as the standard `reasoning_effort='none'` rather than the upstream-deprecated
+    `extra_body['disable_reasoning']`; other unified thinking levels are omitted because Cerebras reasons by default.
+    """
+
+    def test_thinking_false_sets_reasoning_effort_none(self):
         settings = CerebrasModelSettings()
         params = ModelRequestParameters(thinking=False)
         result = _cerebras_settings_to_openai_settings(settings, params)
-        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is True
+        assert result.get('openai_reasoning_effort') == 'none'
+        assert 'extra_body' not in result
 
-    def test_thinking_true_sets_disable_reasoning_false(self):
+    def test_thinking_true_omits_reasoning_effort(self):
         settings = CerebrasModelSettings()
         params = ModelRequestParameters(thinking=True)
         result = _cerebras_settings_to_openai_settings(settings, params)
-        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is False
+        assert 'openai_reasoning_effort' not in result
 
-    def test_thinking_effort_sets_disable_reasoning_false(self):
+    def test_thinking_effort_omits_reasoning_effort(self):
         settings = CerebrasModelSettings()
         params = ModelRequestParameters(thinking='high')
         result = _cerebras_settings_to_openai_settings(settings, params)
-        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is False
+        assert 'openai_reasoning_effort' not in result
 
     def test_explicit_cerebras_disable_takes_precedence(self):
         settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
         params = ModelRequestParameters(thinking=True)
-        result = _cerebras_settings_to_openai_settings(settings, params)
-        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
-        assert extra_body.get('disable_reasoning') is True
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`cerebras_disable_reasoning` is deprecated'):
+            result = _cerebras_settings_to_openai_settings(settings, params)
+        assert result.get('openai_reasoning_effort') == 'none'
 
     def test_explicit_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on Cerebras is passed through."""

@@ -71,6 +71,17 @@ CASES = [
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
+        id='cerebras-zai-disable',
+        provider='cerebras',
+        model_name='zai-glm-4.7',
+        thinking=False,
+        # GLM disables via the standard `reasoning_effort='none'`, not the upstream-deprecated
+        # `extra_body['disable_reasoning']`. https://inference-docs.cerebras.ai/resources/glm-47-migration
+        present={'reasoning_effort': 'none'},
+        absent=('disable_reasoning',),
+        marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
+    ),
+    WireCase(
         id='cerebras-gpt-oss-always-on',
         provider='cerebras',
         model_name='gpt-oss-120b',
