@@ -1048,7 +1048,7 @@ def test_per_request_input_tokens_limit_with_count_before() -> None:
         return RequestUsage(input_tokens=counted)
 
     model = TestModel()
-    model.count_tokens = fake_count_tokens  # type: ignore[method-assign]
+    model.count_tokens = fake_count_tokens
 
     agent = Agent(model)
 
