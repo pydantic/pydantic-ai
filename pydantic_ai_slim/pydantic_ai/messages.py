@@ -2674,10 +2674,24 @@ class FinalResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class ModelResponseResetEvent:
+    """An event indicating streamed response parts should be discarded before continuing."""
+
+    response: ModelResponse
+    """The model response being discarded."""
+
+    event_kind: Literal['model_response_reset'] = 'model_response_reset'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 ModelResponseStreamEvent = Annotated[
-    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
+    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent | ModelResponseResetEvent,
+    pydantic.Discriminator('event_kind'),
 ]
-"""An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
+"""An event in the model response stream."""
 
 
 @dataclass(repr=False)
