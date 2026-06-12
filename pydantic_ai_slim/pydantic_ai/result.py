@@ -138,6 +138,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """Stream the text result as an async iterable.
 
         !!! note
+            [`TextOutput`][pydantic_ai.output.TextOutput] functions are not applied — use
+            [`stream_output()`][pydantic_ai.result.AgentStream.stream_output] instead.
             Result validators will NOT be called on the text result if `delta=True`.
 
         Args:
@@ -563,6 +565,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """Stream the text result as an async iterable.
 
         !!! note
+            [`TextOutput`][pydantic_ai.output.TextOutput] functions are not applied — use
+            [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] instead.
             Result validators will NOT be called on the text result if `delta=True`.
 
         Args:
@@ -863,6 +867,8 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         """Stream the text result as an iterable.
 
         !!! note
+            [`TextOutput`][pydantic_ai.output.TextOutput] functions are not applied — use
+            [`stream_output()`][pydantic_ai.result.StreamedRunResultSync.stream_output] instead.
             Result validators will NOT be called on the text result if `delta=True`.
 
         Args:
