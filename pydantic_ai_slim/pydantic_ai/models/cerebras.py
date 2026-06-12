@@ -58,7 +58,12 @@ class CerebrasModelSettings(ModelSettings, total=False):
     """
 
     cerebras_clear_thinking: bool
-    """Set Cerebras's `clear_thinking` flag via `extra_body`."""
+    """Whether Cerebras strips prior reasoning from earlier turns on multi-turn `zai`/GLM requests.
+
+    `True` (Cerebras's default) drops thinking from previous turns before the next request; `False`
+    preserves it, which improves multi-turn coherence and prompt-cache hit rates at the cost of more
+    tokens. Only sent when explicitly set; otherwise Cerebras's default applies. GLM-specific setting.
+    """
 
 
 @dataclass(init=False)
