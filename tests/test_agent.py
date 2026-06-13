@@ -2305,6 +2305,128 @@ def test_output_type_structured_dict():
     )
 
 
+class Apple(BaseModel):
+    color: str
+
+
+class Banana(BaseModel):
+    length: float
+
+
+def test_output_type_union_text_fallback():
+    """A list `output_type` in tool mode can also be satisfied by the union JSON envelope
+    returned as a text part, parsed via the union processor.
+    """
+
+    def return_apple_as_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Tool mode is active (output tools are offered), yet we return the union envelope as
+        # text rather than a tool call to exercise the auto-schema text fallback.
+        assert info.model_request_parameters.output_mode == 'tool'
+        assert info.output_tools
+        text = '{"result": {"kind": "Apple", "data": {"color": "red"}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(return_apple_as_text), output_type=[Apple, Banana])
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Apple(color='red'))
+
+
+def test_output_type_union_text_fallback_invalid_data_retries():
+    """When the union envelope text has the right `kind` but `data` that doesn't match that
+    member's schema, validation fails and the model is re-prompted with the validation error.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Correct `kind`, but `data` is missing the required `color` field for `Apple`.
+            text = '{"result": {"kind": "Apple", "data": {"length": 12.0}}}'
+        else:
+            text = '{"result": {"kind": "Apple", "data": {"color": "green"}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=[Apple, Banana])
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Apple(color='green'))
+    assert calls == 2
+
+    retry_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    assert retry_parts == snapshot(
+        [
+            RetryPromptPart(
+                content=[{'type': 'missing', 'loc': ('color',), 'msg': 'Field required', 'input': {'length': 12.0}}],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+def test_output_type_union_text_fallback_invalid_kind_retries():
+    """When the union envelope text carries a `kind` that doesn't match any allowed output type,
+    the discriminated union fails to validate and the model is re-prompted.
+
+    The same validation guards `PromptedOutput`, the realistic route to an invalid `kind`: there
+    the envelope schema is only advertised in the prompt (its `const` discriminator is never
+    enforced by the provider), so a weaker model can plausibly flub the `kind` value.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # `kind` is not one of the allowed discriminator values (`Apple` / `Banana`).
+            text = '{"result": {"kind": "Cherry", "data": {"color": "red"}}}'
+        else:
+            text = '{"result": {"kind": "Banana", "data": {"length": 6.0}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=[Apple, Banana])
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Banana(length=6.0))
+    assert calls == 2
+
+    retry_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    assert retry_parts == snapshot(
+        [
+            RetryPromptPart(
+                content=[
+                    {
+                        'type': 'literal_error',
+                        'loc': ('result', 'kind'),
+                        'msg': "Input should be 'Apple' or 'Banana'",
+                        'input': 'Cherry',
+                    }
+                ],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+def test_output_type_union_text_fallback_invalid_kind_exhausts_retries():
+    """When the union envelope text keeps carrying an unknown `kind` past the retry budget, the
+    run raises `UnexpectedModelBehavior` — the invalid `kind` is fully absorbed by the retry
+    machinery and never surfaces as a raw `KeyError` from the `_processors` lookup.
+    """
+
+    def return_invalid_kind(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        text = '{"result": {"kind": "Cherry", "data": {"color": "red"}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(return_invalid_kind), output_type=[Apple, Banana], retries={'output': 1})
+    # `pytest.raises(UnexpectedModelBehavior)` would not catch a `KeyError`, so reaching this
+    # means the bad `kind` was routed through retry exhaustion, not the old crash path.
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
+        agent.run_sync('What fruit is it?')
+
+
 def test_output_type_structured_dict_nested():
     """Test StructuredDict with nested JSON schemas using $ref - Issue #2466."""
     # Schema with nested $ref that pydantic's generator can't resolve
