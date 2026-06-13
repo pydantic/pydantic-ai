@@ -127,7 +127,6 @@ __all__ = (
     'ServerCapabilities',
     'ProcessToolCallback',
     'CallToolFunc',
-    'MCPHTTPClientFactory',
     'ToolResult',
     'Prompt',
     'PromptArgument',
@@ -1942,24 +1941,6 @@ class CallToolFunc(Protocol):
     ) -> ToolResult: ...
 
 
-class MCPHTTPClientFactory(Protocol):
-    """Factory returning the `httpx.AsyncClient` an MCP HTTP transport should use.
-
-    FastMCP's HTTP transports call this with `follow_redirects` and may pass further
-    kwargs in future versions, so the contract names the known arguments and keeps a
-    `**kwargs` catch-all for forward compatibility.
-    """
-
-    def __call__(
-        self,
-        headers: dict[str, str] | None = None,
-        timeout: httpx.Timeout | None = None,
-        auth: httpx.Auth | None = None,
-        follow_redirects: bool = True,
-        **kwargs: object,
-    ) -> httpx.AsyncClient: ...
-
-
 ProcessToolCallback = Callable[
     [
         RunContext[Any],
@@ -2776,15 +2757,16 @@ def _build_transport(
 
 def _make_httpx_client_factory(
     http_client: httpx.AsyncClient,
-) -> MCPHTTPClientFactory:
+) -> Callable[..., httpx.AsyncClient]:
     """Return an `httpx_client_factory` that always returns the user-supplied `http_client`."""
 
     def factory(
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
+        # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`,
+        # which the mcp SDK's `McpHttpClientFactory` protocol doesn't declare.
         follow_redirects: bool = True,
-        **_kwargs: object,
     ) -> httpx.AsyncClient:
         return http_client
 
