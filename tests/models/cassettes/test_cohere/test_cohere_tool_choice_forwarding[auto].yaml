@@ -1,0 +1,83 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '338'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: command-r7b-12-2024
+      stream: false
+      tools:
+      - function:
+          description: Run the get_weather tool.
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '457'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - '6742'
+      num_tokens:
+      - '52'
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      finish_reason: TOOL_CALL
+      id: 762f1121-5d1b-4f11-b2ff-dd893bca4845
+      message:
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: get_weather_468yjczq89jd
+          type: function
+        tool_plan: I will look up the weather in Paris.
+      usage:
+        billed_units:
+          input_tokens: 35
+          output_tokens: 17
+        cached_tokens: 1024
+        tokens:
+          input_tokens: 1435
+          output_tokens: 46
+    status:
+      code: 200
+      message: OK
+version: 1

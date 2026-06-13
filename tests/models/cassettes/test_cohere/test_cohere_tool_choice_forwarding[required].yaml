@@ -1,0 +1,84 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '365'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What's the weather in Paris?
+        role: user
+      model: command-r7b-12-2024
+      stream: false
+      tool_choice: REQUIRED
+      tools:
+      - function:
+          description: Run the get_weather tool.
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '485'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - '6857'
+      num_tokens:
+      - '57'
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      finish_reason: TOOL_CALL
+      id: 8d2cee4e-b46b-48d8-a363-b6eb38627230
+      message:
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: get_weather_2adgpp9xp3h5
+          type: function
+        tool_plan: I will use one or more of the available tools to find the answer
+      usage:
+        billed_units:
+          input_tokens: 35
+          output_tokens: 22
+        cached_tokens: 1024
+        tokens:
+          input_tokens: 1453
+          output_tokens: 33
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, cast
 
+import httpx
 import pytest
 
 from pydantic_ai import (
@@ -27,9 +28,12 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.tools import RunContext
+from pydantic_ai.settings import ToolChoice
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
@@ -49,7 +53,7 @@ with try_import() as imports_successful:
     )
     from cohere.core.api_error import ApiError
 
-    from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.models.cohere import CohereModel, CohereModelSettings
     from pydantic_ai.providers.cohere import CohereProvider
 
     MockChatResponse = ChatResponse | Exception
@@ -658,57 +662,95 @@ async def test_cohere_model_top_k(allow_model_requests: None):
     assert chat_kwargs['k'] == 50
 
 
-async def test_cohere_model_tool_choice_required_forwarded(allow_model_requests: None):
-    """`tool_choice='required'` in ModelSettings should be forwarded to the Cohere v2 chat API as `tool_choice='REQUIRED'`."""
-    from pydantic_ai.direct import model_request
-    from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.tools import ToolDefinition
+@dataclass(frozen=True)
+class ToolChoiceCase:
+    id: str
+    tool_choice: ToolChoice
+    function_tools: list[ToolDefinition]
+    expected_request: dict[str, object]
+    expect_tool_call: bool | None
 
-    c = completion_message(
-        AssistantMessageResponse(
-            content=[TextAssistantMessageResponseContentItem(text='world')],
+
+def _tool_def(name: str, arg: str) -> ToolDefinition:
+    return ToolDefinition(
+        name=name,
+        description=f'Run the {name} tool.',
+        parameters_json_schema={'type': 'object', 'properties': {arg: {'type': 'string'}}, 'required': [arg]},
+    )
+
+
+TOOL_CHOICE_CASES = [
+    ToolChoiceCase(
+        id='required',
+        tool_choice='required',
+        function_tools=[_tool_def('get_weather', 'city')],
+        expected_request=snapshot({'tool_choice': 'REQUIRED', 'tools': ['get_weather']}),
+        expect_tool_call=True,
+    ),
+    ToolChoiceCase(
+        id='none',
+        tool_choice='none',
+        function_tools=[_tool_def('get_weather', 'city')],
+        expected_request=snapshot({'tool_choice': 'NONE', 'tools': ['get_weather']}),
+        expect_tool_call=False,
+    ),
+    ToolChoiceCase(
+        id='auto',
+        tool_choice='auto',
+        function_tools=[_tool_def('get_weather', 'city')],
+        expected_request=snapshot({'tool_choice': None, 'tools': ['get_weather']}),
+        expect_tool_call=None,
+    ),
+    ToolChoiceCase(
+        id='named_subset',
+        tool_choice=['get_weather'],
+        function_tools=[_tool_def('get_weather', 'city'), _tool_def('get_time', 'timezone')],
+        expected_request=snapshot({'tool_choice': 'REQUIRED', 'tools': ['get_weather']}),
+        expect_tool_call=True,
+    ),
+]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in TOOL_CHOICE_CASES])
+async def test_cohere_tool_choice_forwarding(allow_model_requests: None, co_api_key: str, case: ToolChoiceCase):
+    """`tool_choice` from `ModelSettings` is mapped to Cohere's v2 `tool_choice` and reaches the wire.
+
+    Cohere only accepts `REQUIRED`/`NONE` (or omission) and can't target a tool by name, so a
+    restricted subset is sent by filtering the `tools` array and forcing `REQUIRED` — see the
+    `named_subset` case, where two tools are defined but only `get_weather` is sent.
+
+    `direct.model_request` is used (not `Agent.run`) because a static `tool_choice='required'`/`list`
+    is rejected by the agent-level guard; the mapping under test lives in the model layer.
+    """
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    mrp = ModelRequestParameters(function_tools=case.function_tools, allow_text_output=True)
+    settings: CohereModelSettings = {'tool_choice': case.tool_choice}
+
+    async with httpx.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
+        m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key, http_client=http_client))
+        response = await model_request(
+            m,
+            [ModelRequest.user_text_prompt("What's the weather in Paris?")],
+            model_settings=settings,
+            model_request_parameters=mrp,
         )
-    )
-    mock_client = MockAsyncClientV2.create_mock(c)
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
 
-    mrp = ModelRequestParameters(function_tools=[ToolDefinition(name='my_tool')], allow_text_output=True)
+    assert len(sent_bodies) == 1
+    body = sent_bodies[0]
+    trimmed: dict[str, object] = {
+        'tool_choice': body.get('tool_choice'),
+        'tools': [tool['function']['name'] for tool in body['tools']],
+    }
+    assert trimmed == case.expected_request
 
-    await model_request(
-        m,
-        [ModelRequest.user_text_prompt('hi')],
-        model_settings={'tool_choice': 'required'},
-        model_request_parameters=mrp,
-    )
-
-    chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
-    assert chat_kwargs.get('tool_choice') == 'REQUIRED'
-
-
-async def test_cohere_model_tool_choice_none_forwarded(allow_model_requests: None):
-    """`tool_choice='none'` in ModelSettings should be forwarded to the Cohere v2 chat API as `tool_choice='NONE'`."""
-    from pydantic_ai.direct import model_request
-    from pydantic_ai.models import ModelRequestParameters
-
-    c = completion_message(
-        AssistantMessageResponse(
-            content=[TextAssistantMessageResponseContentItem(text='world')],
-        )
-    )
-    mock_client = MockAsyncClientV2.create_mock(c)
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-
-    mrp = ModelRequestParameters(function_tools=[], allow_text_output=True)
-
-    await model_request(
-        m,
-        [ModelRequest.user_text_prompt('hi')],
-        model_settings={'tool_choice': 'none'},
-        model_request_parameters=mrp,
-    )
-
-    chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
-    assert chat_kwargs.get('tool_choice') == 'NONE'
+    has_tool_call = any(isinstance(part, ToolCallPart) for part in response.parts)
+    if case.expect_tool_call is not None:
+        assert has_tool_call is case.expect_tool_call
 
 
 async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
