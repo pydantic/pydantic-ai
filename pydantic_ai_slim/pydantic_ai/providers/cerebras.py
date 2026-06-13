@@ -70,10 +70,19 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'openai_service_tier',
         )
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
+        # gpt-oss reasons unconditionally on Cerebras: `disable_reasoning=True` is rejected with a 400,
+        # so `thinking=False` must be silently ignored rather than emitted. zai-glm-4.7 can still disable.
+        is_always_on_reasoning = model_name_lower.startswith('gpt-oss')
+        # GLM requires prior reasoning to be replayed inside `<think>...</think>` tags in the assistant
+        # message content, not in a separate `reasoning` field; gpt-oss follows Harmony rules and keeps `'auto'`.
+        # https://inference-docs.cerebras.ai/capabilities/reasoning
+        send_back_thinking_parts = 'tags' if model_name_lower.startswith('zai') else 'auto'
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_unsupported_model_settings=unsupported_model_settings,
             supports_thinking=is_reasoning,
+            thinking_always_enabled=is_always_on_reasoning,
+            openai_chat_send_back_thinking_parts=send_back_thinking_parts,
         ).update(profile)
 
     @overload

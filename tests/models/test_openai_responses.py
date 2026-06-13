@@ -1,6 +1,6 @@
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -110,7 +110,7 @@ async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: 
 
 
 @asynccontextmanager
-async def _openai_conversation(openai_api_key: str) -> AsyncIterator[tuple['AsyncOpenAI', str]]:
+async def _openai_conversation(openai_api_key: str) -> AsyncGenerator[tuple['AsyncOpenAI', str]]:
     async with AsyncOpenAI(api_key=openai_api_key) as async_client:
         conversation = await async_client.conversations.create()
         try:
@@ -9424,6 +9424,365 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
     )
 
 
+async def test_openai_responses_model_mcp_list_tools_stream_backfills_missing_results(
+    allow_model_requests: None, openai_api_key: str
+):
+    """With multiple MCP servers, OpenAI Responses streaming only emits `output_item.done` for the
+
+    last `mcp_list_tools` item; the earlier items' results arrive only in the final
+    `response.completed` payload. Verify every server's discovery call gets a result part during
+    streaming (the earlier ones backfilled from `response.completed`), with no duplicate for the
+    last item that appears in both `output_item.done` and `response.completed`. See #5419.
+    """
+    m = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        capabilities=[
+            NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')),
+            NativeTool(MCPServerTool(id='microsoft_learn', url='https://learn.microsoft.com/api/mcp')),
+            NativeTool(MCPServerTool(id='gitmcp', url='https://gitmcp.io/pydantic/pydantic-ai')),
+        ],
+    )
+
+    streamed_list_tools_results: list[NativeToolReturnPart] = []
+    async with agent.iter(
+        user_prompt='List the names of the tools available from each connected MCP server, then stop. Do not call any tools.'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        if (
+                            isinstance(event, PartStartEvent)
+                            and isinstance(event.part, NativeToolReturnPart)
+                            and event.part.tool_call_id.startswith('mcpl_')
+                        ):
+                            streamed_list_tools_results.append(event.part)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='List the names of the tools available from each connected MCP server, then stop. Do not call any tools.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args={'action': 'list_tools'},
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d53c819dbb0f25635141142d',
+                        provider_name='openai',
+                    ),
+                    NativeToolCallPart(
+                        tool_name='mcp_server:microsoft_learn',
+                        args={'action': 'list_tools'},
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d640819d9ec49d5fdfab8a5c',
+                        provider_name='openai',
+                    ),
+                    NativeToolCallPart(
+                        tool_name='mcp_server:gitmcp',
+                        args={'action': 'list_tools'},
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d794819da28402187d7e0600',
+                        provider_name='openai',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='mcp_server:gitmcp',
+                        content={
+                            'tools': [
+                                {
+                                    'input_schema': {'type': 'object'},
+                                    'name': 'fetch_pydantic_ai_documentation',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Fetch entire documentation file from GitHub repository: pydantic/pydantic-ai. Useful for general questions. Always call this tool first if asked about pydantic/pydantic-ai.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'query': {
+                                                'type': 'string',
+                                                'description': 'The search query to find relevant documentation',
+                                            }
+                                        },
+                                        'required': ['query'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
+                                    },
+                                    'name': 'search_pydantic_ai_documentation',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Semantically search within the fetched documentation from GitHub repository: pydantic/pydantic-ai. Useful for specific queries.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'query': {
+                                                'type': 'string',
+                                                'description': 'The search query to find relevant code files',
+                                            },
+                                            'page': {
+                                                'type': 'number',
+                                                'description': 'Page number to retrieve (starting from 1). Each page contains 30 results.',
+                                            },
+                                        },
+                                        'required': ['query'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
+                                    },
+                                    'name': 'search_pydantic_ai_code',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Search for code within the GitHub repository: "pydantic/pydantic-ai" using the GitHub Search API (exact match). Returns matching files for you to query further if relevant.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'url': {
+                                                'type': 'string',
+                                                'description': 'The URL of the document or page to fetch',
+                                            }
+                                        },
+                                        'required': ['url'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
+                                    },
+                                    'name': 'fetch_generic_url_content',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Generic tool to fetch content from any absolute URL, respecting robots.txt rules. Use this to retrieve referenced urls (absolute urls) that were mentioned in previously fetched documentation.',
+                                },
+                            ],
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d794819da28402187d7e0600',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content="""\
+Here are the available tools from each connected MCP server:
+
+---
+
+**mcp_deepwiki**
+- read_wiki_structure
+- read_wiki_contents
+- ask_question
+
+---
+
+**mcp_microsoft_learn**
+- microsoft_docs_search
+- microsoft_code_sample_search
+- microsoft_docs_fetch
+
+---
+
+**mcp_gitmcp**
+- fetch_pydantic_ai_documentation
+- search_pydantic_ai_documentation
+- search_pydantic_ai_code
+- fetch_generic_url_content
+
+---\
+""",
+                        id='msg_034c5e93e2fa45ad006a2c2b77483c819dbedc979fa0978d17',
+                        provider_name='openai',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'tools': [
+                                {
+                                    'input_schema': {
+                                        'properties': {'repoName': {'type': 'string'}},
+                                        'required': ['repoName'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'read_wiki_structure',
+                                    'annotations': {'read_only': False},
+                                    'description': """\
+Get a list of documentation topics for a GitHub repository.
+
+Args:
+    repoName: GitHub repository in owner/repo format (e.g. "facebook/react")\
+""",
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'repoName': {'type': 'string'}},
+                                        'required': ['repoName'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'read_wiki_contents',
+                                    'annotations': {'read_only': False},
+                                    'description': """\
+View documentation about a GitHub repository.
+
+Args:
+    repoName: GitHub repository in owner/repo format (e.g. "facebook/react")\
+""",
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {
+                                            'repoName': {
+                                                'anyOf': [
+                                                    {'type': 'string'},
+                                                    {'items': {'type': 'string'}, 'type': 'array'},
+                                                ]
+                                            },
+                                            'question': {'type': 'string'},
+                                        },
+                                        'required': ['repoName', 'question'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'ask_question',
+                                    'annotations': {'read_only': False},
+                                    'description': """\
+Ask any question about a GitHub repository and get an AI-powered, context-grounded response.
+
+Args:
+    repoName: GitHub repository or list of repositories (max 10) in owner/repo format
+    question: The question to ask about the repository\
+""",
+                                },
+                            ],
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d53c819dbb0f25635141142d',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='mcp_server:microsoft_learn',
+                        content={
+                            'tools': [
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'query': {
+                                                'description': 'a query or topic about Microsoft/Azure products, services, platforms, developer tools, frameworks, or APIs',
+                                                'type': 'string',
+                                                'default': None,
+                                            }
+                                        },
+                                    },
+                                    'name': 'microsoft_docs_search',
+                                    'annotations': {'read_only': True},
+                                    'description': """\
+Search official Microsoft/Azure documentation to find the most relevant and trustworthy content for a user's query. This tool returns up to 10 high-quality content chunks (each max 500 tokens), extracted from Microsoft Learn and other official sources. Each result includes the article title, URL, and a self-contained content excerpt optimized for fast retrieval and reasoning. Always use this tool to quickly ground your answers in accurate, first-party Microsoft/Azure knowledge.
+
+## Follow-up Pattern
+To ensure completeness, use microsoft_docs_fetch when high-value pages are identified by search. The fetch tool complements search by providing the full detail. This is a required step for comprehensive results.\
+""",
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'query': {
+                                                'description': 'a descriptive query, SDK name, method name or code snippet related to Microsoft/Azure products, services, platforms, developer tools, frameworks, APIs or SDKs',
+                                                'type': 'string',
+                                            },
+                                            'language': {
+                                                'description': 'Optional parameter specifying the programming language of code snippets to retrieve. Can significantly improve search quality if provided. Eligible values: csharp javascript typescript python powershell azurecli al sql java kusto cpp go rust ruby php',
+                                                'type': 'string',
+                                                'default': None,
+                                            },
+                                        },
+                                        'required': ['query'],
+                                    },
+                                    'name': 'microsoft_code_sample_search',
+                                    'annotations': {'read_only': True},
+                                    'description': """\
+Search for code snippets and examples in official Microsoft Learn documentation. This tool retrieves relevant code samples from Microsoft documentation pages providing developers with practical implementation examples and best practices for Microsoft/Azure products and services related coding tasks. This tool will help you use the **LATEST OFFICIAL** code snippets to empower coding capabilities.
+
+## When to Use This Tool
+- When you are going to provide sample Microsoft/Azure related code snippets in your answers.
+- When you are **generating any Microsoft/Azure related code**.
+
+## Usage Pattern
+Input a descriptive query, or SDK/class/method name to retrieve related code samples. The optional parameter `language` can help to filter results.
+
+Eligible values for `language` parameter include: csharp javascript typescript python powershell azurecli al sql java kusto cpp go rust ruby php\
+""",
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'url': {
+                                                'description': 'URL of the Microsoft documentation page to read',
+                                                'type': 'string',
+                                            }
+                                        },
+                                        'required': ['url'],
+                                    },
+                                    'name': 'microsoft_docs_fetch',
+                                    'annotations': {'read_only': True},
+                                    'description': """\
+Fetch and convert a Microsoft Learn documentation webpage to markdown format. This tool retrieves the latest complete content of Microsoft documentation webpages including Azure, .NET, Microsoft 365, and other Microsoft technologies.
+
+## When to Use This Tool
+- When search results provide incomplete information or truncated content
+- When you need complete step-by-step procedures or tutorials
+- When you need troubleshooting sections, prerequisites, or detailed explanations
+- When search results reference a specific page that seems highly relevant
+- For comprehensive guides that require full context
+
+## Usage Pattern
+Use this tool AFTER microsoft_docs_search when you identify specific high-value pages that need complete content. The search tool gives you an overview; this tool gives you the complete picture.
+
+## URL Requirements
+- The URL must be a valid HTML documentation webpage from the microsoft.com domain
+- Binary files (PDF, DOCX, images, etc.) are not supported
+
+## Output Format
+markdown with headings, code blocks, tables, and links preserved.\
+""",
+                                },
+                            ],
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d640819d9ec49d5fdfab8a5c',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1199, output_tokens=103, details={'reasoning_tokens': 0}),
+                model_name='gpt-4.1-2025-04-14',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_034c5e93e2fa45ad006a2c2b74c2e4819dafbd93fcd1b49697',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Each server's discovery call produced exactly one result during streaming: the last item via
+    # `output_item.done`, the earlier two backfilled from `response.completed` (and not duplicated).
+    streamed_server_results = [part.tool_name for part in streamed_list_tools_results]
+    assert sorted(streamed_server_results) == snapshot(
+        ['mcp_server:deepwiki', 'mcp_server:gitmcp', 'mcp_server:microsoft_learn']
+    )
+
+
 async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel(
         'o4-mini',
@@ -10294,6 +10653,61 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
             ],
         }
     )
+
+
+async def test_openai_responses_unified_thinking_with_send_reasoning_ids(allow_model_requests: None):
+    """Unified `thinking` and `openai_send_reasoning_ids` compose across a 2-turn round-trip.
+
+    The unified `thinking='high'` (not `openai_reasoning_effort`) drives `reasoning.effort='high'` on the wire,
+    and the reasoning item it yields is replayed on turn 2 with its provider id intact because
+    `openai_send_reasoning_ids=True`. Locks that the unified setting and reasoning-id replay don't interfere.
+    """
+    c1 = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[Summary(text='thinking about it', type='summary_text')],
+                encrypted_content='enc_123',
+                type='reasoning',
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(list[Content], [ResponseOutputText(text='9', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(thinking='high', openai_send_reasoning_ids=True),
+    )
+    agent = Agent(model=model)
+
+    result1 = await agent.run('What is 2+2?')
+    await agent.run('Add 5 to that', message_history=result1.all_messages())
+
+    turn1_kwargs, turn2_kwargs = get_mock_responses_kwargs(mock_client)
+    # Unified `thinking` drives `reasoning.effort` on the wire for both turns.
+    assert turn1_kwargs['reasoning'] == {'effort': 'high'}
+    assert turn2_kwargs['reasoning'] == {'effort': 'high'}
+    # The turn-1 reasoning item is replayed on turn 2 with its provider id intact.
+    turn2_reasoning = [m for m in turn2_kwargs['input'] if m.get('type') == 'reasoning']
+    assert [m['id'] for m in turn2_reasoning] == ['rs_123']
 
 
 async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_model_requests: None, openai_api_key: str):

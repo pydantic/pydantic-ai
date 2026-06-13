@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -172,7 +172,7 @@ class TemporalModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         if not workflow.in_workflow():
             async with super().request_stream(
                 messages, model_settings, model_request_parameters, run_context
@@ -259,7 +259,7 @@ class TemporalModel(WrapperModel):
         return self._resolve_model_id(model_id)
 
     @contextmanager
-    def using_model(self, model: models.Model | models.KnownModelName | str | None) -> Iterator[None]:
+    def using_model(self, model: models.Model | models.KnownModelName | str | None) -> Generator[None]:
         """Context manager to set the model for the duration of a block.
 
         Accepts a Model instance, model name string, or None for the default model.

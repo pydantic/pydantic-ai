@@ -126,8 +126,8 @@ print(result)\
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=147,
-                    output_tokens=636,
+                    input_tokens=507,
+                    output_tokens=276,
                     details={
                         'thoughts_tokens': 168,
                         'tool_use_prompt_tokens': 360,
@@ -325,8 +325,8 @@ print(datetime.datetime.now())
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=257,
-                    output_tokens=2675,
+                    input_tokens=1989,
+                    output_tokens=943,
                     details={
                         'thoughts_tokens': 773,
                         'tool_use_prompt_tokens': 1732,
@@ -420,8 +420,8 @@ print(f"Time in Utrecht: {now}")
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=893,
-                    output_tokens=4474,
+                    input_tokens=3949,
+                    output_tokens=1418,
                     details={
                         'thoughts_tokens': 1312,
                         'tool_use_prompt_tokens': 3056,

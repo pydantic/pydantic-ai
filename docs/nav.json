@@ -298,6 +298,10 @@
           {
             "label": "Restate",
             "slug": "durable_execution/restate"
+          },
+          {
+            "label": "Kitaru",
+            "slug": "durable_execution/kitaru"
           }
         ]
       },
