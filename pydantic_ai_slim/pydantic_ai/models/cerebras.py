@@ -148,11 +148,12 @@ def _cerebras_settings_to_openai_settings(
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
+    # Copy so the `cerebras_` pops never mutate the caller's dict: `merge_model_settings` can return the
+    # model's own `settings` by identity, so popping in place would drop the keys on the next request.
+    settings = model_settings.copy()
+    extra_body = dict(cast(dict[str, Any], settings.get('extra_body', {})))
 
-    disable_reasoning = model_settings.pop(
-        'cerebras_disable_reasoning', None
-    )  # TODO(v3): remove cerebras_disable_reasoning
+    disable_reasoning = settings.pop('cerebras_disable_reasoning', None)  # TODO(v3): remove cerebras_disable_reasoning
     if disable_reasoning is not None:
         warnings.warn(
             '`cerebras_disable_reasoning` is deprecated, use the unified `thinking=False` setting instead.',
@@ -162,7 +163,7 @@ def _cerebras_settings_to_openai_settings(
     else:
         disable_reasoning = model_request_parameters.thinking is False
 
-    if (clear_thinking := model_settings.pop('cerebras_clear_thinking', None)) is not None:
+    if (clear_thinking := settings.pop('cerebras_clear_thinking', None)) is not None:
         extra_body['clear_thinking'] = clear_thinking
     elif replays_thinking_as_tags:
         # zai/GLM replays prior reasoning as `<think>` content; Cerebras's default `clear_thinking=true`
@@ -170,9 +171,9 @@ def _cerebras_settings_to_openai_settings(
         extra_body['clear_thinking'] = False
 
     if extra_body:
-        model_settings['extra_body'] = extra_body
+        settings['extra_body'] = extra_body
 
-    openai_settings = OpenAIChatModelSettings(**model_settings)  # pyright: ignore[reportCallIssue]
+    openai_settings = OpenAIChatModelSettings(**settings)  # pyright: ignore[reportCallIssue]
     if disable_reasoning:
         # Cerebras deprecated `extra_body['disable_reasoning']` on 2026-03-24 in favor of the standard
         # `reasoning_effort='none'`. https://inference-docs.cerebras.ai/resources/glm-47-migration
