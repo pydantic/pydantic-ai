@@ -1348,22 +1348,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
                         if response_part.provider_name == self.system and response_part.signature is not None:
-                            if send_back_thinking_parts is not False:
-                                if response_part.id == 'redacted_thinking':
-                                    assistant_content_params.append(
-                                        BetaRedactedThinkingBlockParam(
-                                            data=response_part.signature,
-                                            type='redacted_thinking',
-                                        )
+                            if response_part.id == 'redacted_thinking':
+                                assistant_content_params.append(
+                                    BetaRedactedThinkingBlockParam(
+                                        data=response_part.signature,
+                                        type='redacted_thinking',
                                     )
-                                else:
-                                    assistant_content_params.append(
-                                        BetaThinkingBlockParam(
-                                            thinking=response_part.content,
-                                            signature=response_part.signature,
-                                            type='thinking',
-                                        )
+                                )
+                            else:
+                                assistant_content_params.append(
+                                    BetaThinkingBlockParam(
+                                        thinking=response_part.content,
+                                        signature=response_part.signature,
+                                        type='thinking',
                                     )
+                                )
                         elif send_back_thinking_parts == 'tags' and response_part.content:
                             # Anthropic does not re-absorb `<thinking>` tags from history, so re-rendering an
                             # unsigned/foreign part as text teaches the model to mimic the format in its

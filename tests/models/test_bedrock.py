@@ -2,10 +2,11 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from itertools import count
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from pytest_mock import MockerFixture
@@ -43,6 +44,7 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
@@ -73,7 +75,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -1207,6 +1209,92 @@ async def test_bedrock_empty_system_prompt(allow_model_requests: None, bedrock_p
     assert result.output == snapshot(
         'The capital of France is Paris. Paris, officially known as "Ville de Paris," is not only the capital city but also the most populous city in France. It is located in the northern central part of the country along the Seine River. Paris is a major global city, renowned for its cultural, political, economic, and social influence. It is famous for its landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées, among many other historic and modern attractions. The city has played a significant role in the history of art, fashion, gastronomy, and science.'
     )
+
+
+@dataclass
+class _BedrockSendBackThinkingCase:
+    id: str
+    send_back: Literal['auto', 'tags', False]
+    thinking: ThinkingPart
+    expected_assistant_content: list[dict[str, Any]]
+
+
+# `BedrockConverseModel.system` is 'bedrock', so a signed same-provider part carries `provider_name='bedrock'`.
+_BEDROCK_SIGNED_SAME_PROVIDER = ThinkingPart(content='reasoning', signature='sig-abc', provider_name='bedrock')
+_BEDROCK_UNSIGNED = ThinkingPart(content='reasoning')
+_BEDROCK_FOREIGN_SIGNED = ThinkingPart(content='reasoning', signature='sig-abc', provider_name='anthropic')
+_BEDROCK_ANSWER_BLOCK = {'text': 'answer'}
+_BEDROCK_REASONING_BLOCK = {'reasoningContent': {'reasoningText': {'text': 'reasoning', 'signature': 'sig-abc'}}}
+_BEDROCK_TAGS_BLOCK = {'text': '<thinking>\nreasoning\n</thinking>'}
+
+_BEDROCK_SEND_BACK_THINKING_CASES = [
+    # 'auto' (default for Anthropic/DeepSeek via Bedrock): signed same-provider -> native reasoningContent;
+    # unsigned/foreign -> dropped (#5869).
+    _BedrockSendBackThinkingCase(
+        'auto-signed', 'auto', _BEDROCK_SIGNED_SAME_PROVIDER, [_BEDROCK_REASONING_BLOCK, _BEDROCK_ANSWER_BLOCK]
+    ),
+    _BedrockSendBackThinkingCase('auto-unsigned-dropped', 'auto', _BEDROCK_UNSIGNED, [_BEDROCK_ANSWER_BLOCK]),
+    _BedrockSendBackThinkingCase('auto-foreign-dropped', 'auto', _BEDROCK_FOREIGN_SIGNED, [_BEDROCK_ANSWER_BLOCK]),
+    # 'tags': signed same-provider still native; unsigned/foreign re-rendered as `<thinking>` text.
+    _BedrockSendBackThinkingCase(
+        'tags-signed', 'tags', _BEDROCK_SIGNED_SAME_PROVIDER, [_BEDROCK_REASONING_BLOCK, _BEDROCK_ANSWER_BLOCK]
+    ),
+    _BedrockSendBackThinkingCase(
+        'tags-unsigned', 'tags', _BEDROCK_UNSIGNED, [_BEDROCK_TAGS_BLOCK, _BEDROCK_ANSWER_BLOCK]
+    ),
+    _BedrockSendBackThinkingCase(
+        'tags-foreign', 'tags', _BEDROCK_FOREIGN_SIGNED, [_BEDROCK_TAGS_BLOCK, _BEDROCK_ANSWER_BLOCK]
+    ),
+    # 'tags' but empty content: nothing to render, so no text block is emitted.
+    _BedrockSendBackThinkingCase('tags-empty-dropped', 'tags', ThinkingPart(content=''), [_BEDROCK_ANSWER_BLOCK]),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _BEDROCK_SEND_BACK_THINKING_CASES])
+async def test_bedrock_send_back_thinking_parts(case: _BedrockSendBackThinkingCase, bedrock_provider: BedrockProvider):
+    """`bedrock_send_back_thinking_parts` mirrors `anthropic_send_back_thinking_parts` for Claude-via-Bedrock.
+
+    Asserts the outbound request body directly via `_map_messages` rather than via a cassette: like the
+    Anthropic cassettes, Bedrock playback wouldn't distinguish whether the part is dropped, re-rendered as
+    tags, or sent as a native `reasoningContent` block.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    profile = replace(BedrockModelProfile.from_profile(model.profile), bedrock_send_back_thinking_parts=case.send_back)
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, profile=profile
+    )
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='question')]),
+        ModelResponse(parts=[case.thinking, TextPart(content='answer')]),
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), None)  # pyright: ignore[reportPrivateUsage]
+    assert bedrock_messages == [
+        {'role': 'user', 'content': [{'text': 'question'}]},
+        {'role': 'assistant', 'content': case.expected_assistant_content},
+    ]
+
+
+async def test_bedrock_send_back_thinking_parts_false_deprecated(bedrock_provider: BedrockProvider):
+    """`bedrock_send_back_thinking_parts=False` still drops signed thinking (back-compat) but is deprecated.
+
+    Dropping a signed block is what Anthropic-via-Bedrock rejects on tool-use turns, so `False` warns and is
+    slated for removal in v3; `'auto'` is the safe replacement.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    profile = replace(BedrockModelProfile.from_profile(model.profile), bedrock_send_back_thinking_parts=False)
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, profile=profile
+    )
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='question')]),
+        ModelResponse(parts=[_BEDROCK_SIGNED_SAME_PROVIDER, TextPart(content='answer')]),
+    ]
+    with pytest.warns(PydanticAIDeprecationWarning, match='bedrock_send_back_thinking_parts=False'):
+        _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), None)  # pyright: ignore[reportPrivateUsage]
+    assert bedrock_messages == [
+        {'role': 'user', 'content': [{'text': 'question'}]},
+        {'role': 'assistant', 'content': [{'text': 'answer'}]},
+    ]
 
 
 @pytest.mark.vcr()

@@ -3507,7 +3507,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
 @dataclass
 class _SendBackThinkingCase:
     id: str
-    send_back: Literal['auto', 'tags', False]
+    send_back: Literal['auto', 'tags']
     thinking: ThinkingPart
     expected_assistant_content: list[dict[str, Any]]
 
@@ -3534,9 +3534,6 @@ _SEND_BACK_THINKING_CASES = [
     _SendBackThinkingCase('tags-foreign', 'tags', _FOREIGN_SIGNED, [_TAGS_BLOCK, _ANSWER_BLOCK]),
     # 'tags' but empty content: nothing to render, so no text block is emitted.
     _SendBackThinkingCase('tags-empty-dropped', 'tags', ThinkingPart(content=''), [_ANSWER_BLOCK]),
-    # False: nothing sent back, including signed same-provider blocks.
-    _SendBackThinkingCase('false-signed-dropped', False, _SIGNED_SAME_PROVIDER, [_ANSWER_BLOCK]),
-    _SendBackThinkingCase('false-unsigned-dropped', False, _UNSIGNED, [_ANSWER_BLOCK]),
 ]
 
 
