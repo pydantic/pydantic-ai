@@ -148,9 +148,19 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
+      - name: cache Temporal dev server
+        if: matrix.python-version != '3.14' && (matrix.install.name == 'standard' || matrix.install.name == 'all-extras')
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .temporal-cache
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-
+
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+          PYDANTIC_AI_TEMPORAL_DOWNLOAD_DIR: .temporal-cache
 
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -202,6 +212,15 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
+      - name: cache Temporal dev server
+        if: matrix.python-version != '3.14'
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .temporal-cache
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-
+
       - run: uv sync --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct
         env:
           UV_FROZEN: "0"
@@ -209,6 +228,7 @@ jobs:
       - run: uv run --no-sync coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
+          PYDANTIC_AI_TEMPORAL_DOWNLOAD_DIR: .temporal-cache
 
       - name: store coverage files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
