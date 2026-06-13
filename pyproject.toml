@@ -145,6 +145,7 @@ dev = [
     "genai-prices>=0.0.62",
     "brotli>=1.2.0",
     "ddgs>=9.0.0",
+    "duckduckgo-search>=7.0.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
