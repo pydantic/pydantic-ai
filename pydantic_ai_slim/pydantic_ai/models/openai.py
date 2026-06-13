@@ -3271,6 +3271,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             async for chunk in self._response:
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
+                    # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
                     # Backfill mcp_list_tools results missing from streamed output_item.done events (see #5419).
                     for item in chunk.response.output:
                         if (
