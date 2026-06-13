@@ -4,7 +4,7 @@ import json
 import os
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
@@ -137,6 +137,7 @@ with try_import() as imports_successful:
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -3501,6 +3502,67 @@ async def test_anthropic_model_thinking_part_from_other_model(
             ),
         ]
     )
+
+
+@dataclass
+class _SendBackThinkingCase:
+    id: str
+    send_back: Literal['auto', 'tags', False]
+    thinking: ThinkingPart
+    expected_assistant_content: list[dict[str, Any]]
+
+
+_SIGNED_SAME_PROVIDER = ThinkingPart(content='reasoning', signature='sig-abc', provider_name='anthropic')
+_UNSIGNED = ThinkingPart(content='reasoning')
+_FOREIGN_SIGNED = ThinkingPart(content='reasoning', signature='sig-abc', provider_name='openai')
+# Same-provider part whose signature was lost in storage round-trip (the #5869 scenario): without a
+# valid signature it can't be sent as a native block, so it follows the unsigned/foreign path.
+_SAME_PROVIDER_UNSIGNED = ThinkingPart(content='reasoning', provider_name='anthropic')
+_ANSWER_BLOCK = {'text': 'answer', 'type': 'text'}
+_THINKING_BLOCK = {'signature': 'sig-abc', 'thinking': 'reasoning', 'type': 'thinking'}
+_TAGS_BLOCK = {'text': '<thinking>\nreasoning\n</thinking>', 'type': 'text'}
+
+_SEND_BACK_THINKING_CASES = [
+    # 'auto' (default): signed same-provider -> native block; unsigned/foreign -> dropped (#5869).
+    _SendBackThinkingCase('auto-signed', 'auto', _SIGNED_SAME_PROVIDER, [_THINKING_BLOCK, _ANSWER_BLOCK]),
+    _SendBackThinkingCase('auto-unsigned-dropped', 'auto', _UNSIGNED, [_ANSWER_BLOCK]),
+    _SendBackThinkingCase('auto-foreign-dropped', 'auto', _FOREIGN_SIGNED, [_ANSWER_BLOCK]),
+    _SendBackThinkingCase('auto-same-provider-unsigned-dropped', 'auto', _SAME_PROVIDER_UNSIGNED, [_ANSWER_BLOCK]),
+    # 'tags': signed same-provider still native; unsigned/foreign re-rendered as `<thinking>` text.
+    _SendBackThinkingCase('tags-signed', 'tags', _SIGNED_SAME_PROVIDER, [_THINKING_BLOCK, _ANSWER_BLOCK]),
+    _SendBackThinkingCase('tags-unsigned', 'tags', _UNSIGNED, [_TAGS_BLOCK, _ANSWER_BLOCK]),
+    _SendBackThinkingCase('tags-foreign', 'tags', _FOREIGN_SIGNED, [_TAGS_BLOCK, _ANSWER_BLOCK]),
+    # 'tags' but empty content: nothing to render, so no text block is emitted.
+    _SendBackThinkingCase('tags-empty-dropped', 'tags', ThinkingPart(content=''), [_ANSWER_BLOCK]),
+    # False: nothing sent back, including signed same-provider blocks.
+    _SendBackThinkingCase('false-signed-dropped', False, _SIGNED_SAME_PROVIDER, [_ANSWER_BLOCK]),
+    _SendBackThinkingCase('false-unsigned-dropped', False, _UNSIGNED, [_ANSWER_BLOCK]),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _SEND_BACK_THINKING_CASES])
+async def test_anthropic_send_back_thinking_parts(case: _SendBackThinkingCase, anthropic_api_key: str):
+    """`anthropic_send_back_thinking_parts` controls how history thinking parts hit the wire.
+
+    Asserts the outbound request body directly via `_map_message` rather than via a cassette:
+    the Anthropic cassettes match on method+URI only, so a VCR test would play back green
+    regardless of whether the part is dropped, re-rendered as tags, or sent as a native block.
+    """
+    provider = AnthropicProvider(api_key=anthropic_api_key)
+    profile = replace(
+        AnthropicModelProfile.from_profile(provider.model_profile('claude-sonnet-4-6')),
+        anthropic_send_back_thinking_parts=case.send_back,
+    )
+    model = AnthropicModel('claude-sonnet-4-6', provider=provider, profile=profile)
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='question')]),
+        ModelResponse(parts=[case.thinking, TextPart(content='answer')]),
+    ]
+    _, anthropic_messages = await model._map_message(messages, ModelRequestParameters(), AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert anthropic_messages == [
+        {'role': 'user', 'content': [{'text': 'question', 'type': 'text'}]},
+        {'role': 'assistant', 'content': case.expected_assistant_content},
+    ]
 
 
 async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, anthropic_api_key: str):

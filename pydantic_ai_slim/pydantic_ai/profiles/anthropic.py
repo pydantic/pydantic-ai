@@ -101,6 +101,14 @@ class AnthropicModelProfile(ModelProfile):
     (or an explicit list of tools) raises a `UserError`.
     """
 
+    anthropic_send_back_thinking_parts: Literal['auto', 'tags', False] = 'auto'
+    """How unsigned / foreign-provider thinking parts in history are sent back to Anthropic.
+
+    Signed same-provider parts are always sent as native `thinking`/`redacted_thinking` blocks
+    (unless `False`). This setting only governs parts that can't be sent as native blocks:
+    `'auto'` (default) drops them, `'tags'` re-renders them as `thinking_tags` text (pre-fix
+    behavior), `False` sends no thinking back at all. Placeholder docstring; see #5869."""
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
