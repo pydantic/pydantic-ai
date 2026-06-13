@@ -348,6 +348,60 @@ async def test_bedrock_inference_profile_count_tokens(
     assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
 
 
+async def test_bedrock_count_tokens_additional_model_requests_fields(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`count_tokens` forwards `bedrock_additional_model_requests_fields` to `input.converse` and Bedrock accepts it.
+
+    Here it carries `anthropic_beta: ['context-1m-2025-08-07']`, the header used to opt into Claude's 1M context window.
+    """
+    settings: BedrockModelSettings = {
+        'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
+    }
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
+    )
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
+
+    sent = single_request_body(vcr)
+    assert sent['input']['converse']['additionalModelRequestFields'] == {'anthropic_beta': ['context-1m-2025-08-07']}
+
+
+async def test_bedrock_count_tokens_tool_config(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`count_tokens` forwards `toolConfig` to `input.converse`, mirroring the real request so tool schemas are counted."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a location',
+        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
+    )
+    params = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('What is the weather in Paris?')], None, params)
+    assert result.input_tokens > 0
+
+    sent = single_request_body(vcr)
+    assert sent['input']['converse']['toolConfig'] == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'get_weather',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {'location': {'type': 'string'}}}},
+                        'description': 'Get the weather for a location',
+                    }
+                }
+            ],
+            'toolChoice': {'auto': {}},
+        }
+    )
+
+
 async def test_bedrock_stream_non_http_error():
     error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
     model = _bedrock_model_with_client_error(error)
