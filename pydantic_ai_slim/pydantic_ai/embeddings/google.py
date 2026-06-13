@@ -56,7 +56,7 @@ GoogleEmbeddingTask = Literal[
     'classification',
     'clustering',
     'sentence similarity',
-    'none',
+    'raw',
 ]
 """Task the embedding is optimized for, applied as a text prefix by `gemini-embedding-2`.
 
@@ -77,7 +77,7 @@ Symmetric tasks prefix both inputs the same way, since both sides play the same 
 - `'clustering'`: group inputs by similarity.
 - `'sentence similarity'`: measure semantic similarity between inputs.
 
-- `'none'`: embed the text verbatim, without any prefix.
+- `'raw'`: embed the text verbatim, without any prefix.
 """
 
 _SYMMETRIC_TASKS: frozenset[GoogleEmbeddingTask] = frozenset({'classification', 'clustering', 'sentence similarity'})
@@ -114,7 +114,7 @@ class GoogleEmbeddingSettings(EmbeddingSettings, total=False):
     For asymmetric tasks the prefix depends on `input_type`: a `'query'` becomes `task: {task} | query: {text}`,
     while a `'document'` becomes `title: {title} | text: {text}`, using
     [`google_title`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_title] (or `none` when no
-    title is set). Symmetric tasks use the `task: {task} | query: {text}` form for both. `'none'` embeds the
+    title is set). Symmetric tasks use the `task: {task} | query: {text}` form for both. `'raw'` embeds the
     text verbatim. See [`GoogleEmbeddingTask`][pydantic_ai.embeddings.google.GoogleEmbeddingTask] for the per-task semantics.
     """
 
@@ -227,9 +227,11 @@ class GoogleEmbeddingModel(EmbeddingModel):
                     stacklevel=2,
                 )
             task = google_task if google_task is not None else 'search result'
-            # `'none'` is the conventional no-conditioning sentinel (verbatim passthrough),
-            # consistent with VoyageAI's `voyageai_input_type` (#3856).
-            if task == 'none':
+            # `'raw'` opts out of conditioning (verbatim passthrough). Named `'raw'`, not `'none'`:
+            # the prefix is applied client-side (no provider API value to mirror, unlike VoyageAI's
+            # `'none'` which maps to a null `input_type`), and `'raw'` avoids the `google_task=None`
+            # footgun where `None` would silently fall back to the `'search result'` default.
+            if task == 'raw':
                 texts = inputs
             elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
                 title = settings.get('google_title') or 'none'

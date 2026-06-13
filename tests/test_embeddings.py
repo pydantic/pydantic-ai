@@ -1294,11 +1294,11 @@ _GOOGLE_TASK_PREFIX_CASES: list[_GoogleTaskPrefixCase] = (
             expected_task_type=None,
         ),
         _GoogleTaskPrefixCase(
-            id='none-passthrough',
+            id='raw-passthrough',
             model_name='gemini-embedding-2',
             input_type='document',
             inputs=['title: custom | text: hello'],
-            settings=GoogleEmbeddingSettings(google_task='none'),
+            settings=GoogleEmbeddingSettings(google_task='raw'),
             expected_texts=['title: custom | text: hello'],
             expected_task_type=None,
         ),

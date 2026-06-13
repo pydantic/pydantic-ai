@@ -299,7 +299,7 @@ embedder = Embedder(
 
 `google_task` accepts the task names from Google's API: `'search result'`, `'question answering'`, `'fact checking'`, `'code retrieval'`, `'classification'`, `'clustering'`, and `'sentence similarity'`. For the retrieval-style (asymmetric) tasks, queries and documents are prefixed differently, so the same task applies to both sides of a pair; the remaining (symmetric) tasks prefix both inputs the same way.
 
-When you don't set `google_task`, `gemini-embedding-2` is conditioned as `'search result'`. Conditioning is on by default because Google recommends it for this model and it yields better retrieval performance than embedding raw text. To opt out and embed the text verbatim, pass `google_task='none'`.
+When you don't set `google_task`, `gemini-embedding-2` is conditioned as `'search result'`. Conditioning is on by default because Google recommends it for this model and it yields better retrieval performance than embedding raw text. To opt out and embed the text verbatim, pass `google_task='raw'`.
 
 `google_task` only applies to `gemini-embedding-2`; on any other model it is ignored with a warning (those models condition via `google_task_type` instead). Conversely, `google_task_type` is ignored on `gemini-embedding-2`, since that model conditions through the text prefix.
 
