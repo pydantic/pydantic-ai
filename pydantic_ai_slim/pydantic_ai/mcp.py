@@ -1797,14 +1797,7 @@ class MCPServerSSE(_MCPServerHTTP):
             raise ValueError('`http_client` is mutually exclusive with `headers`.')
 
         if self.http_client is not None:
-
-            def httpx_client_factory(
-                headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> httpx.AsyncClient:
-                assert self.http_client is not None
-                return self.http_client
+            httpx_client_factory = _make_httpx_client_factory(self.http_client)
 
             async with sse_client(
                 url=self.url,
@@ -2771,6 +2764,9 @@ def _make_httpx_client_factory(
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
+        # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`,
+        # which the mcp SDK's `McpHttpClientFactory` protocol doesn't declare.
+        follow_redirects: bool = True,
     ) -> httpx.AsyncClient:
         return http_client
 
