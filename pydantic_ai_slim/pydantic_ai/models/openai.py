@@ -3464,6 +3464,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
+            mcp_list_tools_return_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -3471,6 +3472,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             async for chunk in self._response:
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
+                    # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
+                    # Backfill mcp_list_tools results missing from streamed output_item.done events (see #5419).
+                    for item in chunk.response.output:
+                        if (
+                            isinstance(item, responses.response_output_item.McpListTools)
+                            and item.id not in mcp_list_tools_return_ids
+                        ):
+                            _, return_part = _map_mcp_list_tools(item, self.provider_name)
+                            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                            mcp_list_tools_return_ids.add(item.id)
+
                     self._usage += self._map_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
 
@@ -3735,6 +3747,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
+                        mcp_list_tools_return_ids.add(chunk.item.id)
                     elif isinstance(chunk.item, ResponseCompactionItem):
                         # Replace the preliminary part from the "added" event with the
                         # final encrypted_content for round-tripping.
