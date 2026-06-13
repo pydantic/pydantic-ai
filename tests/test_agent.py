@@ -2410,6 +2410,53 @@ def test_output_type_union_text_fallback_invalid_kind_retries():
     )
 
 
+def test_prompted_output_union_invalid_kind_retries():
+    """`PromptedOutput` is the realistic route to an unknown `kind`: the envelope schema is only
+    advertised in the prompt (no output tools, no provider-enforced `const` discriminator), so a
+    model can plausibly emit a `kind` outside the registered set. The shared `UnionOutputProcessor`
+    must still reject it as a regular `ValidationError` and re-prompt, exactly as the tool-mode text
+    fallback does in `test_output_type_union_text_fallback_invalid_kind_retries`.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        # Prompted mode, not the tool-mode text fallback: no output tools are offered.
+        assert info.model_request_parameters.output_mode == 'prompted'
+        assert not info.output_tools
+        if calls == 1:
+            # `kind` is not one of the allowed discriminator values (`Apple` / `Banana`).
+            text = '{"result": {"kind": "Cherry", "data": {"color": "red"}}}'
+        else:
+            text = '{"result": {"kind": "Banana", "data": {"length": 6.0}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput([Apple, Banana]))
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Banana(length=6.0))
+    assert calls == 2
+
+    retry_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    assert retry_parts == snapshot(
+        [
+            RetryPromptPart(
+                content=[
+                    {
+                        'type': 'literal_error',
+                        'loc': ('result', 'kind'),
+                        'msg': "Input should be 'Apple' or 'Banana'",
+                        'input': 'Cherry',
+                    }
+                ],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
 def test_output_type_union_text_fallback_invalid_kind_exhausts_retries():
     """When the union envelope text keeps carrying an unknown `kind` past the retry budget, the
     run raises `UnexpectedModelBehavior` — the invalid `kind` is fully absorbed by the retry
