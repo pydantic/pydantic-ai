@@ -161,7 +161,7 @@ jobs:
         if: matrix.python-version != '3.14' && (matrix.install.name == 'standard' || matrix.install.name == 'all-extras')
         run: mkdir -p .temporal-cache
 
-      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run ${{ matrix.install.command }} coverage run -m pytest -q --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
           PYDANTIC_AI_TEMPORAL_DOWNLOAD_DIR: .temporal-cache
@@ -233,7 +233,7 @@ jobs:
         env:
           UV_FROZEN: "0"
 
-      - run: uv run --no-sync coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      - run: uv run --no-sync coverage run -m pytest -q --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
           PYDANTIC_AI_TEMPORAL_DOWNLOAD_DIR: .temporal-cache
