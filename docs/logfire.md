@@ -336,6 +336,42 @@ Builds on version 4 with improved handling of deferred tool calls:
 
 Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
 
+### Attribute naming and backward compatibility
+
+Pydantic AI emits both spec-compliant and backward-compatible attribute names on agent and tool spans to support observability backends at different levels of GenAI semantic convention adoption:
+
+| Span | Spec-compliant attribute (v3+) | Compatibility attribute (v2, also in v3+) | Notes |
+|------|-------------------------------|------------------------------------------|-------|
+| Agent run | `gen_ai.agent.name` | `agent_name` | `agent_name` is kept for backends that don't yet index `gen_ai.agent.name` |
+| Agent run | `gen_ai.agent.description` | `agent_description` | Same rationale as above |
+| Agent run | `gen_ai.input.messages` | (in `pydantic_ai.*`) | v3 moves input messages to spec location |
+| Tool call | `gen_ai.tool.call.arguments` | `tool_arguments` | v3 uses spec-compliant name |
+| Tool call | `gen_ai.tool.call.result` | `tool_response` | v3 uses spec-compliant name |
+
+**Why duplicate?** The OpenTelemetry GenAI semantic conventions are still experimental and evolving. Many observability backends (Logfire, Langfuse, Arize, etc.) built their Pydantic AI integrations against the earlier attribute names. Duplicating attributes ensures:
+
+- **New backends** can use the spec-compliant `gen_ai.*` names without special-casing Pydantic AI.
+- **Existing dashboards and alerts** built on `agent_name`, `tool_arguments`, etc. continue to work without changes.
+- **You can migrate gradually** — adopt the new names in new dashboards while old ones still function.
+
+If you're building a new integration or dashboard, prefer the `gen_ai.*` names. The compatibility attributes may be removed in a future major version.
+
+### Migrating dashboards and alerts
+
+When upgrading from version 2 to version 3 instrumentation:
+
+1. **Span names change**: `agent run` → `invoke_agent {name}`, `running tool` → `execute_tool {name}`. Update any dashboard filters or saved queries that match on span name.
+
+2. **Tool attributes change**: If your dashboards reference `tool_arguments` or `tool_response`, switch to `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`. Both are emitted in version 3, but the old names are deprecated.
+
+3. **Agent run-level messages**: In version 2, all messages are stored under `pydantic_ai.all_messages`. In version 3, `gen_ai.input.messages` and `gen_ai.output.messages` are also available on model request spans.
+
+4. **Thinking tokens** (new in v3): If your model supports reasoning/thinking tokens, version 3 captures them automatically — no migration needed.
+
+5. **Test before switching**: Run the same workload with both `version=2` and `version=3` in a staging environment and compare the traces to ensure your dashboards handle the new span and attribute names correctly.
+
+If your dashboards are built entirely on the compatibility attributes (`agent_name`, `tool_arguments`, etc.), upgrading to v3 should be transparent — those attributes continue to be emitted.
+
 ### Setting OpenTelemetry SDK providers
 
 By default, the global `TracerProvider` and `LoggerProvider` are used. These are set automatically by `logfire.configure()`. They can also be set by the `set_tracer_provider` and `set_logger_provider` functions in the OpenTelemetry Python SDK. You can set custom providers with [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
