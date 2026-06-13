@@ -159,6 +159,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         does.
         """
         if parse_ag_ui_version(self.ag_ui_version) < INTERRUPTS_VERSION:
+            # `outcome=None` only reaches an old client as a bare `RUN_FINISHED` because the SDK's
+            # `EventEncoder` serializes with `exclude_none=True`; the field is valid on this SDK.
             return None
         output = self._result.output if self._result else None
         if isinstance(output, DeferredToolRequests) and output.approvals:
