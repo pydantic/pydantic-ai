@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '365'
+      - '442'
       content-type:
       - application/json
       host:
@@ -16,21 +16,25 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: What's the weather in Paris?
+      - content: Tell me about Paris
         role: user
       model: command-r7b-12-2024
       stream: false
       tool_choice: REQUIRED
       tools:
       - function:
-          description: Run the get_weather tool.
-          name: get_weather
+          description: The final response which ends this conversation
+          name: final_result
           parameters:
             properties:
               city:
                 type: string
+              summary:
+                type: string
             required:
             - city
+            - summary
+            title: CityInfo
             type: object
         type: function
     uri: https://api.cohere.com/v2/chat
@@ -39,19 +43,19 @@ interactions:
       access-control-expose-headers:
       - X-Debug-Trace-ID
       alt-svc:
-      - h3=":443"; ma=2592000
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       cache-control:
       - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
       content-length:
-      - '485'
+      - '523'
       content-type:
       - application/json
       expires:
       - Thu, 01 Jan 1970 00:00:00 GMT
       num_chars:
-      - '6857'
+      - '6934'
       num_tokens:
-      - '57'
+      - '74'
       pragma:
       - no-cache
       transfer-encoding:
@@ -60,24 +64,24 @@ interactions:
       - Origin,Accept-Encoding
     parsed_body:
       finish_reason: TOOL_CALL
-      id: e04308eb-e249-4513-be8d-62eb85130480
+      id: e20d931c-2510-47e9-9d89-5f34e3e53640
       message:
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"city":"Paris"}'
-            name: get_weather
-          id: get_weather_s8kn7xhp4bhd
+            arguments: '{"city":"Paris","summary":"Tell me about Paris"}'
+            name: final_result
+          id: final_result_wyn2fj40mbhv
           type: function
         tool_plan: I will use one or more of the available tools to find the answer
       usage:
         billed_units:
-          input_tokens: 35
-          output_tokens: 22
-        cached_tokens: 1424
+          input_tokens: 45
+          output_tokens: 29
+        cached_tokens: 1024
         tokens:
-          input_tokens: 1453
-          output_tokens: 33
+          input_tokens: 1469
+          output_tokens: 42
     status:
       code: 200
       message: OK

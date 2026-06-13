@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '361'
+      - '362'
       content-type:
       - application/json
       host:
@@ -20,10 +20,10 @@ interactions:
         role: user
       model: command-r7b-12-2024
       stream: false
-      tool_choice: NONE
+      tool_choice: REQUIRED
       tools:
       - function:
-          description: Run the get_weather tool.
+          description: Get weather for a city
           name: get_weather
           parameters:
             properties:
@@ -43,15 +43,15 @@ interactions:
       cache-control:
       - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
       content-length:
-      - '507'
+      - '484'
       content-type:
       - application/json
       expires:
       - Thu, 01 Jan 1970 00:00:00 GMT
       num_chars:
-      - '6760'
+      - '6854'
       num_tokens:
-      - '81'
+      - '55'
       pragma:
       - no-cache
       transfer-encoding:
@@ -59,22 +59,25 @@ interactions:
       vary:
       - Origin,Accept-Encoding
     parsed_body:
-      finish_reason: COMPLETE
-      id: e3c05cc4-c4d9-436e-8726-1faceabacfef
+      finish_reason: TOOL_CALL
+      id: 104628b4-077a-4d6d-8507-c7294fdc43be
       message:
-        content:
-        - text: I can provide you with the weather in Paris, but I'll need to know the specific date and time you're interested
-            in. If you don't have a particular date in mind, I can give you the current weather conditions.
-          type: text
         role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: get_weather_3p2j6ce4gxxx
+          type: function
+        tool_plan: I will use one or more of the available tools to find the answer
       usage:
         billed_units:
-          input_tokens: 35
-          output_tokens: 46
-        cached_tokens: 1424
+          input_tokens: 33
+          output_tokens: 22
+        cached_tokens: 144
         tokens:
-          input_tokens: 1436
-          output_tokens: 47
+          input_tokens: 1452
+          output_tokens: 33
     status:
       code: 200
       message: OK

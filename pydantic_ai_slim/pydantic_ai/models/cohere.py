@@ -207,7 +207,7 @@ class CohereModel(Model[AsyncClientV2]):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: CohereModelSettings,
-    ) -> tuple[list[ToolV2], str | EllipsisType]:
+    ) -> tuple[list[ToolV2], Literal['REQUIRED', 'NONE'] | EllipsisType]:
         """Get the tools and tool choice to send to the Cohere v2 chat API.
 
         Cohere only accepts `'REQUIRED'`/`'NONE'` for `tool_choice` (or omission to let the
@@ -226,8 +226,10 @@ class CohereModel(Model[AsyncClientV2]):
         else:
             mode = resolved
 
-        tool_choice: str | EllipsisType
+        tool_choice: Literal['REQUIRED', 'NONE'] | EllipsisType
         if mode == 'none':
+            # Unlike Mistral (which garbles responses unless tools are dropped), Cohere accepts
+            # `'NONE'` with the tools still present, so we leave the tools list intact here.
             tool_choice = 'NONE'
         elif mode == 'required':
             tool_choice = 'REQUIRED'
