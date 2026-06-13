@@ -13,6 +13,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -47,13 +48,12 @@ from pydantic_ai.messages import (
     BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
-from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput
-from pydantic_ai.settings import ThinkingEffort
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
@@ -6078,82 +6078,17 @@ async def test_stream_cancel(allow_model_requests: None):
     )
 
 
-async def test_get_reasoning_effort_from_setting(allow_model_requests: None):
-    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key='test'))
-    settings: GroqModelSettings = GroqModelSettings(groq_reasoning_effort='medium')
-    params = ModelRequestParameters(thinking='low')
-    result = m._get_reasoning_effort(settings, params)  # pyright: ignore[reportPrivateUsage]
-    assert result == 'medium'
+async def test_groq_reasoning_effort_setting(allow_model_requests: None, groq_api_key: str, vcr: Cassette):
+    """`groq_reasoning_effort` is sent to Groq as `reasoning_effort` (via `extra_body`), merged with the user's own `extra_body`.
 
+    `qwen/qwen3-32b` accepts `'default'`; Groq's accepted `reasoning_effort` values are family-specific
+    (see https://console.groq.com/docs/reasoning#reasoning-effort).
+    """
+    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key=groq_api_key))
+    settings = GroqModelSettings(groq_reasoning_effort='default', extra_body={'service_tier': 'on_demand'})
+    agent = Agent(m, model_settings=settings)
+    await agent.run('What is 2+2? Reply with just the number.')
 
-async def test_get_reasoning_effort_from_thinking_level(allow_model_requests: None):
-    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key='test'))
-    settings: GroqModelSettings = GroqModelSettings()
-    params = ModelRequestParameters(thinking='high')
-    result = m._get_reasoning_effort(settings, params)  # pyright: ignore[reportPrivateUsage]
-    assert result == 'high'
-
-
-async def test_get_reasoning_effort_thinking_false(allow_model_requests: None):
-    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key='test'))
-    settings: GroqModelSettings = GroqModelSettings()
-    params = ModelRequestParameters(thinking=False)
-    result = m._get_reasoning_effort(settings, params)  # pyright: ignore[reportPrivateUsage]
-    assert result is None
-
-
-async def test_get_reasoning_effort_thinking_none(allow_model_requests: None):
-    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key='test'))
-    settings: GroqModelSettings = GroqModelSettings()
-    params = ModelRequestParameters(thinking=None)
-    result = m._get_reasoning_effort(settings, params)  # pyright: ignore[reportPrivateUsage]
-    assert result is None
-
-
-async def test_extra_body_includes_reasoning_effort(allow_model_requests: None):
-    captured_kwargs: dict[str, Any] = {}
-
-    c = completion_message(ChatCompletionMessage(content='ok', role='assistant'))
-    mock_client = MockGroq.create_mock(c)
-    original_create = mock_client.chat.completions.create
-
-    async def capturing_create(*args: Any, **kwargs: Any):
-        captured_kwargs.update(kwargs)
-        return await original_create(*args, **kwargs)
-
-    mock_client.chat.completions.create = capturing_create  # type: ignore[method-assign]
-    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, model_settings=GroqModelSettings())
-    await agent.run('hello', model_settings={'thinking': 'low'})
-    assert captured_kwargs.get('extra_body') == {'reasoning_effort': 'low'}
-
-
-async def test_extra_body_merges_reasoning_effort(allow_model_requests: None):
-    captured_kwargs: dict[str, Any] = {}
-
-    c = completion_message(ChatCompletionMessage(content='ok', role='assistant'))
-    mock_client = MockGroq.create_mock(c)
-    original_create = mock_client.chat.completions.create
-
-    async def capturing_create(*args: Any, **kwargs: Any):
-        captured_kwargs.update(kwargs)
-        return await original_create(*args, **kwargs)
-
-    mock_client.chat.completions.create = capturing_create  # type: ignore[method-assign]
-    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(
-        m, model_settings=GroqModelSettings(extra_body={'service_tier': 'on_demand'})
-    )
-    await agent.run('hello', model_settings={'thinking': 'medium'})
-    assert captured_kwargs.get('extra_body') == {
-        'service_tier': 'on_demand',
-        'reasoning_effort': 'medium',
-    }
-
-
-async def test_get_reasoning_effort_from_thinking_effort_object(allow_model_requests: None):
-    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key='test'))
-    settings: GroqModelSettings = GroqModelSettings()
-    params = ModelRequestParameters(thinking='xhigh')
-    result = m._get_reasoning_effort(settings, params)  # pyright: ignore[reportPrivateUsage]
-    assert result == 'xhigh'
+    body = single_request_body(vcr)
+    assert body['reasoning_effort'] == 'default'
+    assert body['service_tier'] == 'on_demand'

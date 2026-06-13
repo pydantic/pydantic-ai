@@ -289,24 +289,6 @@ class GroqModel(Model[AsyncGroq]):
             return 'parsed'
         return NOT_GIVEN
 
-    def _get_reasoning_effort(
-        self,
-        model_settings: GroqModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> str | None:
-        """Get reasoning effort from provider-specific setting or unified thinking level.
-
-        See https://console.groq.com/docs/reasoning#reasoning-effort
-        """
-        if effort := model_settings.get('groq_reasoning_effort'):
-            return effort
-        thinking = model_request_parameters.thinking
-        if thinking is False or thinking is None:
-            return None
-        # Map pydantic-ai unified thinking levels to Groq reasoning_effort
-        level = thinking if isinstance(thinking, str) else getattr(thinking, 'level', None)
-        return str(level) if level else None
-
     @overload
     async def _completions_create(
         self,
@@ -363,17 +345,17 @@ class GroqModel(Model[AsyncGroq]):
         disable_via_effort = model_request_parameters.thinking is False and groq_profile.groq_supports_reasoning_disable
 
         extra_body = model_settings.get('extra_body')
-        effort = self._get_reasoning_effort(model_settings, model_request_parameters)
-        if disable_via_effort or effort is not None:
+        # `reasoning_effort` value sets are family-specific on Groq (qwen3: none/default; gpt-oss: low/medium/high),
+        # so we don't map the unified `thinking` level here — only the explicit `groq_reasoning_effort` setting, plus
+        # the qwen3 disable signal (`'none'`), which wins. Unified thinking still controls `reasoning_format` above.
+        effort = 'none' if disable_via_effort else model_settings.get('groq_reasoning_effort')
+        if effort is not None:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
             # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.
             merged_extra_body: dict[str, object] = {}
             if isinstance(extra_body, Mapping):
                 merged_extra_body.update(extra_body)  # pyright: ignore[reportUnknownArgumentType]
-            if disable_via_effort:
-                merged_extra_body['reasoning_effort'] = 'none'
-            elif effort is not None:
-                merged_extra_body['reasoning_effort'] = effort
+            merged_extra_body['reasoning_effort'] = effort
             extra_body = merged_extra_body
 
         with _map_api_errors(self.model_name):

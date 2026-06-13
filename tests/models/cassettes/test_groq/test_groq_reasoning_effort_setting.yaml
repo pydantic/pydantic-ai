@@ -1,0 +1,85 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '199'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: qwen/qwen3-32b
+      n: 1
+      reasoning_effort: default
+      service_tier: on_demand
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1899'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: "<think>\nOkay, let's tackle this simple math question: What is 2+2? Hmm, well, I remember from basic arithmetic
+            that adding two numbers together gives you their sum. So, 2 plus 2 should be straightforward. Let me visualize
+            it. If I have two apples and someone gives me two more apples, how many apples do I have in total? That's right,
+            four apples. So, 2 + 2 equals 4.\n\nWait, but maybe I should think about it another way to be sure. On the number
+            line, starting at 2 and moving two places to the right would land me at 4. That checks out. Another way to verify
+            is using multiplication, since 2 times 2 is 4. But that's a different operation. No, addition is more direct here.
+            \n\nIs there any chance that in some contexts 2+2 could be something else? Like in certain mathematical theories
+            or jokes? Oh right, there's that old joke about \"2+2=5\" in some political satire, but that's not real math.
+            In standard arithmetic, it's definitely 4. Let me confirm with another approach. Breaking down the numbers into
+            units: 2 is 1+1, so 2+2 is (1+1)+(1+1) which is 1+1+1+1, totaling 4. Yep, that works.\n\nI think that's solid.
+            All the different methods--counting, number line, breaking down--lead to the same answer. No contradictions here.
+            So, confident that the answer is 4.\n</think>\n\n4"
+          role: assistant
+      created: 1781393323
+      id: chatcmpl-30a9bd34-f510-4831-a922-49e8d746eb79
+      model: qwen/qwen3-32b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_5cf921caa2
+      usage:
+        completion_time: 0.751157444
+        completion_tokens: 334
+        prompt_time: 0.00124178
+        prompt_tokens: 21
+        queue_time: 0.204615308
+        total_time: 0.752399224
+        total_tokens: 355
+      usage_breakdown: null
+      x_groq:
+        id: req_01kv1n1wnsfjws8xcswswx6h75
+        seed: 1903311360
+    status:
+      code: 200
+      message: OK
+version: 1
