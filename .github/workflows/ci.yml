@@ -157,6 +157,10 @@ jobs:
           restore-keys: |
             temporal-cli-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: create Temporal dev server cache dir
+        if: matrix.python-version != '3.14' && (matrix.install.name == 'standard' || matrix.install.name == 'all-extras')
+        run: mkdir -p .temporal-cache
+
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -220,6 +224,10 @@ jobs:
           key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             temporal-cli-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: create Temporal dev server cache dir
+        if: matrix.python-version != '3.14'
+        run: mkdir -p .temporal-cache
 
       - run: uv sync --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct
         env:

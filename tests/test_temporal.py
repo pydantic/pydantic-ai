@@ -111,7 +111,7 @@ import sys
 if sys.version_info >= (3, 14):
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
-        'sandbox module state accumulates across validation cycles causing import failures after ~22 workflows '
+        'coverage sys.monitoring callbacks can run inside the sandbox importer and hang workflow execution '
         '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
         allow_module_level=True,
     )
@@ -206,7 +206,7 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Generator[No
 
 TEMPORAL_PORT = 7243
 TEMPORAL_DOWNLOAD_DIR = os.getenv('PYDANTIC_AI_TEMPORAL_DOWNLOAD_DIR')
-TEMPORAL_DOWNLOAD_TTL = timedelta(days=1) if TEMPORAL_DOWNLOAD_DIR else None
+TEMPORAL_DOWNLOAD_TTL = timedelta(days=1)
 TASK_QUEUE = 'pydantic-ai-agent-task-queue'
 BASE_ACTIVITY_CONFIG = ActivityConfig(
     start_to_close_timeout=timedelta(seconds=60),
@@ -216,9 +216,6 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 
 @pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
-    if TEMPORAL_DOWNLOAD_DIR:
-        os.makedirs(TEMPORAL_DOWNLOAD_DIR, exist_ok=True)
-
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         ui=True,
