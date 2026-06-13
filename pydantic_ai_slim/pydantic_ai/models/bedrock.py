@@ -592,7 +592,9 @@ class BedrockConverseModel(Model[BaseClient]):
             converse['toolConfig'] = tool_config
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
-        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+        if additional_model_requests_fields := self._build_additional_model_request_fields(
+            settings, model_request_parameters
+        ):
             converse['additionalModelRequestFields'] = additional_model_requests_fields
         params: CountTokensRequestTypeDef = {
             'modelId': remove_bedrock_geo_prefix(self.model_name),
@@ -707,18 +709,27 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_details=provider_details,
         )
 
-    def _translate_thinking(
+    def _build_additional_model_request_fields(
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> dict[str, Any] | None:
-        """Build thinking-related additionalModelRequestFields, using unified thinking as fallback."""
+        """Build `additionalModelRequestFields` from user-supplied fields plus unified `top_k` and `thinking`."""
         existing = dict(model_settings.get('bedrock_additional_model_requests_fields') or {})
+        profile = BedrockModelProfile.from_profile(self.profile)
+
+        # Bedrock's `inferenceConfig` has no `topK`, so unified `top_k` rides in the model-specific
+        # `additionalModelRequestFields` (shape varies per family). A user-supplied key wins.
+        if (top_k := model_settings.get('top_k')) is not None:
+            if profile.bedrock_top_k_variant == 'anthropic' and 'top_k' not in existing:
+                existing['top_k'] = top_k
+            elif profile.bedrock_top_k_variant == 'nova' and 'inferenceConfig' not in existing:
+                existing['inferenceConfig'] = {'topK': top_k}
+
         thinking = model_request_parameters.thinking
         if thinking is None:
             return existing or None
 
-        profile = BedrockModelProfile.from_profile(self.profile)
         variant = profile.bedrock_thinking_variant
 
         if variant == 'anthropic' and 'thinking' not in existing:
@@ -821,7 +832,9 @@ class BedrockConverseModel(Model[BaseClient]):
             elif (unified_tier := model_settings.get('service_tier')) and unified_tier != 'auto':
                 params['serviceTier'] = {'type': unified_tier}
 
-        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+        if additional_model_requests_fields := self._build_additional_model_request_fields(
+            settings, model_request_parameters
+        ):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
         with _map_api_errors(self.model_name):

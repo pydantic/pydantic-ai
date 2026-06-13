@@ -2886,6 +2886,86 @@ async def test_bedrock_thinking_true_qwen_variant(
     assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
 
 
+async def test_bedrock_top_k_anthropic_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """Unified `top_k` rides in `additionalModelRequestFields` as a flat `top_k` for Anthropic models.
+
+    Bedrock's `inferenceConfig` has no `topK` field, so the setting can only reach Claude here.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_k=20))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'top_k': 20}
+    assert 'topK' not in sent['inferenceConfig']
+    assert result.output == IsStr()
+
+
+async def test_bedrock_top_k_nova_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """Unified `top_k` rides in `additionalModelRequestFields` nested under `inferenceConfig.topK` for Nova models."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_k=20))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'inferenceConfig': {'topK': 20}}
+    assert result.output == IsStr()
+
+
+async def test_bedrock_top_k_user_field_takes_precedence(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """A user-supplied `bedrock_additional_model_requests_fields['top_k']` is never clobbered by unified `top_k`.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(top_k=20, bedrock_additional_model_requests_fields={'top_k': 5})
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['additionalModelRequestFields'] == {'top_k': 5}
+
+
+async def test_bedrock_top_k_unsupported_family_dropped(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Models without a `bedrock_top_k_variant` (e.g. Mistral) silently drop `top_k`.
+
+    No-network: Bedrock 400s on an unrecognized `additionalModelRequestFields` key, so forwarding `top_k`
+    to a family that doesn't accept it would be a regression — the field must be absent here.
+    """
+    model = BedrockConverseModel('mistral.mistral-large-2402-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_k=20))
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert 'additionalModelRequestFields' not in kwargs
+
+
 async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel(model_name='openai.gpt-oss-120b-1:0', provider=bedrock_provider)
     agent = Agent(model)

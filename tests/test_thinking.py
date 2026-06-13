@@ -570,7 +570,7 @@ class TestAnthropicUnifiedThinkingConflict:
 
 @pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
 class TestBedrockThinkingTranslation:
-    """Test Bedrock _translate_thinking translation for each variant."""
+    """Test Bedrock thinking translation in `_build_additional_model_request_fields` for each variant."""
 
     def test_anthropic_variant_thinking_true(self):
         model = BedrockConverseModel.__new__(BedrockConverseModel)
@@ -581,7 +581,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=True)
-        result = model._translate_thinking(settings, params)
+        result = model._build_additional_model_request_fields(settings, params)
         assert result == {'thinking': {'type': 'enabled', 'budget_tokens': 10000}}
 
     def test_anthropic_variant_thinking_false(self):
@@ -593,7 +593,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._translate_thinking(settings, params)
+        result = model._build_additional_model_request_fields(settings, params)
         assert result == {'thinking': {'type': 'disabled'}}
 
     def test_openai_variant_thinking_false(self):
@@ -606,7 +606,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._translate_thinking(settings, params)
+        result = model._build_additional_model_request_fields(settings, params)
         # thinking=False: no reasoning_effort set, returns None
         assert result is None
 
@@ -619,7 +619,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking='high')
-        result = model._translate_thinking(settings, params)
+        result = model._build_additional_model_request_fields(settings, params)
         assert result == {'reasoning_effort': 'high'}
 
     def test_qwen_variant_thinking_true(self):
@@ -631,7 +631,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=True)
-        result = model._translate_thinking(settings, params)
+        result = model._build_additional_model_request_fields(settings, params)
         assert result == {'reasoning_config': 'high'}
 
     def test_qwen_variant_thinking_false(self):
@@ -644,7 +644,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._translate_thinking(settings, params)
+        result = model._build_additional_model_request_fields(settings, params)
         # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
         assert result is None
 
@@ -655,7 +655,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking='high')
-        result = model._translate_thinking(settings, params)
+        result = model._build_additional_model_request_fields(settings, params)
         # No variant set, so no thinking fields are added
         assert result is None
 
@@ -665,7 +665,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=None)
-        result = model._translate_thinking(settings, params)
+        result = model._build_additional_model_request_fields(settings, params)
         assert result is None
 
     def _adaptive_model(self, *, supports_effort: bool = True):
@@ -686,7 +686,9 @@ class TestBedrockThinkingTranslation:
         from pydantic_ai.models.bedrock import BedrockModelSettings
 
         model = self._adaptive_model()
-        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking=True))
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking=True)
+        )
         assert result == {'thinking': {'type': 'adaptive'}}
 
     def test_anthropic_variant_adaptive_thinking_high_sets_effort(self):
@@ -694,7 +696,9 @@ class TestBedrockThinkingTranslation:
         from pydantic_ai.models.bedrock import BedrockModelSettings
 
         model = self._adaptive_model()
-        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking='high'))
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking='high')
+        )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}}
 
     @pytest.mark.parametrize(
@@ -706,7 +710,9 @@ class TestBedrockThinkingTranslation:
         from pydantic_ai.models.bedrock import BedrockModelSettings
 
         model = self._adaptive_model()
-        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking=level))
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking=level)
+        )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': effort}}
 
     def test_anthropic_variant_adaptive_no_effort_when_unsupported(self):
@@ -714,7 +720,9 @@ class TestBedrockThinkingTranslation:
         from pydantic_ai.models.bedrock import BedrockModelSettings
 
         model = self._adaptive_model(supports_effort=False)
-        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking='high'))
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking='high')
+        )
         assert result == {'thinking': {'type': 'adaptive'}}
 
     def test_anthropic_variant_adaptive_user_output_config_wins(self):
@@ -723,7 +731,7 @@ class TestBedrockThinkingTranslation:
 
         model = self._adaptive_model()
         settings = BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}})
-        result = model._translate_thinking(settings, ModelRequestParameters(thinking='high'))
+        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'))
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}}
 
     def test_anthropic_variant_adaptive_thinking_false_omits(self):
@@ -731,7 +739,9 @@ class TestBedrockThinkingTranslation:
         from pydantic_ai.models.bedrock import BedrockModelSettings
 
         model = self._adaptive_model()
-        result = model._translate_thinking(BedrockModelSettings(), ModelRequestParameters(thinking=False))
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking=False)
+        )
         assert result is None
 
 
