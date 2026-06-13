@@ -513,6 +513,7 @@ KnownModelName = TypeAliasType(
         'openai-chat:o4-mini-deep-research-2025-06-26',
         'openai-chat:o4-mini-deep-research',
         'openai-chat:o4-mini',
+        'nscale:openai/gpt-oss-20b',
         'test',
     ],
 )
