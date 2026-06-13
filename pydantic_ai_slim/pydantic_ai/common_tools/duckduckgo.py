@@ -10,8 +10,8 @@ from pydantic_ai.tools import Tool
 try:
     try:
         from ddgs.ddgs import DDGS
-    except ImportError:  # Fallback for the legacy `duckduckgo_search` package, which `ddgs` was renamed from.
-        from duckduckgo_search import DDGS
+    except ImportError:  # pragma: no cover
+        from duckduckgo_search import DDGS  # pragma: no cover
 except ImportError as _import_error:
     raise ImportError(
         'Please install `ddgs` to use the DuckDuckGo search tool, '
