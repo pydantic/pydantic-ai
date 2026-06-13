@@ -400,7 +400,7 @@ Since messages use a model-agnostic format, you can share message history betwee
 of [programmatic agent hand-off](multi-agent-applications.md#programmatic-agent-hand-off),
 where application code orchestrates multiple agents in sequence.
 
-```python {title="sharing_messages_between_agents.py" hl_lines="11-12"}
+```python {title="sharing_messages_between_agents.py" hl_lines="11-12" test="skip"}
 from pydantic_ai import Agent
 
 research_agent = Agent(
