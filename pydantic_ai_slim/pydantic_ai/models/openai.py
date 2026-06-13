@@ -1451,16 +1451,38 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        # DeepSeek-style `'field'` providers 400 on a tool-calling assistant turn that omits their
+        # thinking field while the run is reasoning. The framework-synthesized deferred-capability
+        # tool-search turn is the common trigger (it carries no thinking), but the backfill below
+        # deliberately covers any such turn missing the field. Resolve the field name to set empty below.
+        thinking_active = any(
+            isinstance(part, ThinkingPart)
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+        )
+        backfill_field = (
+            profile.openai_chat_thinking_field
+            if thinking_active and profile.openai_chat_send_back_thinking_parts == 'field'
+            else None
+        )
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
                 if (mapped := self._map_model_response(message)) is not None:
+                    if (
+                        backfill_field
+                        and mapped['role'] == 'assistant'
+                        and mapped.get('tool_calls')
+                        and backfill_field not in mapped
+                    ):
+                        mapped[backfill_field] = ''
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
-        profile = OpenAIModelProfile.from_profile(self.profile)
         system_prompt_role = profile.openai_system_prompt_role or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
@@ -1680,11 +1702,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         elif isinstance(item, VideoUrl):
             return await self._map_video_url_item(item)
         elif isinstance(item, UploadedFile):
-            if item.provider_name != self.system:
-                raise UserError(
-                    f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIChatModel. '
-                    f'Expected `provider_name` to be `{self.system!r}`.'
-                )
+            self._validate_uploaded_file_provider(item)
             if item.media_type.startswith('image/'):
                 # Chat Completions can only reference an uploaded file as a document `file` part;
                 # `image_url` parts take a URL/data URI, not a `file_id`, so images can't be referenced by id.
@@ -3108,12 +3126,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     text = item if isinstance(item, str) else item.content
                     content.append(responses.ResponseInputTextParam(text=text, type='input_text'))
                 elif isinstance(item, UploadedFile):
-                    if item.provider_name != self.system:
-                        raise UserError(
-                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with OpenAIResponsesModel. '
-                            f'Expected `provider_name` to be `{self.system!r}`.'
-                        )
-                    content.append(OpenAIResponsesModel._map_uploaded_file_to_response_content(item))  # pyright: ignore[reportArgumentType]
+                    content.append(self._map_uploaded_file_to_response_content(item))  # pyright: ignore[reportArgumentType]
                 elif isinstance(item, CachePoint):
                     pass
                 elif is_multi_modal_content(item):
@@ -3122,17 +3135,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
         return responses.EasyInputMessageParam(role='user', content=content)
 
-    @staticmethod
     def _map_uploaded_file_to_response_content(
+        self,
         item: UploadedFile,
     ) -> ResponseInputImageContentParam | ResponseInputFileContentParam:
         """Map an `UploadedFile` to its OpenAI Responses API content param.
+
+        Raises `UserError` if the file was uploaded to a different provider (`provider_name != self.system`).
 
         Image uploads (an `image/*` media type) map to `input_image`, carrying `detail` from
         `vendor_metadata` (default `'auto'`); everything else maps to `input_file`. Opaque OpenAI
         Files-API ids (e.g. `file-...`) report `application/octet-stream`, so an image referenced by
         such an id without an explicit `image/*` media type also maps to `input_file`.
         """
+        self._validate_uploaded_file_provider(item)
         if item.media_type.startswith('image/'):
             detail: Literal['auto', 'low', 'high'] = 'auto'
             if metadata := item.vendor_metadata:
@@ -3196,8 +3212,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         else:
             raise NotImplementedError(f'VideoUrl is not supported in OpenAI Responses {context}')
 
-    @staticmethod
     async def _map_tool_return_output(
+        self,
         part: ToolReturnPart,
     ) -> str | list[ResponseInputTextContentParam | ResponseInputImageContentParam | ResponseInputFileContentParam]:
         """Map a `ToolReturnPart` to OpenAI Responses API output format, supporting multimodal content.
@@ -3213,7 +3229,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         for item in part.content_items(mode='str'):
             if isinstance(item, UploadedFile):
-                output.append(OpenAIResponsesModel._map_uploaded_file_to_response_content(item))
+                output.append(self._map_uploaded_file_to_response_content(item))
             elif is_multi_modal_content(item):
                 output.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns'))  # pyright: ignore[reportArgumentType]
             elif isinstance(item, str):  # pragma: no branch
@@ -3448,6 +3464,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
+            mcp_list_tools_return_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -3455,6 +3472,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             async for chunk in self._response:
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
+                    # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
+                    # Backfill mcp_list_tools results missing from streamed output_item.done events (see #5419).
+                    for item in chunk.response.output:
+                        if (
+                            isinstance(item, responses.response_output_item.McpListTools)
+                            and item.id not in mcp_list_tools_return_ids
+                        ):
+                            _, return_part = _map_mcp_list_tools(item, self.provider_name)
+                            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                            mcp_list_tools_return_ids.add(item.id)
+
                     self._usage += self._map_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
 
@@ -3719,6 +3747,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
+                        mcp_list_tools_return_ids.add(chunk.item.id)
                     elif isinstance(chunk.item, ResponseCompactionItem):
                         # Replace the preliminary part from the "added" event with the
                         # final encrypted_content for round-tripping.
