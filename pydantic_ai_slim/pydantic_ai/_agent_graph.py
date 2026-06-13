@@ -1429,10 +1429,11 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         tool_defs_cache=ctx.state.tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
-    # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the
-    # shared identity of `loaded_capability_ids`/`discovered_tool_names` (see the invariant on
-    # `GraphAgentDeps.loaded_capability_ids`). Never add either set here — forking the object would
-    # silently break in-step capability loads / tool reveals.
+    # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
+    # identity of the mutable members passed by reference above — `loaded_capability_ids`,
+    # `discovered_tool_names`, `pending_messages`, `tool_defs_cache` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking the
+    # object would silently break in-step capability loads / tool reveals / message enqueues / tool-defs caching.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
