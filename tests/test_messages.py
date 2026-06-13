@@ -342,6 +342,17 @@ def test_binary_content_base64():
     assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
 
 
+def test_from_data_uri_base64():
+    bc = BinaryContent.from_data_uri('data:image/png;base64,SGVsbG8sIHdvcmxkIQ==')
+    assert bc.data == b'Hello, world!'
+    assert bc.media_type == 'image/png'
+
+
+def test_from_data_uri_non_base64():
+    with pytest.raises(ValueError, match='must be base64-encoded'):
+        BinaryContent.from_data_uri('data:text/plain,Hello%20World')
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',

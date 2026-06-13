@@ -20,8 +20,8 @@ if TYPE_CHECKING:
     from groq import AsyncGroq
     from openai import AsyncOpenAI
 
-    from pydantic_ai.models.anthropic import AsyncAnthropicClient
     from pydantic_ai.providers import Provider
+    from pydantic_ai.providers.anthropic import AsyncAnthropicClient
 
 
 @overload

@@ -10,3 +10,7 @@ Pydantic AI officially supports four durable execution solutions:
 - [Restate](./restate.md)
 
 These integrations are co-maintained by the Pydantic and vendor teams and only use Pydantic AI's public interface, so they also serve as a reference for integrating with other durable systems.
+
+Additional external SDK integrations:
+
+- [Kitaru](./kitaru.md)

@@ -45,10 +45,10 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
 | Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
-| Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | `thinking=False` → `'hidden'` (no true disable) |
+| Groq | `reasoning_format='parsed'` | `reasoning_format='parsed'` | qwen3: `thinking=False` → `reasoning_effort='none'` (true disable, via `extra_body`); other reasoning models → `'hidden'` (suppresses output only) |
 | OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `effort='none'`; always-on routes silently ignore; via `extra_body` |
-| Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True` |
-| xAI | `reasoning_effort='high'` | `reasoning_effort='high'` | Only `'low'` and `'high'`, on `grok-3-mini` only; `thinking=False` silently ignored |
+| Cerebras | `disable_reasoning=False` | `disable_reasoning=False` | `thinking=False` → `disable_reasoning=True`; gpt-oss reasons always-on, so `thinking=False` is silently ignored |
+| xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False` |
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
@@ -173,7 +173,7 @@ xAI reasoning models (Grok) support native thinking. To preserve the thinking co
 from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel, XaiModelSettings
 
-model = XaiModel('grok-4-fast-reasoning')
+model = XaiModel('grok-4.3')
 settings = XaiModelSettings(xai_include_encrypted_content=True)
 agent = Agent(model, model_settings=settings)
 ...
@@ -262,7 +262,7 @@ agent = Agent(model, model_settings=settings)
 ```
 
 !!! note
-    Groq does not support truly disabling thinking. When `thinking=False` is set via the unified setting, Pydantic AI sends `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally.
+    Most Groq reasoning models do not support truly disabling thinking: when `thinking=False` is set via the unified setting, Pydantic AI sends `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally. The exception is the qwen3 family, which truly disables reasoning via `reasoning_effort='none'`.
 
 ## OpenRouter
 
