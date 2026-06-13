@@ -1368,6 +1368,8 @@ async def test_google_task_prefix(case: _GoogleTaskPrefixCase, gemini_api_key: s
     assert captured['config'].task_type == case.expected_task_type
     assert captured['config'].title is None
     assert len(result.embeddings) == len(case.inputs)
+    # The prefix is applied internally; the user gets their original (non-prefixed) text back.
+    assert result.inputs == case.inputs
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
