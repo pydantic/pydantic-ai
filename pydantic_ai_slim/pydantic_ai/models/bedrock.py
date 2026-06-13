@@ -584,6 +584,9 @@ class BedrockConverseModel(Model[BaseClient]):
             'messages': bedrock_messages,
             'system': system_prompt,
         }
+        # No native-tool strip is needed here (unlike Anthropic's count_tokens, which must drop server tools):
+        # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
+        # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
         tool_config = self._map_tool_config(model_request_parameters, settings)
         if tool_config:
             converse['toolConfig'] = tool_config
