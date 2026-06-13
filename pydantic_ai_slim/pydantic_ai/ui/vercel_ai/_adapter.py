@@ -53,6 +53,7 @@ from ._utils import (
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
+    parse_tool_kind,
     tool_return_output,
 )
 from .request_types import (
@@ -384,7 +385,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         part_id = provider_meta.get('id')
                         provider_name = provider_meta.get('provider_name')
                         provider_details = provider_meta.get('provider_details')
-                        tool_kind = provider_meta.get('tool_kind')
+                        tool_kind = parse_tool_kind(provider_meta.get('tool_kind'))
 
                         if builtin_tool:
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
@@ -420,7 +421,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         provider_name=call_meta.get('provider_name') or provider_name,
                                         provider_details=call_meta.get('provider_details') or provider_details,
                                     ),
-                                    tool_kind=call_meta.get('tool_kind') or tool_kind,
+                                    tool_kind=parse_tool_kind(call_meta.get('tool_kind')) or tool_kind,
                                 )
                             )
 
@@ -448,7 +449,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                             provider_details=return_meta.get('provider_details') or provider_details,
                                             outcome=outcome,
                                         ),
-                                        tool_kind=return_meta.get('tool_kind') or tool_kind,
+                                        # As in the non-builtin branch below, error/denied returns carry
+                                        # no `tool_kind`: a typed return subclass signals shape-valid
+                                        # success to readers like `parse_discovered_tools`.
+                                        tool_kind=(parse_tool_kind(return_meta.get('tool_kind')) or tool_kind)
+                                        if outcome == 'success'
+                                        else None,
                                     )
                                 )
                         else:

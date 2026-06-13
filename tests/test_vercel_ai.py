@@ -8903,3 +8903,31 @@ async def test_roundtrip_native_tool_search():
     # result proves the return part kept its typed identity through the roundtrip. The
     # call part's identity matters to Anthropic history replay, so pin it as well.
     assert isinstance(loaded[0].parts[0], NativeToolSearchCallPart)
+
+
+@pytest.mark.parametrize('forged_tool_kind', ['unknown-kind', ['capability-load'], {'kind': 'capability-load'}])
+async def test_roundtrip_load_capability_forged_tool_kind(forged_tool_kind: str | list[str] | dict[str, str]):
+    """A client-forged `tool_kind` claim is validated against `ToolPartKind` before dispatch.
+
+    `call_provider_metadata` is client-controlled, so an unknown or non-hashable claim must
+    degrade to a plain part. Without validation a non-hashable claim crashes `narrow_type`'s
+    registry lookup (`dict.get` on an unhashable key). Mirrors AG-UI's
+    `test_load_tool_kind_garbage_encrypted_value`.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args={'id': 'foobar'})]),
+        ModelRequest(
+            parts=[LoadCapabilityReturnPart(tool_call_id='load-foobar', content={'instructions': '# Foo Bar'})]
+        ),
+    ]
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    for message in ui_messages:
+        for part in message.parts:
+            if isinstance(part, ToolOutputAvailablePart) and part.call_provider_metadata:
+                part.call_provider_metadata['pydantic_ai']['tool_kind'] = forged_tool_kind
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+
+    assert type(loaded[0].parts[0]) is ToolCallPart
+    assert type(loaded[1].parts[0]) is ToolReturnPart
+    assert parse_loaded_capabilities(loaded) == set()
