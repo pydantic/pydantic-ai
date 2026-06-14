@@ -34,22 +34,25 @@ def test_normalize_matrix_job_signature():
 
 
 def test_non_test_jobs_are_not_tracked():
-    job = ci_duration.normalize_job(
-        {
-            'id': 123,
-            'name': 'lint',
-            'status': 'completed',
-            'conclusion': 'success',
-            'started_at': '2026-06-13T17:15:03Z',
-            'completed_at': '2026-06-13T17:16:03Z',
-            'runner_name': 'GitHub Actions 1001364942',
-            'runner_group_name': 'GitHub Actions',
-            'html_url': 'https://github.com/pydantic/pydantic-ai/actions/runs/1/job/123',
-            'steps': [],
-        }
-    )
+    jobs = [
+        ci_duration.normalize_job(
+            {
+                'id': 123,
+                'name': name,
+                'status': 'completed',
+                'conclusion': 'success',
+                'started_at': '2026-06-13T17:15:03Z',
+                'completed_at': '2026-06-13T17:16:03Z',
+                'runner_name': 'GitHub Actions 1001364942',
+                'runner_group_name': 'GitHub Actions',
+                'html_url': 'https://github.com/pydantic/pydantic-ai/actions/runs/1/job/123',
+                'steps': [],
+            }
+        )
+        for name in ['lint', 'test examples on 3.13']
+    ]
 
-    assert not ci_duration.is_tracked_test_job(job)
+    assert [ci_duration.is_tracked_test_job(job) for job in jobs] == [False, False]
 
 
 def test_classify_slow_job_requires_relative_and_absolute_delta():

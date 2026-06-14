@@ -439,7 +439,7 @@ def parse_job_family(job_name: str) -> str:
 
 
 def is_tracked_test_job(job: JobRecord) -> bool:
-    return job.job_family in {'test', 'test-examples'}
+    return job.job_family == 'test'
 
 
 def parse_runner_class(runner_group_name: str | None, runner_name: str | None, labels: list[JsonValue] | None) -> str:
@@ -623,7 +623,7 @@ def emit_logfire(record: JsonObject) -> None:
     )
     workflow = _expect_object(record['workflow_run'], 'workflow_run')
     jobs = _expect_list(record['jobs'], 'jobs')
-    logfire.info(
+    with logfire.span(
         'ci.duration.test_run',
         _tags=['ci-duration'],
         schema_version=SCHEMA_VERSION,
@@ -644,32 +644,32 @@ def emit_logfire(record: JsonObject) -> None:
             for job in jobs
         ),
         html_url=workflow.get('html_url'),
-    )
-    for job in jobs:
-        job_object = _expect_object(job, 'job')
-        logfire.info(
-            'ci.duration.test_job',
-            _tags=['ci-duration'],
-            schema_version=SCHEMA_VERSION,
-            repo=workflow.get('repo'),
-            run_id=workflow.get('run_id'),
-            run_attempt=workflow.get('run_attempt'),
-            event=workflow.get('event'),
-            head_branch=workflow.get('head_branch'),
-            base_branch=workflow.get('base_branch'),
-            head_sha=workflow.get('head_sha'),
-            pr_numbers=workflow.get('pr_numbers'),
-            job_id=job_object.get('job_id'),
-            job_name=job_object.get('raw_name'),
-            job_family=job_object.get('job_family'),
-            job_signature=job_object.get('job_signature'),
-            matrix_python=job_object.get('matrix_python'),
-            matrix_extra=job_object.get('matrix_extra'),
-            runner_class=job_object.get('runner_class'),
-            conclusion=job_object.get('conclusion'),
-            duration_seconds=job_object.get('duration_seconds'),
-            html_url=job_object.get('html_url'),
-        )
+    ):
+        for job in jobs:
+            job_object = _expect_object(job, 'job')
+            logfire.info(
+                'ci.duration.test_job',
+                _tags=['ci-duration'],
+                schema_version=SCHEMA_VERSION,
+                repo=workflow.get('repo'),
+                run_id=workflow.get('run_id'),
+                run_attempt=workflow.get('run_attempt'),
+                event=workflow.get('event'),
+                head_branch=workflow.get('head_branch'),
+                base_branch=workflow.get('base_branch'),
+                head_sha=workflow.get('head_sha'),
+                pr_numbers=workflow.get('pr_numbers'),
+                job_id=job_object.get('job_id'),
+                job_name=job_object.get('raw_name'),
+                job_family=job_object.get('job_family'),
+                job_signature=job_object.get('job_signature'),
+                matrix_python=job_object.get('matrix_python'),
+                matrix_extra=job_object.get('matrix_extra'),
+                runner_class=job_object.get('runner_class'),
+                conclusion=job_object.get('conclusion'),
+                duration_seconds=job_object.get('duration_seconds'),
+                html_url=job_object.get('html_url'),
+            )
     logfire.force_flush()
 
 
