@@ -25,7 +25,11 @@ from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 
-from ..cassette_utils import get_bedrock_tool_names_from_cassette, get_first_post_body
+from ..cassette_utils import (
+    get_bedrock_tool_names_from_cassette,
+    get_cohere_tool_names_from_cassette,
+    get_first_post_body,
+)
 from ..conftest import try_import
 
 with try_import() as openai_available:
@@ -57,6 +61,10 @@ with try_import() as huggingface_available:
 
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
+
+with try_import() as cohere_available:
+    from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.providers.cohere import CohereProvider
 
 pytestmark = [
     pytest.mark.anyio,
@@ -122,6 +130,12 @@ SUPPORT_MATRIX: dict[tuple[str, Scenario], Expectation] = {
     ('xai', 'list_single'): 'native',
     ('xai', 'none_with_output'): 'native',
     ('xai', 'tools_plus_output'): 'native',
+    ('cohere', 'auto'): 'native',
+    ('cohere', 'none'): 'native',
+    ('cohere', 'required'): 'native',
+    ('cohere', 'list_single'): 'native',
+    ('cohere', 'none_with_output'): 'native',
+    ('cohere', 'tools_plus_output'): 'native',
 }
 
 
@@ -145,6 +159,7 @@ MODEL_CONFIGS: dict[str, tuple[str, Any]] = {
     'bedrock': ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', bedrock_available),
     'huggingface': ('meta-llama/Llama-4-Scout-17B-16E-Instruct', huggingface_available),
     'xai': ('grok-3-fast', xai_available),
+    'cohere': ('command-r7b-12-2024', cohere_available),
 }
 
 
@@ -177,6 +192,8 @@ def create_model(
     elif provider == 'xai':
         assert xai_provider is not None
         return XaiModel(model_name, provider=xai_provider)
+    elif provider == 'cohere':
+        return CohereModel(model_name, provider=CohereProvider(api_key=api_keys['cohere']))
     else:  # pragma: no cover
         raise ValueError(f'Unknown provider: {provider}')
 
@@ -289,6 +306,7 @@ def api_keys(
     gemini_api_key: str,
     huggingface_api_key: str,
     xai_api_key: str,
+    co_api_key: str,
 ) -> dict[str, str]:
     return {
         'openai': openai_api_key,
@@ -298,6 +316,7 @@ def api_keys(
         'google': gemini_api_key,
         'huggingface': huggingface_api_key,
         'xai': xai_api_key,
+        'cohere': co_api_key,
     }
 
 
@@ -362,6 +381,12 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
     ('xai', 'list_single'): snapshot({'type': 'function', 'function': {'name': 'get_weather'}}),
     ('xai', 'none_with_output'): snapshot({'type': 'function', 'function': {'name': 'final_result'}}),
     ('xai', 'tools_plus_output'): snapshot('required'),
+    ('cohere', 'auto'): snapshot(None),
+    ('cohere', 'none'): snapshot('NONE'),
+    ('cohere', 'required'): snapshot('REQUIRED'),
+    ('cohere', 'list_single'): snapshot('REQUIRED'),
+    ('cohere', 'none_with_output'): snapshot('REQUIRED'),
+    ('cohere', 'tools_plus_output'): snapshot('REQUIRED'),
 }
 
 
@@ -375,6 +400,7 @@ PROVIDERS = [
     pytest.param('bedrock', id='bedrock'),
     pytest.param('huggingface', id='huggingface'),
     pytest.param('xai', id='xai'),
+    pytest.param('cohere', id='cohere'),
 ]
 
 SCENARIOS: list[Any] = [
@@ -470,6 +496,14 @@ async def test_tool_choice_matrix(
         # `tool_choice='none'` + output tool with no direct output resolves to ('required', {final_result}),
         # which now skips the tool_defs filter (cache preservation) — the function tool stays in the wire payload.
         assert get_bedrock_tool_names_from_cassette(vcr) == ['get_weather', 'final_result']
+    elif provider == 'cohere' and scenario == 'list_single':
+        # Cohere can't target a tool by name, so the named subset is sent by filtering the tools
+        # array down to the chosen tool — `get_time` is dropped.
+        assert get_cohere_tool_names_from_cassette(vcr) == ['get_weather']
+    elif provider == 'cohere' and scenario == 'none_with_output':
+        # `tool_choice='none'` + output tool resolves to ('required', {final_result}). Cohere has no
+        # prompt cache to preserve, so it filters the tools to the subset — `get_weather` is dropped.
+        assert get_cohere_tool_names_from_cassette(vcr) == ['final_result']
 
 
 # Standalone (outside the `(provider, scenario)` matrix): a native-tool-only request has no
