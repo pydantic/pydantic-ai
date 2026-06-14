@@ -15,6 +15,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import (
+    AbstractToolset,
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -47,6 +48,7 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
+    ToolsetTool,
     UserContent,
     UserPromptPart,
     WebSearchTool,
@@ -1362,6 +1364,97 @@ async def test_dynamic_toolset_outside_workflow():
         'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
     )
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- DynamicToolset.get_instructions test (issue #5282) ---
+# A dynamic toolset whose resolved toolset implements `get_instructions()` must contribute those
+# instructions under `TemporalAgent`, resolved inside an activity like `get_tools`.
+
+
+class InstructionOnlyToolset(AbstractToolset[None]):
+    """A toolset that only contributes instructions, no tools."""
+
+    @property
+    def id(self) -> str:
+        return 'instruction-only-toolset'
+
+    async def get_instructions(self, ctx: RunContext[None]) -> str:
+        return 'SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET'
+
+    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+        return {}
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        raise NotImplementedError  # pragma: no cover
+
+
+def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
+
+
+dynamic_instructions_agent = Agent(FunctionModel(_echo_instructions), name='dynamic_instructions_agent')
+
+
+@dynamic_instructions_agent.toolset(id='dynamic_instruction_toolset', per_run_step=False)
+def dynamic_instruction_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+    return InstructionOnlyToolset()
+
+
+dynamic_instructions_temporal_agent = TemporalAgent(
+    dynamic_instructions_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class DynamicInstructionsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await dynamic_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_in_workflow(allow_model_requests: None, client: Client):
+    """A dynamic toolset's `get_instructions()` reaches the model under `TemporalAgent` (issue #5282).
+
+    The model echoes the request's instructions back as its output, so the sentinel in the output
+    proves the resolved dynamic toolset's instructions were collected via the new activity.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicInstructionsAgentWorkflow],
+        plugins=[AgentPlugin(dynamic_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicInstructionsAgentWorkflow.run,
+            args=['hello'],
+            id='test_dynamic_toolset_instructions_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET')
+
+
+def test_dynamic_toolset_temporal_activities():
+    """`TemporalDynamicToolset` registers a `get_instructions` activity alongside `get_tools`/`call_tool`."""
+    assert [
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in dynamic_instructions_temporal_agent.temporal_activities
+    ] == snapshot(
+        [
+            'agent__dynamic_instructions_agent__event_stream_handler',
+            'agent__dynamic_instructions_agent__model_request',
+            'agent__dynamic_instructions_agent__model_request_stream',
+            'agent__dynamic_instructions_agent__toolset__<agent>__call_tool',
+            'agent__dynamic_instructions_agent__dynamic_toolset__dynamic_instruction_toolset__get_instructions',
+            'agent__dynamic_instructions_agent__dynamic_toolset__dynamic_instruction_toolset__get_tools',
+            'agent__dynamic_instructions_agent__dynamic_toolset__dynamic_instruction_toolset__call_tool',
+        ]
+    )
 
 
 # --- MCP-based DynamicToolset test ---
