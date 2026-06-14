@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -79,7 +80,9 @@ with try_import() as voyageai_imports_successful:
     from pydantic_ai.providers.voyageai import VoyageAIProvider
 
 with try_import() as sentence_transformers_imports_successful:
-    from sentence_transformers import SentenceTransformer
+    import numpy as np
+    import torch
+    from numpy.typing import NDArray
 
     from pydantic_ai.embeddings.sentence_transformers import SentenceTransformerEmbeddingModel
 
@@ -1400,15 +1403,36 @@ class TestGoogle:
 
 @pytest.mark.skipif(not sentence_transformers_imports_successful(), reason='SentenceTransformers not installed')
 class TestSentenceTransformers:
-    @pytest.fixture(scope='session')
-    def stsb_bert_tiny_model(self):
-        model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
-        model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
-        return model
+    class FakeSentenceTransformer:
+        def __init__(self) -> None:
+            self.model_card_data = SimpleNamespace(
+                model_id='sentence-transformers-testing/stsb-bert-tiny-safetensors', base_model=None
+            )
+
+        def encode_query(self, sentences: str | Sequence[str], **_: object) -> NDArray[np.float32]:
+            return self._embeddings(sentences)
+
+        def encode_document(self, sentences: str | Sequence[str], **_: object) -> NDArray[np.float32]:
+            return self._embeddings(sentences)
+
+        def get_max_seq_length(self) -> int:
+            return 512
+
+        def tokenize(self, texts: list[str]) -> dict[str, torch.Tensor]:
+            return {'input_ids': torch.zeros((len(texts), 6), dtype=torch.int64)}
+
+        @staticmethod
+        def _embeddings(sentences: str | Sequence[str]) -> NDArray[np.float32]:
+            inputs = [sentences] if isinstance(sentences, str) else list(sentences)
+            return np.zeros((len(inputs), 128), dtype=np.float32)
 
     @pytest.fixture
-    def embedder(self, stsb_bert_tiny_model: Any) -> Embedder:
-        return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))
+    def stsb_bert_tiny_model(self) -> FakeSentenceTransformer:
+        return self.FakeSentenceTransformer()
+
+    @pytest.fixture
+    def embedder(self, stsb_bert_tiny_model: FakeSentenceTransformer) -> Embedder:
+        return Embedder(SentenceTransformerEmbeddingModel(stsb_bert_tiny_model))  # pyright: ignore[reportArgumentType]
 
     async def test_infer_model(self):
         model = infer_embedding_model('sentence-transformers:all-MiniLM-L6-v2')
