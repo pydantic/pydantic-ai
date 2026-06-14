@@ -48,7 +48,6 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
-    ToolsetTool,
     UserContent,
     UserPromptPart,
     WebSearchTool,
@@ -1371,25 +1370,6 @@ async def test_dynamic_toolset_outside_workflow():
 # instructions under `TemporalAgent`, resolved inside an activity like `get_tools`.
 
 
-class InstructionOnlyToolset(AbstractToolset[None]):
-    """A toolset that only contributes instructions, no tools."""
-
-    @property
-    def id(self) -> str:
-        return 'instruction-only-toolset'
-
-    async def get_instructions(self, ctx: RunContext[None]) -> str:
-        return 'SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET'
-
-    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
-        return {}
-
-    async def call_tool(
-        self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
-    ) -> Any:
-        raise NotImplementedError  # pragma: no cover
-
-
 def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     request = messages[-1]
     assert isinstance(request, ModelRequest)
@@ -1401,7 +1381,8 @@ dynamic_instructions_agent = Agent(FunctionModel(_echo_instructions), name='dyna
 
 @dynamic_instructions_agent.toolset(id='dynamic_instruction_toolset', per_run_step=False)
 def dynamic_instruction_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
-    return InstructionOnlyToolset()
+    # A toolset that only contributes instructions, no tools.
+    return FunctionToolset(instructions='SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET', id='instruction-only-toolset')
 
 
 dynamic_instructions_temporal_agent = TemporalAgent(
