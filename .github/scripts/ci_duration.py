@@ -31,6 +31,7 @@ VERY_SLOW_THRESHOLD_MULTIPLIER = 1.5
 
 JsonValue = None | bool | int | float | str | list['JsonValue'] | dict[str, 'JsonValue']
 JsonObject = dict[str, JsonValue]
+MetricAttributes = dict[str, bool | int | float | str]
 
 
 @dataclass(frozen=True)
@@ -623,6 +624,32 @@ def emit_logfire(record: JsonObject) -> None:
     )
     workflow = _expect_object(record['workflow_run'], 'workflow_run')
     jobs = _expect_list(record['jobs'], 'jobs')
+    tracked_test_duration_seconds = sum(
+        _expect_optional_float(_expect_object(job, 'job').get('duration_seconds'), 'duration_seconds') or 0
+        for job in jobs
+    )
+    test_run_duration_metric = logfire.metric_histogram(
+        'ci.test_run.tracked_duration',
+        unit='s',
+        description='Total duration of tracked CI test jobs in one workflow run.',
+    )
+    test_job_duration_metric = logfire.metric_histogram(
+        'ci.test_job.duration',
+        unit='s',
+        description='Duration of one tracked CI test matrix job.',
+    )
+    test_run_duration_metric.record(
+        tracked_test_duration_seconds,
+        metric_attributes(
+            {
+                'repo': workflow.get('repo'),
+                'workflow_name': workflow.get('workflow_name'),
+                'event': workflow.get('event'),
+                'base_branch': workflow.get('base_branch'),
+                'conclusion': workflow.get('conclusion'),
+            }
+        ),
+    )
     with logfire.span(
         'ci.duration.test_run',
         _tags=['ci-duration'],
@@ -639,14 +666,30 @@ def emit_logfire(record: JsonObject) -> None:
         pr_numbers=workflow.get('pr_numbers'),
         duration_seconds=workflow.get('duration_seconds'),
         tracked_test_jobs=len(jobs),
-        tracked_test_duration_seconds=sum(
-            _expect_optional_float(_expect_object(job, 'job').get('duration_seconds'), 'duration_seconds') or 0
-            for job in jobs
-        ),
+        tracked_test_duration_seconds=tracked_test_duration_seconds,
         html_url=workflow.get('html_url'),
     ):
         for job in jobs:
             job_object = _expect_object(job, 'job')
+            duration_seconds = _expect_optional_float(job_object.get('duration_seconds'), 'duration_seconds')
+            if duration_seconds is not None:
+                test_job_duration_metric.record(
+                    duration_seconds,
+                    metric_attributes(
+                        {
+                            'repo': workflow.get('repo'),
+                            'workflow_name': workflow.get('workflow_name'),
+                            'event': workflow.get('event'),
+                            'base_branch': workflow.get('base_branch'),
+                            'job_name': job_object.get('raw_name'),
+                            'job_signature': job_object.get('job_signature'),
+                            'matrix_python': job_object.get('matrix_python'),
+                            'matrix_extra': job_object.get('matrix_extra'),
+                            'runner_class': job_object.get('runner_class'),
+                            'conclusion': job_object.get('conclusion'),
+                        }
+                    ),
+                )
             logfire.info(
                 'ci.duration.test_job',
                 _tags=['ci-duration'],
@@ -681,6 +724,10 @@ def _github_client_from_env() -> GitHubClient:
     if not token:
         raise SystemExit('GITHUB_TOKEN is required')
     return GitHubClient(repo, token)
+
+
+def metric_attributes(attributes: JsonObject) -> MetricAttributes:
+    return {key: value for key, value in attributes.items() if isinstance(value, bool | int | float | str)}
 
 
 def _ssl_context() -> ssl.SSLContext | None:
