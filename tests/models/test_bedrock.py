@@ -2941,6 +2941,65 @@ async def test_bedrock_top_k_user_field_takes_precedence(
     assert kwargs['additionalModelRequestFields'] == {'top_k': 5}
 
 
+async def test_bedrock_top_k_nova_merges_with_user_inference_config(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """For Nova, unified `top_k` merges into a user-supplied `inferenceConfig` without dropping its other fields.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin. The Nova
+    branch checks the nested `topK` key (not the parent `inferenceConfig`), so an unrelated field doesn't suppress it.
+    A user-supplied `topK` still wins.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    user_inference_config = {'maxTokens': 100}
+    model_settings = BedrockModelSettings(
+        top_k=20, bedrock_additional_model_requests_fields={'inferenceConfig': user_inference_config}
+    )
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['additionalModelRequestFields'] == {'inferenceConfig': {'maxTokens': 100, 'topK': 20}}
+    # The user's settings dict is not mutated in place.
+    assert user_inference_config == {'maxTokens': 100}
+
+
+async def test_bedrock_top_k_nova_user_top_k_takes_precedence(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """A user-supplied `inferenceConfig['topK']` is never clobbered by unified `top_k` for Nova.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(
+        top_k=20, bedrock_additional_model_requests_fields={'inferenceConfig': {'topK': 5}}
+    )
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['additionalModelRequestFields'] == {'inferenceConfig': {'topK': 5}}
+
+
 async def test_bedrock_top_k_unsupported_family_dropped(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:

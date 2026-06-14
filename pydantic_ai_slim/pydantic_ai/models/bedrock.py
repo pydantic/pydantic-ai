@@ -723,8 +723,13 @@ class BedrockConverseModel(Model[BaseClient]):
         if (top_k := model_settings.get('top_k')) is not None:
             if profile.bedrock_top_k_variant == 'anthropic' and 'top_k' not in existing:
                 existing['top_k'] = top_k
-            elif profile.bedrock_top_k_variant == 'nova' and 'inferenceConfig' not in existing:
-                existing['inferenceConfig'] = {'topK': top_k}
+            elif profile.bedrock_top_k_variant == 'nova':
+                # Nova nests `topK` under `inferenceConfig`, so check that specific key (not the parent)
+                # and merge into a fresh dict to preserve any other user-supplied `inferenceConfig` fields
+                # without mutating the user's settings in place. A user-supplied `topK` wins.
+                inference_config: Mapping[str, Any] = existing.get('inferenceConfig') or {}
+                if isinstance(inference_config, dict) and 'topK' not in inference_config:
+                    existing['inferenceConfig'] = {**inference_config, 'topK': top_k}
 
         thinking = model_request_parameters.thinking
         if thinking is None:
