@@ -4,6 +4,7 @@ import os
 import sys
 from collections.abc import Iterator
 from decimal import Decimal
+from time import sleep
 from typing import Any, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1402,7 +1403,16 @@ class TestGoogle:
 class TestSentenceTransformers:
     @pytest.fixture(scope='session')
     def stsb_bert_tiny_model(self):
-        model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
+        model: SentenceTransformer | None = None
+        for attempt in range(3):
+            try:
+                model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
+                break
+            except OSError:
+                if attempt == 2:
+                    raise
+                sleep(2)
+        assert model is not None
         model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
         return model
 
