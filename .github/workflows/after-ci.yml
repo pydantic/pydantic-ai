@@ -25,6 +25,7 @@ jobs:
           python-version: "3.12"
 
       - name: Collect CI duration telemetry
+        continue-on-error: true
         run: uv run --no-project --with certifi --with logfire python .github/scripts/ci_duration.py collect --output ci-duration-record.json
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -38,11 +39,12 @@ jobs:
           OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
 
       - name: Store CI duration record
+        if: hashFiles('ci-duration-record.json') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-duration-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ci-duration-record.json
-          retention-days: 30
+          retention-days: 7
 
   smokeshow:
     runs-on: ubuntu-latest
