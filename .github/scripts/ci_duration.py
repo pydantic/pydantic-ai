@@ -211,7 +211,11 @@ def collect_run(client: GitHubClient, run_id: int, run_attempt: int | None) -> J
     attempt = run_attempt or _expect_int(run.get('run_attempt'), 'run_attempt')
     jobs = client.request_paginated(f'actions/runs/{run_id}/attempts/{attempt}/jobs')
     workflow = normalize_workflow_run(client.repo, run, attempt)
-    job_records = [normalize_job(job) for job in jobs]
+    job_records: list[JobRecord] = []
+    for job_object in jobs:
+        job = normalize_job(job_object)
+        if is_tracked_test_job(job):
+            job_records.append(job)
     return {
         'schema_version': SCHEMA_VERSION,
         'fetched_at': _now(),
@@ -230,9 +234,7 @@ def build_pr_report(client: GitHubClient, pr_number: int, head_sha: str, poll_se
     current_record = collect_run(client, run_id, run_attempt)
     current_jobs = [_job_from_json(job) for job in _expect_list(current_record['jobs'], 'jobs')]
     baselines = collect_baselines(client, head_sha)
-    rows = [
-        classify_job(job, baselines.get(job.job_signature)) for job in current_jobs if not _is_ignored_report_job(job)
-    ]
+    rows = [classify_job(job, baselines.get(job.job_signature)) for job in current_jobs]
     workflow = _expect_object(current_record['workflow_run'], 'workflow_run')
     return render_report(pr_number, head_sha, workflow, rows)
 
@@ -277,7 +279,7 @@ def collect_baselines(client: GitHubClient, current_head_sha: str) -> dict[str, 
         jobs = client.request_paginated(f'actions/runs/{run_id}/attempts/{run_attempt}/jobs')
         for job_object in jobs:
             job = normalize_job(job_object)
-            if job.conclusion == 'success' and job.duration_seconds is not None and not _is_ignored_report_job(job):
+            if job.conclusion == 'success' and job.duration_seconds is not None and is_tracked_test_job(job):
                 durations.setdefault(job.job_signature, []).append(job.duration_seconds)
     return {
         signature: compute_baseline(values)
@@ -436,6 +438,10 @@ def parse_job_family(job_name: str) -> str:
     return job_name
 
 
+def is_tracked_test_job(job: JobRecord) -> bool:
+    return job.job_family in {'test', 'test-examples'}
+
+
 def parse_runner_class(runner_group_name: str | None, runner_name: str | None, labels: list[JsonValue] | None) -> str:
     label_values = [value for value in labels or [] if isinstance(value, str)]
     lower_values = ' '.join([runner_group_name or '', runner_name or '', *label_values]).lower()
@@ -518,7 +524,7 @@ def render_report(pr_number: int, head_sha: str, workflow: JsonObject, rows: lis
             row.job_name,
         ),
     )
-    workflow_duration = _format_seconds(_expect_optional_float(workflow.get('duration_seconds'), 'workflow duration'))
+    tracked_duration = sum(row.duration_seconds or 0 for row in rows)
     run_url = _expect_str(workflow.get('html_url'), 'workflow html_url')
     sha7 = head_sha[:7]
     lines = [
@@ -528,7 +534,8 @@ def render_report(pr_number: int, head_sha: str, workflow: JsonObject, rows: lis
         f'PR #{pr_number}, commit `{sha7}`: [CI run]({run_url})',
         '',
         '**Summary**',
-        f'- Workflow duration: {workflow_duration}',
+        f'- Tracked test jobs: {len(rows)}',
+        f'- Total tracked test job duration: {_format_seconds(tracked_duration)}',
         f'- Slow jobs: {len(slow_rows)}',
         f'- Fast jobs: {len(fast_rows)}',
         f'- Failed/cancelled jobs: {len(failed_rows)}',
@@ -615,8 +622,9 @@ def emit_logfire(record: JsonObject) -> None:
         advanced=advanced_options,
     )
     workflow = _expect_object(record['workflow_run'], 'workflow_run')
+    jobs = _expect_list(record['jobs'], 'jobs')
     logfire.info(
-        'ci.duration.workflow',
+        'ci.duration.test_run',
         _tags=['ci-duration'],
         schema_version=SCHEMA_VERSION,
         repo=workflow.get('repo'),
@@ -630,12 +638,17 @@ def emit_logfire(record: JsonObject) -> None:
         head_sha=workflow.get('head_sha'),
         pr_numbers=workflow.get('pr_numbers'),
         duration_seconds=workflow.get('duration_seconds'),
+        tracked_test_jobs=len(jobs),
+        tracked_test_duration_seconds=sum(
+            _expect_optional_float(_expect_object(job, 'job').get('duration_seconds'), 'duration_seconds') or 0
+            for job in jobs
+        ),
         html_url=workflow.get('html_url'),
     )
-    for job in _expect_list(record['jobs'], 'jobs'):
+    for job in jobs:
         job_object = _expect_object(job, 'job')
         logfire.info(
-            'ci.duration.job',
+            'ci.duration.test_job',
             _tags=['ci-duration'],
             schema_version=SCHEMA_VERSION,
             repo=workflow.get('repo'),
@@ -708,19 +721,6 @@ def _job_from_json(value: JsonValue) -> JobRecord:
         runner_class=_expect_str(job.get('runner_class'), 'runner_class'),
         html_url=_expect_str(job.get('html_url'), 'html_url'),
         steps=[],
-    )
-
-
-def _is_ignored_report_job(job: JobRecord) -> bool:
-    return (
-        job.job_family in {'check'}
-        or job.raw_name.startswith('deploy-')
-        or job.raw_name
-        in {
-            'build release artifacts',
-            'publish to PyPI',
-            'Send tweet',
-        }
     )
 
 

@@ -30,6 +30,26 @@ def test_normalize_matrix_job_signature():
     assert job.runner_class == 'github-hosted'
     assert job.job_signature == 'job=test / runner=github-hosted / py=3.10 / extra=all-extras'
     assert job.duration_seconds == 542
+    assert ci_duration.is_tracked_test_job(job)
+
+
+def test_non_test_jobs_are_not_tracked():
+    job = ci_duration.normalize_job(
+        {
+            'id': 123,
+            'name': 'lint',
+            'status': 'completed',
+            'conclusion': 'success',
+            'started_at': '2026-06-13T17:15:03Z',
+            'completed_at': '2026-06-13T17:16:03Z',
+            'runner_name': 'GitHub Actions 1001364942',
+            'runner_group_name': 'GitHub Actions',
+            'html_url': 'https://github.com/pydantic/pydantic-ai/actions/runs/1/job/123',
+            'steps': [],
+        }
+    )
+
+    assert not ci_duration.is_tracked_test_job(job)
 
 
 def test_classify_slow_job_requires_relative_and_absolute_delta():
@@ -77,6 +97,8 @@ def test_render_report_uses_sticky_marker_and_threshold_context():
     report = ci_duration.render_report(123, 'abcdef1234567890', workflow, [row])
 
     assert report.startswith('<!-- ci-duration-report -->\n## CI Duration Report')
+    assert 'Tracked test jobs: 1' in report
+    assert 'Total tracked test job duration: 10m 00s' in report
     assert 'Baseline: up to 30 successful `main` CI runs and 60 successful PR CI runs' in report
     assert 'Minimum baseline sample: 10 successful matching jobs' in report
     assert '| test on 3.10 (all-extras) | 10m 00s | 6m 45s | 7m 08s | +3m 15s (+48%) | slow |' in report
