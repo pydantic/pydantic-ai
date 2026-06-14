@@ -89,6 +89,7 @@ if TYPE_CHECKING:
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
         ConverseStreamResponseTypeDef,
+        ConverseTokensRequestTypeDef,
         CountTokensRequestTypeDef,
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
@@ -579,14 +580,23 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
+        converse: ConverseTokensRequestTypeDef = {
+            'messages': bedrock_messages,
+            'system': system_prompt,
+        }
+        # No native-tool strip is needed here (unlike Anthropic's count_tokens, which must drop server tools):
+        # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
+        # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
+        tool_config = self._map_tool_config(model_request_parameters, settings)
+        if tool_config:
+            converse['toolConfig'] = tool_config
+        tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
+        self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+            converse['additionalModelRequestFields'] = additional_model_requests_fields
         params: CountTokensRequestTypeDef = {
             'modelId': remove_bedrock_geo_prefix(self.model_name),
-            'input': {
-                'converse': {
-                    'messages': bedrock_messages,
-                    'system': system_prompt,
-                },
-            },
+            'input': {'converse': converse},
         }
         with _map_api_errors(self.model_name):
             response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
