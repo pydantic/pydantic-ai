@@ -1440,13 +1440,14 @@ async def test_dynamic_toolset_instructions_in_workflow(allow_model_requests: No
 
 
 def test_dynamic_toolset_temporal_activities():
-    """`TemporalDynamicToolset` registers a `get_instructions` activity alongside `get_tools`/`call_tool`."""
+    """`TemporalDynamicToolset` collects instructions inside `get_tools`, so it has no separate `get_instructions` activity."""
     activity_names = {
         ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
         for activity in dynamic_instructions_temporal_agent.temporal_activities
     }
     prefix = 'agent__dynamic_instructions_agent__dynamic_toolset__dynamic_instruction_toolset'
-    assert {f'{prefix}__get_instructions', f'{prefix}__get_tools', f'{prefix}__call_tool'} <= activity_names
+    assert {f'{prefix}__get_tools', f'{prefix}__call_tool'} <= activity_names
+    assert f'{prefix}__get_instructions' not in activity_names
 
 
 # --- MCP-based DynamicToolset test ---
