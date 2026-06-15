@@ -29,6 +29,7 @@ SLOW_THRESHOLD_MULTIPLIER = 1.25
 FAST_THRESHOLD_MULTIPLIER = 0.75
 VERY_SLOW_MIN_SECONDS = 300
 VERY_SLOW_THRESHOLD_MULTIPLIER = 1.5
+GITHUB_LOOKUP_ERRORS = (TimeoutError, urllib.error.URLError, json.JSONDecodeError, RuntimeError)
 
 JsonValue = None | bool | int | float | str | list['JsonValue'] | dict[str, 'JsonValue']
 JsonObject = dict[str, JsonValue]
@@ -245,7 +246,7 @@ def wait_for_completed_ci_run(client: GitHubClient, head_sha: str, poll_seconds:
     while True:
         try:
             run = find_latest_ci_run(client, head_sha)
-        except (TimeoutError, urllib.error.URLError) as exc:
+        except GITHUB_LOOKUP_ERRORS as exc:
             print(f'Unable to look up CI run for {head_sha}: {exc}', file=sys.stderr)
             run = None
         if run is not None and run.get('status') == 'completed':
@@ -274,7 +275,7 @@ def collect_baselines(client: GitHubClient, current_head_sha: str) -> dict[str, 
             f'actions/workflows/{CI_WORKFLOW_FILE}/runs?event=pull_request&status=success',
             max_items=BASELINE_PR_RUN_LIMIT,
         )
-    except (TimeoutError, urllib.error.URLError) as exc:
+    except GITHUB_LOOKUP_ERRORS as exc:
         print(f'Unable to collect baseline CI runs: {exc}', file=sys.stderr)
         return {}
 
@@ -292,7 +293,7 @@ def collect_baselines(client: GitHubClient, current_head_sha: str) -> dict[str, 
         run_attempt = _expect_int(run.get('run_attempt'), 'baseline run_attempt')
         try:
             jobs = client.request_paginated(f'actions/runs/{run_id}/attempts/{run_attempt}/jobs')
-        except (TimeoutError, urllib.error.URLError) as exc:
+        except GITHUB_LOOKUP_ERRORS as exc:
             print(f'Unable to collect baseline jobs for run {run_id}: {exc}', file=sys.stderr)
             continue
         for job_object in jobs:
