@@ -17,6 +17,7 @@ from httpx import AsyncClient as HttpxAsyncClient, Timeout
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -3108,6 +3109,28 @@ async def test_google_vertexai_model_usage_limit_exceeded(
             'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
             usage_limits=UsageLimits(total_tokens_limit=9, count_tokens_before_request=True),
         )
+
+
+async def test_google_vertexai_count_tokens_forwards_native_tools(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
+):  # pragma: lax no cover
+    """Vertex `count_tokens` forwards native tools, mirroring the real request for an accurate count.
+
+    Unlike `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects
+    them (#5704), the Vertex `countTokens` endpoint accepts them (#5781).
+    """
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebSearchTool())])
+
+    result = await agent.run(
+        'What is the capital of France?',
+        usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
+    )
+
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
+    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    assert result.output == snapshot('The capital of France is Paris.')
 
 
 def test_map_usage():

@@ -155,6 +155,7 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Anthropic
     * Cohere
+    * Bedrock (Anthropic and Amazon Nova models only)
     """
 
     timeout: float | Timeout
