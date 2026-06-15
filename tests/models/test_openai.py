@@ -4273,6 +4273,35 @@ async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> 
     assert get_mock_responses_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
+async def test_responses_deferred_tool_adds_tool_search(allow_model_requests: None) -> None:
+    """A revealed deferred capability must be accompanied by a `tool_search` tool.
+
+    OpenAI rejects a request that carries a `defer_loading` tool without a
+    `tool_search` tool ("Deferred tools require tools.tool_search"). When the
+    originating `ToolSearchTool` is no longer in `native_tools`, the adapter must
+    add the `tool_search` entry back. See #5938.
+    """
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+
+    # A deferred capability tool surfaces as a function tool with `with_native`
+    # set to the tool-search kind, but with no `ToolSearchTool` in native_tools.
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='bar', with_native='tool_search', defer_loading=True)],
+    )
+
+    await model._responses_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='hello')])],
+        stream=False,
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    tools = get_mock_responses_kwargs(mock_client)[0]['tools']
+    assert any(t.get('type') == 'function' and t.get('defer_loading') for t in tools)
+    assert any(t.get('type') == 'tool_search' for t in tools)
+
+
 async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
