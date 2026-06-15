@@ -17,6 +17,7 @@ from httpx import AsyncClient as HttpxAsyncClient, Timeout
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -3111,7 +3112,7 @@ async def test_google_vertexai_model_usage_limit_exceeded(
 
 
 async def test_google_vertexai_count_tokens_forwards_native_tools(
-    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Any
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
 ):  # pragma: lax no cover
     """Vertex `count_tokens` forwards native tools, mirroring the real request for an accurate count.
 
@@ -3126,9 +3127,9 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
         usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
     )
 
-    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
-    assert len(count_requests) == 1
-    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
+    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
     assert result.output == snapshot('The capital of France is Paris.')
 
 
