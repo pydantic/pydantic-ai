@@ -64,6 +64,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.mistral import (
         MistralModel,
+        MistralModelSettings,
         MistralStreamedResponse,
         _map_content,  # pyright: ignore[reportPrivateUsage]
     )
@@ -379,6 +380,26 @@ async def test_three_completions(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_completion_with_penalties(allow_model_requests: None):
+    captured: dict[str, Any] = {}
+
+    class CapturingMockMistralAI(MockMistralAI):
+        async def chat_completions_create(self, *args: Any, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return await super().chat_completions_create(*args, **kwargs)
+
+    mock_client = cast(
+        Mistral, CapturingMockMistralAI(completions=completion_message(MistralAssistantMessage(content='world')))
+    )
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model=model)
+
+    await agent.run('hello', model_settings=MistralModelSettings(presence_penalty=0.5, frequency_penalty=0.3))
+
+    assert captured['presence_penalty'] == 0.5
+    assert captured['frequency_penalty'] == 0.3
 
 
 #####################
