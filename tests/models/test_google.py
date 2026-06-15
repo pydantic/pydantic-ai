@@ -3110,6 +3110,28 @@ async def test_google_vertexai_model_usage_limit_exceeded(
         )
 
 
+async def test_google_vertexai_count_tokens_forwards_native_tools(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Any
+):  # pragma: lax no cover
+    """Vertex `count_tokens` forwards native tools, mirroring the real request for an accurate count.
+
+    Unlike `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects
+    them (#5704), the Vertex `countTokens` endpoint accepts them (#5781).
+    """
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebSearchTool())])
+
+    result = await agent.run(
+        'What is the capital of France?',
+        usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
+    )
+
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
+    assert len(count_requests) == 1
+    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])
+    assert result.output == snapshot('The capital of France is Paris.')
+
+
 def test_map_usage():
     assert (
         _metadata_as_usage(
