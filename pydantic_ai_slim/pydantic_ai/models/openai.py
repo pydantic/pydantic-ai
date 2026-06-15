@@ -1003,6 +1003,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
                 prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+                # Most providers only accept one of `max_completion_tokens` (OpenAI, incl. o-series) or
+                # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
+                max_tokens = model_settings.get('max_tokens', OMIT)
+                supports_max_completion_tokens = profile.openai_chat_supports_max_completion_tokens
                 return await self.client.chat.completions.create(
                     model=self.model_name,
                     messages=openai_messages,
@@ -1012,7 +1016,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     stream=stream,
                     stream_options=self._get_stream_options(model_settings) if stream else OMIT,
                     stop=model_settings.get('stop_sequences', OMIT),
-                    max_completion_tokens=model_settings.get('max_tokens', OMIT),
+                    max_completion_tokens=max_tokens if supports_max_completion_tokens else OMIT,
+                    max_tokens=OMIT if supports_max_completion_tokens else max_tokens,
                     timeout=model_settings.get('timeout', NOT_GIVEN),
                     response_format=response_format or OMIT,
                     seed=model_settings.get('seed', OMIT),
