@@ -140,22 +140,92 @@ for msg in result.all_messages():
             tool_returns = part.metadata['tool_returns'] # dict[str, ToolReturnPart]
 ```
 
+## Filesystem and OS access
+
+Sandboxed code runs with no access to the host's files, environment, or clock. Two parameters grant
+it -- reach for them when the agent's task genuinely needs the host.
+
+**`mount` -- share host directories.** Reach for this when the agent works with real files: analyzing
+a dataset you've dropped in a folder and writing a report back, editing a checkout, or processing a
+batch of documents. Sandboxed `pathlib` code reads and writes under the mounted path. (For
+environment variables or the clock, use `os_access` instead.)
+
+```python
+from pydantic_monty import MountDir
+
+from pydantic_ai_harness import CodeMode
+
+# The agent can read /work/data.csv and write /work/summary.md back to the host:
+CodeMode(mount=MountDir('/work', '/tmp/agent-workspace', mode='read-write'))
+```
+
+**`os_access` -- answer the sandbox's OS calls yourself.** Reach for this when the agent needs
+environment variables, the current date and time, or filesystem behavior you control. Hand it a
+ready-made OS implementation, or a callback that decides each call -- so you can inject just the
+secrets it needs, pin "now" for reproducible runs, or route file access to your own store.
+
+```python
+from pydantic_monty import NOT_HANDLED, OSAccess
+
+from pydantic_ai_harness import CodeMode
+
+# Give the agent a fixed set of environment values:
+CodeMode(os_access=OSAccess(environ={'API_BASE': 'https://api.example.com'}))
+
+
+# ...or intercept each call to decide what the agent may see:
+allowed_env = {'API_KEY': 'sk-...'}
+
+
+def my_os(fn, args, kwargs):
+    if fn == 'os.getenv':
+        # Answer the call: allow-listed keys resolve, every other key reads back
+        # as None -- absent, exactly like a real unset variable.
+        return allowed_env.get(args[0])
+    # Refuse everything else: NOT_HANDLED makes the call fail in the sandbox.
+    return NOT_HANDLED
+
+
+CodeMode(os_access=my_os)
+```
+
+Your callback's return value decides the call's fate, and the two outcomes are easy to confuse:
+
+- **Return any value** -- including `None`, `''`, or `0` -- and that becomes the result the sandbox
+  sees. `os.getenv` returning `None` looks exactly like a normal unset variable, so the agent's code
+  keeps running. This is how you *hide* something: answer with an empty value.
+- **Return `NOT_HANDLED`** and the call is treated as unsupported: it raises inside the sandbox and
+  the model gets a retry. This *refuses* a capability outright -- use it to block, not to say "no
+  value". Returning `NOT_HANDLED` for a key the agent reasonably expects will burn retries.
+
+Both expose the real host to model-written code, so grant only what the task needs. Access is fixed
+when the capability is built, so construct `CodeMode` per request to scope it.
+
+A `MountDir` defaults to copy-on-write `mode='overlay'`: the sandbox reads host files and sees its
+own writes, but those writes do **not** reach the host. Pass `mode='read-write'` to persist them, or
+`mode='read-only'` to forbid writes.
+
+> Monty-specific: these hooks use Monty's `AbstractOS`/`MountDir` types.
+
 ## Sandbox restrictions
 
 Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python subset. Key restrictions:
 
 - No class definitions
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`)
-- No wall-clock or timing primitives: `asyncio.sleep`, `datetime.datetime.now()`/`datetime.date.today()`, and the `time` module are unavailable
+- No wall-clock or timing primitives by default (`asyncio.sleep`, `datetime.now()`, `date.today()`, `time`) -- `datetime.now()`/`date.today()` become available with an `os_access` handler (above); `asyncio.sleep`/`time` never do
 - No `import *`
+- Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv`/`os.environ` need an `os_access` handler
 - Tools requiring approval or with deferred execution are excluded from the sandbox
 
 ## API
 
 ```python
 CodeMode(
-    tools: ToolSelector = 'all',   # 'all', list[str], callable, or dict
-    max_retries: int = 3,          # retries on sandbox execution errors
+    tools: ToolSelector = 'all',        # 'all', list[str], callable, or dict
+    max_retries: int = 3,               # retries on sandbox execution errors
+    os_access: CodeModeOS | None = None,   # host handler for env vars, clock, and file I/O
+    mount: CodeModeMount | None = None,    # host directories to share with the sandbox
 )
 ```
 
