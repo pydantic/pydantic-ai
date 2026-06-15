@@ -22,6 +22,7 @@ REPORT_MARKER = '<!-- ci-duration-report -->'
 REPORT_LABEL = 'trigger:ci-duration-report'
 BASELINE_MAIN_RUN_LIMIT = 30
 BASELINE_PR_RUN_LIMIT = 60
+BASELINE_COLLECTION_MAX_SECONDS = 90
 MIN_BASELINE_SAMPLES = 10
 WARNING_MIN_SECONDS = 60
 SLOW_THRESHOLD_MULTIPLIER = 1.25
@@ -31,6 +32,7 @@ VERY_SLOW_THRESHOLD_MULTIPLIER = 1.5
 
 JsonValue = None | bool | int | float | str | list['JsonValue'] | dict[str, 'JsonValue']
 JsonObject = dict[str, JsonValue]
+MetricAttributes = dict[str, bool | int | float | str]
 
 
 @dataclass(frozen=True)
@@ -260,23 +262,36 @@ def find_latest_ci_run(client: GitHubClient, head_sha: str) -> JsonObject | None
 
 
 def collect_baselines(client: GitHubClient, current_head_sha: str) -> dict[str, Baseline]:
-    main_runs = client.request_paginated(
-        f'actions/workflows/{CI_WORKFLOW_FILE}/runs?branch=main&event=push&status=success',
-        max_items=BASELINE_MAIN_RUN_LIMIT,
-    )
-    pr_runs = client.request_paginated(
-        f'actions/workflows/{CI_WORKFLOW_FILE}/runs?event=pull_request&status=success',
-        max_items=BASELINE_PR_RUN_LIMIT,
-    )
+    try:
+        main_runs = client.request_paginated(
+            f'actions/workflows/{CI_WORKFLOW_FILE}/runs?branch=main&event=push&status=success',
+            max_items=BASELINE_MAIN_RUN_LIMIT,
+        )
+        pr_runs = client.request_paginated(
+            f'actions/workflows/{CI_WORKFLOW_FILE}/runs?event=pull_request&status=success',
+            max_items=BASELINE_PR_RUN_LIMIT,
+        )
+    except (TimeoutError, urllib.error.URLError) as exc:
+        print(f'Unable to collect baseline CI runs: {exc}', file=sys.stderr)
+        return {}
+
     durations: dict[str, list[float]] = {}
     seen_run_ids: set[int] = set()
+    baseline_deadline = time.monotonic() + BASELINE_COLLECTION_MAX_SECONDS
     for run in [*main_runs, *pr_runs]:
+        if time.monotonic() >= baseline_deadline:
+            print('Baseline collection time budget exhausted; using partial baseline samples', file=sys.stderr)
+            break
         run_id = _expect_int(run.get('id'), 'baseline run id')
         if run_id in seen_run_ids or run.get('head_sha') == current_head_sha:
             continue
         seen_run_ids.add(run_id)
         run_attempt = _expect_int(run.get('run_attempt'), 'baseline run_attempt')
-        jobs = client.request_paginated(f'actions/runs/{run_id}/attempts/{run_attempt}/jobs')
+        try:
+            jobs = client.request_paginated(f'actions/runs/{run_id}/attempts/{run_attempt}/jobs')
+        except (TimeoutError, urllib.error.URLError) as exc:
+            print(f'Unable to collect baseline jobs for run {run_id}: {exc}', file=sys.stderr)
+            continue
         for job_object in jobs:
             job = normalize_job(job_object)
             if job.conclusion == 'success' and job.duration_seconds is not None and is_tracked_test_job(job):
@@ -439,7 +454,7 @@ def parse_job_family(job_name: str) -> str:
 
 
 def is_tracked_test_job(job: JobRecord) -> bool:
-    return job.job_family in {'test', 'test-examples'}
+    return job.job_family == 'test'
 
 
 def parse_runner_class(runner_group_name: str | None, runner_name: str | None, labels: list[JsonValue] | None) -> str:
@@ -623,7 +638,33 @@ def emit_logfire(record: JsonObject) -> None:
     )
     workflow = _expect_object(record['workflow_run'], 'workflow_run')
     jobs = _expect_list(record['jobs'], 'jobs')
-    logfire.info(
+    tracked_test_duration_seconds = sum(
+        _expect_optional_float(_expect_object(job, 'job').get('duration_seconds'), 'duration_seconds') or 0
+        for job in jobs
+    )
+    test_run_duration_metric = logfire.metric_histogram(
+        'ci.test_run.tracked_duration',
+        unit='s',
+        description='Total duration of tracked CI test jobs in one workflow run.',
+    )
+    test_job_duration_metric = logfire.metric_histogram(
+        'ci.test_job.duration',
+        unit='s',
+        description='Duration of one tracked CI test matrix job.',
+    )
+    test_run_duration_metric.record(
+        tracked_test_duration_seconds,
+        metric_attributes(
+            {
+                'repo': workflow.get('repo'),
+                'workflow_name': workflow.get('workflow_name'),
+                'event': workflow.get('event'),
+                'base_branch': workflow.get('base_branch'),
+                'conclusion': workflow.get('conclusion'),
+            }
+        ),
+    )
+    with logfire.span(
         'ci.duration.test_run',
         _tags=['ci-duration'],
         schema_version=SCHEMA_VERSION,
@@ -639,37 +680,53 @@ def emit_logfire(record: JsonObject) -> None:
         pr_numbers=workflow.get('pr_numbers'),
         duration_seconds=workflow.get('duration_seconds'),
         tracked_test_jobs=len(jobs),
-        tracked_test_duration_seconds=sum(
-            _expect_optional_float(_expect_object(job, 'job').get('duration_seconds'), 'duration_seconds') or 0
-            for job in jobs
-        ),
+        tracked_test_duration_seconds=tracked_test_duration_seconds,
         html_url=workflow.get('html_url'),
-    )
-    for job in jobs:
-        job_object = _expect_object(job, 'job')
-        logfire.info(
-            'ci.duration.test_job',
-            _tags=['ci-duration'],
-            schema_version=SCHEMA_VERSION,
-            repo=workflow.get('repo'),
-            run_id=workflow.get('run_id'),
-            run_attempt=workflow.get('run_attempt'),
-            event=workflow.get('event'),
-            head_branch=workflow.get('head_branch'),
-            base_branch=workflow.get('base_branch'),
-            head_sha=workflow.get('head_sha'),
-            pr_numbers=workflow.get('pr_numbers'),
-            job_id=job_object.get('job_id'),
-            job_name=job_object.get('raw_name'),
-            job_family=job_object.get('job_family'),
-            job_signature=job_object.get('job_signature'),
-            matrix_python=job_object.get('matrix_python'),
-            matrix_extra=job_object.get('matrix_extra'),
-            runner_class=job_object.get('runner_class'),
-            conclusion=job_object.get('conclusion'),
-            duration_seconds=job_object.get('duration_seconds'),
-            html_url=job_object.get('html_url'),
-        )
+    ):
+        for job in jobs:
+            job_object = _expect_object(job, 'job')
+            duration_seconds = _expect_optional_float(job_object.get('duration_seconds'), 'duration_seconds')
+            if duration_seconds is not None:
+                test_job_duration_metric.record(
+                    duration_seconds,
+                    metric_attributes(
+                        {
+                            'repo': workflow.get('repo'),
+                            'workflow_name': workflow.get('workflow_name'),
+                            'event': workflow.get('event'),
+                            'base_branch': workflow.get('base_branch'),
+                            'job_name': job_object.get('raw_name'),
+                            'job_signature': job_object.get('job_signature'),
+                            'matrix_python': job_object.get('matrix_python'),
+                            'matrix_extra': job_object.get('matrix_extra'),
+                            'runner_class': job_object.get('runner_class'),
+                            'conclusion': job_object.get('conclusion'),
+                        }
+                    ),
+                )
+            logfire.info(
+                'ci.duration.test_job',
+                _tags=['ci-duration'],
+                schema_version=SCHEMA_VERSION,
+                repo=workflow.get('repo'),
+                run_id=workflow.get('run_id'),
+                run_attempt=workflow.get('run_attempt'),
+                event=workflow.get('event'),
+                head_branch=workflow.get('head_branch'),
+                base_branch=workflow.get('base_branch'),
+                head_sha=workflow.get('head_sha'),
+                pr_numbers=workflow.get('pr_numbers'),
+                job_id=job_object.get('job_id'),
+                job_name=job_object.get('raw_name'),
+                job_family=job_object.get('job_family'),
+                job_signature=job_object.get('job_signature'),
+                matrix_python=job_object.get('matrix_python'),
+                matrix_extra=job_object.get('matrix_extra'),
+                runner_class=job_object.get('runner_class'),
+                conclusion=job_object.get('conclusion'),
+                duration_seconds=job_object.get('duration_seconds'),
+                html_url=job_object.get('html_url'),
+            )
     logfire.force_flush()
 
 
@@ -681,6 +738,10 @@ def _github_client_from_env() -> GitHubClient:
     if not token:
         raise SystemExit('GITHUB_TOKEN is required')
     return GitHubClient(repo, token)
+
+
+def metric_attributes(attributes: JsonObject) -> MetricAttributes:
+    return {key: value for key, value in attributes.items() if isinstance(value, bool | int | float | str)}
 
 
 def _ssl_context() -> ssl.SSLContext | None:
