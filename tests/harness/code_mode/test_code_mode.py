@@ -60,6 +60,8 @@ def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
         prompt=None,
         messages=[],
         run_step=run_step,
+        # A live queue so `ctx.enqueue` works in tests; a real run wires this to the run's queue.
+        pending_messages=[],
     )
 
 
@@ -1856,6 +1858,439 @@ class TestToolSearchIntegration:
         assert ordering is not None
         assert ordering.position == 'outermost'
         assert ToolSearch in ordering.wraps
+
+
+class TestDynamicCatalog:
+    """`CodeMode(dynamic_catalog=True)`: move the catalog to instructions + announce discoveries.
+
+    Two surfaces:
+
+    1. **Catalog placement** — `CodeModeToolset` strips signatures from `run_code.description`
+       and re-exposes them as a dynamic `InstructionPart` via `get_instructions`.
+    2. **Discovery announcements** — `CodeMode.after_tool_execute` (local search) and
+       `after_model_request` (native search) enqueue a `SystemPromptPart` so the model
+       learns that freshly-discovered tools are callable.
+    """
+
+    # -- catalog placement -------------------------------------------------
+
+    async def test_description_drops_signatures_keeps_base_prose(self) -> None:
+        toolset = CodeModeToolset(wrapped=_build_function_toolset(add), tool_selector='all', dynamic_catalog=True)
+        tools = await toolset.get_tools(build_run_context(None))
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        # The signature is gone from the description...
+        assert 'async def add' not in description
+        # ...but the static base prose remains.
+        assert 'sandboxed environment' in description
+
+    async def test_catalog_surfaces_as_dynamic_instruction_part(self) -> None:
+        toolset = CodeModeToolset(wrapped=_build_function_toolset(add), tool_selector='all', dynamic_catalog=True)
+        ctx = build_run_context(None)
+        await toolset.get_tools(ctx)
+        instructions = await toolset.get_instructions(ctx)
+
+        from pydantic_ai.messages import InstructionPart
+
+        # No upstream instructions → the catalog is the only InstructionPart returned.
+        assert isinstance(instructions, InstructionPart)
+        assert 'async def add' in instructions.content
+        # `dynamic=True` so Anthropic/Bedrock place the cache breakpoint before this block.
+        assert instructions.dynamic is True
+
+    async def test_get_instructions_appends_to_upstream_string(self) -> None:
+        from pydantic_ai.messages import InstructionPart
+
+        class _UpstreamToolset(FunctionToolset[None]):
+            async def get_instructions(self, ctx: RunContext[None]) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
+                return 'wrapped instructions'
+
+        toolset = CodeModeToolset(
+            wrapped=_UpstreamToolset(tools=[Tool(add)]), tool_selector='all', dynamic_catalog=True
+        )
+        ctx = build_run_context(None)
+        await toolset.get_tools(ctx)
+        instructions = await toolset.get_instructions(ctx)
+
+        assert isinstance(instructions, list)
+        assert instructions[0] == 'wrapped instructions'
+        assert isinstance(instructions[1], InstructionPart)
+        assert 'async def add' in instructions[1].content
+
+    async def test_get_instructions_appends_to_upstream_sequence(self) -> None:
+        from pydantic_ai.messages import InstructionPart
+
+        class _UpstreamToolset(FunctionToolset[None]):
+            async def get_instructions(  # pyright: ignore[reportIncompatibleMethodOverride]
+                self, ctx: RunContext[None]
+            ) -> list[str | InstructionPart]:
+                return ['a', InstructionPart(content='b')]
+
+        toolset = CodeModeToolset(
+            wrapped=_UpstreamToolset(tools=[Tool(add)]), tool_selector='all', dynamic_catalog=True
+        )
+        ctx = build_run_context(None)
+        await toolset.get_tools(ctx)
+        instructions = await toolset.get_instructions(ctx)
+
+        assert isinstance(instructions, list)
+        assert instructions[0] == 'a'
+        assert isinstance(instructions[1], InstructionPart) and instructions[1].content == 'b'
+        # The catalog is appended at the end.
+        assert isinstance(instructions[2], InstructionPart) and 'async def add' in instructions[2].content
+
+    async def test_default_keeps_catalog_in_description_and_no_instructions(self) -> None:
+        """With `dynamic_catalog=False` (default) the catalog stays in the description."""
+        toolset = CodeModeToolset(wrapped=_build_function_toolset(add), tool_selector='all')
+        ctx = build_run_context(None)
+        tools = await toolset.get_tools(ctx)
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def add' in description
+        # Nothing stashed → defer to upstream (None for FunctionToolset).
+        assert await toolset.get_instructions(ctx) is None
+
+    async def test_empty_catalog_emits_no_instruction(self) -> None:
+        """No sandboxed tools → empty catalog → defer to upstream instructions."""
+        toolset = CodeModeToolset(wrapped=_build_function_toolset(), tool_selector='all', dynamic_catalog=True)
+        ctx = build_run_context(None)
+        tools = await toolset.get_tools(ctx)
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'sandboxed environment' in description
+        assert await toolset.get_instructions(ctx) is None
+
+    async def test_search_addendum_stays_in_description(self) -> None:
+        """The (cache-stable) search addendum stays in `run_code.description` even in dynamic mode."""
+        toolset = CodeModeToolset(
+            wrapped=_StaticToolset([_search_tool_def()]), tool_selector='all', dynamic_catalog=True
+        )
+        ctx = build_run_context(None)
+        tools = await toolset.get_tools(ctx)
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert _TOOL_SEARCH_ADDENDUM.strip() in description
+
+    async def test_for_run_step_preserves_catalog_stash(self) -> None:
+        """A per-step rebuild must carry `_last_catalog` so instructions stay populated."""
+
+        class _ChangingToolset(FunctionToolset[None]):
+            async def for_run_step(self, ctx: RunContext[None]) -> AbstractToolset[None]:
+                # Force `CodeModeToolset.for_run_step` down the `new_wrapped is not self.wrapped`
+                # branch by returning a distinct (but equivalent) wrapped instance.
+                return type(self)(tools=list(self.tools.values()))
+
+        toolset = CodeModeToolset(
+            wrapped=_ChangingToolset(tools=[Tool(add)]), tool_selector='all', dynamic_catalog=True
+        )
+        ctx = build_run_context(None)
+        await toolset.get_tools(ctx)
+        stashed = toolset._last_catalog  # pyright: ignore[reportPrivateUsage]
+        assert stashed  # populated
+
+        new_toolset = await toolset.for_run_step(ctx)
+        assert isinstance(new_toolset, CodeModeToolset)
+        assert new_toolset is not toolset
+        assert new_toolset._last_catalog == stashed  # pyright: ignore[reportPrivateUsage]
+
+    # -- capability per-run state -----------------------------------------
+
+    async def test_for_run_returns_fresh_state_when_enabled(self) -> None:
+        cap = CodeMode[None](dynamic_catalog=True)
+        cap._announced_tools.add('foo')  # pyright: ignore[reportPrivateUsage]
+        fresh = await cap.for_run(build_run_context(None))
+        assert fresh is not cap
+        assert fresh._announced_tools == set()  # pyright: ignore[reportPrivateUsage]
+
+    async def test_for_run_returns_self_when_disabled(self) -> None:
+        cap = CodeMode[None]()
+        assert await cap.for_run(build_run_context(None)) is cap
+
+    # -- discovery announcement: local search path ------------------------
+
+    async def test_announce_on_local_search_return(self) -> None:
+        from pydantic_ai.messages import ModelRequest, SystemPromptPart, ToolCallPart
+
+        cap = CodeMode[None](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def_with_kind(),
+            args={},
+            result={'discovered_tools': [{'name': 'weather', 'description': '...'}]},
+        )
+
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
+        [request] = ctx.pending_messages[0].messages
+        assert isinstance(request, ModelRequest)
+        [part] = request.parts
+        assert isinstance(part, SystemPromptPart)
+        assert '`weather`' in part.content
+
+    async def test_no_announce_when_disabled(self) -> None:
+        """With `dynamic_catalog=False`, the hooks are inert even on a real search return."""
+        from pydantic_ai.messages import ToolCallPart
+
+        cap = CodeMode[None]()
+        ctx = build_run_context(None)
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def_with_kind(),
+            args={},
+            result={'discovered_tools': [{'name': 'weather'}]},
+        )
+        assert ctx.pending_messages == []
+
+    async def test_announce_skipped_when_no_discoveries(self) -> None:
+        from pydantic_ai.messages import ToolCallPart
+
+        cap = CodeMode[None](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def_with_kind(),
+            args={},
+            result={'discovered_tools': []},
+        )
+        assert ctx.pending_messages == []
+
+    async def test_no_announce_for_non_search_tool(self) -> None:
+        """`tool_kind != 'tool-search'` short-circuits before reading the result."""
+        from pydantic_ai.messages import ToolCallPart
+
+        cap = CodeMode[None](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='add', args={}, tool_call_id='c1'),
+            tool_def=ToolDefinition(name='add', description='', parameters_json_schema={}),
+            args={},
+            # Even a `discovered_tools`-shaped result doesn't trigger an announcement:
+            # the `tool_kind` guard is the source of truth.
+            result={'discovered_tools': [{'name': 'spurious'}]},
+        )
+        assert ctx.pending_messages == []
+
+    async def test_no_duplicate_announcement_for_same_tool(self) -> None:
+        from pydantic_ai.messages import ToolCallPart
+
+        cap = CodeMode[None](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        result = {'discovered_tools': [{'name': 'weather'}]}
+        for cid in ('c1', 'c2'):
+            await cap.after_tool_execute(
+                ctx,
+                call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id=cid),
+                tool_def=_search_tool_def_with_kind(),
+                args={},
+                result=result,
+            )
+        # Only the first discovery of `weather` announces.
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
+
+    # -- discovery announcement: native search path -----------------------
+
+    async def test_announce_on_native_search_return_part(self) -> None:
+        from pydantic_ai.messages import ModelRequest, ModelResponse, NativeToolSearchReturnPart, SystemPromptPart
+        from pydantic_ai.usage import RequestUsage
+
+        cap = CodeMode[None](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        response = ModelResponse(
+            parts=[
+                NativeToolSearchReturnPart(
+                    tool_name='tool_search',
+                    content={'discovered_tools': [{'name': 'weather', 'description': 'Get the weather.'}]},
+                    tool_call_id='c1',
+                )
+            ],
+            usage=RequestUsage(input_tokens=1, output_tokens=1),
+        )
+        await cap.after_model_request(ctx, request_context=None, response=response)  # pyright: ignore[reportArgumentType]
+
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
+        [request] = ctx.pending_messages[0].messages
+        assert isinstance(request, ModelRequest)
+        [part] = request.parts
+        assert isinstance(part, SystemPromptPart) and '`weather`' in part.content
+
+    async def test_no_announce_for_unrelated_response_parts(self) -> None:
+        from pydantic_ai.messages import ModelResponse, NativeToolReturnPart, TextPart
+        from pydantic_ai.usage import RequestUsage
+
+        cap = CodeMode[None](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        response = ModelResponse(
+            parts=[
+                TextPart('hi'),
+                NativeToolReturnPart(tool_name='whatever', content='ignored', tool_call_id='c1'),
+            ],
+            usage=RequestUsage(input_tokens=1, output_tokens=1),
+        )
+        await cap.after_model_request(ctx, request_context=None, response=response)  # pyright: ignore[reportArgumentType]
+        assert ctx.pending_messages == []
+
+    # -- `_extract_discovered_names` edge cases ---------------------------
+
+    @pytest.mark.parametrize(
+        ('content', 'expected'),
+        [
+            ('not a dict', []),
+            ({}, []),
+            ({'discovered_tools': 'not a list'}, []),
+            ({'discovered_tools': [{'name': 'a'}, 'not a dict', {'no_name': 1}, {'name': 42}]}, ['a']),
+        ],
+    )
+    def test_extract_discovered_names_handles_malformed(self, content: Any, expected: list[str]) -> None:
+        from pydantic_ai_harness.code_mode._capability import (
+            _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        assert _extract_discovered_names(content) == expected
+
+    # -- end-to-end via `Agent.run` ---------------------------------------
+
+    async def test_agent_run_announces_discovery_and_lists_catalog_in_instructions(self) -> None:
+        """`Agent.run` end-to-end: catalog in instructions, discovery enqueues an announcement.
+
+        Two-step run:
+          1. Model calls `search_tools(['weather'])` (the discovery surface).
+          2. After the local tool-search returns, `CodeMode.after_tool_execute` enqueues a
+             `SystemPromptPart`; the pending-message queue drains it into the next request.
+             On the wire it renders as an (XML-wrapped) `UserPromptPart` — mid-conversation
+             system content is no longer hoisted (pydantic/pydantic-ai#5509) — so the model
+             sees the announcement inline and replies.
+        """
+        from pydantic_ai.capabilities import ToolSearch
+        from pydantic_ai.messages import (
+            ModelMessage,
+            ModelRequest,
+            ModelResponse,
+            SystemPromptPart,
+            TextPart,
+            ToolCallPart,
+            ToolReturnPart,
+            ToolSearchReturnPart,
+            UserPromptPart,
+        )
+        from pydantic_ai.models.function import AgentInfo, FunctionModel
+        from pydantic_ai.usage import RequestUsage
+
+        captured_prompt_texts: list[list[str]] = []
+        captured_descriptions: list[str] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            run_code_def = next(td for td in info.function_tools if td.name == 'run_code')
+            assert run_code_def.description is not None
+            captured_descriptions.append(run_code_def.description)
+
+            last_request = messages[-1]
+            assert isinstance(last_request, ModelRequest)
+            # The announcement may arrive as a `SystemPromptPart` or, after wire-rendering of
+            # mid-conversation system content, an (XML-wrapped) `UserPromptPart` — capture both.
+            captured_prompt_texts.append(
+                [
+                    p.content
+                    for p in last_request.parts
+                    if isinstance(p, (SystemPromptPart, UserPromptPart)) and isinstance(p.content, str)
+                ]
+            )
+
+            if len(captured_descriptions) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['weather']}, tool_call_id='c1')],
+                    usage=RequestUsage(input_tokens=1, output_tokens=1),
+                )
+            return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=1, output_tokens=1))
+
+        def weather(city: str) -> str:
+            """Get the weather."""
+            return f'sunny in {city}'  # pragma: no cover — only the signature matters.
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool(weather, defer_loading=True)],
+            capabilities=[ToolSearch[None](), CodeMode[None](dynamic_catalog=True)],
+        )
+        result = await agent.run('please find a weather tool')
+
+        # `run_code.description` stayed static across both turns — no signature in the tool-defs block.
+        assert all('async def' not in d for d in captured_descriptions)
+        # The discovery announcement landed in turn 2's request (system- or user-framed).
+        assert len(captured_prompt_texts) >= 2
+        assert 'weather' in '\n'.join(captured_prompt_texts[1])
+        # The local `ToolSearchReturnPart` is in history.
+        history = result.all_messages()
+        assert any(
+            isinstance(p, ToolSearchReturnPart) for msg in history if isinstance(msg, ModelRequest) for p in msg.parts
+        )
+        assert any(
+            isinstance(p, ToolReturnPart) and p.tool_name == 'search_tools'
+            for msg in history
+            if isinstance(msg, ModelRequest)
+            for p in msg.parts
+        )
+        assert result.output == 'done'
+
+    async def test_run_code_calls_eager_tool_with_catalog_in_instructions(self) -> None:
+        """An eager tool whose signature lives in instructions is still callable via `run_code`."""
+        from pydantic_ai.messages import (
+            ModelMessage,
+            ModelRequest,
+            ModelResponse,
+            TextPart,
+            ToolCallPart,
+            ToolReturnPart,
+        )
+        from pydantic_ai.models.function import AgentInfo, FunctionModel
+        from pydantic_ai.usage import RequestUsage
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            run_code_def = next(td for td in info.function_tools if td.name == 'run_code')
+            assert run_code_def.description is not None
+            assert 'async def add' not in run_code_def.description
+            if not any(isinstance(msg, ModelResponse) for msg in messages):
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='run_code',
+                            # CodeMode renders all tools as `async def` by default — use `await`.
+                            args={'code': 'result = await add(a=3, b=4)\nresult'},
+                            tool_call_id='c1',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=1, output_tokens=1),
+                )
+            last_request = messages[-1]
+            assert isinstance(last_request, ModelRequest)
+            run_code_return = next(p for p in last_request.parts if isinstance(p, ToolReturnPart))
+            return ModelResponse(
+                parts=[TextPart(f'got {run_code_return.content}')],
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
+            )
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool(add)],
+            capabilities=[CodeMode[None](dynamic_catalog=True)],
+        )
+        result = await agent.run('add 3 and 4 via run_code')
+        assert result.output == 'got 7'
+
+
+def _search_tool_def_with_kind(name: str = 'search_tools') -> ToolDefinition:
+    """A `search_tools` ToolDefinition carrying `tool_kind='tool-search'` (the announcement trigger)."""
+    return ToolDefinition(name=name, description='', parameters_json_schema={}, tool_kind='tool-search')
 
 
 def _unused_os_callback(fn: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
