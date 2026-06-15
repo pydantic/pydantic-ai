@@ -5716,11 +5716,7 @@ async def test_xai_foreign_thinking_part_dropped_from_history(allow_model_reques
     messages = kwargs_list[0]['messages']
 
     # The TextPart from the prior response must still be present.
-    assistant_texts = [
-        m['content'][0]['text']
-        for m in messages
-        if m.get('role') == 'ROLE_ASSISTANT'
-    ]
+    assistant_texts = [m['content'][0]['text'] for m in messages if m.get('role') == 'ROLE_ASSISTANT']
     assert 'First answer' in assistant_texts
 
     # No message must contain the foreign reasoning content.
