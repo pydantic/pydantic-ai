@@ -21,6 +21,7 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.usage import RunUsage
 
 from pydantic_ai_harness.experimental.compaction import (
+    ClampOversizedMessages,
     ClearToolResults,
     DeduplicateFileReads,
     LimitWarner,
@@ -28,6 +29,10 @@ from pydantic_ai_harness.experimental.compaction import (
     SummarizingCompaction,
     TieredCompaction,
     estimate_token_count,
+)
+from pydantic_ai_harness.experimental.compaction._clamp_oversized_messages import (
+    _CLAMP_ARGS_KEY,
+    _CLAMP_MARKER,
 )
 from pydantic_ai_harness.experimental.compaction._shared import (
     _is_safe_cutoff,
@@ -1796,6 +1801,159 @@ class TestSummarizingCompactionModel:
             assert heading in _DEFAULT_SUMMARY_PROMPT
 
 
+class TestClampOversizedMessages:
+    def test_validation_no_trigger(self):
+        with pytest.raises(ValueError, match='max_part_tokens or max_part_chars'):
+            ClampOversizedMessages()
+
+    def test_validation_negative_max_part_tokens(self):
+        with pytest.raises(ValueError, match='max_part_tokens must be positive'):
+            ClampOversizedMessages(max_part_tokens=0)
+
+    def test_validation_negative_max_part_chars(self):
+        with pytest.raises(ValueError, match='max_part_chars must be positive'):
+            ClampOversizedMessages(max_part_chars=0)
+
+    def test_validation_negative_keep_head(self):
+        with pytest.raises(ValueError, match='keep_head_chars must be non-negative'):
+            ClampOversizedMessages(max_part_chars=10, keep_head_chars=-1)
+
+    def test_validation_negative_keep_tail(self):
+        with pytest.raises(ValueError, match='keep_tail_chars must be non-negative'):
+            ClampOversizedMessages(max_part_chars=10, keep_tail_chars=-1)
+
+    @pytest.mark.anyio
+    async def test_clamps_oversized_response_text(self):
+        text = 'H' * 50 + ' ' * 5_000 + 'T' * 50
+        cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=50, keep_tail_chars=50)
+        messages: list[ModelMessage] = [_assistant(text)]
+        result = await cap.compact(messages, _make_ctx())
+
+        clamped = result[0]
+        assert isinstance(clamped, ModelResponse)
+        part = clamped.parts[0]
+        assert isinstance(part, TextPart)
+        assert part.content.startswith('H' * 50)
+        assert part.content.endswith('T' * 50)
+        assert '[clamped: removed' in part.content
+        assert len(part.content) < len(text)
+
+    @pytest.mark.anyio
+    async def test_token_trigger_uses_heuristic(self):
+        text = 'x' * 4_000  # ~1000 tokens at the 4-chars heuristic.
+        cap = ClampOversizedMessages(max_part_tokens=100, keep_head_chars=20, keep_tail_chars=20)
+        result = await cap.compact([_assistant(text)], _make_ctx())
+        part = result[0].parts[0]
+        assert isinstance(part, TextPart)
+        assert '[clamped: removed' in part.content
+
+    @pytest.mark.anyio
+    async def test_token_trigger_uses_tokenizer(self):
+        text = 'word ' * 1_000
+        cap = ClampOversizedMessages(
+            max_part_tokens=100,
+            keep_head_chars=20,
+            keep_tail_chars=20,
+            tokenizer=lambda s: len(s.split()),
+        )
+        result = await cap.compact([_assistant(text)], _make_ctx())
+        part = result[0].parts[0]
+        assert isinstance(part, TextPart)
+        assert '[clamped: removed' in part.content
+
+    @pytest.mark.anyio
+    async def test_small_text_untouched(self):
+        cap = ClampOversizedMessages(max_part_chars=100_000, max_part_tokens=100_000)
+        messages: list[ModelMessage] = [_assistant('short')]
+        result = await cap.compact(messages, _make_ctx())
+        # Nothing oversized -> the message object is returned unchanged.
+        assert result[0] is messages[0]
+
+    @pytest.mark.anyio
+    async def test_keep_tail_zero(self):
+        text = 'A' * 5_000
+        cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=100, keep_tail_chars=0)
+        result = await cap.compact([_assistant(text)], _make_ctx())
+        part = result[0].parts[0]
+        assert isinstance(part, TextPart)
+        assert part.content.startswith('A' * 100)
+        assert part.content.endswith(']\n')
+
+    @pytest.mark.anyio
+    async def test_clamp_skipped_when_not_smaller(self):
+        # Oversized by the token trigger, but keep slices exceed the text length, so
+        # clamping would not shrink it -- leave it untouched.
+        text = 'y' * 100
+        cap = ClampOversizedMessages(max_part_tokens=1, keep_head_chars=2_000, keep_tail_chars=2_000)
+        messages: list[ModelMessage] = [_assistant(text)]
+        result = await cap.compact(messages, _make_ctx())
+        assert result[0] is messages[0]
+
+    @pytest.mark.anyio
+    async def test_clamps_oversized_tool_call_args(self):
+        big = 'p' * 5_000
+        call = ModelResponse(parts=[ToolCallPart(tool_name='write_plan', args=big, tool_call_id='c1')])
+        cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=50, keep_tail_chars=50)
+        result = await cap.compact([call], _make_ctx())
+
+        part = result[0].parts[0]
+        assert isinstance(part, ToolCallPart)
+        assert isinstance(part.args, dict)
+        assert _CLAMP_ARGS_KEY in part.args
+        assert '[clamped: removed' in part.args[_CLAMP_ARGS_KEY]
+        assert part.tool_call_id == 'c1'
+
+    @pytest.mark.anyio
+    async def test_small_tool_call_args_untouched(self):
+        call = ModelResponse(parts=[ToolCallPart(tool_name='t', args='{"a": 1}', tool_call_id='c1')])
+        cap = ClampOversizedMessages(max_part_chars=1_000)
+        messages: list[ModelMessage] = [call]
+        result = await cap.compact(messages, _make_ctx())
+        assert result[0] is messages[0]
+
+    @pytest.mark.anyio
+    async def test_tool_call_args_not_clamped_when_disabled(self):
+        big = 'p' * 5_000
+        call = ModelResponse(parts=[ToolCallPart(tool_name='write_plan', args=big, tool_call_id='c1')])
+        cap = ClampOversizedMessages(max_part_chars=1_000, clamp_tool_call_args=False)
+        messages: list[ModelMessage] = [call]
+        result = await cap.compact(messages, _make_ctx())
+        assert result[0] is messages[0]
+
+    @pytest.mark.anyio
+    async def test_request_messages_and_other_parts_untouched(self):
+        from pydantic_ai.messages import ThinkingPart
+
+        big_user = _user('u' * 5_000)
+        mixed = ModelResponse(parts=[ThinkingPart(content='t' * 5_000), TextPart(content='z' * 5_000)])
+        cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=50, keep_tail_chars=50)
+        result = await cap.compact([big_user, mixed], _make_ctx())
+
+        # Request-side message is left as-is (same object).
+        assert result[0] is big_user
+        # The thinking part is untouched; only the text part is clamped.
+        out_mixed = result[1]
+        assert isinstance(out_mixed, ModelResponse)
+        thinking, text = out_mixed.parts
+        assert isinstance(thinking, ThinkingPart)
+        assert thinking.content == 't' * 5_000
+        assert isinstance(text, TextPart)
+        assert '[clamped: removed' in text.content
+
+    @pytest.mark.anyio
+    async def test_before_model_request(self):
+        text = 'q' * 5_000
+        cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=50, keep_tail_chars=50)
+        rc = _make_request_context([_assistant(text)])
+        result = await cap.before_model_request(_make_ctx(), rc)
+        part = result.messages[0].parts[0]
+        assert isinstance(part, TextPart)
+        assert '[clamped: removed' in part.content
+
+    def test_marker_format(self):
+        assert _CLAMP_MARKER.format(removed=10, original=20) == '\n[clamped: removed 10 of 20 characters]\n'
+
+
 # ---------------------------------------------------------------------------
 # Public path — Agent(capabilities=[...])
 # ---------------------------------------------------------------------------
@@ -1816,6 +1974,18 @@ class TestPublicPath:
         agent = Agent(
             TestModel(),
             capabilities=[ClearToolResults(max_tokens=1, keep_pairs=0)],
+        )
+        result = await agent.run('hello')
+        assert result.output is not None
+
+    @pytest.mark.anyio
+    async def test_clamp_oversized_wired_into_agent(self):
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+
+        agent = Agent(
+            TestModel(),
+            capabilities=[ClampOversizedMessages(max_part_chars=1)],
         )
         result = await agent.run('hello')
         assert result.output is not None

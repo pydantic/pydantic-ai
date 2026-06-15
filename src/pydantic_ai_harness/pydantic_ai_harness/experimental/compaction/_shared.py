@@ -69,6 +69,16 @@ def _user_prompt_text_for_counting(part: UserPromptPart) -> str:
     return ''.join(texts)
 
 
+def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
+    """Approximate the token count of a single string.
+
+    Uses *tokenizer* when given, otherwise the ~4 characters-per-token heuristic.
+    """
+    if tokenizer is not None:
+        return tokenizer(text)
+    return len(text) // _CHARS_PER_TOKEN
+
+
 def estimate_token_count(
     messages: Sequence[ModelMessage],
     tokenizer: Callable[[str], int] | None = None,
