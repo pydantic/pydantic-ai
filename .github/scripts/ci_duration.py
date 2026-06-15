@@ -243,7 +243,11 @@ def build_pr_report(client: GitHubClient, pr_number: int, head_sha: str, poll_se
 def wait_for_completed_ci_run(client: GitHubClient, head_sha: str, poll_seconds: int) -> JsonObject | None:
     deadline = time.monotonic() + poll_seconds
     while True:
-        run = find_latest_ci_run(client, head_sha)
+        try:
+            run = find_latest_ci_run(client, head_sha)
+        except (TimeoutError, urllib.error.URLError) as exc:
+            print(f'Unable to look up CI run for {head_sha}: {exc}', file=sys.stderr)
+            run = None
         if run is not None and run.get('status') == 'completed':
             return run
         if poll_seconds <= 0 or time.monotonic() >= deadline:

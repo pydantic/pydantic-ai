@@ -109,6 +109,17 @@ def test_render_report_uses_sticky_marker_and_threshold_context():
     assert 'trigger:ci-duration-report' in report
 
 
+def test_wait_for_completed_ci_run_treats_lookup_error_as_missing_run():
+    class StubGitHubClient(ci_duration.GitHubClient):
+        def request_paginated(self, path: str, *, max_items: int | None = None) -> list[ci_duration.JsonObject]:
+            raise urllib.error.URLError('timed out')
+
+    assert (
+        ci_duration.wait_for_completed_ci_run(StubGitHubClient('pydantic/pydantic-ai', 'token'), 'current-sha', 0)
+        is None
+    )
+
+
 def test_collect_baselines_skips_unavailable_historical_run():
     class StubGitHubClient(ci_duration.GitHubClient):
         def request_paginated(self, path: str, *, max_items: int | None = None) -> list[ci_duration.JsonObject]:
