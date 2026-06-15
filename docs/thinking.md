@@ -249,32 +249,20 @@ Groq supports different formats to receive thinking parts:
 - `"hidden"`: The thinking part is not included in the text content.
 - `"parsed"`: The thinking part has its own structured part in the response which is converted into a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] object.
 
-To enable thinking, use the [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] [model setting](agent.md#model-run-settings):
+Two composable [model settings](agent.md#model-run-settings) control thinking: [`GroqModelSettings.groq_reasoning_format`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_format] selects how thinking parts are returned (the formats above), and [`GroqModelSettings.groq_reasoning_effort`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_effort] (sent to Groq as `reasoning_effort`) controls how much the model reasons:
 
 ```python {title="groq_thinking_part.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.groq import GroqModel, GroqModelSettings
 
 model = GroqModel('qwen/qwen3-32b')
-settings = GroqModelSettings(groq_reasoning_format='parsed')
+settings = GroqModelSettings(groq_reasoning_format='parsed', groq_reasoning_effort='default')
 agent = Agent(model, model_settings=settings)
 ...
 ```
 
 !!! note
-    Most Groq reasoning models do not support truly disabling thinking: when `thinking=False` is set via the unified setting, Pydantic AI sends `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally. The exception is the qwen3 family, which truly disables reasoning via `reasoning_effort='none'`.
-
-To control how much the model reasons, use the [`GroqModelSettings.groq_reasoning_effort`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_effort] [model setting](agent.md#model-run-settings), which is sent to Groq as `reasoning_effort`:
-
-```python {title="groq_reasoning_effort.py"}
-from pydantic_ai import Agent
-from pydantic_ai.models.groq import GroqModel, GroqModelSettings
-
-model = GroqModel('qwen/qwen3-32b')
-settings = GroqModelSettings(groq_reasoning_effort='default')
-agent = Agent(model, model_settings=settings)
-...
-```
+    Most Groq reasoning models do not support truly disabling thinking: when `thinking=False` is set via the unified setting, Pydantic AI sends `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally. The exception is the qwen3 family, which truly disables reasoning via `reasoning_effort='none'` — and when `thinking=False` is combined with an explicit `groq_reasoning_effort` on qwen3, the disable wins and `groq_reasoning_effort` is ignored (with a warning).
 
 !!! note
     The accepted `groq_reasoning_effort` values are family-specific: the qwen3 family accepts `'none'` and `'default'`, while the gpt-oss family accepts `'low'`, `'medium'`, and `'high'` (see the [Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort)). The unified `thinking` setting controls `reasoning_format` and is deliberately not mapped to `reasoning_effort`, since the valid values differ per model family.

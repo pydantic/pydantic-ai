@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -348,7 +349,14 @@ class GroqModel(Model[AsyncGroq]):
         # `reasoning_effort` value sets are family-specific on Groq (qwen3: none/default; gpt-oss: low/medium/high),
         # so we don't map the unified `thinking` level here — only the explicit `groq_reasoning_effort` setting, plus
         # the qwen3 disable signal (`'none'`), which wins. Unified thinking still controls `reasoning_format` above.
-        effort = 'none' if disable_via_effort else model_settings.get('groq_reasoning_effort')
+        groq_reasoning_effort = model_settings.get('groq_reasoning_effort')
+        if disable_via_effort and groq_reasoning_effort is not None:
+            warnings.warn(
+                "`thinking=False` disables reasoning on this Groq model via `reasoning_effort='none'`, "
+                'which overrides the `groq_reasoning_effort` setting; `groq_reasoning_effort` will be ignored.',
+                UserWarning,
+            )
+        effort = 'none' if disable_via_effort else groq_reasoning_effort
         if effort is not None:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
             # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.

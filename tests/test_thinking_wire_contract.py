@@ -49,6 +49,8 @@ class WireCase:
     """Keys that must appear in the request body with exactly these values."""
     absent: tuple[str, ...] = ()
     """Keys that must NOT appear in the request body."""
+    expect_warning: str | None = None
+    """If set, a `UserWarning` matching this regex must be emitted during the run."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
 
@@ -81,6 +83,8 @@ CASES = [
         extra_body={'service_tier': 'on_demand'},
         # `groq_reasoning_effort` rides on the wire as `reasoning_effort`, merged with the user's own `extra_body`.
         present={'reasoning_effort': 'default', 'service_tier': 'on_demand'},
+        # `thinking` is unset, so `_translate_thinking` returns NOT_GIVEN and `reasoning_format` stays off the wire.
+        absent=('reasoning_format',),
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
@@ -89,9 +93,11 @@ CASES = [
         model_name='qwen/qwen3-32b',
         thinking=False,
         groq_reasoning_effort='high',
-        # The qwen3 disable signal (`thinking=False` → `'none'`) wins over an explicit `groq_reasoning_effort`.
+        # The qwen3 disable signal (`thinking=False` → `'none'`) wins over an explicit `groq_reasoning_effort`,
+        # and the user is warned that their `groq_reasoning_effort` is ignored.
         present={'reasoning_effort': 'none'},
         absent=('reasoning_format',),
+        expect_warning='`groq_reasoning_effort` will be ignored',
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
@@ -136,7 +142,11 @@ async def test_reasoning_wire_contract(
     if case.extra_body is not None:
         settings['extra_body'] = case.extra_body
     agent = Agent(model, model_settings=settings)
-    await agent.run('What is 2+2? Reply with just the number.')
+    if case.expect_warning is not None:
+        with pytest.warns(UserWarning, match=case.expect_warning):
+            await agent.run('What is 2+2? Reply with just the number.')
+    else:
+        await agent.run('What is 2+2? Reply with just the number.')
 
     body = single_request_body(vcr)
     for key, value in case.present.items():
