@@ -8891,11 +8891,39 @@ async def test_roundtrip_native_tool_search():
                     tool_call_id='search-1',
                     content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
                 ),
-            ]
+            ],
+            timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
         ),
     ]
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
+    # Pin the wire location: for the builtin path `tool_kind` must nest under
+    # `call_meta`/`return_meta`, not at the top level. The outcome assertions below would
+    # still pass if a regression moved the key, since the matching read would move with it.
+    assert ui_messages == snapshot(
+        [
+            UIMessage(
+                id='ccd23c0b-ca6c-5cc3-8cb0-7bd8fc22df0e',
+                role='assistant',
+                metadata={'pydantic_ai': {'timestamp': '2026-06-15T00:00:00Z'}},
+                parts=[
+                    ToolOutputAvailablePart(
+                        type='tool-tool_search',
+                        tool_call_id='search-1',
+                        input={'queries': ['refund']},
+                        output={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                        provider_executed=True,
+                        call_provider_metadata={
+                            'pydantic_ai': {
+                                'call_meta': {'tool_kind': 'tool-search'},
+                                'return_meta': {'tool_kind': 'tool-search'},
+                            }
+                        },
+                    )
+                ],
+            )
+        ]
+    )
     loaded = VercelAIAdapter.load_messages(ui_messages)
 
     assert parse_discovered_tools(loaded) == {'refund_tool'}
