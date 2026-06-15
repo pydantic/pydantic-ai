@@ -592,7 +592,11 @@ class GoogleModel(Model[Client]):
         )
         if self._provider.name not in _GEMINI_API_PROVIDER_NAMES:
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
-            config.update(  # pragma: lax no cover
+            # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
+            # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
+            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (#5704);
+            # don't copy that strip here.
+            config.update(
                 system_instruction=generation_config.get('system_instruction'),
                 tools=cast(list[ToolDict], generation_config.get('tools')),
                 # Annoyingly, GenerationConfigDict has fewer fields than GenerateContentConfigDict, and no extra fields are allowed.
