@@ -31,6 +31,22 @@ Each capability package should normally have:
 The root `pydantic_ai_harness/__init__.py` should re-export stable public
 capabilities. Keep implementation helpers private unless users need them.
 
+### Experimental Vs Released Exports
+
+New capabilities land under `pydantic_ai_harness/experimental/`. Each
+experimental package calls `warn_experimental('<name>')` in its `__init__.py` so
+importing it emits `HarnessExperimentalWarning`. Anything under `experimental`
+may change or be removed in any release, without a deprecation period.
+
+Promote a capability to a top-level package and a top-level re-export in
+`pydantic_ai_harness/__init__.py` only when its API is stable.
+
+Top-level exports in `pydantic_ai_harness/__init__.py` are the intended public
+surface. Once an export has shipped in a published release it is a
+backward-compatibility commitment: do not move, rename, or break it. (`CodeMode`
+is a shipped, released example.) Do not relocate an already-top-level capability
+into `experimental`.
+
 ## API Design
 
 - Prefer a small dataclass capability with typed fields.

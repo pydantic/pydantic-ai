@@ -20,6 +20,21 @@ Use this before opening a PR or reviewing a capability change.
 - Capability ordering is justified when present.
 - Dependency changes were made through `uv` and have a clear reason.
 
+## Stale Or Pre-Merge PRs
+
+Run these checks when adopting, rebasing, or re-reviewing a PR that was opened
+well before now, or that was built against unreleased Pydantic AI changes.
+
+- Temporary `[tool.uv.sources]` pins to a branch or git ref are removed once the
+  upstream change they waited on has landed in a released `pydantic-ai-slim`.
+- Each upstream Pydantic AI PR or branch the change rode on has merged. Link the
+  upstream PR and its merge state.
+- The touched surface has not drifted: re-check the capability, hook, and toolset
+  signatures it depends on against current main, not against the state at fork
+  time.
+- Behavior the PR worked around because a primitive was missing is reconsidered
+  if that primitive now exists in core.
+
 ## Tests
 
 - Tests cover the public `Agent(..., capabilities=[...])` path where possible.
