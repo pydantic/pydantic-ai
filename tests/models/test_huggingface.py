@@ -1229,3 +1229,41 @@ async def test_huggingface_close_stream_only_suppresses_async_generator_race(err
             await response.close_stream()
     else:
         await response.close_stream()
+
+
+async def test_tool_return_with_uploaded_file_raises() -> None:
+    """UploadedFile in ToolReturnPart must raise NotImplementedError, not be silently dropped."""
+    model = HuggingFaceModel('test-model', provider=HuggingFaceProvider(api_key='x'))
+    message = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='my_tool',
+                content=UploadedFile(file_id='file-123', provider_name='anthropic'),
+                tool_call_id='call-1',
+            )
+        ]
+    )
+    with pytest.raises(NotImplementedError, match='UploadedFile is not supported for Hugging Face'):
+        async for _ in model._map_user_message(message):  # pyright: ignore[reportPrivateUsage]
+            pass
+
+
+async def test_tool_return_with_image_url_appends_user_message() -> None:
+    """ImageUrl in ToolReturnPart must be forwarded as a trailing user message, not silently dropped."""
+    model = HuggingFaceModel('test-model', provider=HuggingFaceProvider(api_key='x'))
+    image = ImageUrl(url='https://example.com/img.png')
+    message = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='my_tool',
+                content=image,
+                tool_call_id='call-1',
+            )
+        ]
+    )
+    collected = [item async for item in model._map_user_message(message)]  # pyright: ignore[reportPrivateUsage]
+    # First item: tool response with placeholder text; last item: user message carrying the image
+    assert len(collected) == 2
+    tool_msg, user_msg = collected
+    assert tool_msg['role'] == 'tool'  # pyright: ignore[reportIndexIssue]
+    assert user_msg['role'] == 'user'  # pyright: ignore[reportIndexIssue]
