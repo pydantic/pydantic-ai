@@ -264,6 +264,21 @@ agent = Agent(model, model_settings=settings)
 !!! note
     Most Groq reasoning models do not support truly disabling thinking: when `thinking=False` is set via the unified setting, Pydantic AI sends `reasoning_format='hidden'`, which suppresses reasoning output but the model may still reason internally. The exception is the qwen3 family, which truly disables reasoning via `reasoning_effort='none'`.
 
+To control how much the model reasons, use the [`GroqModelSettings.groq_reasoning_effort`][pydantic_ai.models.groq.GroqModelSettings.groq_reasoning_effort] [model setting](agent.md#model-run-settings), which is sent to Groq as `reasoning_effort`:
+
+```python {title="groq_reasoning_effort.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.groq import GroqModel, GroqModelSettings
+
+model = GroqModel('qwen/qwen3-32b')
+settings = GroqModelSettings(groq_reasoning_effort='default')
+agent = Agent(model, model_settings=settings)
+...
+```
+
+!!! note
+    The accepted `groq_reasoning_effort` values are family-specific: the qwen3 family accepts `'none'` and `'default'`, while the gpt-oss family accepts `'low'`, `'medium'`, and `'high'` (see the [Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort)). The unified `thinking` setting controls `reasoning_format` and is deliberately not mapped to `reasoning_effort`, since the valid values differ per model family.
+
 ## OpenRouter
 
 To enable thinking, use the [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] [model setting](agent.md#model-run-settings).

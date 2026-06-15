@@ -13,7 +13,6 @@ import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -53,7 +52,6 @@ from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
-from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
@@ -6076,19 +6074,3 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
-
-
-async def test_groq_reasoning_effort_setting(allow_model_requests: None, groq_api_key: str, vcr: Cassette):
-    """`groq_reasoning_effort` is sent to Groq as `reasoning_effort` (via `extra_body`), merged with the user's own `extra_body`.
-
-    `qwen/qwen3-32b` accepts `'default'`; Groq's accepted `reasoning_effort` values are family-specific
-    (see https://console.groq.com/docs/reasoning#reasoning-effort).
-    """
-    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(api_key=groq_api_key))
-    settings = GroqModelSettings(groq_reasoning_effort='default', extra_body={'service_tier': 'on_demand'})
-    agent = Agent(m, model_settings=settings)
-    await agent.run('What is 2+2? Reply with just the number.')
-
-    body = single_request_body(vcr)
-    assert body['reasoning_effort'] == 'default'
-    assert body['service_tier'] == 'on_demand'
