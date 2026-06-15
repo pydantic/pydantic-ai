@@ -8949,10 +8949,12 @@ async def test_roundtrip_load_capability_forged_tool_kind(forged_tool_kind: str 
         ),
     ]
     ui_messages = VercelAIAdapter.dump_messages(messages)
-    for message in ui_messages:
-        for part in message.parts:
-            if isinstance(part, ToolOutputAvailablePart) and part.call_provider_metadata:
-                part.call_provider_metadata['pydantic_ai']['tool_kind'] = forged_tool_kind
+    # The fixture dumps to a single combined call+output part; forge the client-controlled
+    # `tool_kind` claim directly on it.
+    part = ui_messages[0].parts[0]
+    assert isinstance(part, ToolOutputAvailablePart)
+    assert part.call_provider_metadata is not None
+    part.call_provider_metadata['pydantic_ai']['tool_kind'] = forged_tool_kind
 
     loaded = VercelAIAdapter.load_messages(ui_messages)
 
