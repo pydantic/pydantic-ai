@@ -448,17 +448,9 @@ class XaiModel(Model[AsyncClient]):
     def _append_tool_call(messages: list[chat_types.chat_pb2.Message], tool_call: chat_types.chat_pb2.ToolCall) -> None:
         """Attach a tool call to the most recent assistant message, or create a new one.
 
-        Every message produced for a single `ModelResponse` is an assistant message (reasoning,
-        text, or tool calls), so attaching to the preceding one keeps an encrypted reasoning
-        trace grouped with the tool calls it produced — matching `xai_sdk`'s own `Chat.append`,
-        which packs reasoning, content, and tool calls onto a single assistant message.
-
-        Attaching to `messages[-1]` (rather than to the reasoning message specifically) is safe
-        because xAI does not co-emit assistant `content` alongside `reasoning_content` in a
-        tool-call turn: a reasoning turn yields `[ThinkingPart, ToolCallPart(s)]`, so the
-        preceding message is the reasoning one. (Were a `TextPart` to appear between them, the
-        tool calls would attach to the text message and leave the reasoning on its own — see the
-        possible follow-up noted on the PR.)
+        Every message in a single `ModelResponse` is an assistant message, so attaching to the
+        preceding one keeps an encrypted reasoning trace grouped with the tool calls it produced,
+        matching `xai_sdk`'s `Chat.append`.
         """
         if messages:
             messages[-1].tool_calls.append(tool_call)

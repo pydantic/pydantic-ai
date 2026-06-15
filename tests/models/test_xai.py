@@ -389,7 +389,7 @@ async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_reques
 
 
 async def test_xai_thinking_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
-    """A reasoning `ThinkingPart` followed by `ToolCallPart`s maps to one assistant message (issue #5329).
+    """A reasoning `ThinkingPart` followed by `ToolCallPart`s maps to one assistant message.
 
     The encrypted reasoning trace must stay attached to the tool calls it produced — matching
     `xai_sdk`'s `Chat.append` — rather than splitting into a reasoning message and a separate
@@ -455,7 +455,7 @@ async def test_xai_thinking_part_groups_with_following_tool_calls_in_history(all
 
 
 async def test_xai_text_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
-    """A `TextPart` followed by `ToolCallPart`s maps to one assistant message carrying both (issue #5329).
+    """A `TextPart` followed by `ToolCallPart`s maps to one assistant message carrying both.
 
     The relaxed grouping also packs text with the tool calls it precedes — matching `xai_sdk`'s
     `Chat.append`, which puts `content` and `tool_calls` on a single assistant message — rather
