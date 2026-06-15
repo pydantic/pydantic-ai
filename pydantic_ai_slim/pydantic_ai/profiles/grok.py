@@ -46,6 +46,14 @@ class GrokModelProfile(ModelProfile, total=False):
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     """Native `reasoning_effort` values supported by the Grok model. Default: empty (`frozenset()`)."""
 
+    grok_send_back_thinking_parts: bool = False
+    """Whether to re-render non-native ThinkingParts as thinking tags in history.
+
+    When False (default), ThinkingParts produced by other providers are dropped from history
+    rather than being wrapped in thinking tags — which the model would otherwise repeat
+    verbatim in subsequent turns (reasoning leak).
+    """
+
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""

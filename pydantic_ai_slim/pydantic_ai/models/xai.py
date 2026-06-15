@@ -465,7 +465,7 @@ class XaiModel(Model[AsyncClient]):
             if item.signature:
                 msg.encrypted_content = item.signature
             return msg
-        elif item.content:
+        elif item.content and self.profile.get('grok_send_back_thinking_parts', False):
             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
             return assistant('\n'.join([start_tag, item.content, end_tag]))
         else:
