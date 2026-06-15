@@ -63,6 +63,7 @@ with try_import() as imports_successful:
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
+        _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
         load_mcp_toolsets,
     )
     from pydantic_ai.messages import TextContent
@@ -98,6 +99,10 @@ class TestMCPToolsetConstruction:
         assert isinstance(toolset.client.transport, StreamableHttpTransport)
         assert toolset.client.transport.httpx_client_factory is not None
         assert toolset.client.transport.httpx_client_factory() is client
+        # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`, which the
+        # mcp SDK's `McpHttpClientFactory` protocol doesn't declare; the factory must accept it.
+        factory = _make_httpx_client_factory(client)
+        assert factory(follow_redirects=True) is client
 
     def test_sse_url_with_http_client_uses_factory(self):
         client = httpx.AsyncClient()
@@ -105,6 +110,8 @@ class TestMCPToolsetConstruction:
         assert isinstance(toolset.client.transport, SSETransport)
         assert toolset.client.transport.httpx_client_factory is not None
         assert toolset.client.transport.httpx_client_factory() is client
+        factory = _make_httpx_client_factory(client)
+        assert factory(follow_redirects=True) is client
 
     def test_http_kwargs_with_non_url_input_raises(self):
         """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection

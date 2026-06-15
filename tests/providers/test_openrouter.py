@@ -123,6 +123,9 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     openai_model_profile_mock.assert_called_with('o1-mini')
     assert openai_profile is not None
     assert openai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    # OpenRouter only accepts the older `max_tokens` field, never `max_completion_tokens` — even for OpenAI
+    # models, whose own profile defaults the flag to `True`; the merge must not clobber OpenRouter's `False`.
+    assert openai_profile.get('openai_chat_supports_max_completion_tokens', True) is False
 
     anthropic_profile = provider.model_profile('anthropic/claude-3.5-sonnet')
     anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet')

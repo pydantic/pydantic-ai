@@ -1459,6 +1459,9 @@ def _make_httpx_client_factory(
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
+        # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`,
+        # which the mcp SDK's `McpHttpClientFactory` protocol doesn't declare.
+        follow_redirects: bool = True,
     ) -> httpx.AsyncClient:
         return http_client
 

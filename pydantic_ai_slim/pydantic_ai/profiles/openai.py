@@ -167,6 +167,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Some OpenAI-compatible providers (e.g. Azure) do not support document input via the Chat Completions API.
     """
 
+    openai_chat_supports_max_completion_tokens: bool
+    """Whether the Chat Completions API accepts the `max_completion_tokens` field for the `max_tokens` setting. Default: `True`.
+
+    OpenAI itself (including the o-series reasoning models) uses `max_completion_tokens`, the field that caps
+    visible output plus reasoning tokens, so this defaults to `True`. Many OpenAI-compatible providers (e.g.
+    OpenRouter) only accept the older `max_tokens` field; set this to `False` for those so the `max_tokens`
+    setting is sent as `max_tokens` instead.
+    """
+
 
 def validate_openai_profile(profile: ModelProfile) -> None:
     """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""

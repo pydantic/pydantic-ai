@@ -186,6 +186,19 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
+    bedrock_top_k_variant: Literal['anthropic', 'nova'] | None
+    """How the unified `top_k` setting is placed in `additionalModelRequestFields`.
+
+    Bedrock's Converse `inferenceConfig` has no `topK` field, so `top_k` must travel in the
+    model-specific `additionalModelRequestFields` blob, where the shape differs per family
+    (and Bedrock 400s on an unrecognized key rather than ignoring it):
+
+    - `'anthropic'`: flat `{'top_k': N}`
+    - `'nova'`: nested `{'inferenceConfig': {'topK': N}}`
+    - `None`: `top_k` is silently dropped (Llama/Mistral/DeepSeek/Jamba don't accept it on
+      Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
+    """
+
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
@@ -195,7 +208,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     bedrock_structured_output_unsupported = ('claude-opus-4-1', 'claude-opus-4-7', 'claude-opus-4-8')
     downstream = anthropic_model_profile(model_name)
     supports_adaptive = bool((downstream or {}).get('anthropic_supports_adaptive_thinking', False))
-    # Bedrock only honors effort inside the adaptive branch of `_translate_thinking`, so don't claim
+    # Bedrock only honors effort inside the adaptive branch of `_build_additional_model_request_fields`, so don't claim
     # support for non-adaptive models (e.g. Opus 4.5) even when the direct Anthropic API supports it.
     supports_effort = supports_adaptive and bool((downstream or {}).get('anthropic_supports_effort', False))
     profile = merge_profile(
@@ -208,6 +221,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
+            bedrock_top_k_variant='anthropic',
         ),
         _strip_builtin_tools(downstream),
     )
@@ -234,6 +248,7 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
             BedrockModelProfile(
                 bedrock_supports_tool_choice=True,
                 bedrock_supports_prompt_caching=True,
+                bedrock_top_k_variant='nova',
             ),
         )
 

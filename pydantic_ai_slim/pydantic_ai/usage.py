@@ -235,6 +235,7 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.input_audio_tokens += incr_usage.input_audio_tokens
     slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
     slf.output_tokens += incr_usage.output_tokens
+    slf.output_audio_tokens += incr_usage.output_audio_tokens
 
     for key, value in incr_usage.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation

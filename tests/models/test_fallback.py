@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 from collections.abc import AsyncIterator
@@ -76,6 +77,19 @@ def test_init() -> None:
     )
     assert fallback_model.system == 'fallback:function,function'
     assert fallback_model.base_url is None
+
+
+def test_all_fields_are_accessible() -> None:
+    """Every declared dataclass field must be a real attribute on the instance.
+
+    Regression: `_model_name` was declared as a field but never assigned (`model_name` is a
+    computed property), so generic dataclass introspection — e.g. Prefect's `visit_collection`
+    during durable execution, which does `getattr(model, f.name)` for each field — crashed with
+    `AttributeError`.
+    """
+    fallback_model = FallbackModel(failure_model, success_model)
+    for f in dataclasses.fields(fallback_model):
+        getattr(fallback_model, f.name)  # must not raise
 
 
 def test_first_successful() -> None:

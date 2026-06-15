@@ -1925,6 +1925,41 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
     assert result.output == IsStr()
 
 
+@pytest.mark.parametrize(
+    'supports_max_completion_tokens,sent_field,omitted_field',
+    [
+        (True, 'max_completion_tokens', 'max_tokens'),
+        (False, 'max_tokens', 'max_completion_tokens'),
+    ],
+)
+async def test_max_tokens_field_routed_by_profile(
+    allow_model_requests: None,
+    supports_max_completion_tokens: bool,
+    sent_field: str,
+    omitted_field: str,
+) -> None:
+    """The `max_tokens` setting maps to whichever API field the profile selects.
+
+    OpenAI (and o-series) use `max_completion_tokens`; many compatible providers (e.g. OpenRouter)
+    only accept `max_tokens`. This is a unit test rather than VCR because our cassette matchers ignore
+    the request body, so a VCR test would still pass green if `max_tokens` were routed to the wrong key.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_supports_max_completion_tokens=supports_max_completion_tokens),
+    )
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs[sent_field] == 100
+    assert omitted_field not in kwargs
+
+
 async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
     gemini_model = GoogleModel('gemini-2.0-flash-exp', provider=GoogleProvider(api_key=gemini_api_key))
     openai_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))

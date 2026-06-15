@@ -88,13 +88,17 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     assert harmony_profile is not None
     assert isinstance(harmony_profile, dict)
     assert harmony_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    # gpt-oss follows Harmony rules: prior reasoning is replayed in the `reasoning` field, not `<think>` tags.
+    assert harmony_profile.get('openai_chat_send_back_thinking_parts', None) == 'auto'
 
     # Test zai model - uses default OpenAI profile (zai_model_profile returns None)
-    zai_profile = provider.model_profile('zai-glm-4.6')
-    zai_model_profile_mock.assert_called_with('zai-glm-4.6')
+    zai_profile = provider.model_profile('zai-glm-4.7')
+    zai_model_profile_mock.assert_called_with('zai-glm-4.7')
     assert zai_profile is not None
     assert isinstance(zai_profile, dict)
     assert zai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    # GLM requires prior reasoning replayed inside `<think>...</think>` tags in the assistant content.
+    assert zai_profile.get('openai_chat_send_back_thinking_parts', None) == 'tags'
 
     # Test unknown model - should still return a profile with OpenAIJsonSchemaTransformer
     unknown_profile = provider.model_profile('unknown-model')

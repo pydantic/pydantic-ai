@@ -169,7 +169,8 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
         #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
         #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
-        #    setting is always forwarded regardless of the upstream model's own thinking support.
+        #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
+        #    accepts the older `max_tokens` field, so `openai_chat_supports_max_completion_tokens=False`.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
@@ -178,6 +179,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 openai_chat_thinking_field='reasoning',
                 openai_chat_supports_file_urls=True,
                 openai_chat_supports_web_search=True,
+                openai_chat_supports_max_completion_tokens=False,
                 supports_thinking=True,
                 openrouter_supports_cache_control=supports_cache_control,
                 openrouter_supports_cache_ttl=supports_anthropic_cache,

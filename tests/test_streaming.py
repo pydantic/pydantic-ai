@@ -627,6 +627,33 @@ async def test_plain_response():
     assert call_index == 2
 
 
+async def test_stream_output_type_union_data_before_kind():
+    """A valid union envelope streamed with `data` before `kind` must not crash mid-stream.
+
+    While `kind` is still a partial trailing string (e.g. `'App'`), envelope validation must
+    fail (so the chunk is skipped) rather than reach the union processor's `kind` lookup.
+    Streaming manifestation of https://github.com/pydantic/pydantic-ai/issues/5844.
+    """
+
+    class Apple(BaseModel):
+        color: str
+
+    class Banana(BaseModel):
+        length: float
+
+    async def text_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        # `data` first, so that `kind` is the trailing partial string while streaming.
+        for char in '{"result": {"data": {"color": "red"}, "kind": "Apple"}}':
+            yield char
+
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=PromptedOutput([Apple, Banana]))
+
+    async with agent.run_stream('What fruit is it?') as result:
+        async for _ in result.stream_output(debounce_by=None):
+            pass
+        assert await result.get_output() == snapshot(Apple(color='red'))
+
+
 async def test_call_tool():
     async def stream_structured_function(
         messages: list[ModelMessage], agent_info: AgentInfo
