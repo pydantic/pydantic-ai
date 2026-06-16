@@ -73,6 +73,10 @@ Examples of providers and models that can be used are:
 | Groq | `groq`          | `gateway/groq:openai/gpt-oss-120b`       |
 | AWS Bedrock | `bedrock`       | `gateway/bedrock:amazon.nova-micro-v1:0` |
 
+!!! warning "Deprecation"
+    The `gateway/gemini:` prefix is deprecated. Use `gateway/google-cloud:` instead.
+    Support for `gateway/gemini:` will be removed in v2.0.
+
 ### Pydantic AI
 
 Before you start, make sure you are on version 1.16 or later of `pydantic-ai`. To update to the latest version run:
