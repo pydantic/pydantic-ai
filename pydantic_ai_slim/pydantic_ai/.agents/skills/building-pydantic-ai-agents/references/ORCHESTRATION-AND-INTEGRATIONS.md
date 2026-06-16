@@ -89,7 +89,7 @@ app = agent_to_a2a(agent)
 
 ## Expose Agents to OpenAI-Compatible Clients (Responses API)
 
-Use `Agent.to_responses()` when an OpenAI-compatible client (the `openai` SDK with a custom `base_url`, OpenWebUI, an LLM gateway) should call the agent as if it were an OpenAI model. It returns a Starlette ASGI app serving `POST /v1/responses`, supporting both streaming and non-streaming requests. The agent runs its tool loop server-side and is projected as a single model: only the final text is returned (internal tool calls and reasoning are not surfaced). Requires `starlette` (`pip install 'pydantic-ai-slim[ui]'`).
+Use `Agent.to_responses()` when an OpenAI-compatible client (the `openai` SDK with a custom `base_url`, OpenWebUI, an LLM gateway) should call the agent as if it were an OpenAI model. It returns a Starlette ASGI app serving `POST /v1/responses`, supporting both streaming and non-streaming requests. The agent runs its tool loop server-side and is projected as a single model: only the final text is returned (internal tool calls and reasoning are not surfaced). Requires `starlette` and `openai` (`pip install 'pydantic-ai-slim[ui,openai]'`).
 
 ```python
 from pydantic_ai import Agent

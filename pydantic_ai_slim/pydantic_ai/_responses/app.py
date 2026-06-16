@@ -12,14 +12,15 @@ from openai.types.responses import Response as OpenAIResponse, ResponseCompleted
 from pydantic import ValidationError
 
 from ..agent import AbstractAgent
+from ..capabilities import ReinjectSystemPrompt
 from ..messages import AgentStreamEvent
 from ..models import KnownModelName, Model
 from ..run import AgentRunResultEvent
 from ..settings import ModelSettings
 from ..usage import UsageLimits
-from ._events import encode_sse, response_event_stream
-from ._messages import load_messages
-from .request_types import responses_request_ta
+from .events import encode_sse, response_event_stream
+from .messages import load_messages
+from .types import responses_request_ta
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -68,6 +69,10 @@ async def handle_responses_request(
             model_settings=model_settings,
             instructions=run_instructions,
             usage_limits=usage_limits,
+            # History is reconstructed from the request, so reinject the agent's configured
+            # `system_prompt` when the client didn't supply one (client `system`/`developer`
+            # messages stay authoritative).
+            capabilities=[ReinjectSystemPrompt()],
         ) as stream:
             async for event in stream:
                 yield event

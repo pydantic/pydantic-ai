@@ -8,7 +8,7 @@ The entry point is [`Agent.to_responses()`][pydantic_ai.agent.Agent.to_responses
 control use [`handle_responses_request`][pydantic_ai._responses.handle_responses_request].
 """
 
-from ._app import create_responses_app, handle_responses_request
+from .app import create_responses_app, handle_responses_request
 
 __all__ = [
     'create_responses_app',

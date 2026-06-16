@@ -87,4 +87,4 @@ class ResponsesRequest(BaseModel):
 
 
 responses_request_ta: TypeAdapter[ResponsesRequest] = TypeAdapter(ResponsesRequest)
-"""[`TypeAdapter`][pydantic.TypeAdapter] for validating a request body into a [`ResponsesRequest`][pydantic_ai._responses.request_types.ResponsesRequest]."""
+"""[`TypeAdapter`][pydantic.TypeAdapter] for validating a request body into a [`ResponsesRequest`][pydantic_ai._responses.types.ResponsesRequest]."""

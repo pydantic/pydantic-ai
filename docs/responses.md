@@ -11,6 +11,9 @@ Unlike the [UI event stream protocols](ui/overview.md) (AG-UI and Vercel AI), wh
 
 The quickest way to serve an agent is [`Agent.to_responses()`][pydantic_ai.agent.Agent.to_responses], which returns a [Starlette](https://www.starlette.io/) application you can run with any ASGI server (such as [Uvicorn](https://www.uvicorn.org/)) or mount into a larger app. The endpoint is served at `/v1/responses` by default, so an OpenAI client configured with `base_url='.../v1'` works unchanged.
 
+!!! note
+    This feature needs `starlette` (to serve the endpoint) and `openai` (for the Responses wire types): `pip install 'pydantic-ai-slim[ui,openai]'`.
+
 ```py {title="to_responses.py"}
 from pydantic_ai import Agent
 

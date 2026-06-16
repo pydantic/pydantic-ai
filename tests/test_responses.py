@@ -35,9 +35,9 @@ with try_import() as imports_successful:
     from openai.types.responses import Response, ResponseOutputMessage, ResponseStreamEvent
     from starlette.applications import Starlette
 
-    from pydantic_ai._responses._events import encode_sse, response_event_stream
-    from pydantic_ai._responses._messages import load_messages
-    from pydantic_ai._responses.request_types import ResponsesRequest
+    from pydantic_ai._responses.events import encode_sse, response_event_stream
+    from pydantic_ai._responses.messages import load_messages
+    from pydantic_ai._responses.types import ResponsesRequest
 
 pytestmark = [
     pytest.mark.anyio,
@@ -113,6 +113,33 @@ async def test_non_streaming_message_list_input():
             ('TextPart', 'first answer'),
             ('UserPromptPart', 'second question'),
         ]
+    )
+
+
+async def test_agent_system_prompt_is_reinjected():
+    """The agent's configured `system_prompt` reaches the model even though history is rebuilt from the request."""
+    captured: list[list[ModelMessage]] = []
+
+    async def capture(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        captured.append(messages)
+        yield 'ok'
+
+    agent = Agent(FunctionModel(stream_function=capture), system_prompt='You are a pirate.')
+
+    # Client sends no system message: the agent's own system prompt must be present.
+    await post(agent.to_responses(), {'model': 'gpt-x', 'input': 'hi'})
+    assert [(type(p).__name__, getattr(p, 'content', None)) for m in captured[0] for p in m.parts] == snapshot(
+        [('SystemPromptPart', 'You are a pirate.'), ('UserPromptPart', 'hi')]
+    )
+
+    # Client sends its own system/developer message: it stays authoritative (not overridden).
+    captured.clear()
+    await post(
+        agent.to_responses(),
+        {'model': 'gpt-x', 'input': [{'role': 'system', 'content': 'Be terse.'}, {'role': 'user', 'content': 'hi'}]},
+    )
+    assert [(type(p).__name__, getattr(p, 'content', None)) for m in captured[0] for p in m.parts] == snapshot(
+        [('SystemPromptPart', 'Be terse.'), ('UserPromptPart', 'hi')]
     )
 
 

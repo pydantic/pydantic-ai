@@ -16,7 +16,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from .request_types import FunctionCall, InputMessage, ResponsesInputItem, ResponsesRequest
+from .types import FunctionCall, InputMessage, ResponsesInputItem, ResponsesRequest
 
 
 def _input_items(request: ResponsesRequest) -> Sequence[ResponsesInputItem]:

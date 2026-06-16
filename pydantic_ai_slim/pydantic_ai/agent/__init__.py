@@ -2899,7 +2899,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             print(response.output_text)
             ```
         """
-        from .._responses import create_responses_app
+        try:
+            from .._responses import create_responses_app
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(
+                'Please install `openai` and `starlette` to use `Agent.to_responses()`, '
+                'you can use the `ui` and `openai` optional groups — '
+                'pip install "pydantic-ai-slim[ui,openai]"'
+            ) from e
 
         return create_responses_app(
             self,
