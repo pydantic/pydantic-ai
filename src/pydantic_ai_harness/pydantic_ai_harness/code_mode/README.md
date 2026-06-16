@@ -109,6 +109,19 @@ CodeMode(tools=lambda ctx, td: td.with_native is None)
 
 ### Metadata-based selection
 
+Use metadata when the decision should travel with a tool or toolset, rather than
+with one `CodeMode` instance. This is useful for shared toolsets: the toolset
+author can tag the tools that are safe and useful to call from generated code,
+and each agent can opt into that tag with `CodeMode(tools={...})`.
+
+`CodeMode(tools={'code_mode': True})` uses the standard Pydantic AI
+`ToolSelector` metadata form. A tool is sandboxed when its
+`ToolDefinition.metadata` contains all of the selector's key-value pairs. Extra
+metadata on the tool is fine, and nested dictionaries are matched by deep
+inclusion.
+
+The common pattern is to tag an entire toolset with `.with_metadata(...)`:
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.toolsets import FunctionToolset
@@ -122,6 +135,10 @@ agent = Agent(
     capabilities=[CodeMode(tools={'code_mode': True})],
 )
 ```
+
+Here `search` and `fetch` are removed from the model-facing tool list and
+become callable functions inside `run_code`. Tools without
+`metadata['code_mode'] == True` stay visible as regular tool calls.
 
 ## Return values
 
