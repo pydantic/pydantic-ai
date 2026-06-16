@@ -296,7 +296,16 @@ def test_model_profile_opus():
 
 
 @pytest.mark.parametrize(
-    'model_name', ['claude-mythos-preview', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7']
+    'model_name',
+    [
+        'claude-fable-5',
+        'claude-mythos-5',
+        'claude-mythos-preview',
+        'claude-sonnet-4-6',
+        'claude-opus-4-6',
+        'claude-opus-4-7',
+        'claude-opus-4-8',
+    ],
 )
 def test_model_profile_supports_web_tools_20260209(model_name: str):
     profile = anthropic_model_profile(model_name)

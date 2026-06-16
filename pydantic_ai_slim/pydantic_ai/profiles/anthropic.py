@@ -141,7 +141,15 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     supports_task_budgets = model_name.startswith('claude-opus-4-7')
 
     supports_web_tools_20260209 = model_name.startswith(
-        ('claude-mythos-preview', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-7')
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-mythos-preview',
+            'claude-sonnet-4-6',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+        )
     )
 
     # Native tool search requires the `tool_search_tool_bm25_20251119` /
