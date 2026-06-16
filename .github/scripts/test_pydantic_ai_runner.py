@@ -189,32 +189,43 @@ def test_claude_code_tool_names():
 # --------------------------------------------------------------------------- #
 # Claude Code tool behavior
 # --------------------------------------------------------------------------- #
-def test_file_tools_roundtrip(tmp_path: Path):
+def test_file_tools_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # The harness-backed Read/Write/Edit are contained to the workspace root.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'sub' / 'note.txt'
-    assert 'wrote' in pkg.write_file(str(f), 'hello\nworld\n')
-    assert pkg.read_file(str(f)) == 'hello\nworld\n'
-    assert 'edited' in pkg.edit_file(str(f), 'world', 'there')
-    assert 'there' in pkg.read_file(str(f))
+    # Write creates the missing parent directory, mirroring Claude's `Write`.
+    assert 'Wrote' in asyncio.run(pkg.write_file(str(f), 'hello\nworld\n'))
+    body = asyncio.run(pkg.read_file(str(f)))
+    assert 'hello' in body and 'world' in body
+    assert 'Edited' in asyncio.run(pkg.edit_file(str(f), 'world', 'there'))
+    assert 'there' in asyncio.run(pkg.read_file(str(f)))
     assert 'note.txt' in pkg.list_dir(str(tmp_path / 'sub'))
-    assert pkg.edit_file(str(f), 'absent', 'x') == 'error: `old_string` not found'
+    # The harness requires a unique match; a missing string comes back as an error.
+    miss = asyncio.run(pkg.edit_file(str(f), 'absent', 'x'))
+    assert miss.startswith('error:') and 'not found' in miss
 
 
-def test_read_file_offset_and_limit(tmp_path: Path):
+def test_read_file_offset_and_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'n.txt'
     f.write_text('l1\nl2\nl3\nl4\n', encoding='utf-8')
-    assert pkg.read_file(str(f), offset=2, limit=2) == 'l2\nl3'
+    # Claude's 1-based offset=2 maps to the harness 0-based offset; limit=2.
+    out = asyncio.run(pkg.read_file(str(f), offset=2, limit=2))
+    assert 'l2' in out and 'l3' in out
+    assert 'l1' not in out and 'l4' not in out
 
 
 def test_edit_file_replace_all(tmp_path: Path):
+    # `replace_all` has no harness equivalent, so it stays an in-place rewrite.
     f = tmp_path / 'r.txt'
     f.write_text('a a a', encoding='utf-8')
-    pkg.edit_file(str(f), 'a', 'b', replace_all=True)
+    asyncio.run(pkg.edit_file(str(f), 'a', 'b', replace_all=True))
     assert f.read_text(encoding='utf-8') == 'b b b'
 
 
 def test_bash_tool():
-    out = pkg.bash('echo hello-from-bash')
-    assert 'exit=0' in out and 'hello-from-bash' in out
+    out = asyncio.run(pkg.bash('echo hello-from-bash'))
+    assert 'hello-from-bash' in out
 
 
 def test_grep_tool(tmp_path: Path):
@@ -479,7 +490,7 @@ def test_read_file_prepends_context(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     (tmp_path / 'AGENTS.md').write_text('repo rules', encoding='utf-8')
     (tmp_path / 'f.txt').write_text('file body', encoding='utf-8')
     shared.reset_context_state()
-    out = pkg.read_file('f.txt')
+    out = asyncio.run(pkg.read_file('f.txt'))
     assert 'context: AGENTS.md' in out and 'repo rules' in out and 'file body' in out
 
 
@@ -976,13 +987,15 @@ def test_stream_events_tags_retry_prompt_as_error():
 # --------------------------------------------------------------------------- #
 # disk / IO failure paths for the file tools
 # --------------------------------------------------------------------------- #
-def test_read_missing_file_returns_error(tmp_path: Path):
-    out = pkg.read_file(str(tmp_path / 'nope.txt'))
+def test_read_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    out = asyncio.run(pkg.read_file(str(tmp_path / 'nope.txt')))
     assert out.startswith('error:')
 
 
-def test_edit_missing_file_returns_error(tmp_path: Path):
-    out = pkg.edit_file(str(tmp_path / 'missing.txt'), 'old', 'new')
+def test_edit_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    out = asyncio.run(pkg.edit_file(str(tmp_path / 'missing.txt'), 'old', 'new'))
     assert out.startswith('error:')
 
 
@@ -996,12 +1009,12 @@ def test_list_dir_missing_path_returns_error(tmp_path: Path):
     assert out.startswith('error:')
 
 
-def test_write_to_existing_parent_succeeds_otherwise_creates(tmp_path: Path):
-    # write_file's own `parent.mkdir(parents=True, exist_ok=True)` handles
-    # missing parents; the OSError path triggers only on a real permission
-    # error or invalid path. Verify the happy + nested-parent paths here.
+def test_write_to_existing_parent_succeeds_otherwise_creates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # The harness `write_file` requires an existing parent; the Write adapter
+    # calls `create_directory` first, so nested writes still succeed.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     nested = tmp_path / 'a' / 'b' / 'c.txt'
-    assert 'wrote' in pkg.write_file(str(nested), 'ok')
+    assert 'Wrote' in asyncio.run(pkg.write_file(str(nested), 'ok'))
     assert nested.read_text(encoding='utf-8') == 'ok'
 
 

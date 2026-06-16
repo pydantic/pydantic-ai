@@ -1,21 +1,26 @@
-"""Claude's `Read` tool — read a UTF-8 text file."""
+"""Claude's `Read` tool -- read a UTF-8 text file.
 
-from .shared import attach_context, clip, resolve
+Backed by pydantic-ai-harness's `FileSystemToolset.read_file`: path containment,
+symlink resolution, and binary-file detection come from the harness. The Claude
+`Read` signature (1-based `offset`, `limit`) is preserved, and the
+directory-scoped AGENTS.md / CLAUDE.md context blocks are still prepended.
+"""
+
+from pydantic_ai.exceptions import ModelRetry
+
+from ._backends import filesystem
+from .shared import attach_context, clip
 
 
-def read_file(file_path: str, offset: int | None = None, limit: int | None = None) -> str:
+async def read_file(file_path: str, offset: int | None = None, limit: int | None = None) -> str:
     """Read a UTF-8 text file. Relative paths resolve under the workspace.
 
     Optional 1-based line `offset` and line `limit` mirror Claude's Read tool.
     """
+    # Claude's `offset` is a 1-based line number; the harness uses a 0-based offset.
+    zero_based = max((offset or 1) - 1, 0)
     try:
-        text = resolve(file_path).read_text(encoding='utf-8', errors='replace')
-    except OSError as exc:
+        body = await filesystem().read_file(file_path, offset=zero_based, limit=limit)
+    except ModelRetry as exc:
         return f'error: {exc}'
-    ctx_prefix = attach_context(file_path)
-    if offset is None and limit is None:
-        return clip(ctx_prefix + text)
-    lines = text.splitlines()
-    start = max((offset or 1) - 1, 0)
-    end = start + limit if limit else len(lines)
-    return clip(ctx_prefix + '\n'.join(lines[start:end]))
+    return clip(attach_context(file_path) + body)
