@@ -4,7 +4,7 @@ import asyncio
 import os
 import re
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -57,7 +57,13 @@ from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import UploadedFile
-from pydantic_ai.models import Model, ModelRequestParameters, create_async_http_client, infer_model_profile
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    create_async_http_client,
+    infer_model,
+    infer_model_profile,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -167,12 +173,16 @@ pytestmark = [
 http_client = create_async_http_client()
 
 
-@pytest.fixture(autouse=True, scope='module')
-async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
+# Scoped to `session` rather than `module`: the `http_client` and the module-level agents that
+# capture it are constructed at import time, so they must outlive a single module entry. This is a
+# sync fixture so it doesn't force AnyIO to reuse a session-level event loop for all Temporal async
+# fixtures; the `temporal_env` teardown can make that loop unusable for later tests.
+@pytest.fixture(autouse=True, scope='session')
+def close_cached_httpx_client() -> Iterator[None]:
     try:
         yield
     finally:
-        await http_client.aclose()
+        asyncio.run(http_client.aclose())
 
 
 # `LogfirePlugin` calls `logfire.instrument_pydantic_ai()`, so we need to make sure this doesn't bleed into other tests.
@@ -185,7 +195,7 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
 
 
 @contextmanager
-def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
+def workflow_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
     """Helper for asserting that a Temporal workflow fails with the expected error."""
     with pytest.raises(WorkflowFailureError) as exc_info:
         yield
@@ -1454,6 +1464,71 @@ async def test_mcptoolset_dynamic_toolset_in_workflow(allow_model_requests: None
             task_queue=TASK_QUEUE,
         )
         assert 'pydantic' in output.lower() or 'agent' in output.lower()
+
+
+# Regression test for the workflow-sandbox passthrough list (`_workflow_runner` in
+# `durable_exec/temporal/__init__.py`). A `gateway/` model named by string is constructed lazily via
+# `infer_model` *inside* the workflow, so the provider's SDK is imported and its client built under
+# the `SandboxedWorkflowRunner`. Provider SDKs touch the filesystem/env at construction time, which
+# the sandbox forbids unless the SDK module is passed through. Every other test builds its model at
+# module scope (outside the sandbox), so this seam was previously uncovered. Construction-only (no
+# model request) keeps it deterministic.
+@workflow.defn
+class ConstructModelInWorkflow:
+    @workflow.run
+    async def run(self, model_name: str) -> str:
+        # We assert only that construction succeeds — no request is made.
+        return type(infer_model(model_name)).__name__
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_model_class'),
+    [
+        # Only `gateway/` providers exercise the sandbox: they import their SDK lazily inside
+        # `gateway_provider()`, so the import and client construction run *inside* the workflow. Direct
+        # providers (e.g. `anthropic:`) import their SDK at module level, which rides Temporal's
+        # transitive passthrough of `pydantic_ai` and never trips — so they give no regression coverage.
+        #
+        # The reported regression: `gateway/anthropic:` in-workflow tripped the `anthropic` SDK's
+        # `Path.home()` access.
+        pytest.param('gateway/anthropic:claude-sonnet-4-6', 'AnthropicModel', id='gateway-anthropic'),
+        # Canary: OpenAI needs no passthrough today; turns red here (not in a user's workflow) if a
+        # future SDK release makes a restricted call (e.g. reads `~/...`) during construction.
+        pytest.param('gateway/openai-chat:gpt-5', 'OpenAIChatModel', id='gateway-openai'),
+        # Positive coverage of the `google.auth` (+`certifi`) passthrough: `google-genai` lazily
+        # imports `google.auth` during construction, which the sandbox flags without it.
+        pytest.param('gateway/google-cloud:gemini-2.5-pro', 'GoogleModel', id='gateway-google'),
+    ],
+)
+async def test_model_construction_in_workflow_passes_sandbox(
+    model_name: str,
+    expected_model_class: str,
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Dummy credentials suffice since no request is made. The gateway key must encode a region
+    # (`pylf_v<n>_<region>_...`) so the base URL can be inferred.
+    monkeypatch.setenv('PYDANTIC_AI_GATEWAY_API_KEY', 'pylf_v1_us_0123456789abcdef')
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ConstructModelInWorkflow],
+        # A sandbox violation surfaces as a workflow *task* failure, which Temporal retries forever
+        # by default — so a regression would hang rather than fail. Promote any in-workflow exception
+        # (e.g. `RestrictedWorkflowAccessError`) to a workflow failure so it surfaces immediately.
+        workflow_failure_exception_types=[Exception],
+    ):
+        # Without the SDK passed through this fails with a `WorkflowFailureError`: under the suite's
+        # warnings-as-errors, Temporal's "imported after initial workflow load" becomes a hard error;
+        # in production the SDK's restricted `Path.home()`/env access raises `RestrictedWorkflowAccessError`.
+        result = await client.execute_workflow(
+            ConstructModelInWorkflow.run,
+            args=[model_name],
+            id=f'construct_model_{re.sub(r"[^a-zA-Z0-9]", "_", model_name)}',
+            task_queue=TASK_QUEUE,
+        )
+    assert result == expected_model_class
 
 
 async def test_temporal_agent():
@@ -2959,6 +3034,46 @@ def test_temporal_run_context_serializes_usage():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.usage == ctx.usage
+
+
+def test_temporal_run_context_serialization_is_exhaustive():
+    """Every `RunContext` field must be consciously categorized for Temporal serialization.
+
+    Guards against silent drift: when a `RunContext` field is added, this test fails until
+    the author either includes it in `TemporalRunContext.serialize_run_context` or lists it
+    in `intentionally_unserialized` below with a reason. Without that decision a new field
+    silently becomes unavailable inside a Temporal activity (the `__getattribute__` guard
+    raises `UserError` on access), which is how the deferred-capability fields were missed.
+    """
+    # Fields deliberately NOT carried across the activity boundary, each with its reason.
+    intentionally_unserialized = {
+        'deps',  # passed separately to deserialize_run_context
+        'agent',  # reattached after deserialize by deserialize_run_context
+        'model',  # live Model instance, not serializable
+        'tracer',  # live tracer, not serializable
+        'tool_manager',  # live ToolManager, not serializable (documented on the field)
+        'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
+        'pending_messages',  # live run queue, meaningless outside the running agent
+        'messages',  # not currently exposed inside activities
+        'prompt',  # not currently exposed inside activities
+        'validation_context',  # arbitrary user object, possibly unserializable
+        'trace_include_content',  # tracing config, not run state
+        'instrumentation_version',  # tracing config, not run state
+        'conversation_id',  # not currently exposed inside activities
+        'model_settings',  # not currently exposed inside activities
+    }
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    serialized = set(TemporalRunContext.serialize_run_context(ctx))
+    all_fields = set(RunContext.__dataclass_fields__)
+
+    overlap = serialized & intentionally_unserialized
+    assert not overlap, f'Fields both serialized and excluded: {overlap}'
+
+    uncategorized = all_fields - (serialized | intentionally_unserialized)
+    assert not uncategorized, (
+        f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
+        '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
+    )
 
 
 with warnings.catch_warnings():

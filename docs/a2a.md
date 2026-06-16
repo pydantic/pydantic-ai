@@ -16,7 +16,7 @@
     app = agent_to_a2a(agent)
     ```
 
-The [Agent2Agent (A2A) Protocol](https://google.github.io/A2A/) is an open standard introduced by Google that enables
+The [Agent2Agent (A2A) Protocol](https://a2a-protocol.org/) is an open standard introduced by Google that enables
 communication and interoperability between AI agents, regardless of the framework or vendor they are built on.
 
 At Pydantic, we built the [FastA2A](#fasta2a) library to make it easier to implement the A2A protocol in Python. It is now maintained at [datalayer/fasta2a](https://github.com/datalayer/fasta2a) and ships a Pydantic AI bridge since [v0.6.1](https://github.com/datalayer/fasta2a/releases/tag/v0.6.1) — install it with the `pydantic-ai` extra and use `agent_to_a2a` to expose a Pydantic AI agent as an A2A server:

@@ -10,7 +10,7 @@ from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -62,33 +62,45 @@ _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE: dict[str, tuple[str, ...]] = {
 class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     """Transforms schemas to the subset supported by Bedrock structured outputs.
 
-    Transformation is applied when:
-    - `NativeOutput` is used as the `output_type` of the Agent
-    - `strict=True` is set on the `Tool`
+    The transformer is applied to Bedrock tool and output schemas during request
+    customization. Strict-mode rewrites are applied when:
+    - `NativeOutput` is used as the `output_type` of the Agent. `BedrockConverseModel`
+      forces native output schemas to `strict=True` before request customization.
+    - `strict=True` is set explicitly on a Tool.
 
-    When `strict=None` (the default), simple schemas without incompatible constraints are
-    auto-promoted to `strict=True`. Schemas with any key listed in
-    `_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE` remain `strict=False`.
+    Like `AnthropicJsonSchemaTransformer`, Bedrock does not infer strict tool mode
+    from `strict=None`. Strict tool definitions are opt-in: callers must set
+    `strict=True` explicitly. This avoids silently changing large toolsets into
+    strict toolsets, which can exceed Anthropic/Bedrock's 20 strict-tools-per-request
+    limit, and avoids applying potentially lossy strict-mode schema rewrites unless
+    requested.
 
-    When `strict=True`, keys Bedrock rejects (see the module-level constant for the
-    empirically-verified list) are popped off the schema and re-emitted into the field's
+    When `strict=True`, `additionalProperties: false` is injected on objects and keys
+    Bedrock rejects are removed from the schema and re-emitted into the field's
     `description` so the model still has the hint.
     """
+
+    def walk(self) -> JsonSchema:
+        schema = super().walk()
+
+        # `_customize_tool_def()` and `_customize_output_object()` use this flag
+        # to resolve `strict=None`. For Bedrock tools, strict mode is opt-in, so
+        # only an explicit `strict=True` should resolve to strict-compatible.
+        self.is_strict_compatible = self.strict is True
+
+        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('$schema', None)
 
+        if not self.strict:
+            return schema
+
         schema_type = schema.get('type')
 
         if schema_type == 'object':
-            if self.strict:
-                schema['additionalProperties'] = False
-            elif self.strict is None:
-                if schema.get('additionalProperties', None) not in (None, False):
-                    self.is_strict_compatible = False
-                else:
-                    schema['additionalProperties'] = False
+            schema['additionalProperties'] = False
 
         incompatible: dict[str, object] = {}
         if isinstance(schema_type, str):
@@ -99,16 +111,13 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
                 incompatible['minItems'] = schema['minItems']
 
         if incompatible:
-            if self.strict:
-                notes: list[str] = []
-                for key, value in incompatible.items():
-                    schema.pop(key)
-                    notes.append(f'{key}={value}')
-                notes_str = ', '.join(notes)
-                desc = schema.get('description')
-                schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
-            elif self.strict is None:
-                self.is_strict_compatible = False
+            notes: list[str] = []
+            for key, value in incompatible.items():
+                schema.pop(key)
+                notes.append(f'{key}={value}')
+            notes_str = ', '.join(notes)
+            desc = schema.get('description')
+            schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
 
         return schema
 
@@ -138,18 +147,59 @@ class BedrockModelProfile(ModelProfile):
     bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None = None
     """Which thinking API shape to use for unified thinking translation.
 
-    - `'anthropic'`: Uses `{'thinking': {'type': 'enabled', 'budget_tokens': N}}`
+    - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
+      or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
     - `None`: No unified thinking support.
     """
 
+    bedrock_supports_adaptive_thinking: bool = False
+    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Sonnet 4.6+, Opus 4.6+).
+
+    Only meaningful for the `'anthropic'` variant. When False, the variant falls back to
+    `{'type': 'enabled', 'budget_tokens': N}` for pre-4.6 models.
+    """
+
+    bedrock_supports_effort: bool = False
+    """Whether this model emits `output_config.effort` on Bedrock Converse (Sonnet 4.6+, Opus 4.6+).
+
+    Only meaningful for the `'anthropic'` variant AND only honored alongside
+    `bedrock_supports_adaptive_thinking=True`. Bedrock has not been verified to accept
+    `output_config.effort` on the legacy `{'type': 'enabled', 'budget_tokens': N}` path
+    (e.g. Opus 4.5), so the translator skips it there even though the direct Anthropic
+    API accepts it. Effort lives at `additionalModelRequestFields.output_config.effort`
+    (a sibling of `thinking`, not inside it).
+    """
+
+    bedrock_top_k_variant: Literal['anthropic', 'nova'] | None = None
+    """How the unified `top_k` setting is placed in `additionalModelRequestFields`.
+
+    Bedrock's Converse `inferenceConfig` has no `topK` field, so `top_k` must travel in the
+    model-specific `additionalModelRequestFields` blob, where the shape differs per family
+    (and Bedrock 400s on an unrecognized key rather than ignoring it):
+
+    - `'anthropic'`: flat `{'top_k': N}`
+    - `'nova'`: nested `{'inferenceConfig': {'topK': N}}`
+    - `None`: `top_k` is silently dropped (Llama/Mistral/DeepSeek/Jamba don't accept it on
+      Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
+    """
+
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # Opus 4.1 supports structured output on the direct Anthropic API but is not listed
-    # in the Bedrock docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = ('claude-opus-4-1',)
+    # These Opus models support structured output on the direct Anthropic API but are not listed
+    # in the Bedrock Runtime structured-output docs:
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+    bedrock_structured_output_unsupported = ('claude-opus-4-1', 'claude-opus-4-7', 'claude-opus-4-8')
+    downstream = anthropic_model_profile(model_name)
+    # Read anthropic_* capability flags before update() strips them: ModelProfile.update()
+    # only copies fields that exist on self, so anthropic-prefixed fields would be lost.
+    is_anthropic = isinstance(downstream, AnthropicModelProfile)
+    supports_adaptive = is_anthropic and downstream.anthropic_supports_adaptive_thinking
+    # Bedrock only honors effort inside the adaptive branch of `_build_additional_model_request_fields`, so don't claim
+    # support for non-adaptive models (e.g. Opus 4.5) even when the direct Anthropic API supports it.
+    supports_effort = supports_adaptive and is_anthropic and downstream.anthropic_supports_effort
     profile = BedrockModelProfile(
         bedrock_supports_tool_choice=True,
         bedrock_send_back_thinking_parts=True,
@@ -157,7 +207,10 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         bedrock_supports_tool_caching=True,
         bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
         bedrock_thinking_variant='anthropic',
-    ).update(_without_builtin_tools(anthropic_model_profile(model_name)))
+        bedrock_supports_adaptive_thinking=supports_adaptive,
+        bedrock_supports_effort=supports_effort,
+        bedrock_top_k_variant='anthropic',
+    ).update(_without_builtin_tools(downstream))
     supports_structured_output = profile.supports_json_schema_output and not model_name.startswith(
         bedrock_structured_output_unsupported
     )
@@ -176,6 +229,7 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
         profile = BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_prompt_caching=True,
+            bedrock_top_k_variant='nova',
         ).update(profile)
 
     if 'nova-2' in model_name:
@@ -210,10 +264,13 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
     models_that_support_structured_output = ('qwen3',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
+    # Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3 — no disable value.
+    supports_reasoning = 'qwq' in model_name or 'qwen3' in model_name
     return replace(
         BedrockModelProfile(
             bedrock_thinking_variant='qwen',
-            supports_thinking='qwq' in model_name or 'qwen3' in model_name,
+            supports_thinking=supports_reasoning,
+            thinking_always_enabled=supports_reasoning,
         ).update(_without_builtin_tools(qwen_model_profile(model_name))),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
@@ -310,9 +367,11 @@ class BedrockProvider(Provider[BaseClient]):
             'amazon': bedrock_amazon_model_profile,
             'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
             'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            # Converse rejects `reasoning_effort='none'` — mark always-on.
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,
+                thinking_always_enabled=True,
             ),
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,

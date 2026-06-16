@@ -56,7 +56,7 @@ SystemPromptFunc: TypeAlias = (
     | Callable[[], str | None]
     | Callable[[], Awaitable[str | None]]
 )
-"""A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
+"""A function that may or may not take `RunContext` as an argument, and may or may not be async.
 
 Functions which return None are excluded from model requests.
 
@@ -734,7 +734,7 @@ class ToolDefinition:
     metadata: dict[str, Any] | None = None
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
-    For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
+    For MCP tools, this contains the `meta` and `annotations` fields from the tool definition, as well as a `task` flag indicating whether the server declares support for task-augmented execution.
     """
 
     timeout: float | None = None
@@ -839,6 +839,15 @@ class ToolDefinition:
     When `False`, the `return_schema` will be cleared before sending.
     When `None` (default), defaults to `False` unless the
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
+    """
+
+    capability_id: str | None = None
+    """The id of the capability that contributed this tool, or `None` if the tool is not owned by a capability.
+
+    Assigned once when the run's capabilities are set up and then carried on the `ToolDefinition`
+    for the rest of that run — it does not change or reset between steps. For a tool owned by a
+    deferred capability it gates visibility: the tool is revealed once that capability's id appears
+    in [`RunContext.loaded_capability_ids`][pydantic_ai.tools.RunContext.loaded_capability_ids].
     """
 
     @cached_property

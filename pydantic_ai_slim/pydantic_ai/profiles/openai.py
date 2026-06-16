@@ -107,6 +107,9 @@ class OpenAIModelProfile(ModelProfile):
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
+    supports_inline_system_prompts: bool = True
+    """OpenAI's APIs accept `system`/`developer`/`user`-role messages at any position."""
+
     openai_chat_supports_multiple_system_messages: bool = True
     """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation.
 
@@ -172,6 +175,15 @@ class OpenAIModelProfile(ModelProfile):
     Some OpenAI-compatible providers (e.g. Azure) do not support document input via the Chat Completions API.
     """
 
+    openai_chat_supports_max_completion_tokens: bool = True
+    """Whether the Chat Completions API accepts the `max_completion_tokens` field for the `max_tokens` setting.
+
+    OpenAI itself (including the o-series reasoning models) uses `max_completion_tokens`, the field that caps
+    visible output plus reasoning tokens, so this defaults to `True`. Many OpenAI-compatible providers (e.g.
+    OpenRouter) only accept the older `max_tokens` field; set this to `False` for those so the `max_tokens`
+    setting is sent as `max_tokens` instead.
+    """
+
     def __post_init__(self):  # pragma: no cover
         if not self.openai_supports_sampling_settings:
             warnings.warn(
@@ -220,8 +232,10 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
     )
 
-    # OpenAI's native `tool_search` tool with `defer_loading` is available on
-    # GPT-5.4 and later mainline models.
+    # OpenAI's native `tool_search` tool with `defer_loading` is available on the
+    # GPT-5.4 and GPT-5.5 mainline families. Like the other gates in this function, this
+    # enumerates known versions rather than matching open-endedly, so a future family
+    # (e.g. GPT-5.6) must be added here explicitly; until then it falls back to local search.
     supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 

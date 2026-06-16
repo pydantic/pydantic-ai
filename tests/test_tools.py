@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
-from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -171,6 +171,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -212,6 +213,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -261,6 +263,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -310,6 +313,7 @@ def test_google_style_with_returns():
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -357,6 +361,7 @@ def test_sphinx_style_with_returns():
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -410,6 +415,7 @@ def test_numpy_style_with_returns():
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -451,6 +457,7 @@ def test_only_returns_type():
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -483,6 +490,7 @@ def test_docstring_unknown():
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -533,6 +541,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -576,6 +585,7 @@ def test_takes_just_model():
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -628,6 +638,7 @@ def test_takes_model_and_int():
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -1022,6 +1033,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -1101,6 +1113,7 @@ def test_json_schema_required_parameters():
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
             {
                 'description': None,
@@ -1123,6 +1136,7 @@ def test_json_schema_required_parameters():
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
         ]
     )
@@ -1218,6 +1232,7 @@ def test_schema_generator():
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
             {
                 'description': None,
@@ -1239,6 +1254,7 @@ def test_schema_generator():
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
         ]
     )
@@ -1283,6 +1299,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -1292,7 +1309,7 @@ def test_dynamic_tools_agent_wide():
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
-            return None
+            return []
         elif ctx.deps == 21:
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
@@ -3032,7 +3049,10 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
         is_called.set()
 
         try:
-            await asyncio.sleep(1.0)
+            # Block until cancelled instead of sleeping a fixed duration: a sleep that races the
+            # `wait_for` timeouts below is flaky under CI load — if the loop is starved past the
+            # sleep, the tool returns normally and `is_cancelled` is never set.
+            await asyncio.Event().wait()
 
         except asyncio.CancelledError:
             is_cancelled.set()
@@ -3047,9 +3067,9 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
                 pass
 
     task = asyncio.create_task(run_agent())
-    await asyncio.wait_for(is_called.wait(), timeout=1.0)
+    await asyncio.wait_for(is_called.wait(), timeout=10)
     task.cancel()
-    await asyncio.wait_for(is_cancelled.wait(), timeout=1.0)
+    await asyncio.wait_for(is_cancelled.wait(), timeout=10)
 
 
 def test_tool_approved_with_metadata():
@@ -3863,6 +3883,121 @@ def test_single_base_model_arg_validator_accepts_wrapped_input():
     raw = validator.validate_python({'city': 'Mexico City'})
     wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
     assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
+def test_single_base_model_arg_validator_keeps_same_named_model_field():
+    """When the model has a field named like the parameter, unwrapped input is validated as-is.
+
+    `{argument: {...}}` here is genuine unwrapped input setting the `argument` field, not a wrapper
+    envelope, so it must not be unwrapped a second time.
+    """
+
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'count': 1}}) == {'argument': Payload(argument={'count': 1})}
+
+
+def test_single_base_model_arg_validator_unwraps_round_tripped_same_named_field():
+    """A model with a field named like the parameter still round-trips the already-wrapped shape.
+
+    When previously-validated args (`{argument: Payload(...)}`) are serialized out and re-validated
+    (e.g. across a Temporal activity boundary), the validator sees `{argument: {argument: ...}}`. The
+    unwrapped interpretation fails validation, so it falls back to unwrapping the envelope — keeping
+    validation idempotent even when the parameter name collides with a field name.
+    """
+
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'argument': {'count': 1}}}) == {
+        'argument': Payload(argument={'count': 1})
+    }
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_field_alias():
+    """Unwrapped input validates when the model's only field uses the parameter name as its alias.
+
+    `argument` is not a field *name*, but it is the field's validation alias, so it's a key the model
+    accepts and the input must be validated as-is rather than unwrapped as an envelope. This includes
+    the case where the field has a default and a dict value, where unwrapping would silently drop it.
+    """
+
+    class Inner(BaseModel):
+        x: int = 0
+
+    class Payload(BaseModel):
+        data: Inner = Field(alias='argument', default_factory=Inner)
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.data.x)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    expected = Payload.model_validate({'argument': {'x': 5}})
+    assert validator.validate_python({'argument': {'x': 5}}) == {'argument': expected}
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_alias_choice():
+    """A parameter name matching one of a field's `AliasChoices` is also recognized as a model key."""
+
+    class Payload(BaseModel):
+        city: str = Field(validation_alias=AliasChoices('argument', 'town'))
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    expected = Payload.model_validate({'argument': 'Mexico City'})
+    assert validator.validate_python({'argument': 'Mexico City'}) == {'argument': expected}
+
+
+def test_single_base_model_arg_tool_call_accepts_wrapped_input_with_defaults():
+    class Payload(BaseModel):
+        name: str = 'default_name'
+        value: int = 0
+
+    calls = 0
+    received: list[Payload] = []
+
+    async def model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'argument': {'name': 'actual_name', 'value': 42}},
+                        tool_call_id='call-1',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    def my_tool(argument: Payload) -> str:
+        received.append(argument)
+        return 'ok'
+
+    result = Agent(FunctionModel(model), tools=[my_tool]).run_sync('go')
+
+    assert result.output == 'done'
+    assert received == [Payload(name='actual_name', value=42)]
 
 
 def test_tool_ctx_agent():

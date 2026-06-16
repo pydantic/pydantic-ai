@@ -145,6 +145,19 @@ class ModelSettings(TypedDict, total=False):
     * xAI
     """
 
+    top_k: int
+    """Only sample from the top K options for each subsequent token.
+
+    Used to remove "long tail" low probability responses.
+
+    Supported by:
+
+    * Gemini
+    * Anthropic
+    * Cohere
+    * Bedrock (Anthropic and Amazon Nova models only)
+    """
+
     timeout: float | Timeout
     """Override the client-level default timeout for a request, in seconds.
 
@@ -214,6 +227,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Gemini
     * Outlines (LlamaCpp, VLLMOffline)
+    * xAI
     """
 
     presence_penalty: float

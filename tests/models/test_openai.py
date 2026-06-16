@@ -45,7 +45,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import InstructionPart, SystemPromptPart, UploadedFile, VideoUrl
@@ -1931,6 +1931,41 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
     assert result.output == IsStr()
 
 
+@pytest.mark.parametrize(
+    'supports_max_completion_tokens,sent_field,omitted_field',
+    [
+        (True, 'max_completion_tokens', 'max_tokens'),
+        (False, 'max_tokens', 'max_completion_tokens'),
+    ],
+)
+async def test_max_tokens_field_routed_by_profile(
+    allow_model_requests: None,
+    supports_max_completion_tokens: bool,
+    sent_field: str,
+    omitted_field: str,
+) -> None:
+    """The `max_tokens` setting maps to whichever API field the profile selects.
+
+    OpenAI (and o-series) use `max_completion_tokens`; many compatible providers (e.g. OpenRouter)
+    only accept `max_tokens`. This is a unit test rather than VCR because our cassette matchers ignore
+    the request body, so a VCR test would still pass green if `max_tokens` were routed to the wrong key.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel(
+        'gpt-4o',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_supports_max_completion_tokens=supports_max_completion_tokens),
+    )
+    agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
+
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs[sent_field] == 100
+    assert omitted_field not in kwargs
+
+
 async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
     gemini_model = GoogleModel('gemini-2.0-flash-exp', provider=GoogleProvider(api_key=gemini_api_key))
     openai_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
@@ -3326,6 +3361,7 @@ def test_openai_model_profile_from_provider():
 
 
 def test_model_profile_strict_not_supported():
+    model_settings = ModelSettings()
     my_tool = ToolDefinition(
         name='my_tool',
         description='This is my tool',
@@ -3334,7 +3370,7 @@ def test_model_profile_strict_not_supported():
     )
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, model_settings)  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -3354,7 +3390,7 @@ def test_model_profile_strict_not_supported():
         provider=OpenAIProvider(api_key='foobar'),
         profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(openai_model_profile('gpt-4o')),
     )
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, model_settings)  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -4397,6 +4433,84 @@ async def test_openai_custom_reasoning_field_sending_back_in_custom_field(allow_
     assert m._map_model_response(resp) == snapshot(  # type: ignore[reportPrivateUsage]
         {'role': 'assistant', 'reasoning_content': 'reasoning', 'content': 'response'}
     )
+
+
+@pytest.mark.parametrize('thinking', [True, False])
+@pytest.mark.parametrize(
+    'thinking_field',
+    [
+        pytest.param('reasoning_content', id='deepseek'),
+        pytest.param('reasoning', id='openrouter'),
+        pytest.param('reasoning_content', id='moonshotai'),
+    ],
+)
+async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
+    allow_model_requests: None, thinking_field: str, thinking: bool
+):
+    """Regression test for #5829: deterministic per-CI guard for the wire mapping.
+
+    Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn
+    with tool calls but no thinking. A `'field'`-mode provider (one that round-trips thinking in a
+    custom field) 400s if such a turn omits that field while the run is thinking, so it must be sent
+    empty when thinking is active and left off otherwise. Parametrized over the three providers that
+    use this mode — DeepSeek and MoonshotAI (`reasoning_content`) and OpenRouter (`reasoning`) — to
+    pin that the backfill is field-name-agnostic (it reads `openai_chat_thinking_field`). The
+    real-API counterpart is `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
+    """
+    load_capability_message = ChatCompletionMessage.model_construct(
+        content=None,
+        role='assistant',
+        tool_calls=[
+            ChatCompletionMessageFunctionToolCall(
+                id='call_load',
+                type='function',
+                function=Function(name='load_capability', arguments=json.dumps({'id': 'DICE_ROLL'})),
+            )
+        ],
+    )
+    roll_dice_message = ChatCompletionMessage.model_construct(
+        content=None,
+        role='assistant',
+        tool_calls=[
+            ChatCompletionMessageFunctionToolCall(
+                id='call_roll', type='function', function=Function(name='roll_dice', arguments='{}')
+            )
+        ],
+    )
+    if thinking:
+        # The provider returns its reasoning in the profile's custom field; the model parses it into a
+        # `ThinkingPart`, which makes the run thinking-active so the synthetic turn gets backfilled.
+        setattr(load_capability_message, thinking_field, 'I should load the dice capability.')
+        setattr(roll_dice_message, thinking_field, 'Now I can roll.')
+    load_capability_turn = completion_message(load_capability_message)
+    roll_dice_turn = completion_message(roll_dice_message)
+    final_turn = completion_message(ChatCompletionMessage.model_construct(content='You win!', role='assistant'))
+    mock = MockOpenAI.create_mock([load_capability_turn, roll_dice_turn, final_turn])
+    model = OpenAIChatModel(
+        'foobar',
+        provider=OpenAIProvider(openai_client=mock),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field=thinking_field,
+            openai_chat_send_back_thinking_parts='field',
+        ),
+    )
+
+    def roll_dice() -> str:
+        return '4'
+
+    agent = Agent(model, capabilities=[Capability(id='DICE_ROLL', tools=[roll_dice], defer_loading=True)])
+    await agent.run('My guess is 4')
+
+    # The second request is the one made after `load_capability` returned; it carries the
+    # synthetic `search_tools` assistant turn that the load injected into history.
+    second_request_messages = get_mock_chat_completion_kwargs(mock)[1]['messages']
+    synthetic_turn = next(
+        message
+        for message in second_request_messages
+        if message.get('role') == 'assistant'
+        and any(call['function']['name'] == 'search_tools' for call in message.get('tool_calls', ()))
+    )
+    assert synthetic_turn.get(thinking_field) == ('' if thinking else None)
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
