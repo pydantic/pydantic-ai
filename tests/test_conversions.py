@@ -887,6 +887,31 @@ class TestLegacyEventsToModelMessages:
             [ModelResponse(parts=[TextPart(content='kept')], timestamp=IsDatetime())]
         )
 
+    def test_events_out_of_index_order_are_sorted(self):
+        """Events are grouped by `gen_ai.message.index` even if they arrive out of order."""
+        events = [
+            {'event.name': 'gen_ai.user.message', 'role': 'user', 'content': 'Bye', 'gen_ai.message.index': 2},
+            {
+                'event.name': 'gen_ai.choice',
+                'gen_ai.message.index': 3,
+                'message': {'role': 'assistant', 'content': 'Goodbye'},
+            },
+            {'event.name': 'gen_ai.user.message', 'role': 'user', 'content': 'Hi', 'gen_ai.message.index': 0},
+            {
+                'event.name': 'gen_ai.choice',
+                'gen_ai.message.index': 1,
+                'message': {'role': 'assistant', 'content': 'Hello'},
+            },
+        ]
+        assert otel_messages_to_model_messages(events) == snapshot(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Hi', timestamp=IsDatetime())]),
+                ModelResponse(parts=[TextPart(content='Hello')], timestamp=IsDatetime()),
+                ModelRequest(parts=[UserPromptPart(content='Bye', timestamp=IsDatetime())]),
+                ModelResponse(parts=[TextPart(content='Goodbye')], timestamp=IsDatetime()),
+            ]
+        )
+
 
 # ── model_messages_to_openai_format ──────────────────────────────────
 

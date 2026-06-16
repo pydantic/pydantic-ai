@@ -342,6 +342,12 @@ def _legacy_events_to_model_messages(
     result: list[ModelMessage] = []
     pending_request_parts: list[ModelRequestPart] = []
 
+    # `itertools.groupby` only groups *consecutive* equal keys, so events for a given message must be
+    # adjacent. Sort by `gen_ai.message.index` defensively in case a trace store or exporter returned them
+    # out of order. This is a stable no-op for events already in emission order (the forward path) and for
+    # third-party events that lack the index entirely (all keyed `-1`, original order preserved).
+    events = sorted(events, key=lambda e: e.get('gen_ai.message.index', -1))
+
     for _, event_group in itertools.groupby(events, key=lambda e: e.get('gen_ai.message.index')):
         event_list = list(event_group)
         first_event = event_list[0]
