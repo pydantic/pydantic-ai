@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -38,10 +38,12 @@ KnownEmbeddingModelName = TypeAliasType(
     Literal[
         'google-cloud:gemini-embedding-001',
         'google-cloud:gemini-embedding-2-preview',
+        'google-cloud:gemini-embedding-2',
         'google-cloud:text-embedding-005',
         'google-cloud:text-multilingual-embedding-002',
         'google:gemini-embedding-001',
         'google:gemini-embedding-2-preview',
+        'google:gemini-embedding-2',
         'openai:text-embedding-ada-002',
         'openai:text-embedding-3-small',
         'openai:text-embedding-3-large',
@@ -224,7 +226,7 @@ class Embedder:
         self,
         *,
         model: EmbeddingModel | KnownEmbeddingModelName | str | _utils.Unset = _utils.UNSET,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override the embedding model.
 
         Useful for testing or dynamically switching models.

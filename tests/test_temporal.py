@@ -4,7 +4,7 @@ import asyncio
 import os
 import re
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -195,7 +195,7 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
 
 
 @contextmanager
-def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
+def workflow_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
     """Helper for asserting that a Temporal workflow fails with the expected error."""
     with pytest.raises(WorkflowFailureError) as exc_info:
         yield
@@ -3034,6 +3034,46 @@ def test_temporal_run_context_serializes_usage():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.usage == ctx.usage
+
+
+def test_temporal_run_context_serialization_is_exhaustive():
+    """Every `RunContext` field must be consciously categorized for Temporal serialization.
+
+    Guards against silent drift: when a `RunContext` field is added, this test fails until
+    the author either includes it in `TemporalRunContext.serialize_run_context` or lists it
+    in `intentionally_unserialized` below with a reason. Without that decision a new field
+    silently becomes unavailable inside a Temporal activity (the `__getattribute__` guard
+    raises `UserError` on access), which is how the deferred-capability fields were missed.
+    """
+    # Fields deliberately NOT carried across the activity boundary, each with its reason.
+    intentionally_unserialized = {
+        'deps',  # passed separately to deserialize_run_context
+        'agent',  # reattached after deserialize by deserialize_run_context
+        'model',  # live Model instance, not serializable
+        'tracer',  # live tracer, not serializable
+        'tool_manager',  # live ToolManager, not serializable (documented on the field)
+        'capabilities',  # live capability objects (toolsets/hooks/callables), not serializable
+        'pending_messages',  # live run queue, meaningless outside the running agent
+        'messages',  # not currently exposed inside activities
+        'prompt',  # not currently exposed inside activities
+        'validation_context',  # arbitrary user object, possibly unserializable
+        'trace_include_content',  # tracing config, not run state
+        'instrumentation_version',  # tracing config, not run state
+        'conversation_id',  # not currently exposed inside activities
+        'model_settings',  # not currently exposed inside activities
+    }
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    serialized = set(TemporalRunContext.serialize_run_context(ctx))
+    all_fields = set(RunContext.__dataclass_fields__)
+
+    overlap = serialized & intentionally_unserialized
+    assert not overlap, f'Fields both serialized and excluded: {overlap}'
+
+    uncategorized = all_fields - (serialized | intentionally_unserialized)
+    assert not uncategorized, (
+        f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
+        '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
+    )
 
 
 with warnings.catch_warnings():

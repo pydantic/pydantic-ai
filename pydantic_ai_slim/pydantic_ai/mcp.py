@@ -8,7 +8,7 @@ import re
 import ssl
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -853,7 +853,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     @asynccontextmanager
     async def client_streams(
         self,
-    ) -> AsyncIterator[
+    ) -> AsyncGenerator[
         tuple[
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
@@ -1558,7 +1558,7 @@ class MCPServerStdio(MCPServer):
     @asynccontextmanager
     async def client_streams(
         self,
-    ) -> AsyncIterator[
+    ) -> AsyncGenerator[
         tuple[
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
@@ -1787,7 +1787,7 @@ class MCPServerSSE(_MCPServerHTTP):
     @asynccontextmanager
     async def client_streams(  # pragma: no cover
         self,
-    ) -> AsyncIterator[
+    ) -> AsyncGenerator[
         tuple[
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
@@ -1797,14 +1797,7 @@ class MCPServerSSE(_MCPServerHTTP):
             raise ValueError('`http_client` is mutually exclusive with `headers`.')
 
         if self.http_client is not None:
-
-            def httpx_client_factory(
-                headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> httpx.AsyncClient:
-                assert self.http_client is not None
-                return self.http_client
+            httpx_client_factory = _make_httpx_client_factory(self.http_client)
 
             async with sse_client(
                 url=self.url,
@@ -1896,7 +1889,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     @asynccontextmanager
     async def client_streams(
         self,
-    ) -> AsyncIterator[
+    ) -> AsyncGenerator[
         tuple[
             MemoryObjectReceiveStream[SessionMessage | Exception],
             MemoryObjectSendStream[SessionMessage],
@@ -2771,6 +2764,9 @@ def _make_httpx_client_factory(
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
+        # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`,
+        # which the mcp SDK's `McpHttpClientFactory` protocol doesn't declare.
+        follow_redirects: bool = True,
     ) -> httpx.AsyncClient:
         return http_client
 

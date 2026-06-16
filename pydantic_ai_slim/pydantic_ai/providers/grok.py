@@ -22,10 +22,24 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
-# https://docs.x.ai/docs/models
+# https://docs.x.ai/developers/models
 GrokModelName = Literal[
     'grok-4',
     'grok-4-0709',
+    'grok-4.3',
+    'grok-4.3-latest',
+    'grok-4.20',
+    'grok-4.20-0309',
+    'grok-4.20-0309-non-reasoning',
+    'grok-4.20-0309-reasoning',
+    'grok-4.20-multi-agent',
+    'grok-4.20-multi-agent-0309',
+    'grok-4.20-multi-agent-latest',
+    'grok-4.20-non-reasoning',
+    'grok-4.20-non-reasoning-latest',
+    'grok-4.20-reasoning',
+    'grok-4.20-reasoning-latest',
+    'grok-latest',
     'grok-4-latest',
     'grok-4-1-fast',
     'grok-4-1-fast-reasoning',
@@ -33,6 +47,7 @@ GrokModelName = Literal[
     'grok-4-fast',
     'grok-4-fast-reasoning',
     'grok-4-fast-non-reasoning',
+    'grok-build-0.1',
     'grok-code-fast-1',
     'grok-3',
     'grok-3-mini',
