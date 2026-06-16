@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -1129,6 +1130,50 @@ class TestModelMessagesToOpenaiFormat:
         ]
         result = model_messages_to_openai_format(messages)
         assert result == snapshot([{'role': 'user', 'content': 'Hello'}])
+
+    def test_text_content_in_user_content(self):
+        """`TextContent` contributes its `.content` as a text part, like a plain `str`."""
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(['Plain text', TextContent(content='Tagged text', metadata={'tag': 'important'})]),
+                ]
+            ),
+        ]
+        result = model_messages_to_openai_format(messages)
+        assert result == snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'type': 'text', 'text': 'Plain text'},
+                        {'type': 'text', 'text': 'Tagged text'},
+                    ],
+                }
+            ]
+        )
+
+    def test_uploaded_file_falls_back_to_text(self):
+        """`UploadedFile` is a provider-hosted reference with no Chat Completions equivalent, so it becomes a marker."""
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(['What is in this file?', UploadedFile(file_id='file-abc', provider_name='openai')]),
+                ]
+            ),
+        ]
+        result = model_messages_to_openai_format(messages)
+        assert result == snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'type': 'text', 'text': 'What is in this file?'},
+                        {'type': 'text', 'text': '[UploadedFile: file-abc (openai)]'},
+                    ],
+                }
+            ]
+        )
 
     def test_retry_prompt_with_tool(self):
         messages: list[ModelMessage] = [

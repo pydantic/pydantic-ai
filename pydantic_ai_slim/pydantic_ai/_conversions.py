@@ -31,6 +31,7 @@ from .messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -479,6 +480,24 @@ def _openai_image_url(url: str, vendor_metadata: dict[str, Any] | None) -> dict[
     return image_url
 
 
+def _binary_content_to_openai(item: BinaryContent) -> dict[str, Any]:
+    """Convert a `BinaryContent` item to an OpenAI multimodal content part."""
+    if item.is_image:
+        return {'type': 'image_url', 'image_url': _openai_image_url(item.data_uri, item.vendor_metadata)}
+    if item.is_audio:
+        try:
+            audio_format = item.format
+        except ValueError:
+            # Fall back to a text marker for unknown audio formats.
+            return {'type': 'text', 'text': f'[Audio: {item.media_type}]'}
+        if audio_format in ('wav', 'mp3'):
+            return {'type': 'input_audio', 'input_audio': {'data': item.base64, 'format': audio_format}}
+        # OpenAI Chat Completions only accepts wav/mp3 audio; fall back to a text marker.
+        return {'type': 'text', 'text': f'[Audio: {item.media_type}]'}
+    # No standard OpenAI representation for non-image/audio binary
+    return {'type': 'text', 'text': f'[Binary: {item.media_type}]'}
+
+
 def _user_content_to_openai(content: str | Sequence[UserContent]) -> str | list[dict[str, Any]]:
     """Convert UserPromptPart content to OpenAI multimodal content format."""
     if isinstance(content, str):
@@ -486,36 +505,22 @@ def _user_content_to_openai(content: str | Sequence[UserContent]) -> str | list[
 
     parts: list[dict[str, Any]] = []
     for item in content:
-        if isinstance(item, str):
-            parts.append({'type': 'text', 'text': item})
+        if isinstance(item, str | TextContent):
+            parts.append({'type': 'text', 'text': item if isinstance(item, str) else item.content})
         elif isinstance(item, ImageUrl):
             parts.append({'type': 'image_url', 'image_url': _openai_image_url(item.url, item.vendor_metadata)})
         elif isinstance(item, BinaryContent):
-            if item.is_image:
-                parts.append({'type': 'image_url', 'image_url': _openai_image_url(item.data_uri, item.vendor_metadata)})
-            elif item.is_audio:
-                try:
-                    audio_format = item.format
-                except ValueError:
-                    # Fall back to a text marker for unknown audio formats.
-                    parts.append({'type': 'text', 'text': f'[Audio: {item.media_type}]'})
-                else:
-                    if audio_format in ('wav', 'mp3'):
-                        parts.append(
-                            {'type': 'input_audio', 'input_audio': {'data': item.base64, 'format': audio_format}}
-                        )
-                    else:
-                        # OpenAI Chat Completions only accepts wav/mp3 audio; fall back to a text marker.
-                        parts.append({'type': 'text', 'text': f'[Audio: {item.media_type}]'})
-            else:
-                # No standard OpenAI representation for non-image/audio binary
-                parts.append({'type': 'text', 'text': f'[Binary: {item.media_type}]'})
+            parts.append(_binary_content_to_openai(item))
         elif isinstance(item, AudioUrl):
             # OpenAI input_audio expects base64, not a URL — fall back to text reference
             parts.append({'type': 'text', 'text': f'[Audio: {item.url}]'})
         elif isinstance(item, (DocumentUrl, VideoUrl)):
             # No standard OpenAI representation for document/video URLs
             parts.append({'type': 'text', 'text': f'[{type(item).__name__}: {item.url}]'})
+        elif isinstance(item, UploadedFile):
+            # OpenAI Chat Completions' `file` type requires base64 data, but `UploadedFile.file_id` is a
+            # provider-hosted reference. Fall back to a text marker so the reference isn't silently dropped.
+            parts.append({'type': 'text', 'text': f'[UploadedFile: {item.file_id} ({item.provider_name})]'})
         elif isinstance(item, CachePoint):
             pass
 
