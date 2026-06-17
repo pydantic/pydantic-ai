@@ -156,7 +156,6 @@ def _zai_settings_to_openai_settings(
 
     clear_thinking = model_settings.get('zai_clear_thinking')
     if clear_thinking is not None:
-        # TODO: record a cassette confirming the API accepts `clear_thinking` without a `type`.
         thinking_payload['clear_thinking'] = clear_thinking
 
     if thinking_payload:
