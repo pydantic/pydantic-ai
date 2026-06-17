@@ -1880,6 +1880,30 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     assert 'Please try again' in str(retry_part.content)
 
 
+def test_dump_messages_preserves_part_order() -> None:
+    """Test that dump_messages preserves ModelRequest part ordering (regression for #5964).
+
+    When a ModelRequest has ToolReturnPart before UserPromptPart, dump_messages should emit
+    ToolMessage before UserMessage, not reorder them.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='search', tool_call_id='call_1', content='search result'),
+                UserPromptPart(content='Based on the result, do something'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    # Should emit ToolMessage before UserMessage, preserving original order
+    assert len(ag_ui_msgs) == 2
+    assert isinstance(ag_ui_msgs[0], ToolMessage)
+    assert ag_ui_msgs[0].tool_call_id == 'call_1'
+    assert isinstance(ag_ui_msgs[1], UserMessage)
+
+
 def test_file_part_dropped_by_default() -> None:
     """Test that FilePart is silently dropped when preserve_file_data=False (default).
 
