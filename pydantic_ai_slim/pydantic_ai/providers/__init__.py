@@ -252,6 +252,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .sambanova import SambaNovaProvider
 
         return SambaNovaProvider
+    elif provider == 'pinstripes':
+        from .pinstripes import PinstripeProvider
+
+        return PinstripeProvider
     elif provider == 'outlines':
         from .outlines import OutlinesProvider  # pyright: ignore[reportDeprecated]
 
