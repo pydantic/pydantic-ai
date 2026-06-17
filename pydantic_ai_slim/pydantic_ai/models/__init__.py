@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
+import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
@@ -730,6 +731,11 @@ class StreamedResponse(ABC):
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
+    _first_chunk_monotonic: float | None = field(default=None, init=False)
+    """`time.perf_counter()` captured when the first event is yielded from the stream,
+    or `None` if nothing was ever yielded. Read by `InstrumentedModel.request_stream`
+    together with its own start timestamp to derive
+    `gen_ai.client.operation.time_to_first_chunk` (OTel GenAI client metric)."""
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -812,6 +818,9 @@ class StreamedResponse(ABC):
                 # iteration.
                 try:
                     async for event in iterator:
+                        if self._first_chunk_monotonic is None:
+                            # First event surfaced to the consumer: stamp the wall clock.
+                            self._first_chunk_monotonic = time.perf_counter()
                         yield event
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:

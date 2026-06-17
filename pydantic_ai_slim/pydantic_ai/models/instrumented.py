@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import time
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -175,6 +176,11 @@ class InstrumentationSettings:
             unit='{USD}',
             description='Monetary cost',
         )
+        self.time_to_first_chunk_histogram = self.meter.create_histogram(
+            'gen_ai.client.operation.time_to_first_chunk',
+            unit='s',
+            description='Time to receive the first chunk of a streaming response',
+        )
 
     def messages_to_otel_events(
         self, messages: list[ModelMessage], parameters: ModelRequestParameters | None = None
@@ -326,6 +332,7 @@ class InstrumentationSettings:
         response: ModelResponse,
         price_calculation: PriceCalculation | None,
         attributes: dict[str, AttributeValue],
+        time_to_first_chunk: float | None = None,
     ):
         for typ in ['input', 'output']:
             if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
@@ -335,6 +342,8 @@ class InstrumentationSettings:
         if price_calculation:
             cost = float(price_calculation.total_price)
             self.cost_histogram.record(cost, attributes)
+        if time_to_first_chunk is not None:
+            self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
 
 
 @dataclass(init=False)
@@ -390,6 +399,10 @@ class InstrumentedModel(WrapperModel):
         )
         with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
             response_stream: StreamedResponse | None = None
+            # OTel defines time_to_first_chunk as "from when the client issues the
+            # generation request to when the first chunk is received". Stamp the
+            # request-issue instant here, before the wrapped model opens the stream.
+            request_start = time.perf_counter()
             try:
                 async with self.wrapped.request_stream(
                     prepared_rc.messages,
@@ -400,4 +413,7 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get())
+                    time_to_first_chunk: float | None = None
+                    if response_stream._first_chunk_monotonic is not None:  # pyright: ignore[reportPrivateUsage]
+                        time_to_first_chunk = response_stream._first_chunk_monotonic - request_start  # pyright: ignore[reportPrivateUsage]
+                    finish(response_stream.get(), time_to_first_chunk=time_to_first_chunk)
