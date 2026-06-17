@@ -4920,6 +4920,32 @@ async def test_adapter_load_metadata_chunks_distinct_from_model_file():
     assert file_parts[0].content == pdf
 
 
+async def test_adapter_load_orphan_tool_metadata_part_is_dropped():
+    """An assistant tool-metadata data part with no preceding tool return is dropped, not re-bundled.
+
+    Covers the `current_tool_return is None` branch of the load-path re-bundler: a `DataUIPart`
+    (a tool-metadata chunk) that arrives without an originating `ToolReturnPart` to attach to is
+    silently dropped, matching the prior "shouldn't be sent to the model" behavior, and never
+    leaks into a spurious message. `_find_tool_return` then returns `None` because no tool
+    return survives.
+    """
+    ui_messages = [
+        UIMessage(
+            id='m1',
+            role='assistant',
+            parts=[
+                DataUIPart(type='data-sources', id='s1', data={'q': 'pydantic-ai'}),
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+
+    # The orphan data part carries no model-bound content, so nothing is emitted for it.
+    assert all(not isinstance(part, ToolReturnPart) for msg in reloaded for part in msg.parts)
+    assert _find_tool_return(reloaded, 's1') is None
+
+
 async def test_adapter_dump_load_roundtrip_without_timestamps():
     """Test that dump_messages and load_messages work when ModelRequest has no timestamp (None)."""
     original_messages: list[ModelRequest | ModelResponse] = [
