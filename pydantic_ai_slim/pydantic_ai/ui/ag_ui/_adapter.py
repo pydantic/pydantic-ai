@@ -581,6 +581,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if converted is not None:
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
+                # Flush buffered user content before tool returns so
+                # messages preserve the original ModelRequest.parts order.
+                if user_content:
+                    if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+                        result.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
+                    else:
+                        result.append(UserMessage(id=_new_message_id(), content=user_content))
+                    user_content = []
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
