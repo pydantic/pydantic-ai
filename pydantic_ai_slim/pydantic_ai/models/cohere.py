@@ -399,8 +399,10 @@ def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
 
         request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
         response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
+        cache_read_tokens = int(u.cached_tokens) if getattr(u, 'cached_tokens', None) else 0
         return usage.RequestUsage(
             input_tokens=request_tokens,
             output_tokens=response_tokens,
+            cache_read_tokens=cache_read_tokens,
             details=details,
         )
