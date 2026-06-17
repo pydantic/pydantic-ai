@@ -90,7 +90,7 @@ async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str, v
     # The unified `thinking` setting must reach the wire as Z.AI's `extra_body.thinking` payload (merged to
     # the top level by the OpenAI SDK), and the base OpenAI `reasoning_effort` parameter must be suppressed.
     # VCR cassette matchers aren't sensitive to the request body, so assert it explicitly.
-    assert len(vcr.requests) == 1
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assert request_body['thinking'] == {'type': 'enabled'}
     assert 'reasoning_effort' not in request_body
