@@ -78,6 +78,25 @@ def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[s
     return provider_metadata.get(PROVIDER_METADATA_KEY, {}) if provider_metadata else {}
 
 
+# Marker placed on a `FileUIPart.provider_metadata` to flag files that originated from a
+# tool result's metadata `FileChunk` (rather than a model-generated `FilePart`). `dump_messages`
+# un-bundles every metadata chunk into loose `UIMessagePart`s, and on load `DataUIPart` /
+# `SourceUrlUIPart` / `SourceDocumentUIPart` are unambiguously tool-metadata, but `FileUIPart`
+# is also how a model-generated `FilePart` is represented. The marker lets `load_messages`
+# re-bundle only the tool-metadata files back into `ToolReturnPart.metadata`.
+TOOL_METADATA_FILE_KEY = 'tool_metadata_file'
+
+
+def dump_tool_metadata_file_provider_metadata() -> ProviderMetadata:
+    """Build the `provider_metadata` marker for a tool-metadata `FileChunk` dumped as a `FileUIPart`."""
+    return {PROVIDER_METADATA_KEY: {TOOL_METADATA_FILE_KEY: True}}
+
+
+def is_tool_metadata_file(provider_metadata: ProviderMetadata | None) -> bool:
+    """Return whether a `FileUIPart` originated from a tool result's metadata `FileChunk`."""
+    return bool(load_provider_metadata(provider_metadata).get(TOOL_METADATA_FILE_KEY))
+
+
 def dump_provider_metadata(
     wrapper_key: str | None = PROVIDER_METADATA_KEY,
     **kwargs: ProviderDetailsDelta | str,

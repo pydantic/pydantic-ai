@@ -50,6 +50,8 @@ from ._utils import (
     apply_message_metadata,
     dump_message_metadata,
     dump_provider_metadata,
+    dump_tool_metadata_file_provider_metadata,
+    is_tool_metadata_file,
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
@@ -317,7 +319,27 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     builder.add(UserPromptPart(content=user_prompt_content))
 
             elif msg.role == 'assistant':
+                # The most recently reloaded non-builtin `ToolReturnPart` and the metadata chunks
+                # being re-bundled onto it. `_extract_metadata_ui_parts` un-bundles
+                # `ToolReturnPart.metadata` into loose data-carrying parts emitted contiguously
+                # right after the tool-output part, so any intervening part of another kind clears
+                # this back to None (the chunks are flushed onto the return as they are collected).
+                current_tool_return: ToolReturnPart | None = None
+                current_metadata_chunks: list[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk] = []
                 for part in msg.parts:
+                    if isinstance(part, (DataUIPart, SourceUrlUIPart, SourceDocumentUIPart)) or (
+                        isinstance(part, FileUIPart) and is_tool_metadata_file(part.provider_metadata)
+                    ):
+                        # Re-bundle a tool-metadata chunk back onto the originating tool return.
+                        if current_tool_return is not None:
+                            current_metadata_chunks.append(_load_metadata_chunk(part))
+                            current_tool_return.metadata = list(current_metadata_chunks)
+                        # else: orphan client-sourced data part with no preceding tool return -> drop
+                        #       (matches the prior "shouldn't be sent to the model" behavior).
+                        continue
+
+                    current_tool_return = None
+                    current_metadata_chunks = []
                     if isinstance(part, TextUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         builder.add(
@@ -453,36 +475,26 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
 
                             if part.state == 'output-available':
-                                builder.add(
-                                    ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
+                                current_tool_return = ToolReturnPart(
+                                    tool_name=tool_name, tool_call_id=tool_call_id, content=part.output
                                 )
+                                builder.add(current_tool_return)
                             elif part.state == 'output-error':
-                                builder.add(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=part.error_text,
-                                        outcome='failed',
-                                    )
+                                current_tool_return = ToolReturnPart(
+                                    tool_name=tool_name,
+                                    tool_call_id=tool_call_id,
+                                    content=part.error_text,
+                                    outcome='failed',
                                 )
+                                builder.add(current_tool_return)
                             elif part.state == 'output-denied':
-                                builder.add(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=_denial_reason(part),
-                                        outcome='denied',
-                                    )
+                                current_tool_return = ToolReturnPart(
+                                    tool_name=tool_name,
+                                    tool_call_id=tool_call_id,
+                                    content=_denial_reason(part),
+                                    outcome='denied',
                                 )
-                    elif isinstance(part, DataUIPart):  # pragma: no cover
-                        # Contains custom data that shouldn't be sent to the model
-                        pass
-                    elif isinstance(part, SourceUrlUIPart):  # pragma: no cover
-                        # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
-                        pass
-                    elif isinstance(part, SourceDocumentUIPart):  # pragma: no cover
-                        # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
-                        pass
+                                builder.add(current_tool_return)
                     elif isinstance(part, StepStartUIPart):  # pragma: no cover
                         # Nothing to do here
                         pass
@@ -953,7 +965,45 @@ def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePar
                 )
             )
         elif isinstance(chunk, FileChunk):
-            parts.append(FileUIPart(url=chunk.url, media_type=chunk.media_type))
+            # Mark the file as tool-metadata-sourced so `load_messages` re-bundles it back into
+            # `ToolReturnPart.metadata` instead of treating it as a model-generated `FilePart`.
+            parts.append(
+                FileUIPart(
+                    url=chunk.url,
+                    media_type=chunk.media_type,
+                    provider_metadata=dump_tool_metadata_file_provider_metadata(),
+                )
+            )
         else:
             assert_never(chunk)
     return parts
+
+
+def _load_metadata_chunk(
+    part: DataUIPart | SourceUrlUIPart | SourceDocumentUIPart | FileUIPart,
+) -> DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk:
+    """Reconstruct the original metadata chunk from a UI part dumped by `_extract_metadata_ui_parts`.
+
+    Inverse of `_extract_metadata_ui_parts`: re-bundles the data-carrying parts that
+    `dump_messages` un-bundled from `ToolReturnPart.metadata` back into their chunk form so
+    the metadata round-trips through `dump_messages` -> `load_messages`. See issue #5913.
+    """
+    if isinstance(part, DataUIPart):
+        return DataChunk(type=part.type, id=part.id, data=part.data)
+    elif isinstance(part, SourceUrlUIPart):
+        return SourceUrlChunk(
+            source_id=part.source_id,
+            url=part.url,
+            title=part.title,
+            provider_metadata=part.provider_metadata,
+        )
+    elif isinstance(part, SourceDocumentUIPart):
+        return SourceDocumentChunk(
+            source_id=part.source_id,
+            media_type=part.media_type,
+            title=part.title,
+            filename=part.filename,
+            provider_metadata=part.provider_metadata,
+        )
+    else:
+        return FileChunk(url=part.url, media_type=part.media_type)

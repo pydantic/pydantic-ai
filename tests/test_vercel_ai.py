@@ -4198,7 +4198,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         'media_type': 'image/png',
                         'filename': None,
                         'url': 'https://example.com/file.png',
-                        'provider_metadata': None,
+                        'provider_metadata': {'pydantic_ai': {'tool_metadata_file': True}},
                     },
                     {
                         'type': 'data-valid',
@@ -4791,6 +4791,122 @@ async def test_adapter_dump_load_roundtrip():
     _sync_timestamps(original_messages, reloaded_messages)
 
     assert reloaded_messages == original_messages
+
+
+def _find_tool_return(messages: list[ModelMessage], tool_call_id: str) -> ToolReturnPart | None:
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id:
+                return part
+    return None
+
+
+@pytest.mark.parametrize(
+    'label, chunks',
+    [
+        pytest.param('DataChunk', [DataChunk(type='data-sources', id='s1', data={'q': 'pydantic-ai'})], id='data'),
+        pytest.param(
+            'SourceUrlChunk',
+            [SourceUrlChunk(source_id='su1', url='https://example.com', title='Example')],
+            id='source-url',
+        ),
+        pytest.param(
+            'SourceDocumentChunk',
+            [SourceDocumentChunk(source_id='sd1', media_type='application/pdf', title='Doc', filename='doc.pdf')],
+            id='source-document',
+        ),
+        pytest.param(
+            'FileChunk',
+            [FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf')],
+            id='file',
+        ),
+        pytest.param(
+            'mixed',
+            [
+                DataChunk(type='data-sources', id='s1', data={'q': 'pydantic-ai'}),
+                SourceUrlChunk(source_id='su1', url='https://example.com', title='Example'),
+                SourceDocumentChunk(source_id='sd1', media_type='application/pdf', title='Doc', filename='doc.pdf'),
+                FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf'),
+            ],
+            id='mixed',
+        ),
+    ],
+)
+async def test_adapter_dump_load_roundtrip_tool_metadata_chunks(
+    label: str, chunks: list[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]
+):
+    """`ToolReturnPart.metadata` data chunks round-trip through dump_messages -> load_messages.
+
+    Regression test for #5913: the dump path un-bundles the chunks into loose `UIMessagePart`s
+    via `_extract_metadata_ui_parts`, but the load path had no symmetric re-bundler, so the
+    metadata was silently dropped (and `FileChunk` was mis-routed into a brand-new
+    `ModelResponse(FilePart)`, breaking structural equivalence). Fails without the fix.
+    """
+    tool_return = ToolReturnPart(
+        tool_name='search_docs',
+        content='result text',
+        tool_call_id='tc-1',
+        metadata=list(chunks),
+    )
+    messages_in: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='q')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search_docs', args={}, tool_call_id='tc-1')]),
+        ModelRequest(parts=[tool_return]),
+    ]
+
+    dumped = VercelAIAdapter.dump_messages(messages_in)
+    reloaded = VercelAIAdapter.load_messages(dumped)
+
+    # No spurious extra messages (the FileChunk bug appended a 4th ModelResponse).
+    assert len(reloaded) == len(messages_in), f'{label}: message count changed on round-trip'
+
+    reloaded_tr = _find_tool_return(reloaded, 'tc-1')
+    assert reloaded_tr is not None, f'{label}: tool return lost on round-trip'
+    assert reloaded_tr.metadata == list(chunks), f'{label}: metadata not preserved on round-trip'
+
+    # The reloaded file chunk must NOT have leaked into a separate FilePart.
+    assert not any(isinstance(part, FilePart) for msg in reloaded for part in msg.parts), (
+        f'{label}: tool-metadata file leaked into a model FilePart'
+    )
+
+
+async def test_adapter_load_metadata_chunks_distinct_from_model_file():
+    """A model-generated `FilePart` is preserved as a `FilePart`, not re-bundled into tool metadata.
+
+    The tool-metadata marker (`tool_metadata_file`) on the dumped `FileUIPart` is what lets the
+    load path tell the two apart; a genuine model file has no such marker, so it must still load
+    as a standalone `FilePart`.
+    """
+    pdf = BinaryContent(data=b'fake', media_type='application/pdf')
+    messages_in: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='q')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='search_docs', args={}, tool_call_id='tc-1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search_docs',
+                    content='result text',
+                    tool_call_id='tc-1',
+                    metadata=[FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf')],
+                )
+            ]
+        ),
+        ModelResponse(parts=[FilePart(content=pdf)]),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages_in))
+
+    reloaded_tr = _find_tool_return(reloaded, 'tc-1')
+    assert reloaded_tr is not None
+    assert reloaded_tr.metadata == [FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf')]
+
+    file_parts = [part for msg in reloaded for part in msg.parts if isinstance(part, FilePart)]
+    assert len(file_parts) == 1, 'the model-generated FilePart should survive as exactly one FilePart'
+    assert file_parts[0].content == pdf
 
 
 async def test_adapter_dump_load_roundtrip_without_timestamps():

@@ -122,7 +122,7 @@ async def search_docs(query: str) -> ToolReturn:
 ```
 
 !!! note
-    Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.
+    Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`. They are also restored onto the originating `ToolReturnPart.metadata` by `load_messages`, so the metadata survives a full `dump_messages` → `load_messages` round-trip.
 
 ## Message metadata
 
