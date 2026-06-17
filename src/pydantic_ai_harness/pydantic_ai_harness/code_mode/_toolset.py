@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import keyword
 import re
 import warnings
@@ -22,7 +23,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     is_multi_modal_content,
 )
-from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolDenied, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 
@@ -194,6 +195,25 @@ def _sanitize_tool_name(name: str) -> str:
     if keyword.iskeyword(sanitized):
         sanitized = f'{sanitized}_'
     return sanitized or '_'
+
+
+def _global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
+    """Whether the run-scoped execution mode forces sandbox tool calls to run sequentially.
+
+    pydantic-ai v1's `get_parallel_execution_mode` took the pending calls list
+    and folded per-tool `sequential` flags into the result; v2 dropped the
+    argument and returns only the run-scoped context-var mode. Passing `[]` in
+    v1 isolated that context var from per-tool flags, which is exactly what the
+    no-arg v2 call returns, so the two are equivalent.
+
+    Inspect the arity rather than catch `TypeError` so a genuine `TypeError`
+    raised inside the method is not swallowed. The `Callable[...]` parameter
+    type erases the bound signature so both call shapes typecheck whichever
+    major's stubs pyright resolves.
+    """
+    if inspect.signature(get_mode).parameters:
+        return get_mode([]) != 'parallel'
+    return get_mode() != 'parallel'
 
 
 @dataclass(kw_only=True)
@@ -428,7 +448,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         #   to isolate the context var from per-tool flags.
         # - sequential_tools: per-tool `sequential` flags on ToolDefinition.
         #   These tools are rendered as `def` (sync) and resolved inline.
-        global_sequential = tool_manager.get_parallel_execution_mode([]) != 'parallel'
+        global_sequential = _global_mode_is_sequential(tool_manager.get_parallel_execution_mode)
         sequential_tools = {name for name, td in callable_defs.items() if td.sequential}
 
         # Collect nested tool calls and returns keyed by tool_call_id so they

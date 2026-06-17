@@ -428,8 +428,8 @@ async def test_resolved_property_exposes_active_resolution() -> None:
     assert capability.resolved is None
 
 
-async def test_provider_backed_resolution_uses_remote_value_and_label(capfire: CaptureLogfire) -> None:
-    config = VariablesConfig(
+def _remote_prompt_config() -> VariablesConfig:
+    return VariablesConfig(
         variables={
             'prompt__remote_slug': VariableConfig(
                 name='prompt__remote_slug',
@@ -439,11 +439,11 @@ async def test_provider_backed_resolution_uses_remote_value_and_label(capfire: C
             )
         }
     )
-    with _variables_provider_configured(capfire, config):
-        agent = Agent(
-            TestModel(),
-            capabilities=[ManagedPrompt('remote_slug', default='fallback', label='production'), Instrumentation()],
-        )
+
+
+async def test_provider_backed_resolution_uses_remote_value_and_label(capfire: CaptureLogfire) -> None:
+    with _variables_provider_configured(capfire, _remote_prompt_config()):
+        agent = Agent(TestModel(), capabilities=[ManagedPrompt('remote_slug', default='fallback', label='production')])
 
         result = await agent.run('hello')
 
@@ -455,6 +455,18 @@ async def test_provider_backed_resolution_uses_remote_value_and_label(capfire: C
     assert resolution['attributes']['reason'] == 'resolved'
     assert resolution['attributes']['value'] == '"You are the PRODUCTION prompt."'
     assert resolution['attributes']['label'] == 'production'
+
+
+async def test_provider_backed_resolution_tags_v1_instrumentation_spans(capfire: CaptureLogfire) -> None:
+    with _variables_provider_configured(capfire, _remote_prompt_config()):
+        agent = Agent(
+            TestModel(),
+            capabilities=[ManagedPrompt('remote_slug', default='fallback', label='production'), Instrumentation()],
+        )
+
+        await agent.run('hello')
+
+    spans = capfire.exporter.exported_spans_as_dict()
     # Child spans are tagged with the resolved label via baggage.
     tagged = {s['name'] for s in spans if s['attributes'].get('logfire.variables.prompt__remote_slug') == 'production'}
     assert {'agent run', 'chat test'} <= tagged

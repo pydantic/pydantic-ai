@@ -20,7 +20,9 @@ from pydantic_ai import (
     ToolDefinition,
 )
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ParallelExecutionMode
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
@@ -33,6 +35,7 @@ from pydantic_ai_harness.code_mode import CodeModeToolset
 from pydantic_ai_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_MODIFIER,
     _TOOL_SEARCH_ADDENDUM,
+    _global_mode_is_sequential,
     _PrintCapture,
     _sanitize_tool_name,
 )
@@ -2494,3 +2497,32 @@ def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
         description=description,
         parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
     )
+
+
+class TestGlobalModeIsSequential:
+    """`_global_mode_is_sequential` dispatches across pydantic-ai v1 and v2.
+
+    v1's `get_parallel_execution_mode` takes the pending calls list; v2 dropped
+    the argument. The helper inspects arity and calls the matching shape, so
+    both code paths are exercised here regardless of which major is installed.
+    """
+
+    def test_v1_signature_with_calls_argument(self) -> None:
+        def parallel(calls: list[ToolCallPart]) -> ParallelExecutionMode:
+            return 'parallel'
+
+        def sequential(calls: list[ToolCallPart]) -> ParallelExecutionMode:
+            return 'sequential'
+
+        assert _global_mode_is_sequential(parallel) is False
+        assert _global_mode_is_sequential(sequential) is True
+
+    def test_v2_signature_without_arguments(self) -> None:
+        def parallel() -> ParallelExecutionMode:
+            return 'parallel'
+
+        def sequential() -> ParallelExecutionMode:
+            return 'sequential'
+
+        assert _global_mode_is_sequential(parallel) is False
+        assert _global_mode_is_sequential(sequential) is True
