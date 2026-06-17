@@ -1,19 +1,27 @@
 from __future__ import annotations as _annotations
 
+import json
+from typing import Any
+
 import pytest
 from inline_snapshot import snapshot
+from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
 from pydantic_ai.direct import model_request
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models import ModelRequestParameters
-    from pydantic_ai.models.zai import ZaiModel, ZaiModelSettings
+    from pydantic_ai.models.zai import (
+        ZaiModel,
+        ZaiModelSettings,
+        _zai_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.zai import ZaiProvider
 
 
@@ -67,7 +75,7 @@ async def test_zai_model_simple(allow_model_requests: None, zai_api_key: str):
     )
 
 
-async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str):
+async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
     provider = ZaiProvider(api_key=zai_api_key)
     model = ZaiModel('glm-4.7', provider=provider)
     settings = ModelSettings(thinking=True)
@@ -78,6 +86,13 @@ async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str):
             TextPart(content='2 + 2 is 4.'),
         ]
     )
+
+    # The unified `thinking` setting must reach the wire as Z.AI's `extra_body.thinking` payload (merged to
+    # the top level by the OpenAI SDK), and the base OpenAI `reasoning_effort` parameter must be suppressed.
+    # VCR cassette matchers aren't sensitive to the request body, so assert it explicitly.
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert request_body['thinking'] == {'type': 'enabled'}
+    assert 'reasoning_effort' not in request_body
 
 
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str):
@@ -129,69 +144,68 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
     )
 
 
-def _prepared_settings(model: ZaiModel, settings: ZaiModelSettings) -> object:
-    merged_settings, _ = model.prepare_request(settings, ModelRequestParameters())
-    return merged_settings
+@pytest.mark.parametrize(
+    'thinking,clear_thinking,extra_body,expected',
+    [
+        pytest.param(True, None, None, {'extra_body': {'thinking': {'type': 'enabled'}}}, id='enabled'),
+        pytest.param(False, None, None, {'extra_body': {'thinking': {'type': 'disabled'}}}, id='disabled'),
+        # `True` and every effort level collapse to `enabled` — Z.AI has no effort granularity.
+        pytest.param('high', None, None, {'extra_body': {'thinking': {'type': 'enabled'}}}, id='effort-collapses'),
+        pytest.param(None, None, None, {}, id='no-thinking'),
+        pytest.param(
+            True,
+            False,
+            None,
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}},
+            id='preserved-thinking',
+        ),
+        pytest.param(
+            True, True, None, {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': True}}}, id='clear'
+        ),
+        # `zai_clear_thinking` is independent of `type`: it tunes cross-turn thinking preservation even when the
+        # current turn's thinking is left to the model's default, so it is emitted on its own.
+        pytest.param(
+            None, False, None, {'extra_body': {'thinking': {'clear_thinking': False}}}, id='clear-without-thinking'
+        ),
+        pytest.param(
+            True,
+            None,
+            {'custom_key': 'value'},
+            {'extra_body': {'custom_key': 'value', 'thinking': {'type': 'enabled'}}},
+            id='preserves-existing-extra-body',
+        ),
+    ],
+)
+def test_zai_settings_transformation(
+    thinking: ThinkingLevel | None,
+    clear_thinking: bool | None,
+    extra_body: dict[str, Any] | None,
+    expected: dict[str, Any],
+):
+    """`ZaiModelSettings` are translated into the `extra_body.thinking` payload the Z.AI API expects.
+
+    A unit test (not VCR): this pins the request-body shape, which VCR cassette matchers aren't sensitive to.
+    The resolved unified `thinking` setting arrives via `ModelRequestParameters.thinking` (the base
+    `prepare_request` strips it from settings first); `zai_clear_thinking` stays on the settings. The
+    end-to-end wire emission is covered by `test_zai_thinking_mode`.
+    """
+    settings = ZaiModelSettings()
+    if clear_thinking is not None:
+        settings['zai_clear_thinking'] = clear_thinking
+    if extra_body is not None:
+        settings['extra_body'] = extra_body
+
+    transformed = _zai_settings_to_openai_settings(settings, ModelRequestParameters(thinking=thinking))
+    assert transformed == expected
 
 
-async def test_zai_prepare_request_thinking_enabled(zai_api_key: str):
-    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
-    assert _prepared_settings(model, ZaiModelSettings(thinking=True)) == snapshot(
-        {'extra_body': {'thinking': {'type': 'enabled'}}}
-    )
+def test_zai_thinking_silently_ignored_on_non_thinking_model(zai_api_key: str):
+    """On a model whose profile has `supports_thinking=False`, the unified `thinking` setting is stripped.
 
-
-async def test_zai_prepare_request_thinking_disabled(zai_api_key: str):
-    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
-    assert _prepared_settings(model, ZaiModelSettings(thinking=False)) == snapshot(
-        {'extra_body': {'thinking': {'type': 'disabled'}}}
-    )
-
-
-@pytest.mark.parametrize('effort', ['minimal', 'low', 'medium', 'high', 'xhigh'])
-async def test_zai_prepare_request_thinking_effort_collapses_to_enabled(zai_api_key: str, effort: str):
-    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
-    assert _prepared_settings(model, ZaiModelSettings(thinking=effort)) == snapshot(  # type: ignore[typeddict-item]
-        {'extra_body': {'thinking': {'type': 'enabled'}}}
-    )
-
-
-async def test_zai_prepare_request_thinking_omitted(zai_api_key: str):
-    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
-    assert _prepared_settings(model, ZaiModelSettings()) == snapshot({})
-
-
-async def test_zai_prepare_request_thinking_silently_ignored_on_non_thinking_model(zai_api_key: str):
-    # `glm-4-32b-0414-128k` has `supports_thinking=False`, so the unified `thinking` setting
-    # is stripped by the base `prepare_request` before reaching the Z.AI translation.
+    A unit test (not VCR): this exercises the base `prepare_request` gate (which the transformation function
+    alone can't show) — `glm-4-32b-0414-128k` resolves to `supports_thinking=False`, so `thinking` never
+    reaches the Z.AI translation and no `extra_body` is produced.
+    """
     model = ZaiModel('glm-4-32b-0414-128k', provider=ZaiProvider(api_key=zai_api_key))
-    assert _prepared_settings(model, ZaiModelSettings(thinking=True)) == snapshot({})
-
-
-async def test_zai_prepare_request_preserved_thinking(zai_api_key: str):
-    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
-    assert _prepared_settings(model, ZaiModelSettings(thinking=True, zai_clear_thinking=False)) == snapshot(
-        {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}}
-    )
-
-
-async def test_zai_prepare_request_clear_thinking(zai_api_key: str):
-    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
-    assert _prepared_settings(model, ZaiModelSettings(thinking=True, zai_clear_thinking=True)) == snapshot(
-        {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': True}}}
-    )
-
-
-async def test_zai_prepare_request_clear_thinking_without_unified(zai_api_key: str):
-    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
-    assert _prepared_settings(model, ZaiModelSettings(zai_clear_thinking=False)) == snapshot(
-        {'extra_body': {'thinking': {'clear_thinking': False}}}
-    )
-
-
-async def test_zai_prepare_request_preserves_existing_extra_body(zai_api_key: str):
-    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
-    settings = ZaiModelSettings(thinking=True, extra_body={'custom_key': 'value'})
-    assert _prepared_settings(model, settings) == snapshot(
-        {'extra_body': {'custom_key': 'value', 'thinking': {'type': 'enabled'}}}
-    )
+    merged_settings, _ = model.prepare_request(ZaiModelSettings(thinking=True), ModelRequestParameters())
+    assert merged_settings == {}
