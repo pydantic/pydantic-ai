@@ -4,7 +4,7 @@ import inspect
 import json
 import uuid
 import warnings
-from collections.abc import AsyncIterator, MutableMapping
+from collections.abc import AsyncIterator, Callable, MutableMapping
 from datetime import datetime, timezone
 from typing import Any, cast
 from unittest.mock import Mock
@@ -4802,27 +4802,36 @@ def _find_tool_return(messages: list[ModelMessage], tool_call_id: str) -> ToolRe
 
 
 @pytest.mark.parametrize(
-    'label, chunks',
+    'label, make_chunks',
     [
-        pytest.param('DataChunk', [DataChunk(type='data-sources', id='s1', data={'q': 'pydantic-ai'})], id='data'),
+        # NOTE: the chunk instances are built by these factories *inside the test body* rather than
+        # eagerly in the parametrize decorator. The chunk types are imported under the
+        # `starlette_import_successful` guard, so referencing them at collection time raises
+        # `NameError` in environments where starlette is not installed (e.g. the
+        # `pydantic-evals`/`pydantic-ai-slim` CI shards), even though `skipif` would skip the test.
+        pytest.param(
+            'DataChunk', lambda: [DataChunk(type='data-sources', id='s1', data={'q': 'pydantic-ai'})], id='data'
+        ),
         pytest.param(
             'SourceUrlChunk',
-            [SourceUrlChunk(source_id='su1', url='https://example.com', title='Example')],
+            lambda: [SourceUrlChunk(source_id='su1', url='https://example.com', title='Example')],
             id='source-url',
         ),
         pytest.param(
             'SourceDocumentChunk',
-            [SourceDocumentChunk(source_id='sd1', media_type='application/pdf', title='Doc', filename='doc.pdf')],
+            lambda: [
+                SourceDocumentChunk(source_id='sd1', media_type='application/pdf', title='Doc', filename='doc.pdf')
+            ],
             id='source-document',
         ),
         pytest.param(
             'FileChunk',
-            [FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf')],
+            lambda: [FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf')],
             id='file',
         ),
         pytest.param(
             'mixed',
-            [
+            lambda: [
                 DataChunk(type='data-sources', id='s1', data={'q': 'pydantic-ai'}),
                 SourceUrlChunk(source_id='su1', url='https://example.com', title='Example'),
                 SourceDocumentChunk(source_id='sd1', media_type='application/pdf', title='Doc', filename='doc.pdf'),
@@ -4833,7 +4842,8 @@ def _find_tool_return(messages: list[ModelMessage], tool_call_id: str) -> ToolRe
     ],
 )
 async def test_adapter_dump_load_roundtrip_tool_metadata_chunks(
-    label: str, chunks: list[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]
+    label: str,
+    make_chunks: Callable[[], list[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]],
 ):
     """`ToolReturnPart.metadata` data chunks round-trip through dump_messages -> load_messages.
 
@@ -4842,6 +4852,7 @@ async def test_adapter_dump_load_roundtrip_tool_metadata_chunks(
     metadata was silently dropped (and `FileChunk` was mis-routed into a brand-new
     `ModelResponse(FilePart)`, breaking structural equivalence). Fails without the fix.
     """
+    chunks = make_chunks()
     tool_return = ToolReturnPart(
         tool_name='search_docs',
         content='result text',
