@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,7 +12,7 @@ import anyio
 import pydantic
 
 from .. import _utils as _graph_utils, exceptions
-from ..nodes import BaseNode, End
+from ..basenode import BaseNode, End
 from . import (
     BaseStatePersistence,
     EndSnapshot,
@@ -41,7 +41,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     ```py
     from pathlib import Path
 
-    from pydantic_graph import FullStatePersistence
+    from pydantic_graph.persistence.in_mem import FullStatePersistence
 
     run_id = 'run_123abc'
     persistence = FullStatePersistence(Path('runs') / f'{run_id}.json')
@@ -66,7 +66,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
         await self._append_save(EndSnapshot(state=state, result=end))
 
     @asynccontextmanager
-    async def record_run(self, snapshot_id: str) -> AsyncIterator[None]:
+    async def record_run(self, snapshot_id: str) -> AsyncGenerator[None]:
         async with self._lock():
             snapshots = await self.load_all()
             try:
@@ -96,7 +96,9 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
     async def load_next(self) -> NodeSnapshot[StateT, RunEndT] | None:
         async with self._lock():
             snapshots = await self.load_all()
-            if snapshot := next((s for s in snapshots if isinstance(s, NodeSnapshot) and s.status == 'created'), None):
+            if snapshot := next(
+                (s for s in snapshots if isinstance(s, NodeSnapshot) and s.status == 'created'), None
+            ):  # pragma: no branch
                 snapshot.status = 'pending'
                 await self._save(snapshots)
                 return snapshot
@@ -145,7 +147,7 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
             await self._save(snapshots)
 
     @asynccontextmanager
-    async def _lock(self, *, timeout: float = 1.0) -> AsyncIterator[None]:
+    async def _lock(self, *, timeout: float = 1.0) -> AsyncGenerator[None]:
         """Lock a file by checking and writing a `.pydantic-graph-persistence-lock` to it.
 
         Args:

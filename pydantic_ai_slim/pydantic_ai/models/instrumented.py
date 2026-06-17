@@ -3,11 +3,10 @@ from __future__ import annotations
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
-from urllib.parse import urlparse
+from typing import Any, Literal
 
 from genai_prices.types import PriceCalculation
 from opentelemetry._logs import (
@@ -17,11 +16,18 @@ from opentelemetry._logs import (
     get_logger_provider,
 )
 from opentelemetry.metrics import MeterProvider, get_meter_provider
-from opentelemetry.trace import Span, SpanKind, Tracer, TracerProvider, get_tracer_provider
+from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
-from pydantic import TypeAdapter
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, get_agent_run_baggage_attributes
+from pydantic_ai._instrumentation import (
+    DEFAULT_INSTRUMENTATION_VERSION,
+    GEN_AI_SYSTEM_ATTRIBUTE,
+    TOKEN_HISTOGRAM_BOUNDARIES,
+    event_to_dict,
+    get_instructions,
+    open_model_request_span,
+    serialize_any,
+)
 
 from .. import _otel_messages
 from .._run_context import RunContext
@@ -32,39 +38,14 @@ from ..messages import (
     SystemPromptPart,
 )
 from ..settings import ModelSettings
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
+from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
 
-MODEL_SETTING_ATTRIBUTES: tuple[
-    Literal[
-        'max_tokens',
-        'top_p',
-        'seed',
-        'temperature',
-        'presence_penalty',
-        'frequency_penalty',
-    ],
-    ...,
-] = (
-    'max_tokens',
-    'top_p',
-    'seed',
-    'temperature',
-    'presence_penalty',
-    'frequency_penalty',
-)
-
-ANY_ADAPTER = TypeAdapter[Any](Any)
-
-# These are in the spec:
-# https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
-TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
-
 
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
-    """Instrument a model with OpenTelemetry/logfire."""
+    """Wrap `model` in an `InstrumentedModel` so OTel/Logfire spans are emitted around requests."""
     if instrument and not isinstance(model, InstrumentedModel):
         if instrument is True:
             instrument = InstrumentationSettings()
@@ -208,7 +189,7 @@ class InstrumentationSettings:
             A list of OpenTelemetry events.
         """
         events: list[LogRecord] = []
-        instructions = InstrumentedModel._get_instructions(messages, parameters)  # pyright: ignore [reportPrivateUsage]
+        instructions = get_instructions(messages, parameters)
         if instructions is not None:
             events.append(
                 LogRecord(
@@ -233,7 +214,7 @@ class InstrumentationSettings:
             events.extend(message_events)
 
         for event in events:
-            event.body = InstrumentedModel.serialize_any(event.body)
+            event.body = serialize_any(event.body)
         return events
 
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
@@ -287,7 +268,7 @@ class InstrumentationSettings:
             assert len(output_messages) == 1
             output_message = output_messages[0]
 
-            instructions = InstrumentedModel._get_instructions(input_messages, parameters)  # pyright: ignore [reportPrivateUsage]
+            instructions = get_instructions(input_messages, parameters)
             system_instructions_attributes = self.system_instructions_attributes(instructions)
 
             attributes: dict[str, AttributeValue] = {
@@ -327,7 +308,7 @@ class InstrumentationSettings:
             attr_name = 'events'
             span.set_attributes(
                 {
-                    attr_name: json.dumps([InstrumentedModel.event_to_dict(event) for event in events]),
+                    attr_name: json.dumps([event_to_dict(event) for event in events]),
                     'logfire.json_schema': json.dumps(
                         {
                             'type': 'object',
@@ -356,34 +337,6 @@ class InstrumentationSettings:
             self.cost_histogram.record(cost, attributes)
 
 
-GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
-GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
-GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
-
-
-def _build_tool_definitions(model_request_parameters: ModelRequestParameters) -> list[dict[str, Any]]:
-    """Build OTel-compliant tool definitions from model request parameters.
-
-    Extracts tool metadata from function_tools and output_tools into a list of
-    tool definition dicts following the OTel GenAI semantic conventions format.
-    """
-    all_tools = itertools.chain(
-        model_request_parameters.function_tools or [],
-        model_request_parameters.output_tools or [],
-    )
-
-    tool_definitions: list[dict[str, Any]] = []
-    for tool in all_tools:
-        tool_def: dict[str, Any] = {'type': 'function', 'name': tool.name}
-        if tool.description:
-            tool_def['description'] = tool.description
-        if tool.parameters_json_schema:
-            tool_def['parameters'] = tool.parameters_json_schema
-        tool_definitions.append(tool_def)
-
-    return tool_definitions
-
-
 @dataclass(init=False)
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
@@ -408,13 +361,17 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
-            model_settings,
-            model_request_parameters,
+        request_context = ModelRequestContext(
+            model=self.wrapped,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
         )
-        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
-            response = await self.wrapped.request(messages, model_settings, model_request_parameters)
-            finish(response, prepared_parameters)
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
+            response = await self.wrapped.request(
+                prepared_rc.messages, prepared_rc.model_settings, prepared_rc.model_request_parameters
+            )
+            finish(response)
             return response
 
     @asynccontextmanager
@@ -424,167 +381,23 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
-        prepared_settings, prepared_parameters = self.wrapped.prepare_request(
-            model_settings,
-            model_request_parameters,
+    ) -> AsyncGenerator[StreamedResponse]:
+        request_context = ModelRequestContext(
+            model=self.wrapped,
+            messages=messages,
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
         )
-        with self._instrument(messages, prepared_settings, prepared_parameters) as finish:
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
             response_stream: StreamedResponse | None = None
             try:
                 async with self.wrapped.request_stream(
-                    messages, model_settings, model_request_parameters, run_context
+                    prepared_rc.messages,
+                    prepared_rc.model_settings,
+                    prepared_rc.model_request_parameters,
+                    run_context,
                 ) as response_stream:
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    finish(response_stream.get(), prepared_parameters)
-
-    @contextmanager
-    def _instrument(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> Iterator[Callable[[ModelResponse, ModelRequestParameters], None]]:
-        operation = 'chat'
-        span_name = f'{operation} {self.model_name}'
-        # TODO Missing attributes:
-        #  - error.type: unclear if we should do something here or just always rely on span exceptions
-        #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
-        attributes: dict[str, AttributeValue] = {
-            'gen_ai.operation.name': operation,
-            **self.model_attributes(self.wrapped),
-            **self.model_request_parameters_attributes(model_request_parameters),
-            **get_agent_run_baggage_attributes(),
-            'logfire.json_schema': json.dumps(
-                {
-                    'type': 'object',
-                    'properties': {'model_request_parameters': {'type': 'object'}},
-                }
-            ),
-        }
-
-        tool_definitions = _build_tool_definitions(model_request_parameters)
-        if tool_definitions:
-            attributes['gen_ai.tool.definitions'] = json.dumps(tool_definitions)
-
-        if model_settings:
-            for key in MODEL_SETTING_ATTRIBUTES:
-                if isinstance(value := model_settings.get(key), float | int):
-                    attributes[f'gen_ai.request.{key}'] = value
-
-        record_metrics: Callable[[], None] | None = None
-        try:
-            with self.instrumentation_settings.tracer.start_as_current_span(
-                span_name, attributes=attributes, kind=SpanKind.CLIENT
-            ) as span:
-
-                def finish(response: ModelResponse, parameters: ModelRequestParameters):
-                    # FallbackModel updates these span attributes.
-                    attributes.update(getattr(span, 'attributes', {}))
-                    request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
-                    system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
-
-                    response_model = response.model_name or request_model
-                    price_calculation = None
-
-                    def _record_metrics():
-                        metric_attributes = {
-                            GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
-                            GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
-                            'gen_ai.operation.name': operation,
-                            'gen_ai.request.model': request_model,
-                            'gen_ai.response.model': response_model,
-                        }
-                        self.instrumentation_settings.record_metrics(response, price_calculation, metric_attributes)
-
-                    nonlocal record_metrics
-                    record_metrics = _record_metrics
-
-                    try:
-                        price_calculation = response.cost()
-                    except LookupError:
-                        # The cost of this provider/model is unknown, which is common.
-                        pass
-                    except Exception as e:
-                        warnings.warn(
-                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
-                        )
-
-                    if not span.is_recording():
-                        return
-
-                    self.instrumentation_settings.handle_messages(messages, response, system, span, parameters)
-
-                    attributes_to_set = {
-                        **response.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
-
-                    if price_calculation:
-                        attributes_to_set['operation.cost'] = float(price_calculation.total_price)
-
-                    if response.provider_response_id is not None:
-                        attributes_to_set['gen_ai.response.id'] = response.provider_response_id
-                    if response.finish_reason is not None:
-                        attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
-                    span.set_attributes(attributes_to_set)
-                    span.update_name(f'{operation} {request_model}')
-
-                yield finish
-        finally:
-            if record_metrics:
-                # We only want to record metrics after the span is finished,
-                # to prevent them from being redundantly recorded in the span itself by logfire.
-                record_metrics()
-
-    @staticmethod
-    def model_attributes(model: Model) -> dict[str, AttributeValue]:
-        attributes: dict[str, AttributeValue] = {
-            GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
-            GEN_AI_SYSTEM_ATTRIBUTE: model.system,  # Preserved for backward compatibility (deprecated)
-            GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
-        }
-        if base_url := model.base_url:
-            try:
-                parsed = urlparse(base_url)
-            except Exception:  # pragma: no cover
-                pass
-            else:
-                if parsed.hostname:  # pragma: no branch
-                    attributes['server.address'] = parsed.hostname
-                if parsed.port:  # pragma: no branch
-                    attributes['server.port'] = parsed.port
-
-        return attributes
-
-    @staticmethod
-    def model_request_parameters_attributes(
-        model_request_parameters: ModelRequestParameters,
-    ) -> dict[str, AttributeValue]:
-        return {'model_request_parameters': json.dumps(InstrumentedModel.serialize_any(model_request_parameters))}
-
-    @staticmethod
-    def event_to_dict(event: LogRecord) -> dict[str, Any]:
-        if not event.body:
-            body = {}  # pragma: no cover
-        elif isinstance(event.body, Mapping):
-            body = event.body
-        else:
-            body = {'body': event.body}
-        return {**body, **(event.attributes or {})}
-
-    @staticmethod
-    def serialize_any(value: Any) -> str:
-        try:
-            return ANY_ADAPTER.dump_python(value, mode='json')
-        except Exception:
-            try:
-                return str(value)
-            except Exception as e:
-                return f'Unable to serialize: {e}'
-
-
-class CostCalculationFailedWarning(Warning):
-    """Warning raised when cost calculation fails."""
+                    finish(response_stream.get())

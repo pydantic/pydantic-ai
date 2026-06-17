@@ -246,6 +246,7 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.input_audio_tokens += incr_usage.input_audio_tokens
     slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
     slf.output_tokens += incr_usage.output_tokens
+    slf.output_audio_tokens += incr_usage.output_audio_tokens
 
     for key, value in incr_usage.details.items():
         # Note: value can be None at runtime from model responses despite the type annotation
@@ -281,17 +282,17 @@ class UsageLimits:
     """The maximum number of tokens allowed in requests and responses combined."""
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `request_tokens_limit` ahead of time.
+    to enforce `input_tokens_limit` ahead of time.
 
-    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request) and is disabled by default.
+    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request)
+    and is disabled by default.
 
     Supported by:
 
     - Anthropic
     - Google
     - Bedrock Converse
-
-    Support for OpenAI is in development: https://github.com/pydantic/pydantic-ai/issues/3430
+    - OpenAI Responses
     """
 
     @property

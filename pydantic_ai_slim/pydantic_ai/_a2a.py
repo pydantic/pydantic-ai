@@ -2,7 +2,8 @@ from __future__ import annotations, annotations as _annotations
 
 import base64
 import uuid
-from collections.abc import AsyncIterator, Sequence
+import warnings
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from functools import partial
@@ -28,7 +29,10 @@ from pydantic_ai import (
     VideoUrl,
 )
 
-from .agent import AbstractAgent, AgentDepsT, OutputDataT
+from ._run_context import AgentDepsT
+from ._warnings import PydanticAIDeprecationWarning
+from .agent import AbstractAgent
+from .output import OutputDataT
 
 # AgentWorker output type needs to be invariant for use in both parameter and return positions
 WorkerOutputT = TypeVar('WorkerOutputT')
@@ -62,7 +66,7 @@ except ImportError as _import_error:
 @asynccontextmanager
 async def worker_lifespan(
     app: FastA2A, worker: Worker, agent: AbstractAgent[AgentDepsT, OutputDataT]
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None]:
     """Custom lifespan that runs the worker during application startup.
 
     This ensures the worker is started and ready to process tasks as soon as the application starts.
@@ -92,6 +96,14 @@ def agent_to_a2a(
     lifespan: Lifespan[FastA2A] | None = None,
 ) -> FastA2A:
     """Create a FastA2A server from an agent."""
+    warnings.warn(
+        '`Agent.to_a2a()` is deprecated and will be removed in 2.0. '
+        'The `fasta2a` package is now maintained at https://github.com/datalayer/fasta2a — '
+        "install it with the `pydantic-ai` extra (`pip install 'fasta2a[pydantic-ai]>=0.6.1'`) "
+        'and use `from fasta2a.pydantic_ai import agent_to_a2a` directly.',
+        PydanticAIDeprecationWarning,
+        stacklevel=2,
+    )
     storage = storage or InMemoryStorage()
     broker = broker or InMemoryBroker()
     worker = AgentWorker(agent=agent, broker=broker, storage=storage)

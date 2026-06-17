@@ -10,8 +10,8 @@ from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
-    AgentBuiltinTool,
     AgentDepsT,
+    AgentNativeTool,
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
@@ -22,6 +22,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityDescription,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -52,12 +53,34 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     wrapped: AbstractCapability[AgentDepsT]
 
+    def __post_init__(self) -> None:
+        # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
+        # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
+        # over a deferred capability without losing its deferral or its place in the load
+        # catalog. `for_run` re-creates the wrapper via `replace()`, so this re-resolves
+        # against the post-`for_run` wrapped instance — e.g. one a `DynamicCapability`
+        # produced at run time, whose `id` only becomes known once the factory has run.
+        if self.id is None:
+            self.id = self.wrapped.id
+            self.defer_loading = self.wrapped.defer_loading
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
-        self.wrapped.apply(visitor)
+        visitor(self)
+        # A wrapper over a leaf capability is the registered proxy for that leaf. A wrapper
+        # over a container still needs the container's leaves registered for child-owned hooks
+        # and toolsets to resolve their capability ids.
+        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self.wrapped.apply(wrapped_capabilities.append)
+        if len(wrapped_capabilities) != 1 or wrapped_capabilities[0] is not self.wrapped:
+            for capability in wrapped_capabilities:
+                visitor(capability)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None
+
+    def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
+        return self.description if self.description is not None else self.wrapped.get_description()
 
     @property
     def has_wrap_node_run(self) -> bool:
@@ -87,8 +110,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         return self.wrapped.get_toolset()
 
-    def get_builtin_tools(self) -> Sequence[AgentBuiltinTool[AgentDepsT]]:
-        return self.wrapped.get_builtin_tools()
+    def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
+        return self.wrapped.get_native_tools()
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)

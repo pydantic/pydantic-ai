@@ -176,7 +176,7 @@ dataset = Dataset(
 Explore the documentation to learn more:
 
 - **[Core Concepts](core-concepts.md)** - Understand the data model and evaluation flow
-- **[Built-in Evaluators](evaluators/built-in.md)** - Learn about all available evaluators
+- **[Native Evaluators](evaluators/built-in.md)** - Learn about all available evaluators
 - **[Custom Evaluators](evaluators/custom.md)** - Write your own evaluation logic
 - **[Dataset Management](how-to/dataset-management.md)** - Save, load, and generate datasets
 - **[Examples](examples/simple-validation.md)** - Practical examples for common scenarios

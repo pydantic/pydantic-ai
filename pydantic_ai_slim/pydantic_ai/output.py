@@ -114,10 +114,10 @@ class ToolOutput(Generic[OutputDataT]):
     description: str | None
     """The description of the tool that will be passed to the model. If not specified, the docstring of the output type or function will be used."""
     max_retries: int | None
-    """The maximum number of retries for this specific output tool.
+    """Per-tool retry limit for this output tool.
 
-    Overrides the agent-level `retries`/`output_retries` for this tool.
-    If not set, the agent-level value is used as the default.
+    Overrides the output side of the agent's retry budget, which itself acts as the per-tool default
+    for output tools that do not specify their own limit. If not set, the agent-level value is used.
     """
     strict: bool | None
     """Whether to use strict mode for the tool."""
@@ -290,6 +290,9 @@ class OutputContext:
     """The output object definition (schema, name, description), if structured output."""
     has_function: bool
     """Whether there's an output function to call in the execute step."""
+    function_name: str | None = None
+    """Name of the output function that will run, when known. `None` for union processors that dispatch
+    by output subtype, or when the schema has no function."""
     tool_call: ToolCallPart | None = None
     """The tool call part, for tool-based output. `None` when the current output did not arrive via a tool call (text or image)."""
     tool_def: ToolDefinition | None = None
@@ -323,6 +326,11 @@ class TextOutput(Generic[OutputDataT]):
     print(result.output)
     #> ['Albert', 'Einstein', 'was', 'a', 'German-born', 'theoretical', 'physicist.']
     ```
+
+    !!! note
+        When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does not apply the
+        wrapped function. Use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] to stream
+        the value it produces.
     """
 
     output_function: TextOutputFunc[OutputDataT]

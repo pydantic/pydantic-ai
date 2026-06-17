@@ -21,8 +21,6 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
     DocumentUrl,
     FilePart,
@@ -34,6 +32,8 @@ from pydantic_ai import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -55,9 +55,10 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -68,8 +69,16 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import (
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
@@ -105,47 +114,72 @@ with try_import() as imports_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    from pydantic_ai.ag_ui import (
-        SSE_CONTENT_TYPE,
-        AGUIAdapter,
-        OnCompleteFunc,
-        StateDeps,
-        handle_ag_ui_request,
-        run_ag_ui,
-    )
-    from pydantic_ai.ui.ag_ui import AGUIEventStream
+    from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps
+    from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
+
+    # `handle_ag_ui_request` and `run_ag_ui` are shim-only helpers being removed in 2.0;
+    # this file exercises them for 1.x coverage. Suppress the module-import deprecation
+    # warning at import time — runtime warnings on `to_ag_ui()` are handled via `pytestmark`.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            'ignore', message='The `pydantic_ai.ag_ui` module is deprecated', category=PydanticAIDeprecationWarning
+        )
+        from pydantic_ai.ag_ui import handle_ag_ui_request, run_ag_ui
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import() as interrupts_imports_successful:
+    # `ResumeEntry` and the interrupt-aware run lifecycle were added in ag-ui-protocol 0.1.19
+    # (PR #1569). On older installs, the dedicated interrupt tests below are skipped.
+    from ag_ui.core import ResumeEntry
 
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),
     pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
     ),
 ]
 
 
-def simple_result() -> Any:
+def simple_result(*, outcome: dict[str, Any] | None = None) -> Any:
+    """Expected event sequence for `simple_stream`.
+
+    Pass `outcome={'type': 'success'}` for callers that run against `ag-ui-protocol >= 0.1.19`
+    (where the adapter emits `RunFinishedEvent.outcome`). Older negotiated versions
+    (e.g. `ag_ui_version='0.1.10'`) suppress the field, so the default `outcome=None`
+    matches a bare `RUN_FINISHED`.
+    """
+    thread_id = IsSameStr()
+    run_id = IsSameStr()
+    message_id = IsSameStr()
+    run_finished: dict[str, Any] = {
+        'type': 'RUN_FINISHED',
+        'timestamp': IsInt(),
+        'threadId': thread_id,
+        'runId': run_id,
+    }
+    if outcome is not None:
+        run_finished['outcome'] = outcome
     return snapshot(
         [
             {
                 'type': 'RUN_STARTED',
                 'timestamp': IsInt(),
-                'threadId': (thread_id := IsSameStr()),
-                'runId': (run_id := IsSameStr()),
+                'threadId': thread_id,
+                'runId': run_id,
             },
             {
                 'type': 'TEXT_MESSAGE_START',
                 'timestamp': IsInt(),
-                'messageId': (message_id := IsSameStr()),
+                'messageId': message_id,
                 'role': 'assistant',
             },
             {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'success '},
@@ -156,12 +190,7 @@ def simple_result() -> Any:
                 'delta': '(no tool calls)',
             },
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
-            {
-                'type': 'RUN_FINISHED',
-                'timestamp': IsInt(),
-                'threadId': thread_id,
-                'runId': run_id,
-            },
+            run_finished,
         ]
     )
 
@@ -171,6 +200,16 @@ def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
 
     assert 'manage_system_prompt' in from_request_parameters
     assert from_request_parameters['manage_system_prompt'].default == 'server'
+
+
+def test_deprecated_ag_ui_helpers_expose_file_url_force_download_allowlist() -> None:
+    handle_parameters = inspect.signature(handle_ag_ui_request).parameters
+    run_parameters = inspect.signature(run_ag_ui).parameters
+
+    assert 'allowed_file_url_force_download' in handle_parameters
+    assert handle_parameters['allowed_file_url_force_download'].default == frozenset()
+    assert 'allowed_file_url_force_download' in run_parameters
+    assert run_parameters['allowed_file_url_force_download'].default == frozenset()
 
 
 async def run_and_collect_events(
@@ -1060,6 +1099,63 @@ async def test_tool_local_parts() -> None:
     )
 
 
+async def test_output_tool() -> None:
+    """Output tool calls emit `TOOL_CALL_RESULT` via `handle_output_tool_result`."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"query":"hello"}', tool_call_id='out_1')}
+
+    def web_search(query: str) -> dict[str, str]:
+        return {'result': f'Searched for {query}'}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=web_search)
+
+    run_input = create_input(UserMessage(id='msg_1', content='Tell me about hello'))
+
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'final_result',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '{"query":"hello"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': 'Final result processed.',
+                'role': 'tool',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
+
+
 async def test_thinking() -> None:
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -1449,7 +1545,7 @@ def test_activity_message_file_part_missing_url() -> None:
         )
 
 
-_TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, BuiltinToolReturnPart, SystemPromptPart)
+_TIMESTAMPED_PARTS = (UserPromptPart, RetryPromptPart, ToolReturnPart, NativeToolReturnPart, SystemPromptPart)
 
 
 def _sync_part_timestamps(
@@ -1630,20 +1726,20 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
 
     Note: The round-trip reorders parts within ModelResponse because AG-UI's AssistantMessage
     has separate content and tool_calls fields. TextPart comes first (from content), then
-    BuiltinToolCallPart (from tool_calls), then BuiltinToolReturnPart (from subsequent ToolMessage).
+    NativeToolCallPart (from tool_calls), then NativeToolReturnPart (from subsequent ToolMessage).
     """
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search for info')]),
         ModelResponse(
             parts=[
                 TextPart(content='Based on the search...'),
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
                     args='{"query": "test"}',
                     provider_name='anthropic',
                 ),
-                BuiltinToolReturnPart(
+                NativeToolReturnPart(
                     tool_name='web_search',
                     tool_call_id='call_123',
                     content='Search results here',
@@ -1661,12 +1757,12 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
 
 
 def test_dump_builtin_tool_call_without_return() -> None:
-    """Test that BuiltinToolCallPart without a matching BuiltinToolReturnPart still dumps correctly."""
+    """Test that NativeToolCallPart without a matching NativeToolReturnPart still dumps correctly."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search for info')]),
         ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name='web_search',
                     tool_call_id='call_orphan',
                     args='{"query": "test"}',
@@ -2104,7 +2200,7 @@ async def test_request_with_state() -> None:
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=StateDeps[StateInt],
-        prepare_tools=store_state,
+        capabilities=[PrepareTools(store_state)],
     )
 
     run_inputs = [
@@ -2145,7 +2241,7 @@ async def test_request_with_state() -> None:
         async def on_complete(result: AgentRunResult[Any]):
             seen_deps_states.append(deps.state.value)
 
-        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete):
+        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete, ag_ui_version='0.1.10'):
             events.append(json.loads(event.removeprefix('data: ')))
 
         assert events == simple_result()
@@ -2169,7 +2265,7 @@ async def test_request_with_state_without_handler() -> None:
         match='State was provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps\\[\\.\\.\\.\\]` or implement `StateHandler` to receive AG-UI state.',
     ):
         events = list[dict[str, Any]]()
-        async for event in run_ag_ui(agent, run_input):
+        async for event in run_ag_ui(agent, run_input, ag_ui_version='0.1.10'):
             events.append(json.loads(event.removeprefix('data: ')))
 
     assert events == simple_result()
@@ -2187,7 +2283,7 @@ async def test_request_with_empty_state_without_handler() -> None:
     )
 
     events = list[dict[str, Any]]()
-    async for event in run_ag_ui(agent, run_input):
+    async for event in run_ag_ui(agent, run_input, ag_ui_version='0.1.10'):
         events.append(json.loads(event.removeprefix('data: ')))
 
     assert events == simple_result()
@@ -2207,7 +2303,7 @@ async def test_request_with_state_with_custom_handler() -> None:
     agent: Agent[CustomStateDeps, str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=CustomStateDeps,
-        prepare_tools=store_state,
+        capabilities=[PrepareTools(store_state)],
     )
 
     run_input = create_input(
@@ -2298,13 +2394,16 @@ async def test_concurrent_runs() -> None:
 
 
 @pytest.mark.anyio
+@pytest.mark.filterwarnings(
+    'ignore:`Agent.to_ag_ui\\(\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+)
 async def test_to_ag_ui() -> None:
-    """Test the agent.to_ag_ui method."""
+    """Test the deprecated `agent.to_ag_ui` method for 1.x-coverage. New AG-UI tests use `AGUIAdapter.dispatch_request` directly."""
 
     agent = Agent(model=FunctionModel(stream_function=simple_stream), deps_type=StateDeps[StateInt])
 
     deps = StateDeps(StateInt(value=0))
-    app = agent.to_ag_ui(deps=deps)
+    app = agent.to_ag_ui(deps=deps)  # pyright: ignore[reportDeprecated]
     async with LifespanManager(app):
         transport = httpx.ASGITransport(app)
         async with httpx.AsyncClient(transport=transport) as client:
@@ -2328,7 +2427,9 @@ async def test_to_ag_ui() -> None:
                     if line:
                         events.append(json.loads(line.removeprefix('data: ')))
 
-            assert events == simple_result()
+            # `to_ag_ui()` uses the default (current) ag-ui-protocol version, so the
+            # interrupt-aware run lifecycle is active and `RUN_FINISHED` carries an outcome.
+            assert events == simple_result(outcome={'type': 'success'})
 
     # Verify the state was not mutated by the run
     assert deps.state.value == 0
@@ -2639,13 +2740,13 @@ async def test_messages(image_content: BinaryContent, document_content: BinaryCo
             ),
             ModelResponse(
                 parts=[
-                    BuiltinToolCallPart(
+                    NativeToolCallPart(
                         tool_name='web_search',
                         args='{"query": "Hello, world!"}',
                         tool_call_id='search_1',
                         provider_name='function',
                     ),
-                    BuiltinToolReturnPart(
+                    NativeToolReturnPart(
                         tool_name='web_search',
                         content={
                             'results': [
@@ -2723,7 +2824,7 @@ async def test_builtin_tool_return_json_string_content_parsed() -> None:
     assert isinstance(response, ModelResponse)
 
     return_part = response.parts[1]
-    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.tool_name == 'web_fetch'
     assert return_part.tool_call_id == 'srvtoolu_abc123'
     assert return_part.provider_name == 'anthropic'
@@ -2758,7 +2859,7 @@ async def test_builtin_tool_return_plain_string_content_preserved() -> None:
     assert isinstance(response, ModelResponse)
 
     return_part = response.parts[1]
-    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.content == 'just a plain string, not JSON'
 
 
@@ -2790,7 +2891,7 @@ async def test_builtin_tool_return_non_string_content_passthrough() -> None:
     assert isinstance(response, ModelResponse)
 
     return_part = response.parts[1]
-    assert isinstance(return_part, BuiltinToolReturnPart)
+    assert isinstance(return_part, NativeToolReturnPart)
     assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com'}
 
 
@@ -2818,7 +2919,7 @@ async def test_builtin_tool_call() -> None:
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
         yield {
-            0: BuiltinToolCallPart(
+            0: NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 args='{"query":',
                 tool_call_id='search_1',
@@ -2832,7 +2933,7 @@ async def test_builtin_tool_call() -> None:
             )
         }
         yield {
-            1: BuiltinToolReturnPart(
+            1: NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 content={
                     'results': [
@@ -2847,7 +2948,7 @@ async def test_builtin_tool_call() -> None:
             )
         }
         yield {
-            2: BuiltinToolCallPart(
+            2: NativeToolCallPart(
                 tool_name=WebSearchTool.kind,
                 args='{"query": "Hello world history"}',
                 tool_call_id='search_2',
@@ -2855,7 +2956,7 @@ async def test_builtin_tool_call() -> None:
             )
         }
         yield {
-            3: BuiltinToolReturnPart(
+            3: NativeToolReturnPart(
                 tool_name=WebSearchTool.kind,
                 content={
                     'results': [
@@ -3009,6 +3110,7 @@ async def test_event_stream_back_to_back_text():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
+                'outcome': {'type': 'success'},
             },
         ]
     )
@@ -3058,10 +3160,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
+            part=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
+            part=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
         )
 
         yield PartStartEvent(
@@ -3102,10 +3204,10 @@ async def test_event_stream_multiple_responses_with_tool_calls():
         )
 
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
+            part=ToolReturnPart(tool_name='tool_call_3', content='Hi!', tool_call_id='tool_call_3')
         )
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
+            part=ToolReturnPart(tool_name='tool_call_4', content='Bye!', tool_call_id='tool_call_4')
         )
 
     run_input = create_input(
@@ -3234,6 +3336,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
+                'outcome': {'type': 'success'},
             },
         ]
     )
@@ -3271,7 +3374,7 @@ async def test_tool_returns_event_with_timestamp_preserved():
 
     async def event_generator():
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_status',
                 content='Status retrieved',
                 tool_call_id='call_1',
@@ -3406,6 +3509,7 @@ async def test_handle_ag_ui_request():
                     'timestamp': IsInt(),
                     'threadId': thread_id,
                     'runId': run_id,
+                    'outcome': {'type': 'success'},
                 },
                 'more_body': True,
             },
@@ -3502,7 +3606,7 @@ async def test_tool_return_with_files():
     async def event_generator():
         # Content with text and file - files property extracts BinaryContent from the list
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_image',
                 content=['Image analysis result', BinaryContent(data=b'img', media_type='image/png')],
                 tool_call_id='call_1',
@@ -3510,7 +3614,7 @@ async def test_tool_return_with_files():
         )
         # Content with only a FileUrl - files property returns [ImageUrl]
         yield FunctionToolResultEvent(
-            result=ToolReturnPart(
+            part=ToolReturnPart(
                 tool_name='get_url',
                 content=ImageUrl(url='https://example.com/image.jpg'),
                 tool_call_id='call_2',
@@ -3747,6 +3851,33 @@ def test_load_messages_uploaded_file_missing_fields() -> None:
             [ActivityMessage(id='msg_1', activity_type='pydantic_ai_uploaded_file', content={})],
             preserve_file_data=True,
         )
+
+
+def test_load_messages_uploaded_file_dropped_by_default() -> None:
+    """AG-UI is default-safe: a client `pydantic_ai_uploaded_file` activity is ignored unless
+    `preserve_file_data=True`, so a client-supplied `file_id` is never honored by default."""
+    activity = ActivityMessage(
+        id='msg_1',
+        activity_type='pydantic_ai_uploaded_file',
+        content={'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'},
+    )
+
+    # Default (preserve_file_data=False): the activity is ignored, no UploadedFile is produced.
+    assert AGUIAdapter.load_messages([activity]) == []
+
+    # Opt-in (preserve_file_data=True): the UploadedFile is reconstructed.
+    reloaded = AGUIAdapter.load_messages([activity], preserve_file_data=True)
+    uploaded = [
+        item
+        for msg in reloaded
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert len(uploaded) == 1
+    assert uploaded[0].file_id == 's3://private-bucket/payroll.pdf'
 
 
 def test_dump_messages_uploaded_file_with_vendor_metadata() -> None:
@@ -4651,6 +4782,427 @@ async def test_client_submitted_file_url_disallowed_scheme_stripped() -> None:
     user_part = request.parts[0]
     assert isinstance(user_part, UserPromptPart)
     assert user_part.content == ['See attached', ImageUrl(url='https://example.com/ok.png')]
+
+
+# endregion
+
+
+# region: Interrupts — AG-UI RunFinished outcome and resume[] translation
+
+
+pytestmark_interrupts = pytest.mark.skipif(
+    not interrupts_imports_successful(),
+    reason='ag-ui-protocol < 0.1.19 — interrupt types unavailable',
+)
+
+
+_INTERRUPTS_AG_UI_VERSION = '0.1.19'
+
+
+async def _collect_adapter_events(
+    agent: Agent[Any, Any],
+    run_input: RunAgentInput,
+    *,
+    ag_ui_version: str = _INTERRUPTS_AG_UI_VERSION,
+    deferred_tool_results: DeferredToolResults | None = None,
+) -> list[dict[str, Any]]:
+    """Drive `AGUIAdapter` directly so we can pin `ag_ui_version` to the interrupt-aware release."""
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version)
+    events: list[dict[str, Any]] = []
+    async for encoded in adapter.encode_stream(adapter.run_stream(deferred_tool_results=deferred_tool_results)):
+        events.append(json.loads(encoded.removeprefix('data: ')))
+    return events
+
+
+@pytestmark_interrupts
+async def test_run_finished_success_outcome_on_modern_version() -> None:
+    """On ag-ui-protocol >= 0.1.19, a normal run ends with `outcome.type == 'success'`."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert run_finished['outcome'] == snapshot({'type': 'success'})
+
+
+@pytestmark_interrupts
+async def test_run_finished_no_outcome_on_legacy_version() -> None:
+    """On ag-ui-protocol < 0.1.19, no `outcome` field is emitted — matches today's behavior."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(
+        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='0.1.10'
+    )
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert 'outcome' not in run_finished
+
+
+@pytestmark_interrupts
+async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the installed ag-ui-protocol SDK predates interrupts, `after_stream` emits a bare
+    `RUN_FINISHED` with no `outcome` field — even on a modern negotiated version. This is the
+    import-gated path (`HAS_INTERRUPTS` is False), distinct from the version-gated path.
+    """
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream.HAS_INTERRUPTS', False)
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert 'outcome' not in run_finished
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
+    """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
+    interrupt outcome carrying one `Interrupt` per pending approval, with `reason='tool_call'`
+    and the original `tool_call_id` bound for resume.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:  # pragma: no cover
+        # Body never runs: the tool is deferred for approval and this test asserts the
+        # pre-execution interrupt outcome. The roundtrip test covers an approved execution.
+        return f'deleted {path}'
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete .env')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert run_finished['outcome'] == snapshot(
+        {
+            'type': 'interrupt',
+            'interrupts': [
+                {
+                    'id': IsStr(),
+                    'reason': 'tool_call',
+                    'message': IsStr(),
+                    'toolCallId': IsStr(),
+                    'responseSchema': {
+                        'type': 'object',
+                        'properties': {
+                            'approved': {'type': 'boolean'},
+                            'editedArgs': {'type': 'object'},
+                            'reason': {'type': 'string'},
+                        },
+                        'required': ['approved'],
+                    },
+                }
+            ],
+        }
+    )
+    interrupt = run_finished['outcome']['interrupts'][0]
+    # The `id` must let the client round-trip back to the original tool_call_id.
+    assert interrupt['id'].endswith(interrupt['toolCallId'])
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_outcome_carries_metadata() -> None:
+    """Per-call `DeferredToolRequests.metadata` surfaces on `Interrupt.metadata`.
+
+    A tool raising `ApprovalRequired(metadata=...)` attaches metadata keyed by `tool_call_id`;
+    the adapter must forward it so a frontend can render context-specific approval UI.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def delete_file(path: str) -> str:
+        raise ApprovalRequired(metadata={'risk': 'high', 'scope': 'filesystem'})
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete .env')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['metadata'] == snapshot({'risk': 'high', 'scope': 'filesystem'})
+
+
+@pytestmark_interrupts
+async def test_resume_resolved_approves_tool() -> None:
+    """`status='resolved'` + `payload.approved=True` → `ToolApproved()` for the bound tool call."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolApproved()}))
+
+
+@pytestmark_interrupts
+async def test_resume_resolved_with_edited_args_passes_override_args() -> None:
+    """`payload.editedArgs` on an approval translates to `ToolApproved(override_args=...)`."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            ResumeEntry(
+                interrupt_id='int-tc-001',
+                status='resolved',
+                payload={'approved': True, 'editedArgs': {'path': '/tmp/safer.env'}},
+            )
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-001': ToolApproved(override_args={'path': '/tmp/safer.env'})})
+    )
+
+
+@pytestmark_interrupts
+async def test_resume_resolved_with_approved_false_denies_tool() -> None:
+    """`payload.approved=False` with a `reason` → `ToolDenied(reason)`."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            ResumeEntry(
+                interrupt_id='int-tc-001',
+                status='resolved',
+                payload={'approved': False, 'reason': 'too destructive'},
+            )
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-001': ToolDenied(message='too destructive')})
+    )
+
+
+@pytestmark_interrupts
+async def test_resume_cancelled_denies_tool_regardless_of_payload() -> None:
+    """`status='cancelled'` → `ToolDenied('Cancelled by user.')` regardless of payload contents."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            # Even an apparently-approving payload is overridden by `status='cancelled'`.
+            ResumeEntry(interrupt_id='int-tc-001', status='cancelled', payload={'approved': True}),
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-001': ToolDenied(message='Cancelled by user.')})
+    )
+
+
+@pytestmark_interrupts
+@pytest.mark.parametrize(
+    'payload',
+    [
+        pytest.param({}, id='missing-approved'),
+        pytest.param({'approved': None}, id='approved-null'),
+        pytest.param({'approved': 'true'}, id='approved-string-true'),
+        pytest.param({'approved': 1}, id='approved-truthy-int'),
+        pytest.param('approved', id='payload-is-string'),
+        pytest.param([{'approved': True}], id='payload-is-list'),
+        pytest.param(None, id='payload-null'),
+    ],
+)
+async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> None:
+    """Approval requires an explicit `payload.approved == True`.
+
+    Anything else (missing, null, non-bool, non-dict payload) must deny so a malformed or
+    hostile client cannot bypass the `requires_approval=True` gate by omitting the field.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload=payload)],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolDenied()}))
+
+
+@pytestmark_interrupts
+async def test_resume_unknown_interrupt_id_prefix_raises() -> None:
+    """An `interrupt_id` that doesn't carry the adapter's prefix is a protocol error
+    we surface as `UserError` rather than silently mapping to a wrong tool call.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='bogus-123', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with pytest.raises(UserError, match=r'does not start with the expected'):
+        _ = adapter.deferred_tool_results
+
+
+@pytestmark_interrupts
+async def test_deferred_tool_results_none_when_sdk_lacks_interrupts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the installed ag-ui-protocol SDK predates interrupts, `resume[]` is ignored entirely
+    (`deferred_tool_results` returns `None`) so the old SDK path stays byte-for-byte unchanged.
+    """
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._adapter.HAS_INTERRUPTS', False)
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results is None
+
+
+@pytestmark_interrupts
+async def test_resume_well_formed_but_nonexistent_interrupt_id_is_noop() -> None:
+    """A well-formed `int-` id that binds to no pending approval is accepted, not an error.
+
+    Unlike a missing prefix (which raises `UserError`), a correctly-prefixed id that matches no
+    pending call maps to its own stripped `tool_call_id` — never to a different pending call — so
+    the agent simply finds no call to resolve and the entry is a harmless no-op.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-does-not-exist', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-does-not-exist': ToolApproved()})
+    )
+
+
+@pytestmark_interrupts
+async def test_interrupt_resume_roundtrip_executes_approved_tool() -> None:
+    """End-to-end: turn 1 ends with an interrupt outcome; turn 2 supplies `resume[]` and the
+    tool actually runs. The resumed turn must NOT re-emit `TOOL_CALL_START` for the same
+    `tool_call_id` (per AG-UI spec) — the agent loops back into execution with the original id
+    and we only see `TOOL_CALL_RESULT`.
+    """
+    executed: list[dict[str, Any]] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        # Whenever the agent has just a user prompt + system prompts, propose the call;
+        # after the tool result is in history, emit a final text response.
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, 'parts', [])):
+            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        executed.append({'path': path})
+        return f'deleted {path}'
+
+    # Turn 1: collect the interrupt outcome.
+    turn1_input = create_input(UserMessage(id='m1', content='delete .env'))
+    turn1_events = await _collect_adapter_events(agent, turn1_input)
+
+    run_finished_1 = next(e for e in turn1_events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished_1['outcome']['interrupts'][0]
+    interrupt_id = interrupt['id']
+    tool_call_id = interrupt['toolCallId']
+    assert executed == [], 'turn 1 must not execute the deferred tool'
+
+    # Turn 2: resume with approval; the message history must include the proposed call so the
+    # agent's tool manager can match the resume back to it.
+    turn2_input = RunAgentInput(
+        thread_id=turn1_input.thread_id,
+        run_id=uuid_str(),
+        state={},
+        messages=[
+            UserMessage(id='m1', content='delete .env'),
+            AssistantMessage(
+                id='m2',
+                tool_calls=[
+                    ToolCall(
+                        id=tool_call_id,
+                        type='function',
+                        function=FunctionCall(name='delete_file', arguments='{"path": ".env"}'),
+                    )
+                ],
+            ),
+        ],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id=interrupt_id, status='resolved', payload={'approved': True})],
+    )
+    turn2_events = await _collect_adapter_events(agent, turn2_input)
+
+    assert executed == [{'path': '.env'}], 'turn 2 must execute the approved tool'
+
+    tool_starts_for_call = [
+        e for e in turn2_events if e['type'] == 'TOOL_CALL_START' and e.get('toolCallId') == tool_call_id
+    ]
+    tool_results_for_call = [
+        e for e in turn2_events if e['type'] == 'TOOL_CALL_RESULT' and e.get('toolCallId') == tool_call_id
+    ]
+    assert tool_starts_for_call == [], 'spec: resumed turn must not re-emit TOOL_CALL_START for the same tool_call_id'
+    assert len(tool_results_for_call) == 1, 'resumed turn must emit exactly one TOOL_CALL_RESULT'
+
+    run_finished_2 = next(e for e in turn2_events if e['type'] == 'RUN_FINISHED')
+    assert run_finished_2['outcome'] == snapshot({'type': 'success'})
 
 
 # endregion

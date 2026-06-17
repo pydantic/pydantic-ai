@@ -1,7 +1,9 @@
 from __future__ import annotations as _annotations
 
 import json
+import math
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -19,6 +21,7 @@ with try_import() as imports_successful:
     from pydantic_evals import Case, Dataset, PydanticEvalsDeprecationWarning
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
+        EvaluationReason,
         EvaluationResult,
         Evaluator,
         EvaluatorFailure,
@@ -145,6 +148,44 @@ def test_dataset_name_deprecation_warning(
     """Test that omitting the name parameter emits a deprecation warning."""
     with pytest.warns(PydanticEvalsDeprecationWarning, match='Omitting the `name` parameter is deprecated'):
         Dataset(cases=example_cases)
+
+
+async def test_evaluate_positional_args_deprecation_warning(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """Passing positional args to `Dataset.evaluate` warns and still binds correctly ahead of v2 kw-only."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query)
+
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='positionally to `Dataset.evaluate`'):
+        report = await example_dataset.evaluate(task, 'custom_experiment_name')
+    assert report.name == 'custom_experiment_name'
+
+
+def test_evaluate_sync_positional_args_deprecation_warning(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """`Dataset.evaluate_sync` mirrors the same positional deprecation."""
+
+    def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query)
+
+    with pytest.warns(PydanticEvalsDeprecationWarning, match='positionally to `Dataset.evaluate`'):
+        report = example_dataset.evaluate_sync(task, 'custom_experiment_name')
+    assert report.name == 'custom_experiment_name'
+
+
+async def test_evaluate_too_many_positional_args_raises(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+):
+    """More positionals than legacy slots should still be a TypeError."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
+        raise AssertionError('task should not be called when evaluate() rejects bad positional args')
+
+    with pytest.raises(TypeError, match='takes at most'):
+        await example_dataset.evaluate(task, 'n', None, True, None, None, 'extra')
 
 
 def test_from_file_uses_filename_as_default_name(tmp_path: Path):
@@ -875,6 +916,25 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
 
 
+async def test_serialization_to_yaml_preserves_unicode(tmp_path: Path):
+    dataset = Dataset[TaskInput, TaskOutput](
+        name='unicode',
+        cases=[
+            Case(
+                inputs=TaskInput(query='Привет'),
+                expected_output=TaskOutput(answer='Здравствуйте'),
+            )
+        ],
+    )
+    yaml_path = tmp_path / 'test_cases.yaml'
+
+    dataset.to_file(yaml_path)
+
+    content = yaml_path.read_text(encoding='utf-8')
+    assert 'Привет' in content
+    assert 'Здравствуйте' in content
+
+
 async def test_deserializing_without_name(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
 ):
@@ -1342,6 +1402,46 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
         ]
     )
     assert report.failures == snapshot([])
+
+
+@pytest.mark.parametrize(
+    'output_factory',
+    [
+        pytest.param(lambda: math.nan, id='nan-scalar'),
+        pytest.param(lambda: math.inf, id='inf-scalar'),
+        pytest.param(lambda: -math.inf, id='negative-inf-scalar'),
+        pytest.param(lambda: {'score': math.nan}, id='nan-mapping'),
+        pytest.param(lambda: EvaluationReason(value=math.nan, reason='not finite'), id='nan-reason'),
+        pytest.param(lambda: {'score': EvaluationReason(value=math.inf, reason='not finite')}, id='inf-mapped-reason'),
+    ],
+)
+async def test_dataset_evaluate_with_non_finite_evaluator_result(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], output_factory: Callable[[], Any]
+):
+    """Non-finite evaluator scores should be reported as evaluator failures."""
+    output = output_factory()
+
+    class NonFiniteEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> Any:
+            return output
+
+    example_dataset.add_evaluator(NonFiniteEvaluator())
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await example_dataset.evaluate(task)
+
+    assert report.failures == []
+    assert len(report.cases) == 2
+    for case in report.cases:
+        assert case.scores == {}
+        assert len(case.evaluator_failures) == 1
+        failure = case.evaluator_failures[0]
+        assert failure.name == 'NonFiniteEvaluator'
+        assert failure.error_type == 'ValueError'
+        assert 'returned a value of an invalid type' in failure.error_message
+        assert repr(output) in failure.error_message
 
 
 async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -2095,9 +2195,10 @@ async def test_lifecycle_setup_and_teardown(example_dataset: Dataset[TaskInput, 
         async def teardown(
             self,
             result: ReportCase[TaskInput, TaskOutput, TaskMetadata]
-            | ReportCaseFailure[TaskInput, TaskOutput, TaskMetadata],
+            | ReportCaseFailure[TaskInput, TaskOutput, TaskMetadata]
+            | None,
         ) -> None:
-            events.append(f'teardown:{self.case.name}:{type(result).__name__}')
+            events.append(f'teardown:{self.case.name}:{type(result).__name__ if result is not None else "NoneType"}')
 
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer='test')
@@ -2111,10 +2212,10 @@ async def test_lifecycle_teardown_on_task_failure():
     """Test that teardown runs even when the task fails, and receives ReportCaseFailure."""
     from pydantic_evals.lifecycle import CaseLifecycle
 
-    teardown_results: list[ReportCase | ReportCaseFailure] = []
+    teardown_results: list[ReportCase | ReportCaseFailure | None] = []
 
     class TeardownTracker(CaseLifecycle[str, str, None]):
-        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
             teardown_results.append(result)
 
     dataset = Dataset[str, str, None](
@@ -2229,7 +2330,7 @@ async def test_lifecycle_teardown_exception_propagates():
     from pydantic_evals.lifecycle import CaseLifecycle
 
     class BrokenTeardown(CaseLifecycle[str, str, None]):
-        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
             raise RuntimeError('teardown exploded')
 
     dataset = Dataset[str, str, None](name='teardown_exception', cases=[Case(name='case1', inputs='hello')])
@@ -2251,9 +2352,10 @@ async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown(
         async def setup(self) -> None:
             raise RuntimeError('setup failed')
 
-        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None]) -> None:
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
             nonlocal teardown_called
             teardown_called = True
+            assert result is not None
             assert isinstance(result, ReportCaseFailure)
             assert 'setup failed' in result.error_message
 

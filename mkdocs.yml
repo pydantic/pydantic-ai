@@ -49,7 +49,7 @@ nav:
           - tools-advanced.md
           - toolsets.md
           - deferred-tools.md
-          - builtin-tools.md
+          - native-tools.md
           - common-tools.md
           - third-party-tools.md
       - Advanced Features:
@@ -99,12 +99,12 @@ nav:
 
   - Pydantic Graph:
       - Overview: graph.md
-      - Beta API:
-          - Getting Started: graph/beta/index.md
-          - Steps: graph/beta/steps.md
-          - Joins & Reducers: graph/beta/joins.md
-          - Decisions: graph/beta/decisions.md
-          - Parallel Execution: graph/beta/parallel.md
+      - Graph Builder:
+          - Getting Started: graph/builder/index.md
+          - Steps: graph/builder/steps.md
+          - Joins & Reducers: graph/builder/joins.md
+          - Decisions: graph/builder/decisions.md
+          - Parallel Execution: graph/builder/parallel.md
 
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
@@ -114,6 +114,7 @@ nav:
           - DBOS: durable_execution/dbos.md
           - Prefect: durable_execution/prefect.md
           - Restate: durable_execution/restate.md
+          - Kitaru: durable_execution/kitaru.md
       - UI Event Streams:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
@@ -150,7 +151,7 @@ nav:
       - pydantic_ai:
           - api/ag_ui.md
           - api/agent.md
-          - api/builtin_tools.md
+          - api/native_tools.md
           - api/capabilities.md
           - api/common_tools.md
           - api/concurrency.md
@@ -207,19 +208,13 @@ nav:
           - api/pydantic_evals/otel.md
           - api/pydantic_evals/generation.md
       - pydantic_graph:
-          - api/pydantic_graph/graph.md
-          - api/pydantic_graph/nodes.md
-          - api/pydantic_graph/persistence.md
-          - api/pydantic_graph/mermaid.md
+          - api/pydantic_graph/basenode.md
+          - api/pydantic_graph/graph_builder.md
+          - api/pydantic_graph/step.md
+          - api/pydantic_graph/join.md
+          - api/pydantic_graph/decision.md
+          - api/pydantic_graph/node.md
           - api/pydantic_graph/exceptions.md
-          - Beta API:
-              - api/pydantic_graph/beta.md
-              - api/pydantic_graph/beta_graph.md
-              - api/pydantic_graph/beta_graph_builder.md
-              - api/pydantic_graph/beta_step.md
-              - api/pydantic_graph/beta_join.md
-              - api/pydantic_graph/beta_decision.md
-              - api/pydantic_graph/beta_node.md
       - fasta2a:
           - api/fasta2a.md
 
@@ -394,7 +389,7 @@ plugins:
           - a2a.md
           - agent.md
           - agent-spec.md
-          - builtin-tools.md
+          - native-tools.md
           - capabilities.md
           - dependencies.md
           - deferred-tools.md

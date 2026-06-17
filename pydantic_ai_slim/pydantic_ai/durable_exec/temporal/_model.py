@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -172,7 +172,7 @@ class TemporalModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         if not workflow.in_workflow():
             async with super().request_stream(
                 messages, model_settings, model_request_parameters, run_context
@@ -259,7 +259,7 @@ class TemporalModel(WrapperModel):
         return self._resolve_model_id(model_id)
 
     @contextmanager
-    def using_model(self, model: models.Model | models.KnownModelName | str | None) -> Iterator[None]:
+    def using_model(self, model: models.Model | models.KnownModelName | str | None) -> Generator[None]:
         """Context manager to set the model for the duration of a block.
 
         Accepts a Model instance, model name string, or None for the default model.
@@ -311,7 +311,7 @@ class TemporalModel(WrapperModel):
         current = self._current_model()
         if isinstance(current, str):
             # Unlike Model.profile, this returns the raw provider profile without intersecting
-            # supported_builtin_tools with the model class's supported_builtin_tools(). This is
+            # supported_native_tools with the model class's supported_native_tools(). This is
             # acceptable because TemporalModel delegates to the wrapped model for actual requests,
             # and this profile is only used for capability checks, not request preparation.
             return infer_model_profile(current)
@@ -343,6 +343,19 @@ class TemporalModel(WrapperModel):
             return Model.prepare_request(self, model_settings, model_request_parameters)
 
         return current.prepare_request(model_settings, model_request_parameters)
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Pre-process messages using the currently active model's profile.
+
+        Mirrors `prepare_request`: when `using_model()` overrides the runtime model, we
+        delegate to that model's profile (or to the grandparent default for unregistered
+        model strings) so cross-provider history shapes are translated against the right
+        `supported_builtin_tools`.
+        """
+        current = self._current_model()
+        if isinstance(current, str):
+            return Model.prepare_messages(self, messages)
+        return current.prepare_messages(messages)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.

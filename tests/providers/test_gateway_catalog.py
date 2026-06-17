@@ -4,11 +4,10 @@ import os
 from typing import get_args
 
 import pytest
-from typing_inspection.introspection import get_literal_values
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
-from pydantic_ai.models import KnownModelName
+from pydantic_ai.models import known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
@@ -40,11 +39,7 @@ def gateway_live_api_key(pytestconfig: pytest.Config, gateway_api_key: str | Non
 
 
 def _gateway_known_model_names() -> list[str]:
-    return sorted(
-        name
-        for name in get_literal_values(KnownModelName.__value__, unpack_type_aliases='eager')
-        if name.startswith('gateway/')
-    )
+    return sorted(name for name in known_model_names() if name.startswith('gateway/'))
 
 
 def _gateway_supported_providers() -> set[str]:
@@ -52,7 +47,7 @@ def _gateway_supported_providers() -> set[str]:
 
 
 async def _run_gateway_smoke_test(model_name: str) -> None:
-    agent = Agent(model_name, model_settings={'max_tokens': 256}, retries=3)
+    agent = Agent(model_name, model_settings={'max_tokens': 256}, retries={'tools': 3, 'output': 3})
     result = await agent.run('Reply with exactly OK.')
     assert result.output.strip()
 

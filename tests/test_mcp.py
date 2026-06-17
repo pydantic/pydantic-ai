@@ -1,3 +1,5 @@
+# pyright: reportDeprecated=false
+# Entire file exercises the deprecated `MCPServer*` hierarchy to maintain coverage until v2-cut.
 """Tests for the MCP (Model Context Protocol) server implementation."""
 
 from __future__ import annotations
@@ -5,6 +7,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timezone
 from pathlib import Path
 from typing import Any
@@ -20,13 +24,14 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.agent import Agent
+from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.exceptions import (
     ModelRetry,
     UnexpectedModelBehavior,
@@ -50,19 +55,29 @@ with try_import() as imports_successful:
         ElicitResult,
         ImageContent,
         Implementation,
-        TextContent,
+        ListPromptsResult,
+        Prompt as McpPrompt,
+        PromptListChangedNotification,
+        ServerNotification,
+        TextContent as McpTextContent,
         ToolUseContent,
     )
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
     from pydantic_ai.mcp import (
         CallToolFunc,
+        EmbeddedResource,
         MCPError,
         MCPServerSSE,
         MCPServerStdio,
         MCPServerStreamableHTTP,
+        Prompt,
+        PromptArgument,
+        PromptMessage,
+        PromptResult,
         Resource,
         ResourceAnnotations,
+        ResourceLink,
         ResourceTemplate,
         ServerCapabilities,
         ToolResult,
@@ -73,10 +88,19 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
+with try_import() as logfire_imports_successful:
+    import logfire
+    from logfire.testing import TestExporter
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    # Entire file exercises the deprecated `MCPServer*` hierarchy + `load_mcp_servers` for v2 coverage.
+    pytest.mark.filterwarnings('ignore::DeprecationWarning:pydantic_ai.mcp'),
+    pytest.mark.filterwarnings(r'ignore:`MCPServer\w*` is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`load_mcp_servers` is deprecated:DeprecationWarning'),
 ]
 
 
@@ -121,8 +145,166 @@ async def test_reentrant_context_manager():
             pass
 
 
+async def test_cross_task_mcp_server():
+    """Test that multiple asyncio tasks can share one MCPServer without cancel scope errors.
+
+    Previously, this would raise:
+        RuntimeError: Attempted to exit cancel scope in a different task than it was entered in
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def task_a():
+        async with server:
+            entered.set()
+            await release.wait()
+
+    async def task_b():
+        await entered.wait()
+        async with server:
+            result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+            assert result == 32.0
+        release.set()
+
+    await asyncio.gather(task_a(), task_b())
+    assert not server.is_running
+
+
+async def test_parallel_agent_runs():
+    """Test that multiple parallel agent.run() calls sharing one MCPServer work."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+
+    async def run_agent(celsius: int) -> AgentRunResult[str]:
+        return await agent.run(f'Convert {celsius}C to F')
+
+    r0, r100, r50 = await asyncio.gather(run_agent(0), run_agent(100), run_agent(50))
+
+    for r in (r0, r100, r50):
+        tool_calls = [
+            m
+            for m in r.all_messages()
+            if isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts)
+        ]
+        assert len(tool_calls) >= 1, f'Expected at least one tool call, got: {r.all_messages()}'
+
+    assert not server.is_running
+
+
+async def test_parallel_agent_runs_share_one_connection():
+    """Parallel `agent.run()` calls on one MCPServer must reuse a single underlying connection.
+
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514. Sharing a
+    server instance across concurrent tasks is the whole point of holding a server object;
+    if each sibling task opened its own subprocess we'd silently multiply resource usage.
+    Asserts that 5 concurrent runs open the stdio transport exactly once.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+
+    client_streams_calls = 0
+    original_client_streams = server.client_streams
+
+    @asynccontextmanager
+    async def counting_client_streams():
+        nonlocal client_streams_calls
+        client_streams_calls += 1
+        async with original_client_streams() as pair:
+            yield pair
+
+    with patch.object(server, 'client_streams', counting_client_streams):
+        await asyncio.gather(*[agent.run(f'Convert {c}C to F') for c in range(5)])
+
+    assert client_streams_calls == 1
+    assert not server.is_running
+
+
+async def test_server_shared_across_sibling_tasks():
+    """An MCPServer opened in one task must be shared with sibling tasks spawned later.
+
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514 for the
+    fasta2a / FastAPI lifespan pattern: a lifespan task opens `async with server:` and
+    yields, then request-handler tasks — spawned as *siblings* (not descendants) of the
+    lifespan task — enter the same server object. They must share the lifespan's
+    connection; opening a fresh subprocess per request would defeat the lifespan pattern.
+    Asserts the server opens exactly once.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    client_streams_calls = 0
+    original_client_streams = server.client_streams
+
+    @asynccontextmanager
+    async def counting_client_streams():
+        nonlocal client_streams_calls
+        client_streams_calls += 1
+        async with original_client_streams() as pair:
+            yield pair
+
+    ready = asyncio.Event()
+    stop = asyncio.Event()
+
+    async def lifespan_holder() -> None:
+        async with server:
+            ready.set()
+            await stop.wait()
+
+    async def handler() -> ToolResult:
+        async with server:
+            return await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
+
+    with patch.object(server, 'client_streams', counting_client_streams):
+        lifespan_task = asyncio.create_task(lifespan_holder())
+        await ready.wait()
+        results = await asyncio.gather(*[handler() for _ in range(5)])
+        stop.set()
+        await lifespan_task
+
+    assert results == [32.0] * 5
+    assert client_streams_calls == 1
+    assert not server.is_running
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_parallel_agent_runs_produce_independent_span_trees():
+    """Each parallel `agent.run()` sharing one MCPServer produces its own independent trace.
+
+    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514: each agent
+    run's tool calls must remain children of that run's `agent run` span and not leak
+    across sibling runs' traces.
+    """
+    exporter = TestExporter()
+    logfire.configure(send_to_logfire=False, additional_span_processors=[SimpleSpanProcessor(exporter)])
+    Agent.instrument_all(True)
+    try:
+        server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+        agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
+        async with server:
+            await asyncio.gather(*[agent.run(str(c)) for c in range(3)])
+
+        spans = [s for s in exporter.exported_spans if s.context is not None]
+        trace_ids = {s.context.trace_id for s in spans if s.context is not None}
+        assert len(trace_ids) == 3, f'expected 3 independent traces, got {len(trace_ids)}'
+
+        for trace_id in trace_ids:
+            trace_spans = [s for s in spans if s.context is not None and s.context.trace_id == trace_id]
+            names = [s.name for s in trace_spans]
+            assert names.count('agent run') >= 1
+            assert 'running tool' in names
+            # Every span in this trace must actually belong to it — no cross-trace parenting
+            span_ids = {s.context.span_id for s in trace_spans if s.context is not None}
+            for s in trace_spans:
+                if s.parent is not None:
+                    assert s.parent.span_id in span_ids, (
+                        f'span {s.name!r} in trace {trace_id:x} has a parent outside its own trace'
+                    )
+    finally:
+        Agent.instrument_all(False)
+
+
 async def test_context_manager_initialization_error() -> None:
-    """Test if streams are closed if client fails to initialize."""
+    """Test that a failed initialization cleans up and allows re-entry."""
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     from mcp.client.session import ClientSession
 
@@ -131,8 +313,12 @@ async def test_context_manager_initialization_error() -> None:
             async with server:
                 pass
 
-    assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
-    assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
+    assert not server.is_running
+
+    # Verify re-entry works after a failed initialization
+    async with server:
+        assert server.is_running
+    assert not server.is_running
 
 
 async def test_aexit_called_more_times_than_aenter():
@@ -148,26 +334,92 @@ async def test_aexit_called_more_times_than_aenter():
         await server.__aexit__(None, None, None)
 
 
-async def test_aexit_concurrent_does_not_corrupt_running_count():
-    """Regression test: concurrent __aexit__ calls must not corrupt _running_count.
-
-    Injects a yield point before real lock acquisition so both tasks pass the
-    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
-
-    Old code (guard outside lock):
-      Task A reads _running_count == 1, passes guard, yields.
-      Task B reads _running_count == 1, passes guard, yields.
-      Task A acquires lock, decrements to 0.
-      Task B acquires lock, decrements to -1.  ← bug: count corrupted, no ValueError
-
-    New code (guard inside lock):
-      Task A acquires lock, reads 1, decrements to 0, releases.
-      Task B acquires lock, reads 0, raises ValueError correctly.  ← fix verified
+async def test_aenter_cancelled_during_startup():
+    """Cancelling `__aenter__` while it waits for the session to become ready must tear down
+    the background session task cleanly and leave the server re-entrant.
     """
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
-    # One active entry — the race only matters when both tasks see count > 0.
-    server._running_count = 1  # pyright: ignore[reportPrivateUsage]
+    async def hanging_runner() -> None:
+        await asyncio.Event().wait()
+
+    with patch.object(server, '_session_runner', hanging_runner):
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(server.__aenter__(), timeout=0.1)
+
+    assert not server.is_running
+
+    # Re-entry must work after a cancelled startup
+    async with server:
+        assert server.is_running
+    assert not server.is_running
+
+
+async def test_aexit_with_hung_transport_teardown(monkeypatch: pytest.MonkeyPatch):
+    """`__aexit__` must be bounded if the transport's own `__aexit__` deadlocks.
+
+    Otherwise a misbehaving server (e.g. subprocess that ignores SIGTERM, HTTP/SSE
+    connection where the server never closes its side) can deadlock the agent's
+    own shutdown — `await session_task_to_await` parks forever inside `__aexit__`.
+
+    Patches `_session_runner` instead of `client_streams` (same pattern as
+    `test_aenter_cancelled_during_startup`) — testing the lifecycle invariant, not
+    the MCP protocol; avoids leaking a real subprocess into later tests.
+    """
+    import time
+
+    import pydantic_ai.mcp as _mcp_module
+
+    grace = 0.2
+    monkeypatch.setattr(_mcp_module, '_SHUTDOWN_GRACE_SECONDS', grace)
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    teardown_reached = anyio.Event()
+
+    async def fake_runner_with_hung_teardown() -> None:
+        state = server._session_state  # pyright: ignore[reportPrivateUsage]
+        ready_event = state.ready_event
+        stop_event = state.stop_event
+        assert ready_event is not None and stop_event is not None
+        try:
+            ready_event.set()
+            await stop_event.wait()
+        finally:
+            teardown_reached.set()
+            await asyncio.Event().wait()
+
+    async def enter_then_exit() -> None:
+        async with server:
+            pass
+
+    # Outer `wait_for` is a safety net so a regression doesn't hang the suite —
+    # the real assertion is on elapsed time below. `wait_for` itself can't detect
+    # the regression because `__aexit__` swallows the cancellation it sends.
+    safety_net = 5.0
+    start = time.monotonic()
+    with patch.object(server, '_session_runner', fake_runner_with_hung_teardown):
+        await asyncio.wait_for(enter_then_exit(), timeout=safety_net)
+    elapsed = time.monotonic() - start
+
+    assert teardown_reached.is_set(), 'transport teardown was never reached'
+    assert not server.is_running
+    # With the fix: bounded by ~grace. Without: `__aexit__` awaits the hung task
+    # until `wait_for`'s safety net fires (~5s). Threshold sits comfortably
+    # between the two regimes, with headroom for CI jitter.
+    assert elapsed < safety_net - 1.5, f'shutdown took {elapsed:.2f}s, expected <<{safety_net}s'
+
+
+async def test_aexit_concurrent_does_not_corrupt_nesting_counter():
+    """Regression test: concurrent __aexit__ calls must not corrupt the nesting counter.
+
+    Injects a yield point before real lock acquisition so both tasks pass the
+    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    # One active entry — the race only matters when both tasks see counter > 0.
+    server._session_state.nesting_counter = 1  # pyright: ignore[reportPrivateUsage]
 
     class InterleavingLock:
         def __init__(self) -> None:
@@ -190,10 +442,93 @@ async def test_aexit_concurrent_does_not_corrupt_running_count():
     )
 
     # Exactly one exit must succeed and one must raise ValueError (not silently
-    # corrupt the count). With the old code both would succeed and count == -1.
+    # corrupt the counter). With a guard outside the lock both would succeed and counter == -1.
     errors = [r for r in results if isinstance(r, ValueError)]
     assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
-    assert server._running_count == 0  # pyright: ignore[reportPrivateUsage]
+    assert server._session_state.nesting_counter == 0  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_recycled_session_state_does_not_corrupt_new_session():
+    """Regression test: an old `_session_runner`'s `finally` must not corrupt a recycled session.
+
+    Race: the last `__aexit__` releases the lock and then awaits the old session task
+    *outside* the lock. A concurrent `__aenter__` grabs the lock and reassigns
+    `state.ready_event` / `state.stop_event` for a fresh session. If the old runner's
+    `finally` writes to `state.*` directly, it can prematurely set the *new* session's
+    `ready_event`, causing the new `__aenter__` to return with `state.client is None`.
+
+    The fix captures local references in `_session_runner` so its `finally` only
+    signals events it owns. This test exercises `_session_runner` directly with
+    controlled timing to verify that contract.
+
+    Reported by Devin in https://github.com/pydantic/pydantic-ai/pull/4514#discussion_r3173639823
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    streams_entered = anyio.Event()
+    streams_can_exit = anyio.Event()
+
+    @asynccontextmanager
+    async def gated_streams() -> AsyncIterator[Any]:
+        # Yield streams that fail ClientSession initialization quickly, so the runner
+        # exits its try block and reaches finally — but block teardown until released.
+        send_a, recv_a = anyio.create_memory_object_stream[Any](0)
+        send_b, recv_b = anyio.create_memory_object_stream[Any](0)
+        try:
+            streams_entered.set()
+            yield (recv_a, send_b)
+        finally:
+            await streams_can_exit.wait()
+            await send_a.aclose()
+            await recv_a.aclose()
+            await send_b.aclose()
+            await recv_b.aclose()
+
+    state = server._session_state  # pyright: ignore[reportPrivateUsage]
+    state.ready_event = anyio.Event()
+    state.stop_event = anyio.Event()
+    state.session_task = asyncio.current_task()  # pretend this task is the active session
+
+    # Capture references to verify which event the runner's `finally` signals.
+    original_ready_event = state.ready_event
+    original_stop_event = state.stop_event
+
+    with patch.object(server, 'client_streams', gated_streams):
+        # Start the runner — it will hang inside ClientSession.initialize() because
+        # gated_streams sends nothing. We'll force it to teardown via task cancellation.
+        runner_task = asyncio.create_task(server._session_runner())  # pyright: ignore[reportPrivateUsage]
+        await streams_entered.wait()
+
+        # Cancel to force the runner into its except/finally path.
+        runner_task.cancel()
+        await asyncio.sleep(0)  # let the cancel propagate into the runner
+
+        # Simulate the recycled-session race: replace state events as if a new
+        # __aenter__ had begun while the old runner is mid-teardown.
+        new_ready_event = anyio.Event()
+        new_stop_event = anyio.Event()
+        state.ready_event = new_ready_event
+        state.stop_event = new_stop_event
+        state.connect_error = None
+
+        # Allow the runner's `client_streams.__aexit__` (and thus its finally) to run.
+        streams_can_exit.set()
+        try:
+            await runner_task
+        except BaseException:
+            pass
+
+        # The runner's `finally` must signal the event it captured at entry — NOT the
+        # event that was swapped in afterwards.
+        assert original_ready_event.is_set(), 'Old runner did not set its own ready_event'
+        assert not new_ready_event.is_set(), 'Old runner corrupted the new session by setting the recycled ready_event'
+        # And it must not have set state.connect_error on the new session — current_task
+        # is still this test, not the runner, so the guarded write should skip it.
+        assert state.connect_error is None
+        # The original stop_event was never used by the test, so it should remain unset.
+        assert not new_stop_event.is_set()
+        # State referenced by the test (acting as fake session_task) is left untouched.
+        _ = original_stop_event
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
@@ -228,7 +563,7 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         """A process_tool_call that sets a flag and sends deps as metadata."""
         nonlocal called
         called = True
-        return await call_tool(name, tool_args, {'deps': ctx.deps})
+        return await call_tool(name, tool_args, metadata={'deps': ctx.deps})
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
     async with server:
@@ -1006,7 +1341,7 @@ async def test_tool_returning_audio_resource(
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
@@ -1037,7 +1372,7 @@ async def test_tool_returning_audio_resource(
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
@@ -1075,7 +1410,7 @@ async def test_tool_returning_audio_resource_link(
                             tool_name='get_audio_resource_link',
                             args={},
                             tool_call_id=IsStr(),
-                            provider_name='google-gla',
+                            provider_name='google',
                             provider_details={'thought_signature': IsStr()},
                         )
                     ],
@@ -1084,7 +1419,7 @@ async def test_tool_returning_audio_resource_link(
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
@@ -1115,7 +1450,7 @@ async def test_tool_returning_audio_resource_link(
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
-                    provider_name='google-gla',
+                    provider_name='google',
                     provider_url='https://generativelanguage.googleapis.com/',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
@@ -1767,7 +2102,7 @@ async def test_mcp_server_raises_mcp_error(
 
     async with agent:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'send_request',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -1778,7 +2113,7 @@ async def test_mcp_server_raises_mcp_error(
 def test_map_from_mcp_params_model_request():
     params = CreateMessageRequestParams(
         messages=[
-            SamplingMessage(role='user', content=TextContent(type='text', text='xx')),
+            SamplingMessage(role='user', content=McpTextContent(type='text', text='xx')),
             SamplingMessage(
                 role='user',
                 content=ImageContent(type='image', data=base64.b64encode(b'img').decode(), mimeType='image/png'),
@@ -1805,7 +2140,7 @@ def test_map_from_mcp_params_model_request():
 def test_map_from_mcp_params_model_response():
     params = CreateMessageRequestParams(
         messages=[
-            SamplingMessage(role='assistant', content=TextContent(type='text', text='xx')),
+            SamplingMessage(role='assistant', content=McpTextContent(type='text', text='xx')),
         ],
         maxTokens=8,
     )
@@ -1984,7 +2319,7 @@ async def test_read_resource_error(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'read_resource',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -2006,7 +2341,7 @@ async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'read_resource',
             new=AsyncMock(return_value=empty_result),
         ):
@@ -2022,7 +2357,7 @@ async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'list_resources',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -2044,7 +2379,7 @@ async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None
 
     async with mcp_server:
         with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
+            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
             'list_resource_templates',
             new=AsyncMock(side_effect=mcp_error),
         ):
@@ -2345,6 +2680,20 @@ async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -
             assert result == []
 
 
+async def test_prompt_methods_without_capability(mcp_server: MCPServerStdio) -> None:
+    """`list_prompts` returns `[]` and `get_prompt` raises `MCPError` when prompts capability is absent."""
+    async with mcp_server:
+        mock_capabilities = ServerCapabilities(prompts=False)
+        with patch.object(mcp_server, '_server_capabilities', mock_capabilities):
+            mcp_server._cached_prompts = None  # pyright: ignore[reportPrivateUsage]
+            result = await mcp_server.list_prompts()
+            assert result == []
+
+            with pytest.raises(MCPError, match='does not advertise the `prompts` capability') as exc_info:
+                await mcp_server.get_prompt('simple_prompt')
+            assert exc_info.value.code == -32601
+
+
 async def test_instructions(mcp_server: MCPServerStdio) -> None:
     with pytest.raises(
         AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
@@ -2559,3 +2908,226 @@ async def test_server_capabilities_list_changed_fields() -> None:
         assert isinstance(caps.prompts_list_changed, bool)
         assert isinstance(caps.tools_list_changed, bool)
         assert isinstance(caps.resources_list_changed, bool)
+
+
+async def test_list_prompts() -> None:
+    """Test list_prompts() basic functionality."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        assert server.capabilities.prompts
+
+        prompts = await server.list_prompts()
+        assert prompts == snapshot(
+            [
+                Prompt(name='simple_prompt', description='A simple prompt template.'),
+                Prompt(
+                    name='parameterized_prompt',
+                    description='A prompt template with parameters.',
+                    arguments=[PromptArgument(name='name', required=True), PromptArgument(name='topic', required=True)],
+                ),
+                Prompt(name='annotated_text_prompt', description='A prompt template with annotated text content.'),
+                Prompt(name='text_meta_prompt', description='A prompt template with `_meta` text metadata.'),
+                Prompt(name='image_prompt', description='A prompt template with image content.'),
+                Prompt(name='audio_prompt', description='A prompt template with audio content.'),
+                Prompt(
+                    name='embedded_resource_prompt', description='A prompt template with an embedded text resource.'
+                ),
+                Prompt(name='resource_link_prompt', description='A prompt template with a resource link.'),
+            ]
+        )
+
+
+async def test_get_prompt() -> None:
+    """Test get_prompt() retrieves simple and parameterized prompts and surfaces errors."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        result = await server.get_prompt('simple_prompt')
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content='This is a simple prompt'))],
+                description='A simple prompt template.',
+            )
+        )
+
+        result = await server.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
+        assert result == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content="Hello Alice, let's talk about AI!"))],
+                description='A prompt template with parameters.',
+            )
+        )
+
+        with pytest.raises(MCPError, match='Unknown prompt'):
+            await server.get_prompt('nonexistent_prompt')
+
+
+async def test_prompts_no_caching_when_disabled() -> None:
+    """Test that list_prompts() does not cache when cache_prompts=False."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_prompts=False)
+    async with server:
+        assert server.capabilities.prompts
+
+        prompts1 = await server.list_prompts()
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+        prompts2 = await server.list_prompts()
+        assert prompts2 == prompts1
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_prompts_cache_invalidation_on_notification() -> None:
+    """Test that prompts cache is invalidated when PromptListChangedNotification is received."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        assert server.capabilities.prompts
+
+        await server.list_prompts()
+        assert server._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+
+        notification = ServerNotification(PromptListChangedNotification())
+        await server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
+
+        assert server._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_list_prompts_paginates_and_caches(mcp_server: MCPServerStdio) -> None:
+    """`list_prompts` follows `nextCursor` across pages, then returns the cached value on re-call."""
+    page1 = ListPromptsResult(prompts=[McpPrompt(name='p1', description='one')], nextCursor='cursor-2')
+    page2 = ListPromptsResult(prompts=[McpPrompt(name='p2', description='two')], nextCursor=None)
+
+    async with mcp_server:
+        with patch.object(
+            mcp_server._session_state.client,  # pyright: ignore[reportPrivateUsage]
+            'list_prompts',
+            new=AsyncMock(side_effect=[page1, page2]),
+        ) as list_prompts_mock:
+            prompts = await mcp_server.list_prompts()
+            assert [p.name for p in prompts] == ['p1', 'p2']
+            assert list_prompts_mock.await_count == 2
+
+            cached = await mcp_server.list_prompts()
+            assert cached is prompts
+            assert list_prompts_mock.await_count == 2
+
+
+async def test_list_prompts_error(mcp_server: MCPServerStdio) -> None:
+    """Test that list_prompts converts McpError to MCPError."""
+    mcp_error = McpError(
+        error=ErrorData(code=-32603, message='Failed to list prompts', data={'details': 'server overloaded'})
+    )
+
+    async with mcp_server:
+        # Patch the client method directly — injecting an `McpError` server-side via FastMCP is
+        # impractical, so we mock the SDK call here to exercise the wrapping branch.
+        with patch.object(
+            mcp_server._session_state.client,  # pyright: ignore[reportPrivateUsage]
+            'list_prompts',
+            new=AsyncMock(side_effect=mcp_error),
+        ):
+            with pytest.raises(MCPError, match='Failed to list prompts') as exc_info:
+                await mcp_server.list_prompts()
+
+            assert exc_info.value.code == -32603
+            assert exc_info.value.message == 'Failed to list prompts'
+            assert exc_info.value.data == {'details': 'server overloaded'}
+
+
+async def test_map_prompt_content() -> None:
+    """Test that get_prompt() correctly maps all MCP content types to Pydantic AI types.
+
+    Each content type is exercised through the real MCP server (full round-trip over
+    the MCP protocol) using dedicated prompt handlers defined in tests/mcp_server.py.
+    TextContent without annotations is already covered by test_get_prompt via
+    simple_prompt/parameterized_prompt, so only annotated text is tested here.
+    """
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        # TextContent with annotations preserved in metadata
+        result = await server.get_prompt('annotated_text_prompt')
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=TextContent(
+                        content='annotated text',
+                        metadata={'mcp_annotations': ResourceAnnotations(audience=['user'], priority=1.0)},
+                    ),
+                )
+            ]
+        )
+
+        # ImageContent → BinaryImage
+        result = await server.get_prompt('image_prompt')
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=BinaryImage(
+                        data=b'image-bytes',
+                        media_type='image/jpeg',
+                        vendor_metadata={'mcp_annotations': ResourceAnnotations(audience=['user'], priority=0.8)},
+                    ),
+                )
+            ]
+        )
+
+        # AudioContent → BinaryContent
+        result = await server.get_prompt('audio_prompt')
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=BinaryContent(
+                        data=b'audio-bytes',
+                        media_type='audio/mpeg',
+                        vendor_metadata={'mcp_annotations': ResourceAnnotations(audience=['assistant'], priority=0.3)},
+                    ),
+                )
+            ]
+        )
+
+        # EmbeddedResource with annotations
+        result = await server.get_prompt('embedded_resource_prompt')
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=EmbeddedResource(
+                        uri='resource://product_name.txt',
+                        content='Pydantic AI',
+                        mime_type='text/plain',
+                        annotations=ResourceAnnotations(audience=['user'], priority=0.5),
+                    ),
+                )
+            ]
+        )
+
+        # ResourceLink
+        result = await server.get_prompt('resource_link_prompt')
+        assert result.messages == snapshot(
+            [
+                PromptMessage(
+                    role='user',
+                    content=ResourceLink(
+                        uri='resource://kiwi.jpg',
+                        name='kiwi-image',
+                        title='Kiwi Image',
+                        description='A photo of a kiwi fruit',
+                        mime_type='image/jpeg',
+                    ),
+                )
+            ]
+        )
+
+
+async def test_map_prompt_content_text_meta() -> None:
+    """Test that MCP `_meta` on prompt text is preserved in mapped metadata."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        result = await server.get_prompt('text_meta_prompt')
+        [message] = result.messages
+
+    content = message.content
+
+    assert isinstance(content, TextContent)
+    assert content.metadata == {'mcp_meta': {'source': 'mcp'}}

@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import threading
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from importlib.util import find_spec
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -17,39 +19,38 @@ from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
+from pydantic_ai._tool_search import ToolSearchCallPart, ToolSearchReturnPart
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.builtin_tools import (
-    CodeExecutionTool,
-    ImageGenerationTool,
-    MCPServerTool,
-    WebFetchTool,
-    WebSearchTool,
-    XSearchTool,
-)
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
-    BuiltinTool,
+    Capability,
     CapabilityOrdering,
     HandleDeferredToolCalls,
     ImageGeneration,
     IncludeToolReturnSchemas,
+    Instrumentation,
+    NativeTool,
     PrefixTools,
+    PrepareTools,
     ProcessEventStream,
     ReinjectSystemPrompt,
     SetToolMetadata,
     Thinking,
     ThreadExecutor,
+    ToolSearch,
     Toolset,
     WebFetch,
     WebSearch,
     WrapperCapability,
+    XSearch,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCap
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
+from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -57,6 +58,7 @@ from pydantic_ai.exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -64,35 +66,53 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryImage,
     FilePart,
+    ImageUrl,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     PartStartEvent,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import (
+    AbstractNativeTool,
+    CodeExecutionTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+    XSearchTool,
+)
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, OutputContext, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets._capability_owned import resolve_capability_id
+from pydantic_ai.toolsets._deferred_capability_loader import (
+    LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
+    LOAD_CAPABILITY_TOOL_NAME,
+)
 from pydantic_ai.toolsets._dynamic import ToolsetFunc
+from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsStr, try_import
-
-with try_import() as xai_imports:
-    from pydantic_ai.models.xai import XSearch
+from .conftest import IsDatetime, IsInstance, IsStr, remove_schema_descriptions
 
 pytestmark = [
     pytest.mark.anyio,
@@ -102,18 +122,29 @@ pytestmark = [
 def test_capability_types() -> None:
     assert CAPABILITY_TYPES == snapshot(
         {
-            'BuiltinTool': BuiltinTool,
+            'NativeTool': NativeTool,
             'ImageGeneration': ImageGeneration,
             'IncludeToolReturnSchemas': IncludeToolReturnSchemas,
+            'Instrumentation': Instrumentation,
             'MCP': MCP,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
+            'ToolSearch': ToolSearch,
             'WebFetch': WebFetch,
             'WebSearch': WebSearch,
+            'XSearch': XSearch,
         }
     )
+
+
+def test_instrumentation_default_settings() -> None:
+    """`Instrumentation()` lazy-imports `InstrumentationSettings` and constructs default settings."""
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    instr = Instrumentation()
+    assert isinstance(instr.settings, InstrumentationSettings)
 
 
 def test_agent_from_spec_basic():
@@ -124,7 +155,7 @@ def test_agent_from_spec_basic():
             'instructions': 'You are a helpful agent.',
             'model_settings': {'max_tokens': 4096},
             'capabilities': [
-                'WebSearch',
+                {'WebSearch': {'local': 'duckduckgo'}},
             ],
         }
     )
@@ -153,7 +184,7 @@ def test_agent_from_spec_web_fetch():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': [{'WebFetch': {'allowed_domains': ['example.com'], 'max_uses': 5}}],
+            'capabilities': [{'WebFetch': {'allowed_domains': ['example.com'], 'max_uses': 5, 'local': True}}],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
@@ -167,13 +198,27 @@ def test_agent_from_spec_mcp():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': [{'MCP': {'url': 'https://mcp.example.com/sse', 'allowed_tools': ['search']}}],
+            'capabilities': [
+                {
+                    'MCP': {
+                        'url': 'https://mcp.example.com/sse',
+                        'allowed_tools': ['search'],
+                        'native': True,
+                        'id': 'search-mcp',
+                        'description': 'Search MCP server.',
+                        'defer_loading': True,
+                    }
+                }
+            ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     cap = next(c for c in children if isinstance(c, MCP))
     assert cap.url == 'https://mcp.example.com/sse'
     assert cap.allowed_tools == ['search']
+    assert cap.id == 'search-mcp'
+    assert cap.description == 'Search MCP server.'
+    assert cap.defer_loading is True
 
 
 def test_agent_from_spec_unknown_capability():
@@ -235,7 +280,7 @@ def test_agent_from_spec_with_agent_spec_object():
         model='test',
         instructions='You are helpful.',
         capabilities=[
-            CapabilitySpec(name='WebSearch', arguments=None),
+            CapabilitySpec(name='WebSearch', arguments={'local': 'duckduckgo'}),
         ],
     )
     agent = Agent.from_spec(spec)
@@ -372,19 +417,40 @@ def test_agent_from_spec_model_settings_merged():
 def test_agent_from_spec_retries():
     agent = Agent.from_spec({'model': 'test', 'retries': 5})
     assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_retries_dict():
+    agent = Agent.from_spec({'model': 'test', 'retries': {'tools': 2, 'output': 4}})
+    assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 4  # pyright: ignore[reportPrivateUsage]
 
 
 def test_agent_from_spec_retries_override():
     agent = Agent.from_spec({'model': 'test', 'retries': 5}, retries=2)
     assert agent._max_tool_retries == 2  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 2  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 2  # pyright: ignore[reportPrivateUsage]
 
 
-def test_agent_from_spec_output_retries():
-    agent = Agent.from_spec({'model': 'test', 'retries': 3, 'output_retries': 10})
-    assert agent._max_tool_retries == 3  # pyright: ignore[reportPrivateUsage]
-    assert agent._max_result_retries == 10  # pyright: ignore[reportPrivateUsage]
+def test_agent_from_spec_no_retries_does_not_warn():
+    """`from_spec` without an explicit retry budget uses the default budgets."""
+    agent = Agent.from_spec({'model': 'test'})
+
+    assert agent._max_tool_retries == 1  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_from_spec_explicit_retries_does_not_warn():
+    """`AgentSpec.retries` is canonical."""
+    agent = Agent.from_spec({'model': 'test', 'retries': 5})
+    assert agent._max_tool_retries == 5  # pyright: ignore[reportPrivateUsage]
+    assert agent._max_output_retries == 5  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_spec_retries_field():
+    """`AgentSpec.retries` is the canonical field."""
+    spec = AgentSpec(model='test', retries=5)
+    assert spec.retries == 5
 
 
 def test_agent_from_spec_end_strategy():
@@ -408,7 +474,32 @@ def test_agent_from_spec_tool_timeout_override():
 
 
 def test_agent_from_spec_instrument():
-    agent = Agent.from_spec({'model': 'test', 'instrument': True})
+    """The deprecated spec `instrument` field configures `agent.instrument`."""
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`AgentSpec\.instrument` is deprecated'):
+        agent = Agent.from_spec({'model': 'test', 'instrument': True})
+    assert agent.instrument is True
+
+
+def test_agent_from_spec_instrument_kwarg_deprecated():
+    """The `instrument=` kwarg on `from_spec` is deprecated; the agent still gets configured."""
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_spec\(instrument=\.\.\.\)` is deprecated'):
+        agent = Agent.from_spec({'model': 'test'}, instrument=True)  # type: ignore[call-arg]
+    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
+
+
+def test_agent_from_file_instrument_kwarg_deprecated(tmp_path: Path):
+    """The `instrument=` kwarg on `from_file` is deprecated; the agent still gets configured."""
+    spec_path = tmp_path / 'spec.yaml'
+    spec_path.write_text('model: test\n')
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\.from_file\(instrument=\.\.\.\)` is deprecated'):
+        agent = Agent.from_file(spec_path, instrument=True)  # type: ignore[call-arg]
+    assert agent.instrument is True  # pyright: ignore[reportUnknownMemberType]
+
+
+def test_agent_init_instrument_kwarg_deprecated():
+    """The `instrument=` kwarg on `Agent(...)` is deprecated; the agent still gets configured."""
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`Agent\(instrument=\.\.\.\)` is deprecated'):
+        agent = Agent(model='test', instrument=True)  # type: ignore[call-arg]
     assert agent.instrument is True
 
 
@@ -438,7 +529,7 @@ def test_agent_from_spec_capabilities_merged():
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': ['WebSearch'],
+            'capabilities': [{'WebSearch': {'local': 'duckduckgo'}}],
         },
         capabilities=[ExtraCap()],
     )
@@ -451,17 +542,30 @@ def test_agent_from_spec_capabilities_merged():
 def test_model_json_schema_with_capabilities():
     pytest.importorskip('mcp', reason='schema varies without mcp package')
     schema = AgentSpec.model_json_schema_with_capabilities()
-    assert schema == snapshot(
+    assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
+                'AgentRetries': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'tools': {'title': 'Tools', 'type': 'integer'},
+                        'output': {'title': 'Output', 'type': 'integer'},
+                    },
+                    'title': 'AgentRetries',
+                    'type': 'object',
+                },
                 'CodeExecutionTool': {
-                    'properties': {'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                    },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
                 'FileSearchTool': {
                     'properties': {
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
                     },
                     'required': ['file_store_ids'],
@@ -471,6 +575,13 @@ def test_model_json_schema_with_capabilities():
                 'ImageGenerationTool': {
                     'properties': {
                         'kind': {'default': 'image_generation', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'action': {
+                            'default': 'auto',
+                            'enum': ['generate', 'edit', 'auto'],
+                            'title': 'Action',
+                            'type': 'string',
+                        },
                         'background': {
                             'default': 'auto',
                             'enum': ['transparent', 'opaque', 'auto'],
@@ -487,6 +598,18 @@ def test_model_json_schema_with_capabilities():
                             'enum': ['auto', 'low'],
                             'title': 'Moderation',
                             'type': 'string',
+                        },
+                        'model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'default': None,
+                            'title': 'Model',
                         },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -534,7 +657,9 @@ def test_model_json_schema_with_capabilities():
                 'KnownModelName': {
                     'enum': [
                         'anthropic:claude-3-haiku-20240307',
+                        'anthropic:claude-fable-5',
                         'anthropic:claude-haiku-4-5-20251001',
+                        'anthropic:claude-mythos-5',
                         'anthropic:claude-mythos-preview',
                         'anthropic:claude-haiku-4-5',
                         'anthropic:claude-opus-4-0',
@@ -545,6 +670,7 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-opus-4-5',
                         'anthropic:claude-opus-4-6',
                         'anthropic:claude-opus-4-7',
+                        'anthropic:claude-opus-4-8',
                         'anthropic:claude-sonnet-4-0',
                         'anthropic:claude-sonnet-4-20250514',
                         'anthropic:claude-sonnet-4-5-20250929',
@@ -621,8 +747,12 @@ def test_model_json_schema_with_capabilities():
                         'cohere:command-r7b-12-2024',
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
+                        'deepseek:deepseek-v4-flash',
+                        'deepseek:deepseek-v4-pro',
                         'gateway/anthropic:claude-3-haiku-20240307',
+                        'gateway/anthropic:claude-fable-5',
                         'gateway/anthropic:claude-haiku-4-5-20251001',
+                        'gateway/anthropic:claude-mythos-5',
                         'gateway/anthropic:claude-mythos-preview',
                         'gateway/anthropic:claude-haiku-4-5',
                         'gateway/anthropic:claude-opus-4-0',
@@ -633,6 +763,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-opus-4-5',
                         'gateway/anthropic:claude-opus-4-6',
                         'gateway/anthropic:claude-opus-4-7',
+                        'gateway/anthropic:claude-opus-4-8',
                         'gateway/anthropic:claude-sonnet-4-0',
                         'gateway/anthropic:claude-sonnet-4-20250514',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
@@ -645,16 +776,17 @@ def test_model_json_schema_with_capabilities():
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
                         'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-                        'gateway/google-vertex:gemini-2.5-flash-image',
-                        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-                        'gateway/google-vertex:gemini-2.5-flash-lite',
-                        'gateway/google-vertex:gemini-2.5-flash',
-                        'gateway/google-vertex:gemini-2.5-pro',
-                        'gateway/google-vertex:gemini-3-flash-preview',
-                        'gateway/google-vertex:gemini-3-pro-image-preview',
-                        'gateway/google-vertex:gemini-3.1-flash-image-preview',
-                        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
-                        'gateway/google-vertex:gemini-3.1-pro-preview',
+                        'gateway/google-cloud:gemini-2.5-flash-image',
+                        'gateway/google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+                        'gateway/google-cloud:gemini-2.5-flash-lite',
+                        'gateway/google-cloud:gemini-2.5-flash',
+                        'gateway/google-cloud:gemini-2.5-pro',
+                        'gateway/google-cloud:gemini-3-flash-preview',
+                        'gateway/google-cloud:gemini-3-pro-image-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-image-preview',
+                        'gateway/google-cloud:gemini-3.1-flash-lite-preview',
+                        'gateway/google-cloud:gemini-3.1-pro-preview',
+                        'gateway/google-cloud:gemini-3.5-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
@@ -712,38 +844,40 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:o3',
                         'gateway/openai:o4-mini-2025-04-16',
                         'gateway/openai:o4-mini',
-                        'google-gla:gemini-2.0-flash-lite',
-                        'google-gla:gemini-2.0-flash',
-                        'google-gla:gemini-2.5-flash-image',
-                        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-                        'google-gla:gemini-2.5-flash-lite',
-                        'google-gla:gemini-2.5-flash-preview-09-2025',
-                        'google-gla:gemini-2.5-flash',
-                        'google-gla:gemini-2.5-pro',
-                        'google-gla:gemini-3-flash-preview',
-                        'google-gla:gemini-3-pro-image-preview',
-                        'google-gla:gemini-3-pro-preview',
-                        'google-gla:gemini-3.1-flash-image-preview',
-                        'google-gla:gemini-3.1-flash-lite-preview',
-                        'google-gla:gemini-3.1-pro-preview',
-                        'google-gla:gemini-flash-latest',
-                        'google-gla:gemini-flash-lite-latest',
-                        'google-vertex:gemini-2.0-flash-lite',
-                        'google-vertex:gemini-2.0-flash',
-                        'google-vertex:gemini-2.5-flash-image',
-                        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-                        'google-vertex:gemini-2.5-flash-lite',
-                        'google-vertex:gemini-2.5-flash-preview-09-2025',
-                        'google-vertex:gemini-2.5-flash',
-                        'google-vertex:gemini-2.5-pro',
-                        'google-vertex:gemini-3-flash-preview',
-                        'google-vertex:gemini-3-pro-image-preview',
-                        'google-vertex:gemini-3-pro-preview',
-                        'google-vertex:gemini-3.1-flash-image-preview',
-                        'google-vertex:gemini-3.1-flash-lite-preview',
-                        'google-vertex:gemini-3.1-pro-preview',
-                        'google-vertex:gemini-flash-latest',
-                        'google-vertex:gemini-flash-lite-latest',
+                        'google-cloud:gemini-2.0-flash-lite',
+                        'google-cloud:gemini-2.0-flash',
+                        'google-cloud:gemini-2.5-flash-image',
+                        'google-cloud:gemini-2.5-flash-lite-preview-09-2025',
+                        'google-cloud:gemini-2.5-flash-lite',
+                        'google-cloud:gemini-2.5-flash-preview-09-2025',
+                        'google-cloud:gemini-2.5-flash',
+                        'google-cloud:gemini-2.5-pro',
+                        'google-cloud:gemini-3-flash-preview',
+                        'google-cloud:gemini-3-pro-image-preview',
+                        'google-cloud:gemini-3-pro-preview',
+                        'google-cloud:gemini-3.1-flash-image-preview',
+                        'google-cloud:gemini-3.1-flash-lite-preview',
+                        'google-cloud:gemini-3.1-pro-preview',
+                        'google-cloud:gemini-3.5-flash',
+                        'google-cloud:gemini-flash-latest',
+                        'google-cloud:gemini-flash-lite-latest',
+                        'google:gemini-2.0-flash-lite',
+                        'google:gemini-2.0-flash',
+                        'google:gemini-2.5-flash-image',
+                        'google:gemini-2.5-flash-lite-preview-09-2025',
+                        'google:gemini-2.5-flash-lite',
+                        'google:gemini-2.5-flash-preview-09-2025',
+                        'google:gemini-2.5-flash',
+                        'google:gemini-2.5-pro',
+                        'google:gemini-3-flash-preview',
+                        'google:gemini-3-pro-image-preview',
+                        'google:gemini-3-pro-preview',
+                        'google:gemini-3.1-flash-image-preview',
+                        'google:gemini-3.1-flash-lite-preview',
+                        'google:gemini-3.1-pro-preview',
+                        'google:gemini-3.5-flash',
+                        'google:gemini-flash-latest',
+                        'google:gemini-flash-lite-latest',
                         'grok:grok-2-image-1212',
                         'grok:grok-2-vision-1212',
                         'grok:grok-3-fast',
@@ -751,6 +885,20 @@ def test_model_json_schema_with_capabilities():
                         'grok:grok-3-mini',
                         'grok:grok-3',
                         'grok:grok-4-0709',
+                        'grok:grok-4.3',
+                        'grok:grok-4.3-latest',
+                        'grok:grok-4.20',
+                        'grok:grok-4.20-0309',
+                        'grok:grok-4.20-0309-non-reasoning',
+                        'grok:grok-4.20-0309-reasoning',
+                        'grok:grok-4.20-multi-agent',
+                        'grok:grok-4.20-multi-agent-0309',
+                        'grok:grok-4.20-multi-agent-latest',
+                        'grok:grok-4.20-non-reasoning',
+                        'grok:grok-4.20-non-reasoning-latest',
+                        'grok:grok-4.20-reasoning',
+                        'grok:grok-4.20-reasoning-latest',
+                        'grok:grok-latest',
                         'grok:grok-4-latest',
                         'grok:grok-4-1-fast-non-reasoning',
                         'grok:grok-4-1-fast-reasoning',
@@ -759,6 +907,7 @@ def test_model_json_schema_with_capabilities():
                         'grok:grok-4-fast-reasoning',
                         'grok:grok-4-fast',
                         'grok:grok-4',
+                        'grok:grok-build-0.1',
                         'grok:grok-code-fast-1',
                         'xai:grok-3',
                         'xai:grok-3-fast',
@@ -769,6 +918,18 @@ def test_model_json_schema_with_capabilities():
                         'xai:grok-3-mini-fast-latest',
                         'xai:grok-4',
                         'xai:grok-4-0709',
+                        'xai:grok-4.20',
+                        'xai:grok-4.20-0309',
+                        'xai:grok-4.20-0309-non-reasoning',
+                        'xai:grok-4.20-0309-reasoning',
+                        'xai:grok-4.20-multi-agent',
+                        'xai:grok-4.20-multi-agent-0309',
+                        'xai:grok-4.20-multi-agent-latest',
+                        'xai:grok-4.20-non-reasoning',
+                        'xai:grok-4.20-non-reasoning-latest',
+                        'xai:grok-4.20-reasoning-latest',
+                        'xai:grok-4.3',
+                        'xai:grok-4.3-latest',
                         'xai:grok-4-1-fast',
                         'xai:grok-4-1-fast-non-reasoning',
                         'xai:grok-4-1-fast-non-reasoning-latest',
@@ -918,6 +1079,83 @@ def test_model_json_schema_with_capabilities():
                         'openai:o4-mini-deep-research-2025-06-26',
                         'openai:o4-mini-deep-research',
                         'openai:o4-mini',
+                        'openai-chat:computer-use-preview-2025-03-11',
+                        'openai-chat:computer-use-preview',
+                        'openai-chat:gpt-3.5-turbo-0125',
+                        'openai-chat:gpt-3.5-turbo-0301',
+                        'openai-chat:gpt-3.5-turbo-0613',
+                        'openai-chat:gpt-3.5-turbo-1106',
+                        'openai-chat:gpt-3.5-turbo-16k-0613',
+                        'openai-chat:gpt-3.5-turbo-16k',
+                        'openai-chat:gpt-3.5-turbo',
+                        'openai-chat:gpt-4-0314',
+                        'openai-chat:gpt-4-0613',
+                        'openai-chat:gpt-4-turbo-2024-04-09',
+                        'openai-chat:gpt-4-turbo',
+                        'openai-chat:gpt-4.1-2025-04-14',
+                        'openai-chat:gpt-4.1-mini-2025-04-14',
+                        'openai-chat:gpt-4.1-mini',
+                        'openai-chat:gpt-4.1-nano-2025-04-14',
+                        'openai-chat:gpt-4.1-nano',
+                        'openai-chat:gpt-4.1',
+                        'openai-chat:gpt-4',
+                        'openai-chat:gpt-4o-2024-05-13',
+                        'openai-chat:gpt-4o-2024-08-06',
+                        'openai-chat:gpt-4o-2024-11-20',
+                        'openai-chat:gpt-4o-audio-preview-2024-12-17',
+                        'openai-chat:gpt-4o-audio-preview-2025-06-03',
+                        'openai-chat:gpt-4o-audio-preview',
+                        'openai-chat:gpt-4o-mini-2024-07-18',
+                        'openai-chat:gpt-4o-mini-audio-preview-2024-12-17',
+                        'openai-chat:gpt-4o-mini-audio-preview',
+                        'openai-chat:gpt-4o-mini-search-preview-2025-03-11',
+                        'openai-chat:gpt-4o-mini-search-preview',
+                        'openai-chat:gpt-4o-mini',
+                        'openai-chat:gpt-4o-search-preview-2025-03-11',
+                        'openai-chat:gpt-4o-search-preview',
+                        'openai-chat:gpt-4o',
+                        'openai-chat:gpt-5-2025-08-07',
+                        'openai-chat:gpt-5-chat-latest',
+                        'openai-chat:gpt-5-codex',
+                        'openai-chat:gpt-5-mini-2025-08-07',
+                        'openai-chat:gpt-5-mini',
+                        'openai-chat:gpt-5-nano-2025-08-07',
+                        'openai-chat:gpt-5-nano',
+                        'openai-chat:gpt-5-pro-2025-10-06',
+                        'openai-chat:gpt-5-pro',
+                        'openai-chat:gpt-5.1-2025-11-13',
+                        'openai-chat:gpt-5.1-chat-latest',
+                        'openai-chat:gpt-5.1-codex-max',
+                        'openai-chat:gpt-5.1-codex',
+                        'openai-chat:gpt-5.1',
+                        'openai-chat:gpt-5.2-2025-12-11',
+                        'openai-chat:gpt-5.2-chat-latest',
+                        'openai-chat:gpt-5.2-pro-2025-12-11',
+                        'openai-chat:gpt-5.2-pro',
+                        'openai-chat:gpt-5.2',
+                        'openai-chat:gpt-5.3-chat-latest',
+                        'openai-chat:gpt-5.4-mini-2026-03-17',
+                        'openai-chat:gpt-5.4-mini',
+                        'openai-chat:gpt-5.4-nano-2026-03-17',
+                        'openai-chat:gpt-5.4-nano',
+                        'openai-chat:gpt-5.4',
+                        'openai-chat:gpt-5',
+                        'openai-chat:o1-2024-12-17',
+                        'openai-chat:o1-pro-2025-03-19',
+                        'openai-chat:o1-pro',
+                        'openai-chat:o1',
+                        'openai-chat:o3-2025-04-16',
+                        'openai-chat:o3-deep-research-2025-06-26',
+                        'openai-chat:o3-deep-research',
+                        'openai-chat:o3-mini-2025-01-31',
+                        'openai-chat:o3-mini',
+                        'openai-chat:o3-pro-2025-06-10',
+                        'openai-chat:o3-pro',
+                        'openai-chat:o3',
+                        'openai-chat:o4-mini-2025-04-16',
+                        'openai-chat:o4-mini-deep-research-2025-06-26',
+                        'openai-chat:o4-mini-deep-research',
+                        'openai-chat:o4-mini',
                         'test',
                         'zai:autoglm-phone-multilingual',
                         'zai:glm-4-32b-0414-128k',
@@ -941,6 +1179,7 @@ def test_model_json_schema_with_capabilities():
                 'MCPServerTool': {
                     'properties': {
                         'kind': {'default': 'mcp_server', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'id': {'title': 'Id', 'type': 'string'},
                         'url': {'title': 'Url', 'type': 'string'},
                         'authorization_token': {
@@ -969,23 +1208,30 @@ def test_model_json_schema_with_capabilities():
                     'type': 'object',
                 },
                 'MemoryTool': {
-                    'properties': {'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'}},
+                    'properties': {
+                        'kind': {'default': 'memory', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                    },
                     'title': 'MemoryTool',
                     'type': 'object',
                 },
                 'ModelSettings': {
-                    'description': """\
-Settings to configure an LLM.
-
-Here we include only settings which apply to multiple models / model providers,
-though not all of these settings are supported by all models.\
-""",
                     'properties': {
                         'max_tokens': {'title': 'Max Tokens', 'type': 'integer'},
                         'temperature': {'title': 'Temperature', 'type': 'number'},
                         'top_p': {'title': 'Top P', 'type': 'number'},
+                        'top_k': {'title': 'Top K', 'type': 'integer'},
                         'timeout': {'title': 'Timeout', 'type': 'number'},
                         'parallel_tool_calls': {'title': 'Parallel Tool Calls', 'type': 'boolean'},
+                        'tool_choice': {
+                            'anyOf': [
+                                {'enum': ['none', 'required', 'auto'], 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'$ref': '#/$defs/ToolOrOutput'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Tool Choice',
+                        },
                         'seed': {'title': 'Seed', 'type': 'integer'},
                         'presence_penalty': {'title': 'Presence Penalty', 'type': 'number'},
                         'frequency_penalty': {'title': 'Frequency Penalty', 'type': 'number'},
@@ -1017,10 +1263,32 @@ though not all of these settings are supported by all models.\
                     'title': 'ModelSettings',
                     'type': 'object',
                 },
+                'ToolOrOutput': {
+                    'properties': {
+                        'function_tools': {'items': {'type': 'string'}, 'title': 'Function Tools', 'type': 'array'}
+                    },
+                    'required': ['function_tools'],
+                    'title': 'ToolOrOutput',
+                    'type': 'object',
+                },
+                'ToolSearchTool': {
+                    'properties': {
+                        'kind': {'default': 'tool_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'strategy': {
+                            'anyOf': [{'enum': ['bm25', 'regex', 'custom'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Strategy',
+                        },
+                    },
+                    'title': 'ToolSearchTool',
+                    'type': 'object',
+                },
                 'UrlContextTool': {
                     'deprecated': True,
                     'properties': {
                         'kind': {'default': 'url_context', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1049,6 +1317,7 @@ though not all of these settings are supported by all models.\
                 'WebFetchTool': {
                     'properties': {
                         'kind': {'default': 'web_fetch', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'max_uses': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
@@ -1077,6 +1346,7 @@ though not all of these settings are supported by all models.\
                 'WebSearchTool': {
                     'properties': {
                         'kind': {'default': 'web_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'search_context_size': {
                             'default': 'medium',
                             'enum': ['low', 'medium', 'high'],
@@ -1108,14 +1378,6 @@ though not all of these settings are supported by all models.\
                 },
                 'WebSearchUserLocation': {
                     'additionalProperties': False,
-                    'description': """\
-Allows you to localize search results based on a user's location.
-
-Supported by:
-
-* Anthropic
-* OpenAI Responses\
-""",
                     'properties': {
                         'city': {'title': 'City', 'type': 'string'},
                         'country': {'title': 'Country', 'type': 'string'},
@@ -1128,6 +1390,7 @@ Supported by:
                 'XSearchTool': {
                     'properties': {
                         'kind': {'default': 'x_search', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'allowed_x_handles': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'default': None,
@@ -1167,10 +1430,10 @@ Supported by:
                     'title': 'XSearchTool',
                     'type': 'object',
                 },
-                'short_spec_BuiltinTool': {
+                'short_spec_NativeTool': {
                     'additionalProperties': False,
                     'properties': {
-                        'BuiltinTool': {
+                        'NativeTool': {
                             'anyOf': [
                                 {
                                     'oneOf': [
@@ -1183,29 +1446,15 @@ Supported by:
                                         {'$ref': '#/$defs/MemoryTool'},
                                         {'$ref': '#/$defs/MCPServerTool'},
                                         {'$ref': '#/$defs/FileSearchTool'},
+                                        {'$ref': '#/$defs/ToolSearchTool'},
                                     ]
                                 },
                                 {'type': 'null'},
                             ],
-                            'title': 'Builtintool',
+                            'title': 'Nativetool',
                         }
                     },
-                    'title': 'short_spec_BuiltinTool',
-                    'type': 'object',
-                },
-                'short_spec_IncludeToolReturnSchemas': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'IncludeToolReturnSchemas': {
-                            'anyOf': [
-                                {'const': 'all', 'type': 'string'},
-                                {'items': {'type': 'string'}, 'type': 'array'},
-                                {'additionalProperties': True, 'type': 'object'},
-                            ],
-                            'title': 'Includetoolreturnschemas',
-                        }
-                    },
-                    'title': 'short_spec_IncludeToolReturnSchemas',
+                    'title': 'short_spec_NativeTool',
                     'type': 'object',
                 },
                 'short_spec_MCP': {
@@ -1215,10 +1464,13 @@ Supported by:
                     'title': 'short_spec_MCP',
                     'type': 'object',
                 },
-                'short_spec_ReinjectSystemPrompt': {
+                'spec_IncludeToolReturnSchemas': {
                     'additionalProperties': False,
-                    'properties': {'ReinjectSystemPrompt': {'title': 'Reinjectsystemprompt', 'type': 'boolean'}},
-                    'title': 'short_spec_ReinjectSystemPrompt',
+                    'properties': {
+                        'IncludeToolReturnSchemas': {'$ref': '#/$defs/spec_params_IncludeToolReturnSchemas'}
+                    },
+                    'required': ['IncludeToolReturnSchemas'],
+                    'title': 'spec_IncludeToolReturnSchemas',
                     'type': 'object',
                 },
                 'short_spec_SetToolMetadata': {
@@ -1236,18 +1488,18 @@ Supported by:
                     'title': 'short_spec_SetToolMetadata',
                     'type': 'object',
                 },
-                'short_spec_Thinking': {
+                'spec_ReinjectSystemPrompt': {
                     'additionalProperties': False,
-                    'properties': {
-                        'Thinking': {
-                            'anyOf': [
-                                {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
-                            ],
-                            'title': 'Thinking',
-                        }
-                    },
-                    'title': 'short_spec_Thinking',
+                    'properties': {'ReinjectSystemPrompt': {'$ref': '#/$defs/spec_params_ReinjectSystemPrompt'}},
+                    'required': ['ReinjectSystemPrompt'],
+                    'title': 'spec_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
+                'spec_Thinking': {
+                    'additionalProperties': False,
+                    'properties': {'Thinking': {'$ref': '#/$defs/spec_params_Thinking'}},
+                    'required': ['Thinking'],
+                    'title': 'spec_Thinking',
                     'type': 'object',
                 },
                 'spec_ImageGeneration': {
@@ -1271,6 +1523,31 @@ Supported by:
                     'title': 'spec_PrefixTools',
                     'type': 'object',
                 },
+                'spec_ToolSearch': {
+                    'additionalProperties': False,
+                    'properties': {'ToolSearch': {'$ref': '#/$defs/spec_params_ToolSearch'}},
+                    'required': ['ToolSearch'],
+                    'title': 'spec_ToolSearch',
+                    'type': 'object',
+                },
+                'spec_params_IncludeToolReturnSchemas': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'tools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                            ],
+                            'title': 'Tools',
+                        },
+                    },
+                    'title': 'spec_params_IncludeToolReturnSchemas',
+                    'type': 'object',
+                },
                 'spec_WebFetch': {
                     'additionalProperties': False,
                     'properties': {'WebFetch': {'$ref': '#/$defs/spec_params_WebFetch'}},
@@ -1285,20 +1562,56 @@ Supported by:
                     'title': 'spec_WebSearch',
                     'type': 'object',
                 },
+                'spec_XSearch': {
+                    'additionalProperties': False,
+                    'properties': {'XSearch': {'$ref': '#/$defs/spec_params_XSearch'}},
+                    'required': ['XSearch'],
+                    'title': 'spec_XSearch',
+                    'type': 'object',
+                },
+                'spec_params_ReinjectSystemPrompt': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'replace_existing': {'title': 'Replace Existing', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_ReinjectSystemPrompt',
+                    'type': 'object',
+                },
+                'spec_params_Thinking': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'effort': {
+                            'anyOf': [
+                                {'type': 'boolean'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                            ],
+                            'title': 'Effort',
+                        },
+                    },
+                    'title': 'spec_params_Thinking',
+                    'type': 'object',
+                },
                 'spec_params_ImageGeneration': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/ImageGenerationTool'},
-                                {'type': 'boolean'},
-                            ],
-                            'title': 'Builtin',
+                        'native': {
+                            'anyOf': [{'$ref': '#/$defs/ImageGenerationTool'}, {'type': 'boolean'}],
+                            'title': 'Native',
                         },
                         'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
+                        },
+                        'action': {
+                            'anyOf': [{'enum': ['generate', 'edit', 'auto'], 'type': 'string'}, {'type': 'null'}],
+                            'title': 'Action',
                         },
                         'background': {
                             'anyOf': [{'enum': ['transparent', 'opaque', 'auto'], 'type': 'string'}, {'type': 'null'}],
@@ -1311,6 +1624,17 @@ Supported by:
                         'moderation': {
                             'anyOf': [{'enum': ['auto', 'low'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Moderation',
+                        },
+                        'image_model': {
+                            'anyOf': [
+                                {
+                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'type': 'string',
+                                },
+                                {'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Image Model',
                         },
                         'output_compression': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
@@ -1344,6 +1668,9 @@ Supported by:
                             ],
                             'title': 'Aspect Ratio',
                         },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_ImageGeneration',
                     'type': 'object',
@@ -1352,11 +1679,14 @@ Supported by:
                     'additionalProperties': False,
                     'properties': {
                         'url': {'title': 'Url', 'type': 'string'},
-                        'builtin': {
+                        'native': {
                             'anyOf': [{'$ref': '#/$defs/MCPServerTool'}, {'type': 'boolean'}],
-                            'title': 'Builtin',
+                            'title': 'Native',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'authorization_token': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
@@ -1371,6 +1701,7 @@ Supported by:
                             'title': 'Allowed Tools',
                         },
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                     },
                     'required': ['url'],
                     'title': 'spec_params_MCP',
@@ -1382,25 +1713,30 @@ Supported by:
                         'prefix': {'title': 'Prefix', 'type': 'string'},
                         'capability': {
                             'anyOf': [
-                                {'const': 'BuiltinTool', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                                {'const': 'NativeTool', 'type': 'string'},
+                                {'$ref': '#/$defs/short_spec_NativeTool'},
                                 {'const': 'ImageGeneration', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ImageGeneration'},
                                 {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
+                                {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
+                                {'const': 'Instrumentation', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_MCP'},
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
+                                {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
                                 {'const': 'SetToolMetadata', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
-                                {'$ref': '#/$defs/short_spec_Thinking'},
+                                {'$ref': '#/$defs/spec_Thinking'},
+                                {'const': 'ToolSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_ToolSearch'},
                                 {'const': 'WebFetch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebFetch'},
                                 {'const': 'WebSearch', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_WebSearch'},
+                                {'const': 'XSearch', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_XSearch'},
                             ]
                         },
                     },
@@ -1408,17 +1744,41 @@ Supported by:
                     'title': 'spec_params_PrefixTools',
                     'type': 'object',
                 },
+                'spec_params_ToolSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'strategy': {
+                            'anyOf': [
+                                {'const': 'keywords', 'type': 'string'},
+                                {'enum': ['bm25', 'regex'], 'type': 'string'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Strategy',
+                        },
+                        'max_results': {'title': 'Max Results', 'type': 'integer'},
+                        'tool_description': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Tool Description',
+                        },
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'parameter_description': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'title': 'Parameter Description',
+                        },
+                    },
+                    'title': 'spec_params_ToolSearch',
+                    'type': 'object',
+                },
                 'spec_params_WebFetch': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/WebFetchTool'},
-                                {'type': 'boolean'},
-                            ],
-                            'title': 'Builtin',
+                        'native': {
+                            'anyOf': [{'$ref': '#/$defs/WebFetchTool'}, {'type': 'boolean'}],
+                            'title': 'Native',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
                         'allowed_domains': {
                             'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
                             'title': 'Allowed Domains',
@@ -1436,6 +1796,9 @@ Supported by:
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'title': 'Max Content Tokens',
                         },
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebFetch',
                     'type': 'object',
@@ -1443,14 +1806,14 @@ Supported by:
                 'spec_params_WebSearch': {
                     'additionalProperties': False,
                     'properties': {
-                        'builtin': {
-                            'anyOf': [
-                                {'$ref': '#/$defs/WebSearchTool'},
-                                {'type': 'boolean'},
-                            ],
-                            'title': 'Builtin',
+                        'native': {
+                            'anyOf': [{'$ref': '#/$defs/WebSearchTool'}, {'type': 'boolean'}],
+                            'title': 'Native',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'const': 'duckduckgo', 'type': 'string'}, {'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'search_context_size': {
                             'anyOf': [{'enum': ['low', 'medium', 'high'], 'type': 'string'}, {'type': 'null'}],
                             'title': 'Search Context Size',
@@ -1465,8 +1828,52 @@ Supported by:
                             'title': 'Allowed Domains',
                         },
                         'max_uses': {'anyOf': [{'type': 'integer'}, {'type': 'null'}], 'title': 'Max Uses'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                     },
                     'title': 'spec_params_WebSearch',
+                    'type': 'object',
+                },
+                'spec_params_XSearch': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'native': {'anyOf': [{'$ref': '#/$defs/XSearchTool'}, {'type': 'boolean'}], 'title': 'Native'},
+                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'fallback_model': {
+                            'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
+                            'title': 'Fallback Model',
+                        },
+                        'allowed_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Allowed X Handles',
+                        },
+                        'excluded_x_handles': {
+                            'anyOf': [{'items': {'type': 'string'}, 'type': 'array'}, {'type': 'null'}],
+                            'title': 'Excluded X Handles',
+                        },
+                        'from_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'title': 'From Date',
+                        },
+                        'to_date': {
+                            'anyOf': [{'format': 'date-time', 'type': 'string'}, {'type': 'null'}],
+                            'title': 'To Date',
+                        },
+                        'enable_image_understanding': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Image Understanding',
+                        },
+                        'enable_video_understanding': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Enable Video Understanding',
+                        },
+                        'include_output': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Include Output'},
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_XSearch',
                     'type': 'object',
                 },
             },
@@ -1495,10 +1902,21 @@ Supported by:
                     'title': 'Output Schema',
                 },
                 'model_settings': {'anyOf': [{'$ref': '#/$defs/ModelSettings'}, {'type': 'null'}], 'default': None},
-                'retries': {'default': 1, 'title': 'Retries', 'type': 'integer'},
+                'tool_retries': {
+                    'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                    'default': None,
+                    'deprecated': True,
+                    'title': 'Tool Retries',
+                },
+                'retries': {
+                    'anyOf': [{'type': 'integer'}, {'$ref': '#/$defs/AgentRetries'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Retries',
+                },
                 'output_retries': {
                     'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                     'default': None,
+                    'deprecated': True,
                     'title': 'Output Retries',
                 },
                 'end_strategy': {
@@ -1526,25 +1944,30 @@ Supported by:
                     'default': [],
                     'items': {
                         'anyOf': [
-                            {'const': 'BuiltinTool', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_BuiltinTool'},
+                            {'const': 'NativeTool', 'type': 'string'},
+                            {'$ref': '#/$defs/short_spec_NativeTool'},
                             {'const': 'ImageGeneration', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ImageGeneration'},
                             {'const': 'IncludeToolReturnSchemas', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_IncludeToolReturnSchemas'},
+                            {'$ref': '#/$defs/spec_IncludeToolReturnSchemas'},
+                            {'const': 'Instrumentation', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_MCP'},
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_ReinjectSystemPrompt'},
+                            {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
-                            {'$ref': '#/$defs/short_spec_Thinking'},
+                            {'$ref': '#/$defs/spec_Thinking'},
+                            {'const': 'ToolSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_ToolSearch'},
                             {'const': 'WebFetch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebFetch'},
                             {'const': 'WebSearch', 'type': 'string'},
                             {'$ref': '#/$defs/spec_WebSearch'},
+                            {'const': 'XSearch', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_XSearch'},
                         ]
                     },
                     'title': 'Capabilities',
@@ -1623,46 +2046,47 @@ def test_agent_spec_schema_field_parity():
     assert schema_fields == spec_fields
 
 
-def test_builtin_tools_param_wrapped_as_capabilities():
-    """The builtin_tools parameter items are wrapped in BuiltinTool capabilities."""
-    agent = Agent('test', builtin_tools=[WebSearchTool(), CodeExecutionTool()])
+def test_native_tools_param_wrapped_as_capabilities():
+    """`Agent(capabilities=[NativeTool(...)])` produces NativeTool capabilities."""
+    agent = Agent('test', capabilities=[NativeTool(WebSearchTool()), NativeTool(CodeExecutionTool())])
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 2
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
     assert isinstance(builtin_caps[1].tool, CodeExecutionTool)
-    # Also available via _cap_builtin_tools
-    assert len(agent._cap_builtin_tools) == 2  # pyright: ignore[reportPrivateUsage]
+    # Also available via _cap_native_tools (ToolSearchTool is auto-injected).
+    cap_tools = [t for t in agent._cap_native_tools if not isinstance(t, ToolSearchTool)]  # pyright: ignore[reportPrivateUsage]
+    assert len(cap_tools) == 2
 
 
 def test_agent_from_spec_builtin_tool():
-    """BuiltinTool capability can be constructed from spec."""
+    """NativeTool capability can be constructed from spec."""
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
-                {'BuiltinTool': {'kind': 'web_search'}},
+                {'NativeTool': {'kind': 'web_search'}},
             ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, WebSearchTool)
 
 
 def test_agent_from_spec_builtin_tool_with_options():
-    """BuiltinTool spec supports builtin tool configuration options."""
+    """NativeTool spec supports builtin tool configuration options."""
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
-                {'BuiltinTool': {'kind': 'web_search', 'search_context_size': 'high'}},
+                {'NativeTool': {'kind': 'web_search', 'search_context_size': 'high'}},
             ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     tool = builtin_caps[0].tool
     assert isinstance(tool, WebSearchTool)
@@ -1670,17 +2094,17 @@ def test_agent_from_spec_builtin_tool_with_options():
 
 
 def test_agent_from_spec_builtin_tool_explicit_form():
-    """BuiltinTool spec supports the explicit {tool: ...} form."""
+    """NativeTool spec supports the explicit {tool: ...} form."""
     agent = Agent.from_spec(
         {
             'model': 'test',
             'capabilities': [
-                {'BuiltinTool': {'tool': {'kind': 'code_execution'}}},
+                {'NativeTool': {'tool': {'kind': 'code_execution'}}},
             ],
         }
     )
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
-    builtin_caps = [c for c in children if isinstance(c, BuiltinToolCap)]
+    builtin_caps = [c for c in children if isinstance(c, NativeToolCap)]
     assert len(builtin_caps) == 1
     assert isinstance(builtin_caps[0].tool, CodeExecutionTool)
 
@@ -1814,14 +2238,14 @@ def test_to_file_roundtrip_yaml(tmp_path: str):
 
 
 def test_to_file_roundtrip_json(tmp_path: str):
-    spec = AgentSpec(model='test', name='roundtrip', retries=3)
+    spec = AgentSpec(model='test', name='roundtrip', retries={'tools': 3})
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
 
     loaded = AgentSpec.from_file(spec_path)
     assert loaded.model == 'test'
     assert loaded.name == 'roundtrip'
-    assert loaded.retries == 3
+    assert loaded.retries == {'tools': 3}
 
 
 @dataclass
@@ -1924,6 +2348,56 @@ def test_abstract_capability_get_model_settings_default():
 
     cap = PlainCap()
     assert cap.get_model_settings() is None
+    assert cap.get_description() is None
+
+
+async def test_abstract_capability_description_field_is_optional_in_deferred_catalog() -> None:
+    """Deferred capability catalog entries can include a description but do not require one."""
+
+    @dataclass
+    class AccountSecurityRunbook(AbstractCapability[None]):
+        id: str | None = 'account-security'
+        description: str | None = 'Use for suspicious logins, account takeover, or session revocation.'
+        defer_loading: bool = True
+
+    @dataclass
+    class RefundsRunbook(AbstractCapability[None]):
+        id: str | None = 'refunds'
+        defer_loading: bool = True
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[AccountSecurityRunbook(), RefundsRunbook()])
+    result = await agent.run('hi')
+    request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
+
+    assert request.instructions == snapshot(
+        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        '- account-security: Use for suspicious logins, account takeover, or session revocation.\n'
+        '- refunds'
+    )
+
+
+async def test_capability_description_can_be_dynamic() -> None:
+    """The convenience Capability accepts a CapabilityDescription callable."""
+
+    def describe(ctx: RunContext[str]) -> str:
+        return f'Use for {ctx.deps} questions.'
+
+    agent = Agent(
+        FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('done')])),
+        deps_type=str,
+        capabilities=[Capability[str](id='dynamic-description', description=describe, defer_loading=True)],
+    )
+
+    result = await agent.run('hi', deps='billing')
+    request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
+
+    assert request.instructions == snapshot(
+        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        '- dynamic-description: Use for billing questions.'
+    )
 
 
 def test_combined_capability_get_model_settings_merge():
@@ -1963,11 +2437,171 @@ def test_combined_capability_get_model_settings_none():
     assert caps.get_model_settings() is None
 
 
+def test_combined_capability_get_model_settings_deferred():
+    """Deferred capability model settings resolve only after the capability is loaded."""
+    seen_dynamic_loaded: list[bool | None] = []
+
+    @dataclass
+    class StaticSettingsCap(AbstractCapability[None]):
+        def get_model_settings(self) -> _ModelSettings:
+            return _ModelSettings(max_tokens=123)
+
+    @dataclass
+    class DynamicSettingsCap(AbstractCapability[None]):
+        def get_model_settings(self) -> Callable[[RunContext[None]], _ModelSettings]:
+            def settings(ctx: RunContext[None]) -> _ModelSettings:
+                seen_dynamic_loaded.append(ctx.capability_loaded)
+                return _ModelSettings(temperature=0.2)
+
+            return settings
+
+    resolver = CombinedCapability(
+        [
+            StaticSettingsCap(id='static-settings', defer_loading=True),
+            DynamicSettingsCap(id='dynamic-settings', defer_loading=True),
+        ]
+    ).get_model_settings()
+
+    assert callable(resolver)
+
+    def resolve(loaded_capability_ids: set[str]) -> _ModelSettings:
+        return resolver(
+            RunContext(
+                deps=None,
+                model=TestModel(),
+                usage=RunUsage(),
+                loaded_capability_ids=loaded_capability_ids,
+            )
+        )
+
+    assert [
+        resolve(set()),
+        resolve({'static-settings'}),
+        resolve({'static-settings', 'dynamic-settings'}),
+    ] == snapshot(
+        [
+            {},
+            {'max_tokens': 123},
+            {'max_tokens': 123, 'temperature': 0.2},
+        ]
+    )
+    assert seen_dynamic_loaded == [True]
+
+
+async def test_deferred_hooks_do_not_fire_until_capability_is_loaded() -> None:
+    """Hooks owned by a deferred capability are skipped until `load_capability` succeeds."""
+    hooks = Hooks[None](id='audit', description='Audit request flow.', defer_loading=True)
+    seen_loaded: list[bool | None] = []
+
+    @hooks.on.before_model_request
+    async def record(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        seen_loaded.append(ctx.capability_loaded)
+        return request_context
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        already_loaded = any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not already_loaded:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'audit'},
+                        tool_call_id='load-audit',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[hooks])
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+    assert seen_loaded == [True]
+
+
 def test_toolset_capability_get_toolset():
     """Toolset capability returns its toolset."""
     ts = FunctionToolset[None]()
     cap = Toolset(toolset=ts)
     assert cap.get_toolset() is ts
+
+    convenience_cap = Capability[None](toolsets=[ts])
+    assert convenience_cap.get_toolset() is ts
+
+    ts_b = FunctionToolset[None]()
+    combined_cap = Capability[None](toolsets=[ts, ts_b])
+    from pydantic_ai.toolsets import CombinedToolset
+
+    combined = cast(CombinedToolset[None], combined_cap.get_toolset())
+    assert list(combined.toolsets) == [ts, ts_b]
+
+
+def _noop_greet(name: str) -> str:
+    return f'Hello, {name}!'  # pragma: no cover
+
+
+def _noop_greet_with_context(_ctx: RunContext[None], name: str) -> str:
+    return f'Hello, {name}!'  # pragma: no cover
+
+
+def test_capability_combines_toolsets_and_tools_together():
+    """`Capability(toolsets=..., tools=...)` mirrors `Agent` by combining both."""
+    toolset = FunctionToolset[None]()
+    cap = Capability[None](toolsets=[toolset], tools=[_noop_greet])
+
+    from pydantic_ai.toolsets import CombinedToolset
+
+    combined = cast(CombinedToolset[None], cap.get_toolset())
+    function_toolset, provided_toolset = combined.toolsets
+    assert isinstance(function_toolset, FunctionToolset)
+    assert function_toolset.tools.keys() == {'_noop_greet'}
+    assert provided_toolset is toolset
+
+
+def test_capability_tool_plain_combines_with_toolsets():
+    """`Capability.tool_plain()` registers a function toolset alongside provided toolsets."""
+    toolset = FunctionToolset[None]()
+    cap = Capability[None](toolsets=[toolset])
+    cap.tool_plain(_noop_greet)
+
+    from pydantic_ai.toolsets import CombinedToolset
+
+    combined = cast(CombinedToolset[None], cap.get_toolset())
+    function_toolset, provided_toolset = combined.toolsets
+    assert isinstance(function_toolset, FunctionToolset)
+    assert function_toolset.tools.keys() == {'_noop_greet'}
+    assert provided_toolset is toolset
+
+
+def test_capability_tool_combines_with_toolsets():
+    """`Capability.tool()` registers a function toolset alongside provided toolsets."""
+    toolset = FunctionToolset[None]()
+    cap = Capability[None](toolsets=[toolset])
+    cap.tool(_noop_greet_with_context)
+
+    from pydantic_ai.toolsets import CombinedToolset
+
+    combined = cast(CombinedToolset[None], cap.get_toolset())
+    function_toolset, provided_toolset = combined.toolsets
+    assert isinstance(function_toolset, FunctionToolset)
+    assert function_toolset.tools.keys() == {'_noop_greet_with_context'}
+    assert provided_toolset is toolset
+
+
+def test_capability_opts_out_of_spec_serialization():
+    """`Capability` holds non-serializable state (function tools, instructions, callable
+    descriptions), so it opts out of spec construction like the other non-serializable
+    capabilities, and passing it as a custom capability type fails loudly."""
+    from pydantic_ai.agent.spec import get_capability_registry
+
+    assert Capability.get_serialization_name() is None
+    with pytest.raises(ValueError, match='Capability has opted out of serialization'):
+        get_capability_registry(custom_types=[Capability])
 
 
 async def test_toolset_capability_in_agent():
@@ -1992,6 +2626,1443 @@ async def test_toolset_capability_in_agent():
     assert len(tool_returns) == 1
     assert isinstance(tool_returns[0].content, str)
     assert tool_returns[0].content.startswith('Hello, ')
+
+
+async def test_capability_function_tools_shortcuts_in_agent():
+    """A Capability can register function tools directly or with decorators."""
+
+    def greet(name: str) -> str:
+        """Greet someone by name."""
+        return f'Hello, {name}!'
+
+    cap = Capability[int](tools=[greet])
+
+    @cap.tool_plain(name='wave')
+    def wave(name: str) -> str:
+        """Wave to someone by name."""
+        return f'Waving to {name}!'
+
+    @cap.tool
+    def add_deps(ctx: RunContext[int], value: int) -> int:
+        """Add the run dependency to a value."""
+        return ctx.deps + value
+
+    agent = Agent(TestModel(call_tools=['greet', 'wave', 'add_deps']), capabilities=[cap], deps_type=int)
+    result = await agent.run('Use the capability tools', deps=10)
+
+    tool_returns = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert [part.tool_name for part in tool_returns] == ['greet', 'wave', 'add_deps']
+
+
+async def test_capability_instructions_decorator_without_parenthesis():
+    """A Capability can register instructions with a bare decorator."""
+    captured_messages: list[ModelMessage] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    cap = Capability[None]()
+
+    @cap.instructions
+    def instructions() -> str:
+        return 'Use the capability runbook.'
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+    result = await agent.run('Help me')
+
+    assert result.output == 'done'
+    assert [msg.instructions for msg in captured_messages if isinstance(msg, ModelRequest)] == snapshot(
+        ['Use the capability runbook.']
+    )
+
+
+async def test_capability_instructions_decorator_with_parenthesis():
+    """A Capability can register instructions with a called decorator."""
+    captured_messages: list[ModelMessage] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    cap = Capability[None]()
+
+    @cap.instructions()
+    def instructions_2() -> str:
+        return 'Use the capability runbook.'
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+    result = await agent.run('Help me')
+
+    assert result.output == 'done'
+    assert [msg.instructions for msg in captured_messages if isinstance(msg, ModelRequest)] == snapshot(
+        ['Use the capability runbook.']
+    )
+
+
+async def test_capability_instructions_decorator_combines_with_constructor_instructions():
+    """Constructor instructions and decorator instructions are combined."""
+    captured_messages: list[ModelMessage] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    cap = Capability[int](instructions='Use the capability runbook.')
+
+    @cap.instructions
+    def add_deps(ctx: RunContext[int]) -> str:
+        return f'The current account id is {ctx.deps}.'
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap], deps_type=int)
+    result = await agent.run('Help me', deps=123)
+
+    assert result.output == 'done'
+    assert [msg.instructions for msg in captured_messages if isinstance(msg, ModelRequest)] == snapshot(
+        ['Use the capability runbook.\n\nThe current account id is 123.']
+    )
+
+
+async def test_deferred_capability_instructions_decorator_resolves_on_load() -> None:
+    """A deferred capability returns decorator-registered instructions when loaded."""
+    cap = Capability[int](
+        id='account',
+        description='Account-specific guidance.',
+        defer_loading=True,
+    )
+
+    @cap.instructions
+    def account_instructions(ctx: RunContext[int]) -> str:
+        return f'Use account id {ctx.deps}.'
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        already_loaded = any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not already_loaded:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'account'},
+                        tool_call_id='load-account',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap], deps_type=int)
+    result = await agent.run('Help me', deps=123)
+
+    assert result.output == 'done'
+    [load_return] = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert load_return.instructions == 'Use account id 123.'
+    first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
+    assert first_request.instructions == snapshot(
+        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        '- account: Account-specific guidance.'
+    )
+
+
+async def test_deferred_capability_partitions_native_tools() -> None:
+    """Deferred native tools are kept out of the baseline request until loaded."""
+    native_cap = NativeTool[None](
+        tool=WebSearchTool(),
+        id='web-search',
+        defer_loading=True,
+    )
+
+    [native_tool_func] = CombinedCapability([native_cap]).get_native_tools()
+    assert callable(native_tool_func)
+    native_tool_ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        capabilities={'web-search': native_cap},
+    )
+    assert native_tool_func(native_tool_ctx) is None
+    native_tool_ctx.loaded_capability_ids.add('web-search')
+    assert native_tool_func(native_tool_ctx) == WebSearchTool()
+
+    @dataclass
+    class CallableNativeToolCap(AbstractCapability[None]):
+        id: str | None = 'callable-web-search'
+        defer_loading: bool = True
+
+        def get_native_tools(self) -> list[Callable[[RunContext[None]], WebSearchTool]]:
+            return [lambda ctx: WebSearchTool()]
+
+    callable_native_cap = CallableNativeToolCap()
+    [callable_native_tool_func] = CombinedCapability([callable_native_cap]).get_native_tools()
+    assert callable(callable_native_tool_func)
+    assert callable_native_tool_func(native_tool_ctx) is None
+    native_tool_ctx.loaded_capability_ids.add('callable-web-search')
+    assert callable_native_tool_func(native_tool_ctx) == WebSearchTool()
+
+    seen_web_search_tools: list[list[WebSearchTool]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_web_search_tools.append(
+            [tool for tool in info.model_request_parameters.native_tools if isinstance(tool, WebSearchTool)]
+        )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[native_cap])
+    await agent.run('before load')
+    await agent.run(
+        'after load',
+        message_history=[
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'web-search'}, tool_call_id='load-web')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='load-web')]),
+        ],
+    )
+
+    assert seen_web_search_tools == snapshot([[], [WebSearchTool()]])
+
+
+async def test_load_capability_tool_name_conflict_raises() -> None:
+    """The framework loader must not be shadowed by a user tool with the same name."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def load_capability() -> str:
+        return 'user-defined loader'  # pragma: no cover
+
+    hidden = Capability[None](
+        id='hidden',
+        description='Hidden instructions.',
+        instructions='Hidden instructions.',
+        defer_loading=True,
+    )
+    agent = Agent(TestModel(), toolsets=[toolset], capabilities=[hidden])
+
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('hi')
+
+    assert str(exc_info.value) == snapshot(
+        "Tool name 'load_capability' is reserved for deferred capability loading. Rename your tool to avoid conflicts."
+    )
+
+
+def test_duplicate_capability_ids_raise() -> None:
+    """Capability ids are used as a run registry, so duplicates must fail loudly — at construction."""
+    with pytest.raises(UserError) as exc_info:
+        Agent(
+            TestModel(),
+            capabilities=[
+                Capability[None](id='dup', description='First capability.', instructions='First.'),
+                Capability[None](id='dup', description='Second capability.', instructions='Second.'),
+            ],
+        )
+
+    assert str(exc_info.value) == snapshot(
+        "Capability id 'dup' is used by multiple capabilities. Capability ids must be unique within a run."
+    )
+
+
+def test_deferred_capability_without_id_raises_at_construction() -> None:
+    """A statically-provided deferred capability without an `id` fails fast at construction."""
+    with pytest.raises(UserError, match='stable explicit `id` values'):
+        Agent(TestModel(), capabilities=[Capability[None](description='No id.', defer_loading=True)])
+
+
+async def test_partial_load_capability_history_does_not_mark_loaded() -> None:
+    """A partial/stale `load_capability` call in history must not load a capability on replay."""
+    captured_messages: list[ModelMessage] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        captured_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            Capability[None](
+                id='reports',
+                description='Report tools.',
+                instructions='Report instructions.',
+                defer_loading=True,
+            )
+        ],
+    )
+
+    result = await agent.run(
+        'hi',
+        message_history=[
+            ModelResponse(parts=[LoadCapabilityCallPart(args='{"id":', tool_call_id='partial-load')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='partial-load')]),
+        ],
+    )
+
+    assert result.output == 'done'
+    # `output == 'done'` alone would pass even if the stale partial load had wrongly marked
+    # `reports` loaded, so assert the gating directly. The catalog lists `reports` whether or
+    # not it is loaded (kept stable for prompt caching), so the real discriminator is the
+    # capability's loaded-only instructions: they must be absent because it never loaded.
+    final_instructions = next(
+        msg.instructions for msg in reversed(captured_messages) if isinstance(msg, ModelRequest) and msg.instructions
+    )
+    assert 'Report instructions.' not in final_instructions
+    assert 'reports: Report tools.' in final_instructions
+
+
+@pytest.mark.parametrize(
+    'args,expected_id',
+    [
+        pytest.param(None, None, id='partial-stream-no-args'),
+        pytest.param({'id': 'refunds'}, 'refunds', id='validated-dict'),
+        pytest.param('{"id": "billing"}', 'billing', id='complete-json-string'),
+        pytest.param('{"id":', None, id='partial-stream-json'),
+        pytest.param('[1, 2, 3]', None, id='non-dict-json'),
+    ],
+)
+def test_load_capability_call_part_typed_args(args: Any, expected_id: str | None) -> None:
+    """`typed_args` handles valid, partial, and invalid payloads."""
+    part = LoadCapabilityCallPart(tool_call_id='c', args=args)
+    assert part.capability_id == expected_id
+    if expected_id is None:
+        assert part.typed_args is None
+    else:
+        assert part.typed_args == {'id': expected_id}
+
+
+def test_load_capability_return_part_accessors() -> None:
+    """`instructions` reads the optional return payload field."""
+    with_instructions = LoadCapabilityReturnPart(
+        tool_call_id='c',
+        content={'instructions': 'Use refunds carefully.'},
+    )
+    assert with_instructions.instructions == 'Use refunds carefully.'
+
+    without_instructions = LoadCapabilityReturnPart(
+        tool_call_id='c',
+        content={},
+    )
+    assert without_instructions.instructions is None
+
+
+def test_load_capability_narrow_type_promotes_and_is_idempotent() -> None:
+    """Capability-load narrowing is idempotent."""
+    base_call = ToolCallPart(
+        tool_name='load_capability',
+        tool_call_id='c',
+        args={'id': 'refunds'},
+        tool_kind='capability-load',
+    )
+    promoted_call = ToolCallPart.narrow_type(base_call)
+    assert isinstance(promoted_call, LoadCapabilityCallPart)
+    assert ToolCallPart.narrow_type(promoted_call) is promoted_call
+
+    base_return = ToolReturnPart(
+        tool_name='load_capability',
+        tool_call_id='c',
+        content={},
+        tool_kind='capability-load',
+    )
+    promoted_return = ToolReturnPart.narrow_type(base_return)
+    assert isinstance(promoted_return, LoadCapabilityReturnPart)
+    assert ToolReturnPart.narrow_type(promoted_return) is promoted_return
+
+
+def test_load_capability_parts_round_trip_through_message_history() -> None:
+    """`capability-load` parts survive history (de)serialization as typed subclasses, and a
+    user tool named `load_capability` without `tool_kind` is left as a plain `ToolCallPart`."""
+    from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
+
+    raw: list[dict[str, Any]] = [
+        {
+            'kind': 'response',
+            'parts': [
+                {
+                    'part_kind': 'tool-call',
+                    'tool_name': 'load_capability',
+                    'tool_kind': 'capability-load',
+                    'args': {'id': 'refunds'},
+                    'tool_call_id': 'c1',
+                },
+                # User tool colliding on the name but without `tool_kind`: must stay base.
+                {
+                    'part_kind': 'tool-call',
+                    'tool_name': 'load_capability',
+                    'args': {'foo': 'bar'},
+                    'tool_call_id': 'c2',
+                },
+            ],
+        },
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 'load_capability',
+                    'tool_kind': 'capability-load',
+                    'content': {'instructions': 'Confirm the order id.'},
+                    'tool_call_id': 'c1',
+                },
+            ],
+        },
+    ]
+    response, request = ModelMessagesTypeAdapter.validate_python(raw)
+    assert isinstance(response, ModelResponse)
+    assert isinstance(response.parts[0], LoadCapabilityCallPart)
+    assert response.parts[0].capability_id == 'refunds'
+    # Collision on `tool_name='load_capability'` without `tool_kind` stays a base part.
+    assert type(response.parts[1]) is ToolCallPart
+    assert response.parts[1].args == {'foo': 'bar'}
+    assert isinstance(request, ModelRequest)
+    assert isinstance(request.parts[0], LoadCapabilityReturnPart)
+    assert request.parts[0].instructions == 'Confirm the order id.'
+
+    # Full JSON dump -> load round-trip preserves the typed subclasses.
+    rebuilt = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response, request]))
+    assert isinstance(rebuilt[0].parts[0], LoadCapabilityCallPart)
+    assert isinstance(rebuilt[1].parts[0], LoadCapabilityReturnPart)
+
+
+async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
+    """A deferred capability starts as a catalog entry and becomes usable after `load_capability`."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    def add_account_context(ctx: RunContext[None]) -> str:
+        return f'Load-time account context for run step {ctx.run_step}.'
+
+    def empty_instruction(ctx: RunContext[None]) -> None:
+        return None
+
+    always_on = Capability[None](
+        id='always-on',
+        description='Visible billing guidance.',
+        instructions='Visible billing instructions.',
+    )
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        instructions=[
+            'Use the refund policy before answering refund questions.',
+            add_account_context,
+            empty_instruction,
+        ],
+        toolsets=[toolset],
+        defer_loading=True,
+    )
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+
+        if not any(part.tool_name == 'lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ]
+            )
+
+        refund_result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund_policy')
+        return make_text_response(f'final: {refund_result}')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[always_on, refunds])
+
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == snapshot('final: order-123: refund allowed for 30 days')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Can I get a refund?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions="""\
+Visible billing instructions.
+
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Refund policy tools.""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    LoadCapabilityCallPart(
+                        tool_name='load_capability',
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=55, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(
+                        tool_name='load_capability',
+                        content={
+                            'instructions': 'Use the refund policy before answering refund questions.\n\n'
+                            'Load-time account context for run step 1.',
+                        },
+                        tool_call_id='load-refunds',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+Visible billing instructions.
+
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Refund policy tools.""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            # Synthesized by `ToolSearch.before_model_request` after the capability load.
+            ModelResponse(
+                parts=[
+                    ToolSearchCallPart(
+                        args={'queries': ['refunds']},
+                        tool_call_id='auto_load_0f10f8b659c3c105',
+                    )
+                ],
+                usage=RequestUsage(),
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={
+                            'discovered_tools': [
+                                {
+                                    'name': 'lookup_refund_policy',
+                                    'description': 'Look up the refund policy for an order.',
+                                }
+                            ]
+                        },
+                        tool_call_id='auto_load_0f10f8b659c3c105',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=88, output_tokens=16),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup_refund_policy',
+                        content='order-123: refund allowed for 30 days',
+                        tool_call_id='lookup-refund',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+Visible billing instructions.
+
+The following capabilities are deferred and can be loaded using the `load_capability` tool:
+- refunds: Refund policy tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
+                usage=RequestUsage(input_tokens=94, output_tokens=23),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_deferred_capability_tool_registered_after_construction_defers_until_load() -> None:
+    """A tool registered via `@cap.tool` *after* construction defers like a constructor tool: hidden until load.
+
+    Deferred tools stay in the toolset tagged `defer_loading=True` (the wire-level filter in
+    `Model.prepare_request` is what hides them from a real provider), so the regression signal is the
+    flag flipping `True` -> `False` once the capability loads, not the tool's mere presence.
+    """
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    # Register on the deferred capability *after* construction (decorator path, not the `tools=` arg).
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    defer_flag_by_phase: dict[str, bool | None] = {}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        loaded = any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns)
+        refund_def = next((tool for tool in info.function_tools if tool.name == 'lookup_refund_policy'), None)
+        defer_flag_by_phase['after_load' if loaded else 'before_load'] = (
+            refund_def.defer_loading if refund_def else None
+        )
+
+        if not loaded:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        if not any(part.tool_name == 'lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='lookup_refund_policy', args={'order_id': 'order-1'}, tool_call_id='look')
+                ]
+            )
+        result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund_policy')
+        return make_text_response(f'final: {result}')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == snapshot('final: order-1: refund allowed for 30 days')
+    # Deferred before the capability loads, revealed (and callable) afterward.
+    assert defer_flag_by_phase == snapshot({'before_load': True, 'after_load': False})
+
+
+async def test_deferred_capability_tool_stays_available_across_turns() -> None:
+    """A capability-owned tool stays callable across every turn after `load_capability`.
+
+    Regression guard: the `available_tool_names`/`discovered_tool_names` split must keep a
+    loaded deferred tool non-deferred on the second (and later) post-load model request,
+    not just on the turn immediately following the load.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        toolsets=[toolset],
+        defer_loading=True,
+    )
+
+    # Names of non-deferred function tools the model sees on each request.
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        # Turn 1: load the capability.
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+
+        lookup_calls = [part for part in tool_returns if part.tool_name == 'lookup_refund_policy']
+
+        # Turns 2 and 3: call the loaded tool twice, so we exercise two post-load turns.
+        if len(lookup_calls) < 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': f'order-{len(lookup_calls)}'},
+                        tool_call_id=f'lookup-{len(lookup_calls)}',
+                    )
+                ]
+            )
+
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done'
+
+    # First request: tool is still deferred (not yet loaded).
+    assert 'lookup_refund_policy' not in available_per_turn[0]
+    # Every request after the load must expose the loaded tool as non-deferred — including
+    # the second post-load turn, which is what the regression broke.
+    post_load_turns = available_per_turn[1:]
+    assert len(post_load_turns) >= 2
+    for turn_tools in post_load_turns:
+        assert 'lookup_refund_policy' in turn_tools
+
+
+async def test_run_context_tools_exposes_deferred_definitions_as_name_keyed_dict() -> None:
+    """`ctx.tools` is the full name-keyed dict of `ToolDefinition`s, including entries
+    that are still deferred (and therefore absent from `ctx.available_tool_names`)."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    refunds = Capability[None](id='refunds', toolsets=[toolset], defer_loading=True)
+
+    seen_tools: list[dict[str, ToolDefinition]] = []
+
+    @dataclass
+    class CaptureCtxToolsCap(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            seen_tools.append(ctx.tools)
+            return request_context
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds, CaptureCtxToolsCap()])
+    await agent.run('hi')
+
+    [tools] = seen_tools
+    # The deferred tool is keyed by its own name and carries `defer_loading=True`,
+    # even though it's absent from `available_tool_names` until the capability loads.
+    assert tools['lookup_refund_policy'].name == 'lookup_refund_policy'
+    assert tools['lookup_refund_policy'].defer_loading is True
+
+
+async def test_deferred_capability_synthetic_tool_search_persists_in_history() -> None:
+    """The synthetic tool-search exchange injected after a capability load persists to
+    the run's message history, and re-running with that history does not duplicate it."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        toolsets=[toolset],
+        defer_loading=True,
+    )
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('Can I get a refund?')
+
+    def synthetic_pairs(messages: list[ModelMessage]) -> list[str]:
+        call_ids: list[str] = []
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_'):
+                    call_ids.append(part.tool_call_id)
+        return call_ids
+
+    messages = result.all_messages()
+    call_ids = synthetic_pairs(messages)
+    # Exactly one synthetic call part, and its matching return part is present.
+    assert len(call_ids) == 1
+    return_ids = [
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id == call_ids[0]
+    ]
+    assert return_ids == [call_ids[0]]
+
+    # Idempotence: feeding the resulting history back in does not inject a duplicate pair
+    # (the deterministic call_id means it's recognized as already discovered).
+    result2 = await agent.run('And another refund?', message_history=messages)
+    new_messages = result2.all_messages()[len(messages) :]
+    assert synthetic_pairs(new_messages) == []
+
+
+class _NoNativeToolSearchModel(FunctionModel):
+    """`FunctionModel` that forces the local `search_tools` function path.
+
+    `FunctionModel` reports support for every native tool (including native tool search),
+    which would route deferred standalone tools through the provider rather than the
+    synthetic `search_tools` function. Dropping `ToolSearchTool` mirrors a model without
+    native tool-search support, exercising the function-tool discovery path.
+    """
+
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        return frozenset(super().supported_native_tools()) - {ToolSearchTool}
+
+
+async def test_two_deferred_capabilities_loaded_sequentially_both_stay_available() -> None:
+    """Loading a second deferred capability does not drop the first one's tool.
+
+    Trajectory: load A and call A's tool, then on a later turn load B and call B's tool,
+    then one more turn. Both capabilities' tools must be non-deferred on every turn after
+    their respective loads, proving loads are additive and sticky.
+    """
+    toolset_a = FunctionToolset[None]()
+
+    @toolset_a.tool_plain
+    def alpha_tool() -> str:
+        """Capability A's tool."""
+        return 'alpha-result'
+
+    toolset_b = FunctionToolset[None]()
+
+    @toolset_b.tool_plain
+    def beta_tool() -> str:
+        """Capability B's tool."""
+        return 'beta-result'
+
+    cap_a = Capability[None](id='alpha', description='Alpha tools.', toolsets=[toolset_a], defer_loading=True)
+    cap_b = Capability[None](id='beta', description='Beta tools.', toolsets=[toolset_b], defer_loading=True)
+
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        names = {part.tool_name for part in tool_returns}
+
+        # Turn 1: load A.
+        if 'alpha' not in {part.capability_id for part in _load_calls(messages)}:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'alpha'}, tool_call_id='load-a')]
+            )
+        # Turn 2: use A's tool.
+        if 'alpha_tool' not in names:
+            return ModelResponse(parts=[ToolCallPart(tool_name='alpha_tool', args={}, tool_call_id='call-a')])
+        # Turn 3: load B.
+        if 'beta' not in {part.capability_id for part in _load_calls(messages)}:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'beta'}, tool_call_id='load-b')]
+            )
+        # Turn 4: use B's tool.
+        if 'beta_tool' not in names:
+            return ModelResponse(parts=[ToolCallPart(tool_name='beta_tool', args={}, tool_call_id='call-b')])
+        # Turn 5+: just respond.
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap_a, cap_b])
+    result = await agent.run('Use both capabilities.')
+
+    assert result.output == 'done'
+    # >= 5 turns: load A, use A, load B, use B, final.
+    assert len(available_per_turn) >= 5
+
+    # Identify the first turn on which each capability's tool became available.
+    a_loaded_from = next(i for i, tools in enumerate(available_per_turn) if 'alpha_tool' in tools)
+    b_loaded_from = next(i for i, tools in enumerate(available_per_turn) if 'beta_tool' in tools)
+    assert a_loaded_from < b_loaded_from
+
+    # Once loaded, each tool stays available on every later turn — loading B never drops A.
+    for tools in available_per_turn[a_loaded_from:]:
+        assert 'alpha_tool' in tools
+    for tools in available_per_turn[b_loaded_from:]:
+        assert 'beta_tool' in tools
+    # Both present together on the final turn.
+    assert {'alpha_tool', 'beta_tool'} <= available_per_turn[-1]
+
+
+async def test_tool_search_discovery_and_capability_load_coexist() -> None:
+    """A tool-search-discovered standalone tool and a load_capability tool coexist and persist.
+
+    Trajectory: discover a standalone deferred tool via `search_tools`, load a deferred
+    capability via `load_capability`, then continue for extra turns. Both the searched tool
+    and the capability's tool must be available together and stay available afterwards.
+    """
+    standalone = FunctionToolset[None]()
+
+    @standalone.tool_plain(defer_loading=True)
+    def searchable_weather(city: str) -> str:
+        """Look up the weather for a city."""
+        return f'{city}: sunny'
+
+    cap_toolset = FunctionToolset[None]()
+
+    @cap_toolset.tool_plain
+    def lookup_refund(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refundable'
+
+    refunds = Capability[None](id='refunds', description='Refund tools.', toolsets=[cap_toolset], defer_loading=True)
+
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        names = {part.tool_name for part in tool_returns}
+
+        # Turn 1: search for the standalone deferred tool.
+        if not any(part.tool_name == _SEARCH_TOOLS_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['weather']}, tool_call_id='search')]
+            )
+        # Turn 2: load the deferred capability.
+        if not _load_calls(messages):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        # Turn 3: use the discovered standalone tool.
+        if 'searchable_weather' not in names:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='searchable_weather', args={'city': 'Paris'}, tool_call_id='call-w')]
+            )
+        # Turn 4: use the capability's tool.
+        if 'lookup_refund' not in names:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='lookup_refund', args={'order_id': 'o1'}, tool_call_id='call-r')]
+            )
+        # Turn 5+: respond.
+        return make_text_response('done')
+
+    agent = Agent(_NoNativeToolSearchModel(model_fn), capabilities=[standalone_capability(standalone), refunds])
+    result = await agent.run('Find weather and refund tools.')
+
+    assert result.output == 'done'
+
+    weather_from = next(i for i, tools in enumerate(available_per_turn) if 'searchable_weather' in tools)
+    refund_from = next(i for i, tools in enumerate(available_per_turn) if 'lookup_refund' in tools)
+
+    # Each reveal mechanism is sticky from the turn it first exposes its tool.
+    for tools in available_per_turn[weather_from:]:
+        assert 'searchable_weather' in tools
+    for tools in available_per_turn[refund_from:]:
+        assert 'lookup_refund' in tools
+    # Both available together once both are revealed, including on the final turn.
+    assert {'searchable_weather', 'lookup_refund'} <= available_per_turn[-1]
+
+
+async def test_deferred_capability_synthetic_exchange_not_duplicated_over_long_trajectory() -> None:
+    """The synthetic tool-search exchange for a loaded capability appears exactly once.
+
+    Extends the persistence test to >= 3 model-request turns after the load: the deterministic
+    `auto_load_*` call_id must keep the synthetic call/return pair singular across the whole
+    trajectory, and the capability's tool stays available on every post-load turn.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', toolsets=[toolset], defer_loading=True)
+
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+
+        # Three post-load turns that each call the loaded tool, then respond.
+        lookup_calls = [part for part in tool_returns if part.tool_name == 'lookup_refund_policy']
+        if len(lookup_calls) < 3:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': f'order-{len(lookup_calls)}'},
+                        tool_call_id=f'lookup-{len(lookup_calls)}',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('Refund please.')
+
+    assert result.output == 'done'
+
+    messages = result.all_messages()
+    synthetic_call_ids = [
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolSearchCallPart) and part.tool_call_id.startswith('auto_load_')
+    ]
+    synthetic_return_ids = [
+        part.tool_call_id
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolSearchReturnPart) and part.tool_call_id.startswith('auto_load_')
+    ]
+    # Exactly one synthetic exchange survives the long trajectory — no per-turn duplication.
+    assert len(synthetic_call_ids) == 1
+    assert synthetic_return_ids == synthetic_call_ids
+
+    # The capability's tool was deferred on turn 1 and available on every post-load turn.
+    assert 'lookup_refund_policy' not in available_per_turn[0]
+    post_load_turns = available_per_turn[1:]
+    assert len(post_load_turns) >= 3
+    for tools in post_load_turns:
+        assert 'lookup_refund_policy' in tools
+
+
+async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it() -> None:
+    """A loaded capability's tool stays available on a turn that does not call it.
+
+    After loading, the model calls an unrelated visible tool (not the capability's tool) and
+    then responds. The capability's tool must remain non-deferred on those turns — loading is
+    sticky, not gated on per-turn usage.
+    """
+    visible_toolset = FunctionToolset[None]()
+
+    @visible_toolset.tool_plain
+    def ping() -> str:
+        """An always-visible tool unrelated to the capability."""
+        return 'pong'
+
+    cap_toolset = FunctionToolset[None]()
+
+    @cap_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](
+        id='refunds', description='Refund policy tools.', toolsets=[cap_toolset], defer_loading=True
+    )
+
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        names = {part.tool_name for part in tool_returns}
+
+        # Turn 1: load the capability.
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+        # Turn 2: call an UNRELATED tool, never the capability's tool.
+        if 'ping' not in names:
+            return ModelResponse(parts=[ToolCallPart(tool_name='ping', args={}, tool_call_id='call-ping')])
+        # Turn 3: respond without ever calling the capability's tool.
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), tools=[ping], capabilities=[refunds])
+    # `ping` is registered via a function tool on the agent; ensure both paths see it.
+    result = await agent.run('Load refunds but use ping.')
+
+    assert result.output == 'done'
+    assert len(available_per_turn) >= 3
+
+    # Turn 1: capability tool still deferred.
+    assert 'lookup_refund_policy' not in available_per_turn[0]
+    # Every turn after the load: capability tool available even though it is never called.
+    for tools in available_per_turn[1:]:
+        assert 'lookup_refund_policy' in tools
+
+
+def _load_calls(messages: list[ModelMessage]) -> list[LoadCapabilityCallPart]:
+    """All `load_capability` call parts in the message history."""
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, LoadCapabilityCallPart)
+    ]
+
+
+def standalone_capability(toolset: FunctionToolset[None]) -> Capability[None]:
+    """Wrap a toolset of standalone deferred tools in an eager capability (tools keep their own defer flag)."""
+    return Capability[None](id='standalone', description='Standalone searchable tools.', toolsets=[toolset])
+
+
+async def test_deferred_capability_load_includes_toolset_instructions() -> None:
+    """Instructions declared on a deferred capability's toolset surface via the `load_capability` return.
+
+    The wrapping `CapabilityOwnedToolset` silences `get_instructions` for deferred-loading
+    capabilities (so toolset hints don't leak into the prompt), then re-emits them on load
+    alongside the capability's own instructions.
+    """
+    toolset = FunctionToolset[None](instructions='Use the refund tool with the order id, not the customer id.')
+
+    @toolset.tool_plain
+    def lookup_refund(order_id: str) -> str:
+        return f'{order_id}: ok'
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund tools.',
+        instructions='Quote the refund policy verbatim.',
+        toolsets=[toolset],
+        defer_loading=True,
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        already_loaded = any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not already_loaded:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+        if not any(part.tool_name == 'lookup_refund' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ]
+            )
+        refund_result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund')
+        return make_text_response(str(refund_result))
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+    result = await agent.run('hi')
+
+    assert result.output == 'order-123: ok'
+    [load_return] = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert load_return.instructions == snapshot("""\
+Quote the refund policy verbatim.
+
+Use the refund tool with the order id, not the customer id.\
+""")
+    first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
+    assert first_request.instructions == snapshot(
+        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        '- refunds: Refund tools.'
+    )
+    assert first_request.instructions is not None
+    assert 'Use the refund tool' not in first_request.instructions
+
+
+async def test_deferred_capability_load_drops_empty_toolset_instructions() -> None:
+    """Empty toolset instructions are filtered from load returns."""
+    from dataclasses import dataclass
+
+    from pydantic_ai.messages import InstructionPart
+    from pydantic_ai.toolsets.wrapper import WrapperToolset
+
+    @dataclass
+    class _LiteralInstructionsToolset(WrapperToolset[None]):
+        raw: tuple[str | InstructionPart, ...] = ()
+
+        async def get_instructions(self, ctx: RunContext[None]) -> list[str | InstructionPart]:
+            return list(self.raw)
+
+    toolset = _LiteralInstructionsToolset(
+        wrapped=FunctionToolset[None](),
+        raw=(
+            InstructionPart(content='   ', dynamic=False),
+            InstructionPart(content='Real hint from toolset.', dynamic=False),
+            '',
+        ),
+    )
+    cap = Capability[None](id='cap', description='Custom-toolset cap.', toolsets=[toolset], defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        already_loaded = any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not already_loaded:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'cap'},
+                        tool_call_id='load',
+                    )
+                ]
+            )
+        return make_text_response('ok')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+    result = await agent.run('hi')
+
+    [load_return] = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert load_return.instructions == 'Real hint from toolset.'
+
+
+async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> None:
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def hidden_tool() -> str:
+        return 'hidden'  # pragma: no cover
+
+    hidden = Capability[None](
+        id='hidden',
+        description='Hidden tool access.',
+        toolsets=[toolset],
+        defer_loading=True,
+    )
+    seen_tool_state: list[list[tuple[str, bool]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
+        # Give up on the first signal of tool feedback — either a `ToolReturnPart`
+        # (success, which can't happen here) or a `RetryPromptPart` (the framework
+        # signaling the bad cap id). Without the retry branch, we'd loop past
+        # `max_retries` and raise `UnexpectedModelBehavior` instead of giving up.
+        if not any(
+            isinstance(part, (ToolReturnPart, RetryPromptPart))
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'missing'},
+                        tool_call_id='load-missing',
+                    )
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[hidden])
+    result = await agent.run('load missing')
+
+    assert result.output == snapshot('done')
+    assert seen_tool_state == snapshot(
+        [
+            [('load_capability', False), ('hidden_tool', True), ('search_tools', False)],
+            [('load_capability', False), ('hidden_tool', True), ('search_tools', False)],
+        ]
+    )
+    history_parts = [part for message in result.all_messages() for part in message.parts]
+    assert not any(isinstance(part, LoadCapabilityReturnPart) for part in history_parts)
+    [retry] = [part for part in history_parts if isinstance(part, RetryPromptPart)]
+    assert retry.content == snapshot("No capability found with id 'missing'.")
+
+
+async def test_load_capability_retries_for_already_available_capability() -> None:
+    always_on = Capability[None](
+        id='always-on',
+        description='Already visible.',
+        instructions='Already visible instructions.',
+    )
+    deferred = Capability[None](
+        id='deferred',
+        description='Deferred.',
+        instructions='Deferred instructions.',
+        defer_loading=True,
+    )
+    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='always-on')
+    retry_messages: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        retries = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
+        ]
+        if retries:
+            retry_messages.extend(retries)
+            return make_text_response('done')
+
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    args={'id': 'always-on'},
+                    tool_call_id='load-always-on',
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[always_on, deferred])
+    result = await agent.run('load always-on')
+
+    assert result.output == 'done'
+    assert retry_messages == [expected_retry]
+    assert not any(
+        isinstance(part, LoadCapabilityReturnPart) for message in result.all_messages() for part in message.parts
+    )
+
+
+async def test_load_capability_retries_when_capability_is_already_loaded() -> None:
+    deferred = Capability[None](
+        id='deferred',
+        description='Deferred.',
+        instructions='Deferred instructions.',
+        defer_loading=True,
+    )
+    expected_retry = LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id='deferred')
+    retry_messages: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        retries = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart) and isinstance(part.content, str)
+        ]
+        if retries:
+            retry_messages.extend(retries)
+            return make_text_response('done')
+
+        load_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, LoadCapabilityReturnPart)
+        ]
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                    args={'id': 'deferred'},
+                    tool_call_id=f'load-deferred-{len(load_returns)}',
+                )
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[deferred])
+    result = await agent.run('load twice')
+
+    assert result.output == 'done'
+    assert retry_messages == [expected_retry]
+    load_returns = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert len(load_returns) == 1
+    assert load_returns[0].instructions == 'Deferred instructions.'
 
 
 def test_infer_fmt_explicit():
@@ -2039,6 +4110,23 @@ def _build_run_context(deps: Any = None) -> RunContext[Any]:
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage(), run_step=0)
 
 
+def test_resolve_capability_id_scans_run_context_capabilities() -> None:
+    @dataclass
+    class SimpleCap(AbstractCapability[None]):
+        pass
+
+    target = SimpleCap()
+    other = SimpleCap()
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        capabilities={'other': other, 'target': target},
+    )
+
+    assert resolve_capability_id(ctx, target) == 'target'
+
+
 async def test_capability_for_run_default_returns_self():
     """Default for_run returns self."""
 
@@ -2049,6 +4137,182 @@ async def test_capability_for_run_default_returns_self():
     cap = SimpleCap()
     ctx = _build_run_context()
     assert await cap.for_run(ctx) is cap
+
+
+async def test_run_context_available_tool_names_empty_before_tool_manager_is_ready() -> None:
+    """Early capability hooks can ask for available tool names before the tool manager is populated."""
+    seen_available_tool_names: list[set[str]] = []
+    seen_tools: list[dict[str, ToolDefinition]] = []
+
+    @dataclass
+    class AvailableToolsCap(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            seen_available_tool_names.append(ctx.available_tool_names)
+            seen_tools.append(ctx.tools)
+
+    agent = Agent(TestModel(), capabilities=[AvailableToolsCap()])
+    await agent.run('hello')
+
+    assert seen_available_tool_names == [set()]
+    # The `tools` empty-guard mirrors `available_tool_names`: no tool manager yet → empty dict.
+    assert seen_tools == [{}]
+
+
+def test_run_context_available_tool_names_includes_discovered_before_tool_manager() -> None:
+    ctx = _build_run_context()
+    ctx.discovered_tool_names = {'discovered_tool'}
+
+    assert ctx.tools == {}
+    assert ctx.available_tool_names == {'discovered_tool'}
+
+
+async def test_run_context_available_tool_names_unions_discovered_current_tools() -> None:
+    """Available tool names are always-visible current tools plus revealed corpus tools."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def always_tool() -> str:  # pragma: no cover
+        return 'always'
+
+    @toolset.tool_plain(defer_loading=True)
+    def discovered_tool() -> str:  # pragma: no cover
+        return 'discovered'
+
+    @toolset.tool_plain(defer_loading=True)
+    def pending_tool() -> str:  # pragma: no cover
+        return 'pending'
+
+    @toolset.tool_plain(defer_loading=True)
+    def loaded_capability_tool() -> str:  # pragma: no cover
+        return 'loaded'
+
+    ctx = _build_run_context()
+    ctx.discovered_tool_names = {'discovered_tool', 'removed_tool'}
+    ctx.loaded_capability_ids = {'loaded_capability'}
+    tools = await toolset.get_tools(ctx)
+    tools['discovered_tool'] = replace(
+        tools['discovered_tool'],
+        tool_def=replace(tools['discovered_tool'].tool_def, with_native=ToolSearchTool.kind, defer_loading=False),
+    )
+    tools['pending_tool'] = replace(
+        tools['pending_tool'],
+        tool_def=replace(tools['pending_tool'].tool_def, with_native=ToolSearchTool.kind, defer_loading=True),
+    )
+    tools['loaded_capability_tool'] = replace(
+        tools['loaded_capability_tool'],
+        tool_def=replace(
+            tools['loaded_capability_tool'].tool_def,
+            with_native=ToolSearchTool.kind,
+            defer_loading=False,
+            capability_id='loaded_capability',
+        ),
+    )
+    tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=tools)
+    ctx.tool_manager = tool_manager
+
+    assert ctx.available_tool_names == {'always_tool', 'discovered_tool', 'loaded_capability_tool'}
+
+
+_DEFERRED_HOOK_NAMES = {
+    'prepare_output_tools',
+    'wrap_run_event_stream',
+    'on_model_request_error',
+    'on_tool_validate_error',
+    'on_tool_execute_error',
+    'before_output_validate',
+    'after_output_validate',
+    'wrap_output_validate',
+    'on_output_validate_error',
+    'on_output_process_error',
+    'handle_deferred_tool_calls',
+}
+
+
+@dataclass
+class _FailIfDispatchedDeferredCap(AbstractCapability[None]):
+    id: str | None = 'deferred'
+    defer_loading: bool = True
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in _DEFERRED_HOOK_NAMES:  # pragma: no cover
+            raise AssertionError(f'unloaded capability hook should be skipped: {name}')
+        return super().__getattribute__(name)
+
+
+@dataclass
+class _NoopCap(AbstractCapability[None]):
+    pass
+
+
+def _output_context() -> OutputContext:
+    return OutputContext(mode='text', output_type=str, object_def=None, has_function=False)
+
+
+async def _empty_event_stream() -> AsyncIterator[AgentStreamEvent]:
+    if False:  # pragma: no cover
+        yield cast(AgentStreamEvent, None)
+
+
+async def _validate_output(output: str | dict[str, Any]) -> Any:
+    return output
+
+
+async def test_combined_capability_skips_unloaded_deferred_forward_hooks() -> None:
+    """Forward-order hook dispatch skips unloaded deferred capabilities."""
+    combined = CombinedCapability([_FailIfDispatchedDeferredCap(), _NoopCap()])
+    ctx = _build_run_context()
+    output_context = _output_context()
+    tool_def = ToolDefinition(name='tool')
+
+    assert await combined.prepare_output_tools(ctx, [tool_def]) == [tool_def]
+    assert await combined.before_output_validate(ctx, output_context=output_context, output='raw') == 'raw'
+    assert (
+        await combined.handle_deferred_tool_calls(
+            ctx, requests=DeferredToolRequests(calls=[ToolCallPart('tool', {}, tool_call_id='deferred-call')])
+        )
+        is None
+    )
+
+
+async def test_combined_capability_skips_unloaded_deferred_reverse_hooks() -> None:
+    """Reverse-order hook dispatch skips unloaded deferred capabilities."""
+    combined = CombinedCapability([_NoopCap(), _FailIfDispatchedDeferredCap()])
+    ctx = _build_run_context()
+    output_context = _output_context()
+    tool_def = ToolDefinition(name='tool')
+    call = ToolCallPart('tool', {}, tool_call_id='tool-call')
+    request_context = ModelRequestContext(
+        model=TestModel(),
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert [event async for event in combined.wrap_run_event_stream(ctx, stream=_empty_event_stream())] == []
+    assert await combined.after_output_validate(ctx, output_context=output_context, output='parsed') == 'parsed'
+    assert (
+        await combined.wrap_output_validate(ctx, output_context=output_context, output='raw', handler=_validate_output)
+        == 'raw'
+    )
+
+    with pytest.raises(RuntimeError, match='model'):
+        await combined.on_model_request_error(ctx, request_context=request_context, error=RuntimeError('model'))
+    with pytest.raises(ModelRetry, match='tool validate'):
+        await combined.on_tool_validate_error(
+            ctx, call=call, tool_def=tool_def, args={}, error=ModelRetry('tool validate')
+        )
+    with pytest.raises(RuntimeError, match='tool execute'):
+        await combined.on_tool_execute_error(
+            ctx, call=call, tool_def=tool_def, args={}, error=RuntimeError('tool execute')
+        )
+    with pytest.raises(ModelRetry, match='output validate'):
+        await combined.on_output_validate_error(
+            ctx, output_context=output_context, output='raw', error=ModelRetry('output validate')
+        )
+    with pytest.raises(RuntimeError, match='output process'):
+        await combined.on_output_process_error(
+            ctx, output_context=output_context, output='parsed', error=RuntimeError('output process')
+        )
 
 
 async def test_combined_capability_for_run_propagates():
@@ -2071,9 +4335,9 @@ async def test_combined_capability_for_run_propagates():
 async def test_combined_capability_for_run_returns_new_when_child_changes():
     """CombinedCapability returns new instance when a child's for_run returns different."""
 
+    @dataclass
     class PerRunCap(AbstractCapability[None]):
-        def __init__(self, run_id: int = 0):
-            self.run_id = run_id
+        run_id: int = 0
 
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return PerRunCap(run_id=self.run_id + 1)
@@ -2183,29 +4447,86 @@ def test_apply_nested_combined_capability():
 
 
 def test_apply_wrapper_capability():
-    """WrapperCapability.apply() delegates to the wrapped capability."""
+    """WrapperCapability.apply() visits the wrapper registered for the wrapped capability."""
     inner = Thinking()
     wrapper = WrapperCapability(wrapped=inner)
 
     visited: list[AbstractCapability[None]] = []
     wrapper.apply(visited.append)
-    assert visited == [inner]
+    assert visited == [wrapper]
+
+
+def test_apply_wrapper_over_combined_capability():
+    """WrapperCapability.apply() also visits children when the wrapped capability is a container."""
+
+    @dataclass
+    class CapA(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class CapB(AbstractCapability[None]):
+        pass
+
+    cap_a = CapA()
+    cap_b = CapB()
+    wrapper = WrapperCapability(wrapped=CombinedCapability([cap_a, cap_b]))
+
+    visited: list[AbstractCapability[None]] = []
+    wrapper.apply(visited.append)
+    assert visited == [wrapper, cap_a, cap_b]
+
+
+async def test_wrapper_over_combined_capability_registers_child_tool_owners():
+    """Child-owned toolsets still resolve capability ids when a wrapper contains a CombinedCapability."""
+    toolset_a = FunctionToolset[None]()
+
+    @toolset_a.tool_plain
+    def tool_a() -> str:
+        return 'a'  # pragma: no cover
+
+    toolset_b = FunctionToolset[None]()
+
+    @toolset_b.tool_plain
+    def tool_b() -> str:
+        return 'b'  # pragma: no cover
+
+    wrapper = WrapperCapability(
+        wrapped=CombinedCapability(
+            [
+                Toolset(toolset_a, id='a'),
+                Toolset(toolset_b, id='b'),
+            ]
+        )
+    )
+    seen_capability_ids: list[str] = []
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for tool in info.function_tools:
+            assert tool.capability_id is not None
+            seen_capability_ids.append(tool.capability_id)
+        return ModelResponse(parts=[TextPart(','.join(sorted(tool.name for tool in info.function_tools)))])
+
+    agent = Agent(FunctionModel(respond), capabilities=[wrapper])
+    result = await agent.run('list tools')
+
+    assert result.output == 'tool_a,tool_b'
+    assert sorted(seen_capability_ids) == ['a', 'b']
 
 
 def test_apply_prefix_tools():
-    """PrefixTools (a WrapperCapability) delegates apply() to the wrapped capability."""
+    """PrefixTools.apply() visits the wrapper registered for the wrapped capability."""
     thinking = Thinking()
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
 
     visited: list[AbstractCapability[None]] = []
     prefixed.apply(visited.append)
-    assert visited == [thinking]
+    assert visited == [prefixed]
 
 
 def test_apply_finds_capability_by_type():
     """Realistic usage: use apply() to check if a specific capability type is present."""
     thinking = Thinking()
-    web_search = WebSearch()
+    web_search = WebSearch(local='duckduckgo')
     combined = CombinedCapability([thinking, web_search])
 
     visited: list[AbstractCapability[None]] = []
@@ -2217,17 +4538,17 @@ def test_apply_finds_capability_by_type():
 
 
 def test_apply_finds_wrapped_capability_by_type():
-    """apply() traverses through wrappers, so wrapped capabilities are discoverable by type."""
+    """apply() registers wrappers themselves because wrapper behavior affects the loaded capability."""
     thinking = Thinking()
     prefixed = PrefixTools(wrapped=thinking, prefix='ns')
-    combined = CombinedCapability([prefixed, WebSearch()])
+    combined = CombinedCapability([prefixed, WebSearch(local='duckduckgo')])
 
     visited: list[AbstractCapability[None]] = []
     combined.apply(visited.append)
 
-    assert any(isinstance(c, Thinking) for c in visited)
+    assert not any(isinstance(c, Thinking) for c in visited)
     assert any(isinstance(c, WebSearch) for c in visited)
-    assert not any(isinstance(c, PrefixTools) for c in visited)
+    assert any(isinstance(c, PrefixTools) for c in visited)
 
 
 def test_apply_empty_combined():
@@ -2252,9 +4573,9 @@ async def test_for_run_with_different_toolset():
     def tool_b() -> str:
         return 'b'  # pragma: no cover
 
+    @dataclass
     class SwitchingCap(AbstractCapability[None]):
-        def __init__(self, use_b: bool = False):
-            self.use_b = use_b
+        use_b: bool = False
 
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return SwitchingCap(use_b=True)
@@ -2277,15 +4598,15 @@ async def test_for_run_with_different_toolset():
 async def test_for_run_with_different_instructions():
     """When for_run returns a capability with different get_instructions(), per-run instructions are used."""
 
+    @dataclass
     class DynamicInstructionsCap(AbstractCapability[None]):
-        def __init__(self, run_instructions: str = 'init-time'):
-            self._run_instructions = run_instructions
+        run_instructions: str = 'init-time'
 
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return DynamicInstructionsCap(run_instructions='per-run')
 
         def get_instructions(self) -> str:
-            return self._run_instructions
+            return self.run_instructions
 
     captured_messages: list[ModelMessage] = []
 
@@ -2305,12 +4626,42 @@ async def test_for_run_with_different_instructions():
     )
 
 
+async def test_for_run_receives_populated_run_context():
+    """`for_run` hooks receive a `RunContext` with run_id, conversation_id, and resolved metadata."""
+
+    captured: dict[str, Any] = {}
+
+    class CapturingCap(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            captured['run_id'] = ctx.run_id
+            captured['conversation_id'] = ctx.conversation_id
+            captured['metadata'] = ctx.metadata
+            captured['instrumentation_version'] = ctx.instrumentation_version
+            return self
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    def metadata_factory(ctx: RunContext[None]) -> dict[str, Any]:
+        # Factory should be able to read run_id/conversation_id from the early ctx.
+        return {'run_id_seen': ctx.run_id, 'conversation_id_seen': ctx.conversation_id}
+
+    agent = Agent(FunctionModel(respond), capabilities=[CapturingCap()])
+
+    await agent.run('Hello', conversation_id='conv-123', metadata=metadata_factory)
+
+    assert captured['run_id'] is not None
+    assert captured['conversation_id'] == 'conv-123'
+    assert captured['metadata'] == {'run_id_seen': captured['run_id'], 'conversation_id_seen': 'conv-123'}
+    assert captured['instrumentation_version'] is not None
+
+
 async def test_concurrent_runs_capability_isolation():
     """Multiple concurrent runs don't share state on stateful capabilities."""
 
+    @dataclass
     class CountingCap(AbstractCapability[None]):
-        def __init__(self) -> None:
-            self.request_count = 0
+        request_count: int = 0
 
         async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
             return CountingCap()
@@ -2333,6 +4684,55 @@ async def test_concurrent_runs_capability_isolation():
     results = await asyncio.gather(agent.run('A'), agent.run('B'))
     assert results[0].output == 'Done'
     assert results[1].output == 'Done'
+
+
+@pytest.mark.parametrize(
+    'forced_choice',
+    [
+        pytest.param('required', id='required'),
+        pytest.param(['get_weather'], id='list'),
+    ],
+)
+async def test_capability_can_inject_forcing_tool_choice_per_step(forced_choice: Any):
+    """A capability returning a callable from get_model_settings() may inject `tool_choice='required'`
+    or `list[str]` per step without tripping the agent.run baseline validator.
+
+    Forces the tool on step 1, then steps aside so the agent can produce a final response.
+    """
+
+    class ForceFirstStep(AbstractCapability[None]):
+        def get_model_settings(self) -> Any:
+            def settings(ctx: RunContext[None]) -> _ModelSettings:
+                tool_called = any(
+                    isinstance(part, ToolReturnPart) and part.tool_name == 'get_weather'
+                    for message in ctx.messages
+                    if isinstance(message, ModelRequest)
+                    for part in message.parts
+                )
+                if tool_called:
+                    return _ModelSettings()
+                return _ModelSettings(tool_choice=forced_choice)
+
+            return settings
+
+    seen_tool_choices: list[Any] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_choices.append((info.model_settings or {}).get('tool_choice'))
+        if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='sunny')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'})])
+
+    agent = Agent(FunctionModel(respond), capabilities=[ForceFirstStep()])
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Weather in {city}: sunny'
+
+    result = await agent.run('Weather in Paris?')
+
+    assert result.output == 'sunny'
+    assert seen_tool_choices == [forced_choice, None]
 
 
 # --- Hooks test helpers ---
@@ -4090,7 +6490,12 @@ class TestPrepareOutputToolsHook:
                 parts=[ToolCallPart(tool_name=info.output_tools[0].name, args='{"value": 7}', tool_call_id='c1')]
             )
 
-        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, retries=4, capabilities=[CaptureCtxCap()])
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=MyOutput,
+            retries={'tools': 4, 'output': 4},
+            capabilities=[CaptureCtxCap()],
+        )
         await agent.run('hello')
         assert seen == [(0, 4)]
 
@@ -4194,7 +6599,6 @@ class TestWrapNodeRunHook:
 
     async def test_bare_async_for_warns_with_wrap_node_run(self):
         """Using bare async for on iter() warns when a capability has wrap_node_run."""
-        import warnings
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
@@ -4259,14 +6663,14 @@ class TestWrapNodeRunHook:
         assert log[3] == 'outer:after:ModelRequestNode'
 
 
-# --- BuiltinOrLocalTool tests ---
+# --- NativeOrLocalTool tests ---
 
 
 class TestWebSearchCapability:
     def test_websearch_default_with_supporting_model(self):
-        """WebSearch() with a model that supports builtin web search → builtin used, local removed."""
-        cap = WebSearch()
-        builtins = cap.get_builtin_tools()
+        """WebSearch(local='duckduckgo') with a supporting model → native used, local removed."""
+        cap = WebSearch(local='duckduckgo')
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebSearchTool)
 
@@ -4275,7 +6679,11 @@ class TestWebSearchCapability:
         assert toolset is not None
 
     def test_websearch_default_with_nonsupporting_model(self, allow_model_requests: None):
-        """WebSearch() with a model that doesn't support builtin → DuckDuckGo fallback used."""
+        """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
+        from unittest.mock import patch
+
+        pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+        from pydantic_ai.common_tools.duckduckgo import DDGS
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # When called with tools, call the first one
@@ -4291,43 +6699,47 @@ class TestWebSearchCapability:
                 )
             return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
 
-        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
-        agent = Agent(model, capabilities=[WebSearch()])
-        result = agent.run_sync('search for something')
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebSearch(local='duckduckgo')])
+        # `ddgs` calls Bing/DuckDuckGo via the Rust `primp` HTTP client, so VCR can't intercept it.
+        # Mock the result at the library boundary to keep the test hermetic.
+        fake_results = [{'title': 'Example', 'href': 'https://example.com', 'body': 'Example body'}]
+        with patch.object(DDGS, 'text', return_value=fake_results):
+            result = agent.run_sync('search for something')
         # Should have used the DuckDuckGo fallback tool
         assert 'Tool result' in result.output
 
     def test_websearch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebSearch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebSearch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
 
-    def test_websearch_builtin_false(self):
-        """WebSearch(builtin=False) → only local, no builtin registered."""
-        cap = WebSearch(builtin=False)
-        assert cap.get_builtin_tools() == []
+    def test_websearch_native_false(self):
+        """WebSearch(native=False, local='duckduckgo') → only local, no native tool registered."""
+        cap = WebSearch(native=False, local='duckduckgo')
+        assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
         # Should have a plain toolset (no PreparedToolset wrapping)
         assert toolset is not None
 
-    def test_websearch_requires_builtin_with_constraints(self, allow_model_requests: None):
+    def test_websearch_requires_native_with_constraints(self, allow_model_requests: None):
         """WebSearch(allowed_domains=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'])])
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebSearch(allowed_domains=['example.com'], local='duckduckgo')])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('search')
 
     def test_websearch_both_false_raises(self):
-        """WebSearch(builtin=False, local=False) → UserError at construction."""
-        with pytest.raises(UserError, match='both builtin and local cannot be False'):
-            WebSearch(builtin=False, local=False)
+        """WebSearch(native=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
+            WebSearch(native=False, local=False)
 
-    def test_websearch_builtin_false_with_constraints_raises(self):
-        """WebSearch(builtin=False, allowed_domains=...) → UserError at construction."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            WebSearch(builtin=False, allowed_domains=['example.com'])
+    def test_websearch_native_false_with_constraints_raises(self):
+        """WebSearch(native=False, allowed_domains=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
+            WebSearch(native=False, allowed_domains=['example.com'], local='duckduckgo')
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
@@ -4340,13 +6752,19 @@ class TestWebSearchCapability:
         assert isinstance(cap.local, Tool)
 
 
-@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 class TestXSearchCapability:
     def test_xsearch_default(self):
-        """XSearch() with defaults → builtin XSearchTool, no local."""
+        """XSearch() with defaults → native XSearchTool, no local."""
         cap = XSearch()
-        assert cap.get_builtin_tools() == snapshot([XSearchTool()])
+        assert cap.get_native_tools() == snapshot([XSearchTool()])
+        assert cap.fallback_model is None
         assert cap.get_toolset() is None
+
+    def test_xsearch_with_fallback_model(self):
+        """XSearch(fallback_model=...) → native XSearchTool, local subagent fallback."""
+        cap = XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning')
+        assert cap.get_native_tools() == snapshot([XSearchTool()])
+        assert cap.get_toolset() is not None
 
     def test_xsearch_with_all_constraints(self):
         """XSearch with all constraint fields → XSearchTool configured."""
@@ -4358,7 +6776,7 @@ class TestXSearchCapability:
             enable_video_understanding=True,
             include_output=True,
         )
-        assert cap.get_builtin_tools() == snapshot(
+        assert cap.get_native_tools() == snapshot(
             [
                 XSearchTool(
                     allowed_x_handles=['handle1'],
@@ -4371,29 +6789,247 @@ class TestXSearchCapability:
             ]
         )
 
-    def test_xsearch_requires_builtin_with_handles(self):
+    def test_xsearch_requires_native_with_handles(self):
         """XSearch with handle constraints requires builtin."""
-        assert XSearch(allowed_x_handles=['h']).get_builtin_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
-        assert XSearch(excluded_x_handles=['h']).get_builtin_tools() == snapshot(
-            [XSearchTool(excluded_x_handles=['h'])]
+        assert XSearch(allowed_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
+        assert XSearch(excluded_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(excluded_x_handles=['h'])])
+
+    def test_xsearch_native_false_local_false_raises(self):
+        """XSearch(native=False, local=False) → UserError."""
+        with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
+            XSearch(native=False, local=False)
+
+    def test_xsearch_native_false_with_constraints_raises(self):
+        """XSearch(native=False, allowed_x_handles=...) without fallback_model → UserError."""
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
+            XSearch(native=False, allowed_x_handles=['handle1'])
+
+    def test_xsearch_resolved_native_merges_overrides(self):
+        """Capability-level kwargs override fields on a passed native instance."""
+        base = XSearchTool(allowed_x_handles=['a'], enable_image_understanding=True)
+        cap = XSearch(native=base, from_date=datetime(2024, 1, 1), enable_image_understanding=False)
+        resolved = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
+        assert resolved == snapshot(
+            XSearchTool(
+                allowed_x_handles=['a'],
+                from_date=datetime(2024, 1, 1),
+                enable_image_understanding=False,
+            )
         )
 
-    def test_xsearch_builtin_false_local_false_raises(self):
-        """XSearch(builtin=False, local=False) → UserError."""
-        with pytest.raises(UserError, match='both builtin and local cannot be False'):
-            XSearch(builtin=False, local=False)
+    def test_xsearch_fallback_model_and_local_conflict(self):
+        """XSearch(fallback_model=..., local=func) raises UserError."""
 
-    def test_xsearch_builtin_false_with_constraints_raises(self):
-        """XSearch(builtin=False, allowed_x_handles=...) → UserError."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            XSearch(builtin=False, allowed_x_handles=['handle1'])
+        def my_search(query: str) -> str:
+            return 'result'  # pragma: no cover
+
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning', local=my_search)
+
+    def test_xsearch_fallback_model_with_local_false(self):
+        """XSearch(fallback_model=..., local=False) raises UserError."""
+        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
+            XSearch(fallback_model='xai:grok-4-1-fast-non-reasoning', local=False)
+
+    def test_xsearch_callable_native_with_fallback(self):
+        """Callable native with fallback_model still creates a local fallback tool."""
+        from pydantic_ai.tools import Tool
+
+        cap = XSearch(
+            native=lambda ctx: XSearchTool(enable_image_understanding=True),
+            fallback_model='xai:grok-4-1-fast-non-reasoning',
+        )
+        assert isinstance(cap.local, Tool)
+        assert cap.get_toolset() is not None
+
+    async def test_xsearch_callable_fallback_model(self, allow_model_requests: None):
+        """XSearch with callable fallback_model resolves the model per-run."""
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='summary of recent tweets')])
+
+        inner_model = FunctionModel(
+            inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        async def model_factory(ctx: RunContext[None]) -> FunctionModel:
+            return inner_model
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        result = await agent.run('What is happening on X?')
+        assert result.output == 'done'
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='What is happening on X?', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='x_search',
+                            args='{"query": "latest news"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=55, output_tokens=6),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='x_search',
+                            content='summary of recent tweets',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=59, output_tokens=7),
+                    model_name='function:outer_model_fn:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_xsearch_sync_callable_fallback_model(self, allow_model_requests: None):
+        """XSearch with sync callable fallback_model resolves the model per-run."""
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='summary')])
+
+        inner_model = FunctionModel(
+            inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        def model_factory(ctx: RunContext[None]) -> FunctionModel:
+            return inner_model
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "news"}')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=model_factory)])
+        result = await agent.run('search X')
+        assert result.output == 'done'
+        tool_returns = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert len(tool_returns) == 1
+        assert tool_returns[0].content == 'summary'
+
+    async def test_xsearch_subagent_error_becomes_model_retry(self, allow_model_requests: None):
+        """UnexpectedModelBehavior from the subagent becomes a retry prompt to the outer model."""
+
+        # Inner model returns an empty response → triggers UnexpectedModelBehavior in the subagent.
+        def empty_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[])
+
+        inner_model = FunctionModel(
+            empty_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        call_count = 0
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "test"}')])
+            return ModelResponse(parts=[TextPart(content='gave up')])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(outer_model, capabilities=[XSearch(fallback_model=inner_model)])
+        result = await agent.run('search X')
+        assert result.output == 'gave up'
+        retry_parts = [
+            part
+            for msg in result.all_messages()
+            if isinstance(msg, ModelRequest)
+            for part in msg.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        assert len(retry_parts) == 1
+        assert retry_parts[0].tool_name == 'x_search'
+
+    def test_x_search_tool_builtin_tool_kwarg_deprecated(self):
+        """`x_search_tool(builtin_tool=...)` warns and forwards to `native_tool=`."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`x_search_tool\(builtin_tool=\.\.\.\)` is deprecated'):
+            tool = x_search_tool('xai:grok-4-1-fast-non-reasoning', builtin_tool=XSearchTool())
+        assert tool.name == 'x_search'
+
+    def test_x_search_tool_native_tool_wins_over_builtin_tool(self):
+        """`x_search_tool(native_tool=..., builtin_tool=...)` keeps the explicit `native_tool=`."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        explicit = XSearchTool(allowed_x_handles=['preferred'])
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`x_search_tool\(builtin_tool=\.\.\.\)` is deprecated'):
+            tool = x_search_tool('xai:grok-4-1-fast-non-reasoning', native_tool=explicit, builtin_tool=XSearchTool())
+        assert tool.name == 'x_search'
+
+    def test_x_search_tool_unknown_kwarg_raises(self):
+        """`x_search_tool(unknown=...)` raises TypeError naming the offending kwarg."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.raises(TypeError, match=r'unexpected keyword arguments: `bogus`'):
+            x_search_tool('xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool(), bogus=1)
+
+    def test_x_search_tool_missing_native_tool_raises(self):
+        """`x_search_tool()` without `native_tool=` raises TypeError."""
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        with pytest.raises(TypeError, match=r"missing required argument: 'native_tool'"):
+            x_search_tool('xai:grok-4-1-fast-non-reasoning')
+
+    def test_xsearch_subagent_tool_builtin_tool_attr_deprecated(self):
+        """Reading `XSearchSubagentTool.builtin_tool` warns and returns `.native_tool`."""
+        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
+
+        native = XSearchTool()
+        subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=native)
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`XSearchSubagentTool\.builtin_tool` is deprecated'):
+            assert subagent.builtin_tool is native
+
+    def test_xsearch_subagent_tool_unknown_attr_raises(self):
+        """Unknown attribute access on `XSearchSubagentTool` raises AttributeError as usual."""
+        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
+
+        subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool())
+        with pytest.raises(AttributeError, match='no_such_field'):
+            subagent.no_such_field
 
 
 class TestWebFetchCapability:
     def test_webfetch_default(self):
-        """WebFetch() provides builtin and default local fallback."""
-        cap = WebFetch()
-        builtins = cap.get_builtin_tools()
+        """WebFetch(local=True) provides native and the default local fallback."""
+        cap = WebFetch(local=True)
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], WebFetchTool)
         # Default local fallback is auto-detected (markdownify-based)
@@ -4401,7 +7037,7 @@ class TestWebFetchCapability:
         assert cap.get_toolset() is not None
 
     def test_webfetch_default_with_nonsupporting_model(self, allow_model_requests: None):
-        """WebFetch() with a model that doesn't support builtin → markdownify fallback used."""
+        """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
         from unittest.mock import AsyncMock, patch
 
         import httpx
@@ -4430,8 +7066,8 @@ class TestWebFetchCapability:
             request=httpx.Request('GET', 'https://example.com'),
         )
 
-        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
-        agent = Agent(model, capabilities=[WebFetch()])
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch(local=True)])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
@@ -4449,22 +7085,22 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_false_with_nonsupporting_model(self, allow_model_requests: None):
         """WebFetch(local=False) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
         agent = Agent(model, capabilities=[WebFetch(local=False)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
-    def test_webfetch_builtin_false(self):
-        """WebFetch(builtin=False) → only local, no builtin registered."""
-        cap = WebFetch(builtin=False)
-        assert cap.get_builtin_tools() == []
+    def test_webfetch_native_false(self):
+        """WebFetch(native=False, local=True) → only local, no native tool registered."""
+        cap = WebFetch(native=False, local=True)
+        assert cap.get_native_tools() == []
         toolset = cap.get_toolset()
         assert toolset is not None
 
-    def test_webfetch_max_uses_requires_builtin(self, allow_model_requests: None):
+    def test_webfetch_max_uses_requires_native(self, allow_model_requests: None):
         """WebFetch(max_uses=...) with non-supporting model → UserError."""
-        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_builtin_tools=frozenset()))  # type: ignore
-        agent = Agent(model, capabilities=[WebFetch(max_uses=5)])
+        model = FunctionModel(lambda m, i: None, profile=ModelProfile(supported_native_tools=frozenset()))  # type: ignore
+        agent = Agent(model, capabilities=[WebFetch(max_uses=5, local=True)])
         with pytest.raises(UserError, match='not supported'):
             agent.run_sync('fetch')
 
@@ -4498,8 +7134,8 @@ class TestWebFetchCapability:
             request=httpx.Request('GET', 'https://example.com'),
         )
 
-        model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
-        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'])])
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent(model, capabilities=[WebFetch(allowed_domains=['example.com'], local=True)])
         with patch(
             'pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock, return_value=mock_response
         ):
@@ -4516,14 +7152,14 @@ class TestWebFetchCapability:
         assert tool_calls[0].tool_name == 'web_fetch'
 
     def test_webfetch_both_false_raises(self):
-        """WebFetch(builtin=False, local=False) → UserError at construction."""
-        with pytest.raises(UserError, match='both builtin and local cannot be False'):
-            WebFetch(builtin=False, local=False)
+        """WebFetch(native=False, local=False) → UserError at construction."""
+        with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
+            WebFetch(native=False, local=False)
 
-    def test_webfetch_builtin_false_with_max_uses_raises(self):
-        """WebFetch(builtin=False, max_uses=...) → UserError at construction."""
-        with pytest.raises(UserError, match='constraint fields require the builtin tool'):
-            WebFetch(builtin=False, max_uses=5)
+    def test_webfetch_native_false_with_max_uses_raises(self):
+        """WebFetch(native=False, max_uses=...) → UserError at construction."""
+        with pytest.raises(UserError, match='constraint fields require the native tool'):
+            WebFetch(native=False, max_uses=5, local=True)
 
     def test_webfetch_local_callable(self):
         """WebFetch(local=some_function) → bare callable wrapped in Tool."""
@@ -4542,22 +7178,32 @@ class TestImageGenerationCapability:
         import dataclasses
         import inspect
 
-        # partial_images is excluded — not useful for subagent fallback (no streaming)
+        # partial_images is excluded — not useful for subagent fallback (no streaming).
+        # optional is excluded — applies to wire-side dropping, not local-fallback config.
         builtin_fields = {
-            f.name for f in dataclasses.fields(ImageGenerationTool) if f.name not in ('kind', 'partial_images')
+            f.name
+            for f in dataclasses.fields(ImageGenerationTool)
+            if f.name not in ('kind', 'optional', 'partial_images')
         }
+        builtin_fields.remove('model')
+        builtin_fields.add('image_model')
+        # Subtract framework-inherited kw-only params from `AbstractCapability`
+        # (forwarded so `dataclasses.replace` round-trips through the custom `__init__`).
         init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
             'self',
-            'builtin',
+            'native',
             'local',
             'fallback_model',
+            'id',
+            'defer_loading',
+            'description',
         }
         assert init_params == builtin_fields
 
     def test_image_generation_default(self):
         """ImageGeneration() provides only builtin, no local fallback."""
         cap = ImageGeneration()
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], ImageGenerationTool)
         # No default local
@@ -4582,42 +7228,46 @@ class TestImageGenerationCapability:
         cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], ImageGenerationTool)
 
     def test_image_generation_forwards_config_to_builtin(self):
         """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
         cap = ImageGeneration(
+            action='generate',
             background='opaque',
             input_fidelity='high',
             moderation='low',
+            image_model='gpt-image-2',
             output_compression=80,
             output_format='jpeg',
             quality='high',
             size='1024x1024',
             aspect_ratio='16:9',
         )
-        builtins = cap.get_builtin_tools()
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         tool = builtins[0]
         assert isinstance(tool, ImageGenerationTool)
+        assert tool.action == 'generate'
         assert tool.background == 'opaque'
         assert tool.input_fidelity == 'high'
         assert tool.moderation == 'low'
+        assert tool.model == 'gpt-image-2'
         assert tool.output_compression == 80
         assert tool.output_format == 'jpeg'
         assert tool.quality == 'high'
         assert tool.size == '1024x1024'
         assert tool.aspect_ratio == '16:9'
 
-    def test_image_generation_fallback_merges_custom_builtin_with_overrides(self):
-        """Custom builtin settings are merged with capability-level overrides for the fallback."""
+    def test_image_generation_fallback_merges_custom_native_with_overrides(self):
+        """Custom native tool settings are merged with capability-level overrides for the fallback."""
         from pydantic_ai.tools import Tool
 
-        custom_builtin = ImageGenerationTool(quality='high', size='1024x1024')
+        custom_native = ImageGenerationTool(quality='high', size='1024x1024')
         cap = ImageGeneration(
-            builtin=custom_builtin,
+            native=custom_native,
             fallback_model='openai-responses:gpt-5.4',
             output_format='jpeg',  # capability-level override
         )
@@ -4625,15 +7275,15 @@ class TestImageGenerationCapability:
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
-    def test_image_generation_callable_builtin_with_fallback(self):
-        """When builtin is a callable, the fallback local tool still gets created."""
+    def test_image_generation_callable_native_with_fallback(self):
+        """When native is a callable, the fallback local tool still gets created."""
         from pydantic_ai.tools import Tool
 
         cap = ImageGeneration(
-            builtin=lambda ctx: ImageGenerationTool(quality='high'),
+            native=lambda ctx: ImageGenerationTool(quality='high'),
             fallback_model='openai-responses:gpt-5.4',
         )
-        # Callable builtin can't be resolved at init time, but local fallback is still created
+        # Callable native can't be resolved at init time, but local fallback is still created
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
@@ -4651,6 +7301,9 @@ class TestImageGenerationCapability:
         with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
             ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
 
+    @pytest.mark.filterwarnings(
+        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
         """ImageGeneration with async callable fallback_model resolves the model per-run."""
         from pydantic_ai.messages import BinaryImage, FilePart
@@ -4670,7 +7323,7 @@ class TestImageGenerationCapability:
                 return ModelResponse(parts=[TextPart(content='done')])
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
         result = await agent.run('Generate a test image')
         assert result.output == 'done'
@@ -4729,11 +7382,14 @@ class TestImageGenerationCapability:
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
 
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])  # pyright: ignore[reportArgumentType]
         with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
             await agent.run('Generate a test image')
 
+    @pytest.mark.filterwarnings(
+        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
         """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
 
@@ -4752,7 +7408,7 @@ class TestImageGenerationCapability:
                 return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
             return ModelResponse(parts=[TextPart(content='gave up')])
 
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate a test image')
         assert result.output == 'gave up'
@@ -4781,7 +7437,7 @@ class TestImageGenerationCapability:
                 ModelRequest(
                     parts=[
                         RetryPromptPart(
-                            content='Exceeded maximum retries (1) for output validation',
+                            content='Exceeded maximum output retries (1)',
                             tool_name='generate_image',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
@@ -4793,7 +7449,7 @@ class TestImageGenerationCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='gave up')],
-                    usage=RequestUsage(input_tokens=68, output_tokens=7),
+                    usage=RequestUsage(input_tokens=66, output_tokens=7),
                     model_name='function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4802,14 +7458,18 @@ class TestImageGenerationCapability:
             ]
         )
 
-    def test_image_generation_rejects_image_only_model(self):
-        """Using a dedicated image model like gpt-image-1 raises a clear error at construction."""
-        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
-            ImageGeneration(fallback_model='openai-responses:gpt-image-1')
+    @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'])
+    def test_image_generation_rejects_image_only_model(self, model_name: str):
+        """Using a dedicated image model like gpt-image-2 raises a clear error at construction."""
+        with pytest.raises(UserError, match=f'{model_name!r} is a dedicated image generation model'):
+            ImageGeneration(fallback_model=f'openai-responses:{model_name}')
 
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
     @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings(
+        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
         from pydantic_ai.messages import BinaryImage
@@ -4832,7 +7492,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
         inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
             capabilities=[
@@ -4892,6 +7552,9 @@ class TestImageGenerationCapability:
     @pytest.mark.vcr()
     @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
     @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
+    @pytest.mark.filterwarnings(
+        'ignore:`Agent\\(builtin_tools=...\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    )
     async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')
@@ -4907,7 +7570,7 @@ class TestImageGenerationCapability:
             return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
 
         inner_model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_builtin_tools=frozenset()))
+        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
         result = await agent.run('Generate an image of a cute baby sea otter')
         assert result.output == 'Here is the generated image.'
@@ -4960,21 +7623,15 @@ class TestImageGenerationCapability:
         )
 
 
-try:
-    import mcp as _mcp
-
-    has_mcp = True
-    del _mcp
-except ImportError:
-    has_mcp = False
+has_mcp = find_spec('mcp') is not None
 
 
 @pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 class TestMCPCapability:
     def test_mcp_default(self):
-        """MCP(url=...) provides builtin + local fallback."""
-        cap = MCP(url='https://mcp.example.com/api')
-        builtins = cap.get_builtin_tools()
+        """MCP(url=..., native=True) provides native + local fallback."""
+        cap = MCP(url='https://mcp.example.com/api', native=True)
+        builtins = cap.get_native_tools()
         assert len(builtins) == 1
         assert isinstance(builtins[0], MCPServerTool)
         assert builtins[0].url == 'https://mcp.example.com/api'
@@ -4982,44 +7639,92 @@ class TestMCPCapability:
 
     def test_mcp_id_from_url(self):
         """MCP auto-derives id from URL including hostname to avoid collisions."""
-        cap = MCP(url='https://mcp.example.com/api')
-        builtin = cap.get_builtin_tools()[0]
+        cap = MCP(url='https://mcp.example.com/api', native=True)
+        builtin = cap.get_native_tools()[0]
         assert isinstance(builtin, MCPServerTool)
+        assert cap.id == 'mcp.example.com-api'
         assert builtin.id == 'mcp.example.com-api'
 
         # SSE URLs include hostname to avoid collisions between different servers
-        cap_sse = MCP(url='https://server1.example.com/sse')
-        builtin_sse = cap_sse.get_builtin_tools()[0]
+        cap_sse = MCP(url='https://server1.example.com/sse', native=True)
+        builtin_sse = cap_sse.get_native_tools()[0]
         assert isinstance(builtin_sse, MCPServerTool)
+        assert cap_sse.id == 'server1.example.com-sse'
         assert builtin_sse.id == 'server1.example.com-sse'
 
-    def test_mcp_sse_transport(self):
-        """MCP with /sse URL uses MCPServerSSE for local."""
-        from pydantic_ai.mcp import MCPServerSSE
+        # Connector-style and opaque server names still get stable ids even when
+        # there is no hostname to use.
+        assert MCP(url='x-openai-connector:deepwiki', native=True, local=False).id == 'x-openai-connector-deepwiki'
+        assert MCP(url='local-mcp-server', native=True, local=False).id == 'local-mcp-server'
 
-        cap = MCP(url='https://mcp.example.com/sse')
-        assert isinstance(cap.local, MCPServerSSE)
+    async def test_mcp_explicit_native_id_marks_local_fallback(self):
+        """An explicit native MCP tool keeps the local fallback tied to that server id."""
+
+        def local_tool() -> str:
+            return 'local result'  # pragma: no cover
+
+        cap = MCP(
+            url='https://mcp.example.com/api',
+            native=MCPServerTool(id='custom-mcp', url='https://mcp.example.com/api'),
+            local=local_tool,
+        )
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        tools = await toolset.get_tools(_build_run_context())
+        assert tools['local_tool'].tool_def.unless_native == 'mcp_server:custom-mcp'
+
+    async def test_mcp_dynamic_native_id_marks_local_fallback(self):
+        """A dynamic native MCP tool still marks the local fallback with the stable capability id."""
+
+        def local_tool() -> str:
+            return 'local result'  # pragma: no cover
+
+        async def native_tool(ctx: RunContext[None]) -> MCPServerTool:
+            return MCPServerTool(id='dynamic-mcp', url='https://mcp.example.com/api')
+
+        cap = MCP(url='https://mcp.example.com/api', id='dynamic-mcp', native=native_tool, local=local_tool)
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        tools = await toolset.get_tools(_build_run_context())
+        assert tools['local_tool'].tool_def.unless_native == 'mcp_server:dynamic-mcp'
+
+    def test_mcp_sse_transport(self):
+        """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""
+        from fastmcp.client.transports import SSETransport
+
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP(url='https://mcp.example.com/sse', native=True)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, SSETransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_streamable_transport(self):
-        """MCP with non-/sse URL uses MCPServerStreamableHTTP for local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP with non-/sse URL routes to an MCPToolset using FastMCP's Streamable HTTP transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
 
-        cap = MCP(url='https://mcp.example.com/api')
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP(url='https://mcp.example.com/api', native=True)
+        assert isinstance(cap.local, MCPToolset)
+        assert isinstance(cap.local.client.transport, StreamableHttpTransport)  # pyright: ignore[reportUnknownMemberType]
 
     def test_mcp_authorization_token_in_local_headers(self):
-        """MCP passes authorization_token as Authorization header to local."""
-        from pydantic_ai.mcp import MCPServerStreamableHTTP
+        """MCP passes authorization_token as Authorization header through to the transport."""
+        from fastmcp.client.transports import StreamableHttpTransport
 
-        cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz')
-        assert isinstance(cap.local, MCPServerStreamableHTTP)
-        assert cap.local.headers == {'Authorization': 'Bearer xyz'}
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP(url='https://mcp.example.com/api', authorization_token='Bearer xyz', native=True)
+        assert isinstance(cap.local, MCPToolset)
+        transport = cap.local.client.transport  # pyright: ignore[reportUnknownMemberType]
+        assert isinstance(transport, StreamableHttpTransport)
+        assert transport.headers == {'Authorization': 'Bearer xyz'}
 
     def test_mcp_allowed_tools_filters_local(self):
         """MCP(allowed_tools=...) applies FilteredToolset to the local toolset."""
         from pydantic_ai.toolsets.filtered import FilteredToolset
 
-        cap = MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'])
+        cap = MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'], native=True)
         toolset = cap.get_toolset()
         assert toolset is not None
         # The outer toolset should be a FilteredToolset wrapping the prepared toolset
@@ -5029,6 +7734,15 @@ class TestMCPCapability:
         """MCP without url raises TypeError."""
         with pytest.raises(TypeError, match="missing 1 required positional argument: 'url'"):
             MCP()  # type: ignore[call-arg]
+
+    def test_mcp_wraps_non_toolset_local_into_mcptoolset(self):
+        """A bare `fastmcp.FastMCP` server passed as `local=` is wrapped in `MCPToolset` automatically."""
+        from fastmcp import FastMCP
+
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP(url='https://mcp.example.com/api', native=True, local=FastMCP(name='in_process'))
+        assert isinstance(cap.local, MCPToolset)
 
 
 class TestNamedSpecDictRoundTrip:
@@ -5088,7 +7802,7 @@ class TestPrepareToolsCapability:
         assert result.output == "tools: ['public_tool']"
 
     async def test_prepare_tools_none_disables_all(self):
-        """PrepareTools treats None return as 'disable all tools', consistent with ToolsPrepareFunc docs."""
+        """Returning None still disables all function tools, but now emits the deprecation warning."""
         from pydantic_ai.capabilities import PrepareTools
 
         async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
@@ -5104,8 +7818,30 @@ class TestPrepareToolsCapability:
         def my_tool() -> str:
             return 'result'  # pragma: no cover
 
-        result = await agent.run('hello')
+        with pytest.warns(PydanticAIDeprecationWarning, match='returning `None` from a prepare callback is deprecated'):
+            result = await agent.run('hello')
         assert result.output == 'tools: []'
+
+    async def test_prepare_tools_empty_list_does_not_warn(self):
+        """Returning [] is the explicit 'disable all' alternative and must not emit the warning.
+
+        Relies on the suite-wide `filterwarnings = ['error']` in `pyproject.toml` to turn any
+        unexpected `PydanticAIDeprecationWarning` into a test failure.
+        """
+
+        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(disable_all)])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            return 'result'  # pragma: no cover
+
+        await agent.run('hello')
 
     async def test_prepare_tools_modifies_definitions(self):
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
@@ -5241,6 +7977,28 @@ class TestPrepareOutputToolsCapability:
         class Out(BaseModel):
             value: str
 
+        async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response(f'output_tools: {len(info.output_tools)}')
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, ToolOutput(Out, name='out')],
+            capabilities=[PrepareOutputTools(disable_all)],
+        )
+
+        result = await agent.run('hello')
+        assert result.output == 'output_tools: 0'
+
+    async def test_prepare_output_tools_none_disables_all(self):
+        """Returning None still disables all output tools, but now emits the deprecation warning."""
+        from pydantic_ai.capabilities import PrepareOutputTools
+
+        class Out(BaseModel):
+            value: str
+
         async def disable_all(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
 
@@ -5253,7 +8011,8 @@ class TestPrepareOutputToolsCapability:
             capabilities=[PrepareOutputTools(disable_all)],
         )
 
-        result = await agent.run('hello')
+        with pytest.warns(PydanticAIDeprecationWarning, match='returning `None` from a prepare callback is deprecated'):
+            result = await agent.run('hello')
         assert result.output == 'output_tools: 0'
 
     async def test_only_sees_output_tools(self):
@@ -5285,38 +8044,6 @@ class TestPrepareOutputToolsCapability:
         from pydantic_ai.capabilities import PrepareOutputTools
 
         assert PrepareOutputTools.get_serialization_name() is None
-
-
-class TestAgentPrepareArgInjection:
-    """The Agent `prepare_tools` / `prepare_output_tools` constructor args are
-    sugar for `PrepareTools` / `PrepareOutputTools` capabilities — verify they
-    show up in `root_capability` and apply the same way."""
-
-    def test_prepare_tools_arg_injects_capability(self):
-        from pydantic_ai.capabilities import PrepareTools
-
-        async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:  # pragma: no cover
-            return tool_defs
-
-        agent = Agent('test', prepare_tools=noop)
-        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareTools)]
-        assert len(injected) == 1
-        assert injected[0].prepare_func is noop
-
-    def test_prepare_output_tools_arg_injects_capability(self):
-        from pydantic_ai.capabilities import PrepareOutputTools
-
-        async def noop(
-            ctx: RunContext[None], tool_defs: list[ToolDefinition]
-        ) -> list[ToolDefinition]:  # pragma: no cover
-            return tool_defs
-
-        agent = Agent('test', output_type=str, prepare_output_tools=noop)
-        injected = [c for c in agent.root_capability.capabilities if isinstance(c, PrepareOutputTools)]
-        assert len(injected) == 1
-        assert injected[0].prepare_func is noop
 
 
 class TestOverrideWithSpec:
@@ -5688,8 +8415,21 @@ from-spec\
         """Non-default unsupported fields produce warnings."""
         agent = Agent('test')
 
-        with pytest.warns(UserWarning, match='retries'):
-            await agent.run('hello', spec={'retries': 5})
+        with pytest.warns(UserWarning, match='end_strategy'):
+            await agent.run('hello', spec={'end_strategy': 'exhaustive'})
+
+    async def test_spec_tool_retry_override_warns(self):
+        """Run-time specs can only override the output retry budget."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('ok')
+
+        agent = Agent(FunctionModel(model_fn))
+
+        with pytest.warns(UserWarning, match=r"retry field 'tools'.*ignored"):
+            result = await agent.run('hello', spec={'retries': {'tools': 5}})
+
+        assert result.output == 'ok'
 
 
 class TestGetWrapperToolsetHook:
@@ -5942,7 +8682,7 @@ class TestGetWrapperToolsetHook:
             descs = [t.description for t in info.function_tools]
             return make_text_response(f'tools: {tool_names}, descs: {descs}')
 
-        agent = Agent(FunctionModel(model_fn), prepare_tools=agent_prepare, capabilities=[PrefixCap()])
+        agent = Agent(FunctionModel(model_fn), capabilities=[PrepareTools(agent_prepare), PrefixCap()])
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -6114,15 +8854,16 @@ class TestOverrideWithSpecAdditional:
 
 
 def test_web_fetch_with_constraints():
-    """WebFetch capability populates builtin tool with all constraint kwargs."""
+    """WebFetch capability populates native tool with all constraint kwargs."""
     cap = WebFetch(
+        local=True,
         allowed_domains=['example.com'],
         blocked_domains=['bad.com'],
         max_uses=5,
         enable_citations=True,
         max_content_tokens=1000,
     )
-    builtin_tools = cap.get_builtin_tools()
+    builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, WebFetchTool)
@@ -6132,34 +8873,34 @@ def test_web_fetch_with_constraints():
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
     # Only max_uses requires builtin (domains are handled locally)
-    assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
+    assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_fetch_unique_id():
-    """WebFetch returns the correct builtin unique_id."""
-    cap = WebFetch()
-    assert cap._builtin_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
+    """WebFetch returns the correct native unique_id."""
+    cap = WebFetch(local=True)
+    assert cap._native_unique_id() == 'web_fetch'  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.skipif(not xai_imports(), reason='xai_sdk not installed')
 def test_xsearch_unique_id():
     """XSearch returns the correct builtin unique_id."""
     cap = XSearch()
-    assert cap._builtin_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
+    assert cap._native_unique_id() == 'x_search'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_web_search_with_constraints():
-    """WebSearch capability populates builtin tool with all constraint kwargs."""
-    from pydantic_ai.builtin_tools import WebSearchUserLocation
+    """WebSearch capability populates native tool with all constraint kwargs."""
+    from pydantic_ai.native_tools import WebSearchUserLocation
 
     cap = WebSearch(
+        local='duckduckgo',
         search_context_size='high',
         user_location=WebSearchUserLocation(city='NYC', country='US'),
         blocked_domains=['bad.com'],
         allowed_domains=['good.com'],
         max_uses=3,
     )
-    builtin_tools = cap.get_builtin_tools()
+    builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, WebSearchTool)
@@ -6168,11 +8909,11 @@ def test_web_search_with_constraints():
     assert tool.blocked_domains == ['bad.com']
     assert tool.allowed_domains == ['good.com']
     assert tool.max_uses == 3
-    assert cap._requires_builtin() is True  # pyright: ignore[reportPrivateUsage]
+    assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
-def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebSearch._default_local() warns and returns None when duckduckgo is not installed."""
+def test_web_search_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
+    """WebSearch() silently produces a builtin-only capability when duckduckgo isn't installed — user isn't on the deprecated path, no warning."""
     import builtins
 
     original_import = builtins.__import__
@@ -6183,14 +8924,17 @@ def test_web_search_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    with pytest.warns(UserWarning, match='duckduckgo'):
-        cap = WebSearch(builtin=False)
-    # With builtin disabled and no duckduckgo, local is None
+    # Defaults path with no DDG: no deprecation warning (auto-fallback can't run), but main's
+    # base-class still emits a `UserWarning` heads-up via `_default_local()` when the user explicitly
+    # disables the native tool. Here we leave the native default in place, so it's silent.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        cap = WebSearch()
     assert cap.local is None
 
 
-def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
-    """WebFetch._default_local() warns and returns None when markdownify is not installed."""
+def test_web_fetch_default_local_import_error_is_silent(monkeypatch: pytest.MonkeyPatch):
+    """WebFetch() silently produces a native-only capability when markdownify isn't installed — user isn't on the deprecated path, no warning."""
     import builtins
 
     original_import = builtins.__import__
@@ -6201,17 +8945,17 @@ def test_web_fetch_default_local_import_error(monkeypatch: pytest.MonkeyPatch):
         return original_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', mock_import)
-    with pytest.warns(UserWarning, match='web-fetch'):
-        cap = WebFetch(builtin=False)
-    # With builtin disabled and no markdownify, local is None
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        cap = WebFetch()
     assert cap.local is None
 
 
 def test_mcp_default_builtin():
-    """MCP capability constructs the default builtin MCPServerTool."""
+    """MCP capability constructs the default native MCPServerTool."""
     pytest.importorskip('mcp', reason='mcp package not installed')
-    cap = MCP(url='http://example.com/mcp', id='my-mcp')
-    builtin_tools = cap.get_builtin_tools()
+    cap = MCP(url='http://example.com/mcp', id='my-mcp', native=True)
+    builtin_tools = cap.get_native_tools()
     assert len(builtin_tools) == 1
     tool = builtin_tools[0]
     assert isinstance(tool, MCPServerTool)
@@ -6219,63 +8963,323 @@ def test_mcp_default_builtin():
     assert tool.id == 'my-mcp'
 
 
-@pytest.mark.filterwarnings('ignore::DeprecationWarning')
-def test_builtin_or_local_base_no_default_builtin():
-    """BuiltinOrLocalTool base class with builtin=True raises (no _default_builtin)."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+@pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning')
+def test_mcp_constructs_without_mcp_extra(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=...)` must construct cleanly when the MCP extra isn't installed.
 
-    with pytest.raises(UserError, match='builtin=True requires a subclass'):
-        BuiltinOrLocalTool()
+    The native tool always works; the local default just resolves to None. The user gets
+    a clear `UserError` at request time if the model doesn't support native MCP either.
+    """
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    cap = MCP(url='http://example.com/mcp')
+    assert cap.local is None
+    assert len(cap.get_native_tools()) == 1
 
 
-def test_builtin_tool_from_spec_no_args():
-    """BuiltinTool.from_spec() with no arguments raises TypeError."""
-    from pydantic_ai.capabilities.builtin_tool import BuiltinTool as BuiltinToolCapDirect
+def test_mcp_local_true_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=..., local=True)` raises a `UserError` with install hint when MCP extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
+        MCP(url='http://example.com/mcp', local=True, native=True)
+
+
+def test_mcp_local_string_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
+    """`MCP(url=..., local='https://override...')` raises a `UserError` when MCP extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.mcp':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[mcp\]'):
+        MCP(url='http://example.com/mcp', local='https://override.example.com/mcp', native=True)
+
+
+@pytest.mark.filterwarnings(
+    'ignore::RuntimeWarning'
+)  # the `duckduckgo_search` package emits a "renamed to ddgs" RuntimeWarning when DDGS is instantiated
+def test_web_search_v2_deprecation_warning():
+    """WebSearch() with duckduckgo installed warns about v2 default change."""
+    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+    with pytest.warns(PydanticAIDeprecationWarning, match='WebSearch will stop auto-selecting'):
+        WebSearch()
+
+
+def test_web_search_v2_deprecation_silenced_with_explicit_local():
+    """WebSearch(local=False) does not emit the v2 deprecation warning."""
+
+    def noop_search(q: str) -> str:
+        return q  # pragma: no cover
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        WebSearch(local=False)
+        WebSearch(native=False, local=noop_search)
+
+
+def test_web_fetch_v2_deprecation_warning():
+    """WebFetch() with web-fetch extra installed warns about v2 default change."""
+    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
+    with pytest.warns(PydanticAIDeprecationWarning, match='WebFetch will stop auto-selecting'):
+        WebFetch()
+
+
+def test_web_fetch_v2_deprecation_silenced_with_explicit_local():
+    """WebFetch(local=False) does not emit the v2 deprecation warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        WebFetch(local=False)
+
+
+def test_mcp_v2_deprecation_warning():
+    """MCP(url=...) with no explicit native/local warns about v2 default change."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'MCP\(\) defaults will change'):
+        MCP(url='http://example.com/mcp')
+
+
+def test_mcp_v2_deprecation_silenced_with_explicit_native():
+    """MCP(url=..., native=...) does not emit the v2 deprecation warning.
+
+    `local=False` alone still warns since it relies on the v1 native default flipping in v2.
+    """
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        MCP(url='http://example.com/mcp', native=True)
+        MCP(url='http://example.com/mcp', native=False)
+        MCP(url='http://example.com/mcp', native=True, local=False)
+
+
+def test_mcp_v2_deprecation_warns_for_local_false_alone():
+    """MCP(url=..., local=False) still warns because the user relies on the v1 default of native=True.
+
+    In v2, native defaults to False, so `MCP(url=..., local=False)` would raise "both can't be False"
+    without an explicit native=True. The warning surfaces this silent breaking change.
+    """
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'MCP\(\) defaults will change'):
+        MCP(url='http://example.com/mcp', local=False)
+
+
+def test_web_search_local_string_strategy_silent():
+    """WebSearch(local='duckduckgo') resolves silently to the DDG tool — no PydanticAIDeprecationWarning."""
+    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        cap = WebSearch(local='duckduckgo')
+    assert cap.local is not None and cap.local is not False
+
+
+def test_web_search_local_true_silent():
+    """WebSearch(local=True) resolves silently to the default strategy (DDG)."""
+    pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        cap = WebSearch(local=True)
+    assert cap.local is not None and cap.local is not False
+
+
+def test_web_fetch_local_true_silent():
+    """WebFetch(local=True) resolves silently to the default markdownify-based tool."""
+    pytest.importorskip('markdownify', reason='web-fetch extra not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        cap = WebFetch(local=True)
+    assert cap.local is not None and cap.local is not False
+
+
+def test_mcp_local_true_silent_with_explicit_native():
+    """MCP(url=..., local=True, native=True) resolves silently — no PydanticAIDeprecationWarning."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        cap = MCP(url='http://example.com/mcp', local=True, native=True)
+    assert cap.local is not None and cap.local is not False
+    assert len(cap.get_native_tools()) == 1
+
+
+def test_native_or_local_base_no_default_native():
+    """NativeOrLocalTool base class with native=True raises (no _default_native)."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
+
+    with pytest.raises(UserError, match='native=True requires a subclass'):
+        NativeOrLocalTool()
+
+
+def test_native_tool_from_spec_no_args():
+    """NativeTool.from_spec() with no arguments raises TypeError."""
+    from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCapDirect
 
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
-        BuiltinToolCapDirect.from_spec()
+        NativeToolCapDirect.from_spec()
 
 
-@pytest.mark.filterwarnings('ignore::DeprecationWarning')
-def test_builtin_or_local_no_default_local():
-    """BuiltinOrLocalTool base class _default_local() returns None."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+def test_native_or_local_no_default_local():
+    """NativeOrLocalTool base class _default_local() returns None."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
-    cap = BuiltinOrLocalTool(builtin=WebSearchTool())
+    cap = NativeOrLocalTool(native=WebSearchTool())
     # Base class _default_local() returns None — no local fallback
     assert cap.local is None
     assert cap.get_toolset() is None
 
 
-@pytest.mark.filterwarnings('ignore::DeprecationWarning')
-def test_builtin_or_local_with_explicit_builtin():
-    """BuiltinOrLocalTool used directly with an explicit builtin and local tool."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+def test_native_or_local_with_explicit_native():
+    """NativeOrLocalTool used directly with an explicit native and local tool."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
     def my_local_tool() -> str:
         """A local fallback tool."""
         return 'local result'  # pragma: no cover
 
-    cap = BuiltinOrLocalTool(builtin=WebSearchTool(), local=my_local_tool)
-    # get_builtin_tools returns the explicit builtin
-    assert len(cap.get_builtin_tools()) == 1
-    assert isinstance(cap.get_builtin_tools()[0], WebSearchTool)
-    # get_toolset wraps local with prefer_builtin from _builtin_unique_id()
+    cap = NativeOrLocalTool(native=WebSearchTool(), local=my_local_tool)
+    # get_native_tools returns the explicit native tool
+    assert len(cap.get_native_tools()) == 1
+    assert isinstance(cap.get_native_tools()[0], WebSearchTool)
+    # get_toolset wraps local with unless_native from _native_unique_id()
     toolset = cap.get_toolset()
     assert toolset is not None
 
 
-@pytest.mark.filterwarnings('ignore::DeprecationWarning')
-def test_builtin_or_local_builtin_unique_id_non_abstract():
-    """_builtin_unique_id() raises when builtin is callable (not AbstractBuiltinTool)."""
-    from pydantic_ai.capabilities.builtin_or_local import BuiltinOrLocalTool
+def test_native_or_local_native_unique_id_non_abstract():
+    """_native_unique_id() raises when native is callable (not AbstractNativeTool)."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
-    cap = BuiltinOrLocalTool.__new__(BuiltinOrLocalTool)
-    cap.builtin = lambda ctx: WebSearchTool()
+    cap = NativeOrLocalTool.__new__(NativeOrLocalTool)
+    cap.native = lambda ctx: WebSearchTool()
     cap.local = False
 
-    with pytest.raises(UserError, match='cannot derive builtin_unique_id'):
-        cap._builtin_unique_id()  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='cannot derive native unique_id'):
+        cap._native_unique_id()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_native_or_local_base_unknown_strategy_raises():
+    """`NativeOrLocalTool(local='foo')` raises a UserError from the default `_resolve_local_strategy`."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
+
+    with pytest.raises(UserError, match=r"`local='foo'` is not supported"):
+        NativeOrLocalTool(native=WebSearchTool(), local='foo')
+
+
+def test_native_or_local_preserves_passed_tool_instance():
+    """A pre-wrapped `Tool` passed as `local` is preserved (not re-wrapped or treated as a callable)."""
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
+    from pydantic_ai.tools import Tool as ToolDirect
+
+    def my_search(query: str) -> str:
+        return f'results for {query}'  # pragma: no cover
+
+    tool = ToolDirect(my_search)
+    cap = NativeOrLocalTool(native=WebSearchTool(), local=tool)
+    assert cap.local is tool
+
+
+def test_native_or_local_id_kwarg_overrides_default():
+    """`id=` overrides the auto-derived capability id across `NativeOrLocalTool` subclasses.
+
+    The id is the wire-side identifier (used in `ctx.capabilities` lookup and surfaced to the model
+    in the deferred-capability catalog), so users need a way to disambiguate when they instantiate
+    the same capability twice in one agent.
+    """
+    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
+    from pydantic_ai.tools import Tool as ToolDirect
+
+    def _nop() -> None:
+        return None  # pragma: no cover
+
+    nop = ToolDirect(_nop)
+
+    assert NativeOrLocalTool(native=WebSearchTool(), local=nop, id='custom').id == 'custom'
+    assert WebFetch(local=nop, id='custom').id == 'custom'
+    assert ImageGeneration(local=False, id='custom').id == 'custom'
+
+
+def test_websearch_unknown_strategy_raises():
+    """WebSearch(local='not_a_real_strategy') → UserError naming the unknown strategy."""
+    with pytest.raises(UserError, match='not a known strategy'):
+        WebSearch(local='not_a_real_strategy')  # type: ignore[arg-type]
+
+
+def test_websearch_duckduckgo_missing_install_hint(monkeypatch: pytest.MonkeyPatch):
+    """`WebSearch(local='duckduckgo')` raises a UserError with install hint when the extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.duckduckgo':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[duckduckgo\]'):
+        WebSearch(local='duckduckgo')
+
+
+def test_webfetch_unknown_strategy_raises():
+    """WebFetch(local='not_a_real_strategy') → UserError naming the unknown strategy."""
+    with pytest.raises(UserError, match='not a known strategy'):
+        WebFetch(local='not_a_real_strategy')  # type: ignore[arg-type]
+
+
+def test_webfetch_local_true_install_hint(monkeypatch: pytest.MonkeyPatch):
+    """`WebFetch(local=True)` raises a UserError with install hint when the `web-fetch` extra is missing."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == 'pydantic_ai.common_tools.web_fetch':
+            raise ImportError('mocked')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', mock_import)
+    with pytest.raises(UserError, match=r'pydantic-ai-slim\[web-fetch\]'):
+        WebFetch(local=True)
+
+
+def test_mcp_local_string_must_be_url_raises_user_error():
+    """`MCP(url=..., local='not-a-url')` raises a `UserError` directing the user to `local=MCPToolset(...)`."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    with pytest.raises(UserError, match=r"MCP\(local='not_a_real_strategy'\) must be an `http\(s\)://` URL"):
+        MCP(url='http://example.com/mcp', local='not_a_real_strategy', native=True)
+
+
+def test_mcp_local_url_string_override_uses_provided_url():
+    """`MCP(url=..., local='https://override...')` builds an `MCPToolset` from the override URL."""
+    pytest.importorskip('mcp', reason='mcp package not installed')
+    pytest.importorskip('fastmcp', reason='fastmcp package not installed')
+    from pydantic_ai.mcp import MCPToolset
+
+    cap = MCP(
+        url='http://primary.example.com/mcp',
+        local='https://override.example.com/mcp',
+        native=True,
+    )
+    assert isinstance(cap.local, MCPToolset)
 
 
 def test_validate_capability_not_dataclass():
@@ -6287,6 +9291,135 @@ def test_validate_capability_not_dataclass():
 
     with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
         get_capability_registry(custom_types=(NotADataclass,))
+
+
+async def _registered_capability_context(
+    *capabilities: AbstractCapability[None],
+) -> tuple[dict[str, AbstractCapability[None]], set[str]]:
+    captured_capabilities: dict[str, AbstractCapability[None]] = {}
+    captured_available_ids: set[str] = set()
+
+    @dataclass
+    class CaptureCapabilities(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            captured_capabilities.update(ctx.capabilities)
+            captured_available_ids.update(ctx.available_capability_ids)
+            return request_context
+
+    agent = Agent(
+        FunctionModel(lambda _messages, _info: make_text_response('done')),
+        capabilities=[*capabilities, CaptureCapabilities()],
+    )
+    await agent.run('capture capabilities')
+    capability_ids = {id(capability) for capability in capabilities}
+    captured_capabilities = {
+        capability_id: capability
+        for capability_id, capability in captured_capabilities.items()
+        if id(capability) in capability_ids
+    }
+    captured_available_ids &= set(captured_capabilities)
+    return captured_capabilities, captured_available_ids
+
+
+async def test_deferred_capability_without_id_set_after_construction_raises_at_run() -> None:
+    """`defer_loading` flipped on after construction escapes the eager check, so the run-time guard still fires."""
+
+    @dataclass
+    class DeferredCap(AbstractCapability[None]):
+        pass
+
+    cap = DeferredCap()
+    # Not deferred at construction, so the eager check passes; the run-time check is what catches it.
+    agent = Agent(TestModel(), capabilities=[cap])
+    cap.defer_loading = True
+    assert cap.id is None
+
+    with pytest.raises(UserError, match='stable explicit `id` values'):
+        await agent.run('hi')
+
+    assert DeferredCap(id='stable', defer_loading=True).id == 'stable'
+
+
+async def test_plain_class_capability_can_use_class_metadata() -> None:
+    """A plain class subclass can declare metadata without dataclass or super calls."""
+
+    class DeferredCap(AbstractCapability[None]):
+        id = 'plain-deferred'
+        description = 'Plain class deferred capability.'
+        defer_loading = True
+
+    cap = DeferredCap()
+    capability_map, available_ids = await _registered_capability_context(cap)
+
+    assert capability_map == {'plain-deferred': cap}
+    assert 'plain-deferred' not in available_ids
+    assert cap.defer_loading is True
+    assert cap.get_description() == 'Plain class deferred capability.'
+
+
+async def test_custom_init_capability_can_initialize_metadata_without_post_init() -> None:
+    """Custom capability init can initialize metadata without a base-class ritual."""
+
+    class DeferredCap(AbstractCapability[None]):
+        def __init__(self, *, id: str | None = None, defer_loading: bool = False) -> None:
+            self.id = id
+            self.description = None
+            self.defer_loading = defer_loading
+
+    cap = DeferredCap(id='stable', defer_loading=True)
+    capability_map, available_ids = await _registered_capability_context(cap)
+
+    assert cap.id == 'stable'
+    assert cap.defer_loading is True
+    assert capability_map == {'stable': cap}
+    assert 'stable' not in available_ids
+
+    non_deferred_cap = DeferredCap()
+    non_deferred_capability_map, non_deferred_available_ids = await _registered_capability_context(non_deferred_cap)
+    assert non_deferred_cap.id is None
+    assert non_deferred_cap.description is None
+    assert non_deferred_cap.defer_loading is False
+    assert non_deferred_capability_map == {'deferred_cap': non_deferred_cap}
+    assert 'deferred_cap' in non_deferred_available_ids
+
+
+async def test_duplicate_explicit_capability_ids_set_after_construction_raise_at_run() -> None:
+    """Ids that only collide after construction escape the eager check, so run registration still rejects them."""
+
+    @dataclass
+    class FirstCap(AbstractCapability[None]):
+        pass
+
+    @dataclass
+    class SecondCap(AbstractCapability[None]):
+        pass
+
+    first = FirstCap(id='same')
+    second = SecondCap()  # no id at construction, so the eager check passes
+    agent = Agent(TestModel(), capabilities=[first, second])
+    second.id = 'same'  # collision introduced after construction
+
+    with pytest.raises(UserError, match="Capability id 'same' is used by multiple capabilities"):
+        await agent.run('hi')
+
+
+async def test_anonymous_non_deferred_capabilities_get_run_local_ids() -> None:
+    """Anonymous non-deferred capabilities are still present in run context."""
+
+    @dataclass
+    class PlainCap(AbstractCapability[None]):
+        pass
+
+    first = PlainCap()
+    second = PlainCap()
+    capability_map, available_ids = await _registered_capability_context(first, second)
+
+    assert list(capability_map) == ['plain_cap', 'plain_cap_2']
+    assert first.id is None
+    assert second.id is None
+    assert {'plain_cap', 'plain_cap_2'} <= available_ids
 
 
 # --- Node run lifecycle hook tests ---
@@ -7699,7 +10832,7 @@ async def test_prefix_tools_from_spec():
                 {
                     'PrefixTools': {
                         'prefix': 'search',
-                        'capability': {'BuiltinTool': {'kind': 'web_search'}},
+                        'capability': {'NativeTool': {'kind': 'web_search'}},
                     }
                 },
             ],
@@ -7727,7 +10860,7 @@ async def test_prefix_tools_from_spec():
 
 async def test_prefix_tools_from_spec_direct():
     """PrefixTools.from_spec works outside Agent.from_spec (no contextvar), using default registry."""
-    cap = PrefixTools.from_spec(prefix='ws', capability='WebSearch')  # pyright: ignore[reportArgumentType]
+    cap = PrefixTools.from_spec(prefix='ws', capability={'WebSearch': {'local': 'duckduckgo'}})  # pyright: ignore[reportArgumentType]
     assert isinstance(cap, PrefixTools)
     assert cap.prefix == 'ws'
 
@@ -7758,6 +10891,245 @@ async def test_prefix_tools_with_callable_toolset():
     agent = Agent(FunctionModel(respond), capabilities=[cap])
     result = await agent.run('list tools')
     assert result.output == 'dyn_dynamic_tool'
+
+
+async def test_prefix_tools_inherits_wrapped_metadata_for_registration():
+    """A wrapper with no id of its own delegates identity to the capability it wraps.
+
+    This is what lets a wrapper sit over a deferred capability without losing its deferral or
+    its place in the load catalog: the wrapper registers under the wrapped capability's id and
+    keeps `defer_loading` and `description`.
+    """
+    toolset = FunctionToolset[None]()
+    wrapped = Toolset(
+        toolset,
+        id='leaf-tools',
+        description='Leaf tool bundle.',
+        defer_loading=True,
+    )
+    cap = PrefixTools(wrapped=wrapped, prefix='leaf')
+
+    visited: list[AbstractCapability[None]] = []
+    cap.apply(visited.append)
+    capability_map, available_ids = await _registered_capability_context(cap)
+
+    assert cap.id == 'leaf-tools'
+    assert cap.defer_loading is True
+    assert cap.get_description() == 'Leaf tool bundle.'
+    assert capability_map == {'leaf-tools': cap}
+    # Deferred and not yet loaded, so it is registered but not available this turn.
+    assert 'leaf-tools' not in available_ids
+    assert visited == [cap]
+
+
+async def test_prefix_tools_can_override_metadata():
+    """A wrapper with explicit metadata becomes its own registered capability."""
+    wrapped = Toolset(FunctionToolset[None](), id='leaf-tools', description='Leaf tool bundle.', defer_loading=True)
+    cap = PrefixTools(
+        wrapped=wrapped,
+        prefix='leaf',
+        id='prefixed-leaf-tools',
+        description='Prefixed leaf tools.',
+        defer_loading=False,
+    )
+
+    visited: list[AbstractCapability[None]] = []
+    cap.apply(visited.append)
+    capability_map, available_ids = await _registered_capability_context(cap)
+
+    assert cap.id == 'prefixed-leaf-tools'
+    assert cap.description == 'Prefixed leaf tools.'
+    assert capability_map == {'prefixed-leaf-tools': cap}
+    assert 'prefixed-leaf-tools' in available_ids
+    assert cap.defer_loading is False
+    assert visited == [cap]
+
+
+async def test_prefix_tools_registration_inherits_or_overrides_wrapper_metadata():
+    """A wrapper inherits the wrapped capability's identity, unless it sets its own id."""
+
+    github = Capability[None](
+        id='github',
+        description='GitHub MCP server.',
+        defer_loading=True,
+    )
+
+    # No id of its own: inherit the wrapped capability's id, deferral, and description, so the
+    # deferred capability still shows up in the load catalog under its own id.
+    prefixed = PrefixTools(github, prefix='github')
+
+    registered, available_ids = await _registered_capability_context(prefixed)
+
+    assert registered['github'] is prefixed
+    assert 'github' not in available_ids
+    assert prefixed.id == 'github'
+    assert prefixed.defer_loading is True
+    assert prefixed.get_description() == 'GitHub MCP server.'
+
+    # An explicit id makes the wrapper its own capability: it no longer inherits the wrapped
+    # capability's id or deferral, though it still falls back to its description.
+    explicit_id = PrefixTools(github, prefix='github', id='github_prefixed')
+    registered, available_ids = await _registered_capability_context(explicit_id)
+
+    assert registered['github_prefixed'] is explicit_id
+    assert 'github_prefixed' in available_ids
+    assert explicit_id.defer_loading is False
+    assert explicit_id.get_description() == 'GitHub MCP server.'
+
+
+async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() -> None:
+    """Wrapping a deferred capability keeps it deferred through a full run.
+
+    Regression guard for metadata delegation: a wrapper with no id of its own must surface the
+    wrapped deferred capability in the load catalog and reveal its (prefixed) tools after
+    `load_capability`, rather than silently becoming an always-available capability.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools.',
+        toolsets=[toolset],
+        defer_loading=True,
+    )
+    wrapped = PrefixTools(refunds, prefix='refunds')
+
+    first_request_instructions: list[str | None] = []
+    available_per_turn: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_per_turn.append({td.name for td in info.function_tools if not td.defer_loading})
+
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            first_request = messages[0]
+            assert isinstance(first_request, ModelRequest)
+            first_request_instructions.append(first_request.instructions)
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='load')]
+            )
+
+        if not any(part.tool_name == 'refunds_lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='refunds_lookup_refund_policy',
+                        args={'order_id': 'order-1'},
+                        tool_call_id='lookup',
+                    )
+                ]
+            )
+
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[wrapped])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done'
+    # The deferred capability is surfaced in the catalog under the wrapped capability's id.
+    assert first_request_instructions == [
+        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        '- refunds: Refund policy tools.'
+    ]
+    # The prefixed tool is hidden until the capability is loaded, then becomes callable.
+    assert 'refunds_lookup_refund_policy' not in available_per_turn[0]
+    assert 'refunds_lookup_refund_policy' in available_per_turn[-1]
+
+
+async def test_prefix_tools_explicit_defer_loading_overrides_anonymous_wrapped() -> None:
+    """`PrefixTools(..., id='github', defer_loading=True)` over an anonymous wrapped
+    capability registers as deferred under the wrapper's own id, not the wrapped's."""
+    explicit_deferred = PrefixTools(
+        Capability[None](),
+        prefix='github',
+        id='github',
+        defer_loading=True,
+    )
+
+    registered, available_ids = await _registered_capability_context(explicit_deferred)
+
+    assert registered['github'] is explicit_deferred
+    assert 'github' not in available_ids
+    assert explicit_deferred.defer_loading is True
+
+
+async def test_prefix_tools_can_be_deferred():
+    """A deferred PrefixTools wrapper keeps its prefixed tools deferred until load."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    cap = PrefixTools(
+        wrapped=Toolset(
+            toolset,
+        ),
+        prefix='billing',
+        id='refunds',
+        description='Refund policy tools.',
+        defer_loading=True,
+    )
+    seen_tool_state: list[list[tuple[str, bool]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        if not any(isinstance(part, LoadCapabilityReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'refunds'},
+                        tool_call_id='load-refunds',
+                    )
+                ]
+            )
+
+        if not any(part.tool_name == 'billing_lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='billing_lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ]
+            )
+
+        refund_result = next(part.content for part in tool_returns if part.tool_name == 'billing_lookup_refund_policy')
+        return make_text_response(f'done: {refund_result}')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done: order-123: refund allowed'
+    assert seen_tool_state == snapshot(
+        [
+            [('load_capability', False), ('billing_lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', False), ('search_tools', False)],
+            [('load_capability', False), ('billing_lookup_refund_policy', False), ('search_tools', False)],
+        ]
+    )
 
 
 async def test_prefix_tools_convenience_method():
@@ -7839,6 +11211,34 @@ async def test_wrapper_capability_for_run_replaces():
     result = await agent.run('Hello')
     # for_run switches to toolset_b
     assert 'tool_b' in result.output
+
+
+async def test_wrapper_capability_for_run_preserves_explicit_metadata() -> None:
+    """WrapperCapability.for_run preserves explicit wrapper metadata."""
+
+    @dataclass
+    class SwitchCap(AbstractCapability[None]):
+        name: str = 'before'
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return SwitchCap(name='after')
+
+    wrapper = WrapperCapability(
+        wrapped=SwitchCap(),
+        id='explicit-wrapper',
+        description='Explicit wrapper metadata.',
+        defer_loading=False,
+    )
+
+    result = await wrapper.for_run(_build_run_context())
+
+    assert result is not wrapper
+    assert isinstance(result, WrapperCapability)
+    assert result.id == 'explicit-wrapper'
+    assert result.description == 'Explicit wrapper metadata.'
+    assert result.defer_loading is False
+    assert isinstance(result.wrapped, SwitchCap)
+    assert result.wrapped.name == 'after'
 
 
 async def test_wrapper_capability_has_wrap_node_run():
@@ -8306,7 +11706,7 @@ class TestModelRetryFromHooks:
         )
 
     async def test_after_model_request_model_retry_max_retries(self):
-        """after_model_request raises ModelRetry repeatedly — hits max_result_retries."""
+        """after_model_request raises ModelRetry repeatedly — hits output_retries."""
 
         @dataclass
         class AlwaysRetryCap(AbstractCapability[Any]):
@@ -8322,9 +11722,9 @@ class TestModelRetryFromHooks:
         agent = Agent(
             FunctionModel(simple_model_function),
             capabilities=[AlwaysRetryCap()],
-            output_retries=2,
+            retries={'output': 2},
         )
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
 
     async def test_after_model_request_model_retry_streaming(self):
@@ -8650,8 +12050,10 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], output_retries=1)
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries'):
+        agent = Agent(
+            FunctionModel(simple_model_function), capabilities=[WrapRetrySkipErrorCap()], retries={'output': 1}
+        )
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
             await agent.run('hello')
         assert not on_error_called
 
@@ -8850,7 +12252,7 @@ class TestModelRetryFromHooks:
                 raise ModelRetry('Not ready to execute, try again')
             return args
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[hooks], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9177,7 +12579,7 @@ class TestModelRetryFromHooks:
                 on_error_called = True
                 raise error
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[WrapExecRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9253,7 +12655,7 @@ class TestModelRetryFromHooks:
             ) -> Any:
                 raise ModelRetry('Tool errored, please retry')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[ErrorRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9327,7 +12729,7 @@ class TestModelRetryFromHooks:
             ) -> dict[str, Any]:
                 raise ModelRetry('Validated args are bad')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[AfterValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9401,7 +12803,7 @@ class TestModelRetryFromHooks:
             ) -> str | dict[str, Any]:
                 raise ModelRetry('Args look bad before validation')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries=2)
+        agent = Agent(FunctionModel(model_fn), capabilities=[BeforeValRetryCap()], retries={'tools': 2, 'output': 2})
 
         @agent.tool_plain
         def my_tool() -> str:
@@ -9894,37 +13296,34 @@ def test_ordering_preserves_user_order():
 
 
 def test_ordering_nested_combined():
-    """Ordering from leaves inside a nested CombinedCapability is respected.
+    """Leaves of a nested `CombinedCapability` participate as siblings in the outer sort.
 
-    When a CombinedCapability is nested inside another, its leaves' ordering
-    constraints are merged and applied to the outer sort. Leaves without
-    ordering constraints are skipped during the merge.
+    `CombinedCapability` auto-flattens nested instances so each leaf is sorted
+    independently rather than as a group. Here `OutermostCap` (inside `inner`)
+    sorts to the front; its former sibling `PlainCapB` is unconstrained.
     """
-    # OutermostCap declares position='outermost'; PlainCapB has no ordering.
-    # The merged effective ordering for 'inner' should be position='outermost',
-    # placing it before PlainCapA despite being listed second.
     inner = CombinedCapability([PlainCapB(), OutermostCap()])
     combined = CombinedCapability([PlainCapA(), inner])
-    assert combined.capabilities[0] is inner
+    # `inner` is splatted; `OutermostCap` sorts first.
+    assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, PlainCapB]
 
 
 def test_ordering_nested_combined_no_constraints():
-    """A nested CombinedCapability with no ordering leaves is treated as unconstrained."""
+    """A nested `CombinedCapability` with no ordering leaves is splatted as flat siblings."""
     inner = CombinedCapability([PlainCapA(), PlainCapB()])
     combined = CombinedCapability([inner, OutermostCap()])
-    # OutermostCap first (has ordering), inner second (no constraints → unconstrained)
-    assert combined.capabilities[0].__class__ is OutermostCap
-    assert combined.capabilities[1] is inner
+    # `OutermostCap` first; `inner`'s leaves follow as flat siblings in their original order.
+    assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, PlainCapB]
 
 
 def test_ordering_nested_combined_wraps_without_position():
-    """A nested CombinedCapability with wraps constraints (but no position) merges correctly."""
+    """A `wraps` constraint on a leaf inside a nested `CombinedCapability` applies to that leaf only."""
     inner = CombinedCapability([PlainCapB(), WrapsACap()])
-    # WrapsACap has wraps=[PlainCapA] but no position.
-    # The nested group inherits that constraint, so it sorts before PlainCapA.
     combined = CombinedCapability([PlainCapA(), inner])
-    assert combined.capabilities[0] is inner
-    assert combined.capabilities[1].__class__ is PlainCapA
+    # `WrapsACap` is splatted and sorts before `PlainCapA`; `PlainCapB` is unconstrained
+    # and keeps its insertion order (it sits between PlainCapA and WrapsACap in the
+    # post-flatten input list, so the topo sort surfaces it first as ready-without-deps).
+    assert [type(c) for c in combined.capabilities] == [PlainCapB, WrapsACap, PlainCapA]
 
 
 def test_ordering_single_capability():
@@ -9956,20 +13355,29 @@ def test_ordering_cycle_detection():
         CombinedCapability([CycleA(), CycleB()])
 
 
-def test_ordering_conflicting_positions_in_nested():
-    """Conflicting positions in a nested CombinedCapability raise UserError."""
+def test_ordering_mixed_positions_in_nested():
+    """Mixed positions in a nested `CombinedCapability` work — leaves are splatted into the outer sort."""
     inner = CombinedCapability([OutermostCap(), InnermostCap()])
-    with pytest.raises(UserError, match='Conflicting positions in nested CombinedCapability'):
-        CombinedCapability([inner, PlainCapA()])
+    combined = CombinedCapability([inner, PlainCapA()])
+    # `OutermostCap` first (outermost tier), `PlainCapA` middle, `InnermostCap` last (innermost tier).
+    assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, InnermostCap]
 
 
-def test_ordering_wrapper_capability_recurses():
-    """Ordering constraints on capabilities inside a WrapperCapability are preserved."""
-    wrapped = WrapperCapability(wrapped=OutermostCap())
-    # The WrapperCapability wraps an OutermostCap; ordering sees through via apply()
-    # and picks up OutermostCap's position='outermost' constraint.
-    combined = CombinedCapability([PlainCapA(), wrapped])
-    assert combined.capabilities[0] is wrapped
+def test_ordering_conflicting_positions_in_custom_nested_capability():
+    """A custom capability tree cannot collapse outermost and innermost leaves into one ordered group."""
+
+    @dataclass
+    class NestedCapabilityGroup(AbstractCapability[Any]):
+        leaves: tuple[AbstractCapability[Any], ...]
+
+        def apply(self, visitor: Callable[[AbstractCapability[Any]], None]) -> None:
+            for leaf in self.leaves:
+                leaf.apply(visitor)
+
+    nested = NestedCapabilityGroup((OutermostCap(), InnermostCap()))
+
+    with pytest.raises(UserError, match='Conflicting positions among nested leaves'):
+        CombinedCapability([nested, PlainCapA()])
 
 
 def test_ordering_hooks_ordering_parameter():
@@ -10136,14 +13544,12 @@ async def test_next_node_raises_on_error_marker():
     agent = Agent(FunctionModel(failing_then_ok_model))
     async with agent.iter('hello') as agent_run:
         node = agent_run.next_node
-        while not isinstance(node, End):
-            try:
-                node = await agent_run.next(node)
-            except ValueError:
-                # After an unrecovered error, next_node should re-raise
-                with pytest.raises(ValueError, match='model failure'):
-                    _ = agent_run.next_node
-                break
+        node = cast(Any, await agent_run.next(cast(Any, node)))
+        with pytest.raises(ValueError, match='model failure'):
+            await agent_run.next(node)
+        # After an unrecovered error, next_node should re-raise
+        with pytest.raises(ValueError, match='model failure'):
+            _ = agent_run.next_node
 
 
 async def test_on_node_run_error_returns_end():
@@ -10221,6 +13627,1281 @@ async def test_after_node_run_node_to_end():
     result = await agent.run('hello')
     assert result.output == 'short-circuited'
     assert model_call_count == 1
+
+
+# ===== Pending Message Queue Tests =====
+
+
+async def test_enqueue_asap_message_from_tool():
+    """`'asap'` messages enqueued from a tool are injected before the next model request."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('Injected asap message')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'done'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_msg',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Injected asap message', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_when_idle_message_prevents_end():
+    """`'when_idle'` messages prevent the agent from ending and are drained into a new ModelRequest."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        elif call_count == 2:
+            # Agent produces final result, but follow-up is pending
+            return ModelResponse(
+                parts=[TextPart(content='premature end')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        else:
+            # After follow-up is drained, agent produces real final result
+            return ModelResponse(
+                parts=[TextPart(content='final answer after follow-up')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_follow_up(ctx: RunContext[None]) -> str:
+        ctx.enqueue('Follow-up context', priority='when_idle')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'final answer after follow-up'
+    assert call_count == 3
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_follow_up',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='premature end')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Follow-up context', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final answer after follow-up')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_when_idle_redirects_after_output_tool_end():
+    """A `when_idle` message redirects the run even when it would end via an output tool.
+
+    The run terminates when the model calls an output tool (`ToolOutput` mode), which produces
+    an `End` from `CallToolsNode`. The drain's `after_node_run` still sees that `End` and
+    redirects into a fresh request, so the agent gets another turn after the structured output —
+    and the final `result.output` comes from that later turn.
+    """
+
+    class Answer(BaseModel):
+        value: int
+
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        output_tool = info.output_tools[0].name
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        if call_count == 2:
+            # Would end the run via the output tool, but a `when_idle` message is pending.
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=output_tool, args='{"value": 1}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        # After the follow-up is drained, the model produces the real final output.
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=output_tool, args='{"value": 2}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn), output_type=Answer)
+
+    @agent.tool
+    def inject_follow_up(ctx: RunContext[None]) -> str:
+        ctx.enqueue('Follow-up context', priority='when_idle')
+        return 'ok'
+
+    result = await agent.run('Hello')
+
+    assert result.output == Answer(value=2)
+    assert call_count == 3
+    # The `when_idle` follow-up lands as its own request after the first (superseded) output-tool
+    # call, redirecting the run so the second output-tool call produces the real output.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_follow_up',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"value": 1}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Follow-up context', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"value": 2}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_from_agent_run():
+    """Messages can be enqueued from external code via AgentRun.enqueue."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(
+            parts=[TextPart(content=f'response {call_count}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with agent.iter('Hello') as agent_run:
+        assert agent_run.pending_messages == []
+        # Enqueue a when_idle message from external code before iteration
+        agent_run.enqueue('External follow-up', priority='when_idle')
+        assert len(agent_run.pending_messages) == 1
+        # Use next() to drive iteration so after_node_run fires
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            node = await agent_run.next(node)
+
+    assert agent_run.result is not None
+    assert call_count == 2  # First response triggers End, follow-up prevents it, second response is final
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='response 1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='External follow-up', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='response 2')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bare_async_for_raises_with_undrained_pending_messages():
+    """Bare `async for` reaching End with undrained `when_idle` messages raises rather than stranding them.
+
+    `when_idle` (and end-of-step `asap` leftovers) drain in `after_node_run`, which bare
+    iteration skips — so they'd be silently lost. `__anext__` raises
+    `UndrainedPendingMessagesError` when it would yield the `End` node with a non-empty queue,
+    pointing the user at `next()` driving.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart(content='done')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with agent.iter('hi') as agent_run:
+        agent_run.enqueue('stranded follow-up', priority='when_idle')
+        with pytest.raises(UndrainedPendingMessagesError, match='undrained pending messages'):
+            async for _ in agent_run:
+                pass
+
+        # The message was never delivered: it's still queued.
+        assert len(agent_run.pending_messages) == 1
+
+
+async def test_pending_messages_accessible_on_run_context():
+    """RunContext.pending_messages is accessible and initially empty."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='check_queue', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def check_queue(ctx: RunContext[None]) -> str:
+        # The queue must be live (mutations from inside a tool reach the drain).
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 0
+        ctx.enqueue('observed', priority='asap')
+        assert len(ctx.pending_messages) == 1
+        return 'done'
+
+    result = await agent.run('Test')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='check_queue', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='check_queue',
+                        content='done',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='observed', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_with_no_args_is_a_noop():
+    """`ctx.enqueue()` and `agent_run.enqueue()` with no content are silent no-ops.
+
+    Producers that conditionally enqueue (e.g. "announce if new tools were discovered")
+    can call `enqueue(*maybe_items)` without guarding for the empty case — `enqueue`
+    simply doesn't append a `PendingMessage` when there's nothing to send.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='from_tool', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def from_tool(ctx: RunContext[None]) -> str:
+        ctx.enqueue()  # no-op, no exception
+        assert ctx.pending_messages == []
+        return 'ok'
+
+    async with agent.iter('hi') as agent_run:
+        agent_run.enqueue()  # no-op, no exception
+        assert agent_run.pending_messages == []
+        async for _ in agent_run:
+            pass
+
+
+async def test_enqueue_coerces_string_to_user_prompt():
+    """A bare string passed to `enqueue` is wrapped in a `UserPromptPart`."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('steering as plain string')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart) and part.content == 'steering as plain string'
+    ]
+    assert len(injected) == 1, 'string-coerced enqueue did not land as a UserPromptPart'
+
+
+async def test_enqueue_accepts_multimodal_user_content():
+    """Adjacent user-content args (text + multi-modal) are gathered into one `UserPromptPart`."""
+    image = ImageUrl(url='https://example.com/image.png')
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('look at this', image)
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = [
+        part
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart) and part.content == ['look at this', image]
+    ]
+    assert len(injected) == 1
+
+
+async def test_enqueue_accepts_model_request_passthrough():
+    """A full `ModelRequest` is enqueued verbatim, preserving `instructions`/`metadata`.
+
+    Two passthroughs cover both branches of the fill-in-if-unset stamping logic:
+    one with `timestamp`/`run_id` unset (drain stamps them); one with both set
+    (drain leaves them alone).
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    unstamped = ModelRequest(
+        parts=[UserPromptPart(content='wire-level payload')],
+        instructions='do this carefully',
+        metadata={'origin': 'webhook-42'},
+    )
+    preset_timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    prestamped = ModelRequest(
+        parts=[UserPromptPart(content='already stamped')],
+        instructions='preserve me',
+        timestamp=preset_timestamp,
+        run_id='caller-run-id',
+        conversation_id='caller-conv-id',
+    )
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue(unstamped)
+        ctx.enqueue(prestamped)
+        return 'ok'
+
+    result = await agent.run('Hello')
+
+    injected_unstamped = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest) and msg.instructions == 'do this carefully'
+    )
+    assert injected_unstamped.metadata == {'origin': 'webhook-42'}
+    # Drain should have stamped timestamp/run_id/conversation_id since the user didn't set them.
+    assert injected_unstamped.timestamp is not None
+    assert injected_unstamped.run_id is not None
+    assert injected_unstamped.conversation_id is not None
+
+    injected_prestamped = next(
+        msg for msg in result.all_messages() if isinstance(msg, ModelRequest) and msg.instructions == 'preserve me'
+    )
+    # Producer-supplied timestamp/run_id/conversation_id are preserved (drain doesn't overwrite).
+    assert injected_prestamped.timestamp == preset_timestamp
+    assert injected_prestamped.run_id == 'caller-run-id'
+    assert injected_prestamped.conversation_id == 'caller-conv-id'
+
+
+def test_pending_message_drain_capability_is_not_spec_constructible():
+    """`PendingMessageDrainCapability` is auto-injected only; can't be in an `AgentSpec`."""
+    from pydantic_ai.capabilities._pending_messages import PendingMessageDrainCapability
+
+    assert PendingMessageDrainCapability.get_serialization_name() is None
+
+
+def test_pending_message_allows_empty_request():
+    """`PendingMessage` doesn't validate its `messages`; empty-parts requests are tolerated.
+
+    `enqueue()` already filters out the no-args case (no `PendingMessage` is appended).
+    An empty `ModelRequest` reaching the queue is harmless — the drain stamps and forwards
+    it, and downstream wire-merging absorbs zero-part messages as a natural no-op.
+    """
+    from pydantic_ai._enqueue import PendingMessage
+
+    msg = PendingMessage(messages=[ModelRequest(parts=[])])
+    assert msg.priority == 'asap'
+    assert msg.messages[0].parts == []
+
+
+def test_enqueue_without_live_queue_raises():
+    """`ctx.enqueue` raises when the `RunContext` isn't backed by a running agent's queue.
+
+    Synthetic contexts (e.g. the one `Agent.system_prompt_parts` builds to resolve system
+    prompts outside a run) have no queue to drain to, so enqueue fails loudly instead of
+    silently dropping the message.
+    """
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[])
+    assert ctx.pending_messages is None
+    with pytest.raises(UserError, match='only available during an agent run'):
+        ctx.enqueue('this has nowhere to go')
+
+
+async def test_enqueue_parts_style_calls_produce_one_request_per_call():
+    """Each `enqueue` call produces its own `ModelRequest` in history.
+
+    Each `enqueue` call pre-packages its content into a `ModelRequest` at enqueue time,
+    so two calls produce two `PendingMessage`s with two separate `ModelRequest`s. The
+    history reflects per-call structure; wire-level `_clean_message_history` still merges
+    adjacent compatible `ModelRequest`s so the model sees one turn. Producers wanting a
+    single message should pass a single `ModelRequest(parts=[...])` themselves.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('first hint')
+        ctx.enqueue('second hint')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    drained = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content in ('first hint', 'second hint') for p in msg.parts)
+    ]
+    assert len(drained) == 2, 'expected one ModelRequest per enqueue call'
+    assert [p.content for msg in drained for p in msg.parts if isinstance(p, UserPromptPart)] == [
+        'first hint',
+        'second hint',
+    ]
+
+
+async def test_enqueue_passthrough_stays_separate_from_parts_style():
+    """A passthrough `ModelRequest` stays its own message even when surrounded by parts-style enqueues."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_msg', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[None]) -> str:
+        ctx.enqueue('before')
+        ctx.enqueue(
+            ModelRequest(parts=[UserPromptPart(content='passthrough')], instructions='careful'),
+        )
+        ctx.enqueue('after')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    # Three drained requests: synthesized(["before"]), passthrough, synthesized(["after"]).
+    drained = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after') for p in msg.parts)
+    ]
+    assert len(drained) == 3
+    contents = [
+        next(
+            p.content
+            for p in r.parts
+            if isinstance(p, UserPromptPart) and p.content in ('before', 'passthrough', 'after')
+        )
+        for r in drained
+    ]
+    assert contents == ['before', 'passthrough', 'after']
+    # Passthrough preserved its instructions.
+    assert drained[1].instructions == 'careful'
+    assert drained[0].instructions is None
+    assert drained[2].instructions is None
+
+
+async def test_enqueue_system_prompt_part():
+    """A bare `SystemPromptPart` is coalesced into a `ModelRequest` and delivered.
+
+    Now that mid-conversation `SystemPromptPart`s are rendered inline (not hoisted) on all
+    providers, `enqueue` accepts request parts directly — no `ModelRequest` wrapper needed.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='announce', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def announce(ctx: RunContext[None]) -> str:
+        ctx.enqueue(SystemPromptPart(content='New tools are now available.'))
+        return 'ok'
+
+    result = await agent.run('Hello')
+    injected = next(
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, SystemPromptPart) and p.content == 'New tools are now available.' for p in msg.parts)
+    )
+    assert injected is not None
+
+
+async def test_enqueue_interleaved_response_and_request():
+    """One `enqueue` call can inject an interleaved `ModelResponse` + `ModelRequest` exchange.
+
+    This is the synthetic "tool-search call + result" shape (a `ModelResponse` carrying the call
+    followed by a `ModelRequest` carrying the return). Both land in history in order, and the
+    trailing request is what the agent responds to next.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject_exchange', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    synthetic_response = ModelResponse(
+        parts=[TextPart(content='synthetic prior turn')],
+        usage=RequestUsage(input_tokens=1, output_tokens=1),
+    )
+
+    @agent.tool
+    def inject_exchange(ctx: RunContext[None]) -> str:
+        ctx.enqueue(
+            synthetic_response,
+            ModelRequest(parts=[UserPromptPart(content='follow-up after synthetic turn')]),
+            priority='when_idle',
+        )
+        return 'ok'
+
+    result = await agent.run('Hello')
+    # The synthetic response is appended to history immediately before its paired request.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='inject_exchange', args='{}', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='inject_exchange',
+                        content='ok',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='synthetic prior turn')],
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='follow-up after synthetic turn', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_rejects_content_not_ending_in_request():
+    """Enqueued content must end in a `ModelRequest`; a lone `ModelResponse` is rejected.
+
+    The agent needs a request to respond to — content that ends in a `ModelResponse` (with no
+    trailing request/part-style items) would leave nothing for the model to react to.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='from_tool', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    lone_response = ModelResponse(
+        parts=[TextPart(content='synthetic')], usage=RequestUsage(input_tokens=1, output_tokens=1)
+    )
+
+    @agent.tool
+    def from_tool(ctx: RunContext[None]) -> str:
+        with pytest.raises(UserError, match='must end with a `ModelRequest`'):
+            ctx.enqueue(lone_response)
+        return 'ok'
+
+    async with agent.iter('hi') as agent_run:
+        with pytest.raises(UserError, match='must end with a `ModelRequest`'):
+            agent_run.enqueue(lone_response)
+        async for _ in agent_run:
+            pass
+
+
+async def test_drain_rejects_directly_queued_content_not_ending_in_request():
+    """Directly appending a malformed `PendingMessage` raises a `UserError` at end-of-run drain.
+
+    `enqueue` enforces the "ends in a `ModelRequest`" rule up front, but `RunContext.pending_messages`
+    is public, so a producer can append a `PendingMessage` directly. The end-of-run drain catches a
+    request-less message with a helpful `UserError` rather than a bare assertion.
+    """
+    from pydantic_ai._enqueue import PendingMessage
+
+    lone_response = ModelResponse(
+        parts=[TextPart(content='synthetic')], usage=RequestUsage(input_tokens=1, output_tokens=1)
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+            return ModelResponse(parts=[TextPart(content='done')], usage=RequestUsage(input_tokens=10, output_tokens=5))
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='queue_bad', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def queue_bad(ctx: RunContext[None]) -> str:
+        assert ctx.pending_messages is not None
+        ctx.pending_messages.append(PendingMessage(messages=[lone_response], priority='when_idle'))
+        return 'ok'
+
+    with pytest.raises(UserError, match='must end with a `ModelRequest`'):
+        await agent.run('hi')
+
+
+async def test_enqueue_asap_with_rich_message_history_tail():
+    """`'asap'` enqueue lands as its own `ModelRequest` in history *and* gets wire-merged into the rich tail.
+
+    The history keeps the un-merged view (drain's request is a separate `ModelRequest`
+    after the rich tail) so `all_messages()` reflects per-call structure. On the wire,
+    `_clean_message_history` merges the two adjacent `ModelRequest`s and sorts
+    `ToolReturnPart`/`RetryPromptPart` first — non-tool parts keep arrival order, so the
+    enqueued content lands at the *end* of the merged turn (not interleaved between
+    existing parts). Captures the `messages` arg `FunctionModel` actually received to
+    validate the wire-level merge through the public path.
+    """
+    captured_wire_messages: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured_wire_messages.append(messages)
+        return ModelResponse(
+            parts=[TextPart(content='done')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='original prompt')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+            model_name='function:model_fn:',
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1'),
+                UserPromptPart(content='follow-up question'),
+            ],
+        ),
+    ]
+
+    async with agent.iter(message_history=history) as agent_run:
+        agent_run.enqueue('injected after rich tail')
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    # `all_messages()` keeps the un-merged view (drain's request is a separate
+    # `ModelRequest` after the rich tail).
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1', timestamp=IsDatetime()),
+                    UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='injected after rich tail', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # And the wire-level view: the rich tail and the drained request merged into one
+    # `ModelRequest`, with `ToolReturnPart` first and the user-prompt parts in arrival
+    # order (so the enqueued content lands at the end, not interleaved).
+    assert len(captured_wire_messages) == 1
+    assert captured_wire_messages[0] == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='original prompt', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='hint', args='{}', tool_call_id='call-1')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='hint', content='ok', tool_call_id='call-1', timestamp=IsDatetime()),
+                    UserPromptPart(content='follow-up question', timestamp=IsDatetime()),
+                    UserPromptPart(content='injected after rich tail', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
+    """`'asap'` arriving during the final step (after its `before_model_request` drain) still gets delivered.
+
+    Simulates the background-tools pattern: a long-running task completes *during* what
+    would have been the model's final response. The enqueue happens after the step's
+    `before_model_request` drain has already fired, so the message can only be picked up
+    by the end-of-run drain (matching pi-mono's drain-on-end). Without this fallback the
+    message would be lost. `'asap'` semantically means "deliver at the earliest opportunity"
+    — including redirecting if the agent would otherwise terminate before another call.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[TextPart(content='would-have-ended')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[TextPart(content='final after late asap')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    @dataclass
+    class BackgroundTaskCap(AbstractCapability[Any]):
+        """Simulates a background task that completes mid-model-response on the first call only."""
+
+        fired: bool = False
+
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if not self.fired:
+                ctx.enqueue('background task result', priority='asap')
+                self.fired = True
+            return response
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTaskCap()])
+
+    result = await agent.run('Hello')
+    assert result.output == 'final after late asap'
+    assert call_count == 2
+    # The 'asap' message landed in its own ModelRequest before the final response,
+    # not lost despite the agent producing a no-tool-call response.
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='would-have-ended')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='background task result', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='final after late asap')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                model_name='function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_enqueue_when_idle_drains_after_leftover_asap():
+    """If both `'asap'` and `'when_idle'` are queued at end-of-run, `'asap'` drains first."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Only fire enqueues once.
+        already_enqueued = any(
+            isinstance(p, UserPromptPart) and p.content in ('A', 'B')
+            for msg in messages
+            if isinstance(msg, ModelRequest)
+            for p in msg.parts
+        )
+        # If we've already seen our injected messages, just terminate.
+        if already_enqueued:
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='inject', args='{}')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject(ctx: RunContext[None]) -> str:
+        ctx.enqueue('B', priority='when_idle')
+        ctx.enqueue('A', priority='asap')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    # Both A and B should appear in history. `'asap'` (A) drains in `before_model_request`
+    # before the second call. `'when_idle'` (B) drains at end-of-run when the second
+    # response has no tool calls.
+    requests_with_injected = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(isinstance(p, UserPromptPart) and p.content in ('A', 'B') for p in msg.parts)
+    ]
+    contents = [
+        [p.content for p in r.parts if isinstance(p, UserPromptPart) and p.content in ('A', 'B')]
+        for r in requests_with_injected
+    ]
+    assert contents == [['A'], ['B']], f'expected A before B in separate requests, got {contents}'
+
+
+async def test_enqueue_priorities_stay_separate_when_both_drain_at_end_of_run():
+    """When both `'asap'` and `'when_idle'` parts-style payloads drain together at end-of-run,
+    they land in separate `ModelRequest`s — the priority split stays visible in history.
+
+    Reaches the case Devin flagged: a tool enqueues `'when_idle'` (which sits until
+    end-of-run), and a capability `after_model_request` hook enqueues `'asap'` during the
+    final step (after that step's `before_model_request` drain has already fired). Both
+    arrive at `after_node_run`. Without the per-priority split they'd merge into one
+    synthesized request, blurring the priority distinction in the persisted history.
+    On the wire `_clean_message_history` still merges them for the model.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='inject', args='{}')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        if call_count == 2:
+            return ModelResponse(
+                parts=[TextPart(content='would-have-ended')],
+                usage=RequestUsage(input_tokens=10, output_tokens=5),
+            )
+        return ModelResponse(
+            parts=[TextPart(content='final')],
+            usage=RequestUsage(input_tokens=10, output_tokens=5),
+        )
+
+    @dataclass
+    class LateAsapCap(AbstractCapability[Any]):
+        """Enqueues an `'asap'` message during `after_model_request` of the no-tool-call step.
+
+        Fires after the step's `before_model_request` drain, so the message can only be
+        delivered via the end-of-run drain in `after_node_run`.
+        """
+
+        fired: bool = False
+
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if not self.fired and any(
+                isinstance(p, TextPart) and p.content == 'would-have-ended' for p in response.parts
+            ):
+                ctx.enqueue('asap-from-cap')
+                self.fired = True
+            return response
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[LateAsapCap()])
+
+    @agent.tool
+    def inject(ctx: RunContext[None]) -> str:
+        ctx.enqueue('when-idle-from-tool', priority='when_idle')
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert result.output == 'final'
+
+    # Find the two end-of-run drained requests: one with the 'asap' content, one with 'when_idle'.
+    drained = [
+        msg
+        for msg in result.all_messages()
+        if isinstance(msg, ModelRequest)
+        and any(
+            isinstance(p, UserPromptPart) and p.content in ('asap-from-cap', 'when-idle-from-tool') for p in msg.parts
+        )
+    ]
+    contents = [
+        next(
+            p.content
+            for p in r.parts
+            if isinstance(p, UserPromptPart) and p.content in ('asap-from-cap', 'when-idle-from-tool')
+        )
+        for r in drained
+    ]
+    assert contents == ['asap-from-cap', 'when-idle-from-tool'], (
+        f'asap and when_idle should land in separate ModelRequests with asap first, got {contents}'
+    )
+    # Each priority bucket got its own ModelRequest (not merged into one).
+    assert all(len([p for p in r.parts if isinstance(p, UserPromptPart)]) == 1 for r in drained)
 
 
 # --- Output hook tests ---
@@ -12948,8 +17629,6 @@ class TestStreamingOutputHooks:
 
         hook_calls: list[tuple[str, bool]] = []
 
-        hook_calls: list[tuple[str, bool]] = []
-
         async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
             # Stream the JSON response in chunks
             yield {0: DeltaToolCall(name='final_result', json_args='{"val')}
@@ -13195,7 +17874,7 @@ class TestOutputHookEdgeCases:
             await toolset.call_tool(tool_name, {}, ctx, tool)
 
         with pytest.raises(NotImplementedError, match='validate_output_tool_call'):
-            asyncio.get_event_loop().run_until_complete(run())
+            asyncio.run(run())
 
     def test_hooks_on_output_process_via_hooks_class(self):
         """Test wrap_output_process via Hooks decorator API."""
@@ -13246,8 +17925,6 @@ class TestErrorHookCoveragePaths:
         @dataclass
         class BareCap(AbstractCapability[Any]):
             """Has no hook overrides — uses all defaults."""
-
-            pass
 
         agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[BareCap()])
         result = agent.run_sync('hello')
@@ -16171,6 +20848,95 @@ async def test_dynamic_capability_returning_combined() -> None:
     assert fired == ['A', 'B']
 
 
+async def test_dynamic_deferred_capability_returned_from_custom_init_requires_stable_id() -> None:
+    """Deferred capability validation also catches custom init objects returned at run time."""
+
+    @dataclass(init=False)
+    class CustomInitDeferredCap(AbstractCapability[None]):
+        def __init__(self) -> None:
+            self.defer_loading = True
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return CustomInitDeferredCap()
+
+    agent = Agent(FunctionModel(lambda _messages, _info: make_text_response('done')), capabilities=[factory])
+
+    with pytest.raises(UserError, match='stable explicit `id` values'):
+        await agent.run('hi')
+
+
+async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_tools() -> None:
+    """A loaded dynamic deferred capability exposes tools from the resolved capability."""
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return Capability[None](
+            id='dynamic-refunds',
+            description='Refund policy tools.',
+            toolsets=[toolset],
+            defer_loading=True,
+        )
+
+    seen_tool_state: list[list[tuple[str, bool]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_state.append([(t.name, bool(t.defer_loading)) for t in info.function_tools])
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+        if not any(
+            isinstance(part, LoadCapabilityReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'dynamic-refunds'},
+                        tool_call_id='load-dynamic-refunds',
+                    )
+                ]
+            )
+
+        if not any(part.tool_name == 'lookup_refund_policy' for part in tool_returns):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='lookup_refund_policy',
+                        args={'order_id': 'order-123'},
+                        tool_call_id='lookup-refund',
+                    )
+                ]
+            )
+
+        refund_result = next(part.content for part in tool_returns if part.tool_name == 'lookup_refund_policy')
+        return make_text_response(f'done: {refund_result}')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[factory])
+    result = await agent.run('Can I get a refund?')
+
+    assert result.output == 'done: order-123: refund allowed'
+    assert seen_tool_state == snapshot(
+        [
+            [('load_capability', False), ('lookup_refund_policy', True), ('search_tools', False)],
+            [('load_capability', False), ('lookup_refund_policy', False), ('search_tools', False)],
+            [('load_capability', False), ('lookup_refund_policy', False), ('search_tools', False)],
+        ]
+    )
+
+
 async def test_dynamic_capability_in_run_call() -> None:
     """`agent.run(capabilities=[factory])` accepts callables as well."""
     calls = 0
@@ -16237,6 +21003,17 @@ async def test_dynamic_capability_wraps_func_in_constructor() -> None:
     result = await agent.run('hi')
     request = next(m for m in result.all_messages() if isinstance(m, ModelRequest))
     assert request.instructions == 'Label is x.'
+
+
+def test_dynamic_capability_rejects_wrapper_fields() -> None:
+    """`defer_loading` on the wrapper would otherwise be silently ignored — reject at construction."""
+    from pydantic_ai.capabilities import DynamicCapability
+
+    def factory(ctx: RunContext[None]) -> AbstractCapability[Any]:
+        return _RecordingCapability(label='x')  # pragma: no cover
+
+    with pytest.raises(UserError, match='not supported on `DynamicCapability`'):
+        DynamicCapability(capability_func=factory, defer_loading=True)
 
 
 # endregion

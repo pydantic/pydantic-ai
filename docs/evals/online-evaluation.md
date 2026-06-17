@@ -35,7 +35,7 @@ async def summarize(text: str) -> str:
     return f'Summary of: {text}'
 ```
 
-Wire up OTel export (e.g. [`logfire.configure()`](../logfire.md#using-logfire)) elsewhere in your application startup so that the emitted `gen_ai.evaluation.result` events reach your backend.
+Wire up OTel export (e.g. [`logfire.configure()`](../logfire.md#using-logfire)) elsewhere in your application startup so that the emitted `gen_ai.evaluation.result` events reach your backend. When using [Pydantic Logfire](https://pydantic.dev/docs/logfire/evaluate/live-evals/), these events surface in the **Live Evaluations** view, where you can browse results by target, drill into the originating trace, and watch scores over a time window.
 
 Each decorated call emits one `gen_ai.evaluation.result` OTel event per evaluator result, following the [OTel GenAI evaluation semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/#event-gen_aievaluationresult). This mirrors how offline evaluation emits OTel spans via `logfire.span`: if any OTel SDK is configured in the process (via [`logfire.configure()`](../logfire.md#using-logfire), the OTel SDK directly, or a vendor instrumentation), events flow to your backend; if not, emission is a cheap no-op.
 
@@ -231,7 +231,7 @@ config = OnlineEvalConfig(emit_otel_events=False)
 
 #### Evaluator Versioning
 
-Set `evaluator_version` as a class attribute on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to stamp every result it emits with a version string — surfaced as `gen_ai.evaluation.evaluator.version` on emitted events and as `evaluator_version` on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
+Override [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to stamp every result it emits with a version string — surfaced as `gen_ai.evaluation.evaluator.version` on emitted events and as `evaluator_version` on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
 
 ```python
 from dataclasses import dataclass
@@ -241,10 +241,11 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 @dataclass
 class ToneCheck(Evaluator):
-    evaluator_version = 'v2'  # bumped after prompt rewrite
-
     def evaluate(self, ctx: EvaluatorContext) -> str:
         return 'neutral'
+
+    def get_evaluator_version(self) -> str | None:
+        return 'v2'  # bumped after prompt rewrite
 ```
 
 The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results).
@@ -909,6 +910,37 @@ Key behaviors:
 - **If `on_error` itself raises**, the exception is silently suppressed to protect sibling evaluators.
 - **If no `on_error` is set**, exceptions are silently suppressed — this is the safe default.
 
+### Evaluating Failed Calls
+
+By default, when the decorated function or wrapped agent run raises, **no evaluators are dispatched** — only successful results reach evaluators. The exception propagates to the caller as usual.
+
+To score failure modes (e.g. classify exception types, count tool errors, alert on regressions), opt an evaluator in by setting `run_on_errors=True` on its [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator]. When the call raises, those evaluators are dispatched with the exception as `EvaluatorContext.output`; the exception still propagates after dispatch:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.online import OnlineEvaluator, evaluate
+
+
+@dataclass
+class CategorizeError(Evaluator):
+    def evaluate(self, ctx: EvaluatorContext) -> str:
+        # On failed calls, ctx.output is the raised exception.
+        if isinstance(ctx.output, Exception):
+            return type(ctx.output).__name__
+        return 'ok'
+
+
+@evaluate(OnlineEvaluator(evaluator=CategorizeError(), run_on_errors=True))
+async def my_function(x: int) -> int:
+    if x < 0:
+        raise ValueError('negative input')
+    return x * 2
+```
+
+Evaluators sampled for the call but without `run_on_errors=True` are skipped on the error path, so a cheap success-only check can sit alongside a dedicated error categorizer in the same decorator. The flag is also honored by the [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] agent capability.
+
 ## Agent Integration
 
 The [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] capability brings online evaluation to Pydantic AI agents. Instead of decorating a function, you add the capability to your agent. As with the `@evaluate` decorator, evaluators dispatch in the background and results are emitted as OTel events by default — no sink registration required:
@@ -957,6 +989,7 @@ The complete API for the `pydantic_evals.online` module is documented in the [AP
 ## Next Steps
 
 - **[Custom Evaluators](evaluators/custom.md)** — Write evaluators for your domain
-- **[Built-in Evaluators](evaluators/built-in.md)** — Use ready-made evaluators
+- **[Native Evaluators](evaluators/built-in.md)** — Use ready-made evaluators
+- **[Live Evaluations in Logfire](https://pydantic.dev/docs/logfire/evaluate/live-evals/)** — Browse, filter, and trend online evaluation results in the Logfire web UI
 - **[Logfire Integration](how-to/logfire-integration.md)** — Visualize evaluation results in Logfire
 - **[Quick Start](quick-start.md)** — Offline evaluation with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate]

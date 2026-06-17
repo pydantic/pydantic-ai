@@ -235,13 +235,11 @@ The following providers have dedicated documentation on Pydantic AI:
 - [W&B Weave](https://weave-docs.wandb.ai/guides/integrations/pydantic_ai/)
 - [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
 - [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
-- [OpenLIT](https://docs.openlit.io/latest/integrations/pydantic)
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
-- [Patronus AI](https://docs.patronus.ai/docs/percival/pydantic)
+- [Patronus AI](https://docs.patronus.ai/docs/percival/integrations/pydantic)
 - [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
 - [mlflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
 - [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
-- [Confident AI](https://documentation.confident-ai.com/docs/llm-tracing/integrations/pydanticai)
 - [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
 - [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
 - [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
@@ -347,36 +345,27 @@ from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
 from pydantic_ai import Agent, InstrumentationSettings
+from pydantic_ai.capabilities import Instrumentation
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
     logger_provider=LoggerProvider(),
 )
 
-agent = Agent('openai:gpt-5.2', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
-```
-
-### Instrumenting a specific `Model`
-
-```python {title="instrumented_model_example.py"}
-from pydantic_ai import Agent
-from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
-
-settings = InstrumentationSettings()
-model = InstrumentedModel('openai:gpt-5.2', settings)
-agent = Agent(model)
 ```
 
 ### Excluding binary content
 
 ```python {title="excluding_binary_content.py"}
 from pydantic_ai import Agent, InstrumentationSettings
+from pydantic_ai.capabilities import Instrumentation
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
-agent = Agent('openai:gpt-5.2', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -389,11 +378,12 @@ When `include_content=False` is set, Pydantic AI will exclude sensitive content 
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
 
-agent = Agent('openai:gpt-5.2', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```

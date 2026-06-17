@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
 from enum import IntEnum
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 import httpx
 import pytest
@@ -54,6 +54,7 @@ from pydantic_ai.models.gemini import (
     _GeminiToolConfig,
     _GeminiUsageMetaData,
     _metadata_as_usage,
+    _part_discriminator,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.providers.google_gla import GoogleGLAProvider
@@ -69,6 +70,29 @@ pytestmark = [
     pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
     pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning'),
 ]
+
+
+@pytest.mark.parametrize(
+    'value,expected_tag',
+    [
+        ({'text': 'hello'}, 'text'),
+        ({'inlineData': {}}, 'inline_data'),
+        ({'inline_data': {}}, 'inline_data'),
+        ({'fileData': {}}, 'file_data'),
+        ({'file_data': {}}, 'file_data'),
+        ({'thought': True}, 'thought'),
+        ({'functionCall': {}}, 'function_call'),
+        ({'function_call': {}}, 'function_call'),
+        ({'functionResponse': {}}, 'function_response'),
+        ({'function_response': {}}, 'function_response'),
+        ({}, 'text'),
+        ('not a dict', 'text'),
+    ],
+)
+def test_part_discriminator(value: Any, expected_tag: str):
+    """Both Gemini's camelCase wire keys and the snake_case attribute names produced by
+    history replay (e.g. inline-snapshot reconstruction) route to the same part tag."""
+    assert _part_discriminator(value) == expected_tag
 
 
 async def test_model_simple(allow_model_requests: None):
@@ -584,7 +608,7 @@ async def test_text_success(get_gemini_client: GetGeminiClient):
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
     result = await agent.run('Hello', message_history=result.new_messages())
     assert result.output == 'Hello world'
@@ -791,7 +815,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=3, output_tokens=6, tool_calls=2))
+    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=3, output_tokens=6, tool_calls=2))
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):
@@ -824,12 +848,12 @@ async def test_stream_text(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'Hello world', 'Hello world'])
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_text(delta=True, debounce_by=None)]
         assert chunks == snapshot(['Hello ', 'world'])
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
 async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
@@ -861,7 +885,7 @@ async def test_stream_invalid_unicode_text(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
         assert chunks == snapshot(['abc', 'abc€def', 'abc€def'])
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
 async def test_stream_text_no_data(get_gemini_client: GetGeminiClient):
@@ -891,7 +915,7 @@ async def test_stream_structured(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         chunks = [chunk async for chunk in result.stream_output(debounce_by=None)]
         assert chunks == snapshot([(1, 2), (1, 2)])
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
 async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
@@ -932,7 +956,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         response = await result.get_output()
         assert response == snapshot((1, 2))
-    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=2, output_tokens=4, tool_calls=2))
+    assert result.usage == snapshot(RunUsage(requests=2, input_tokens=2, output_tokens=4, tool_calls=2))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1549,7 +1573,7 @@ async def test_response_with_thought_part(get_gemini_client: GetGeminiClient):
     result = await agent.run('Test with thought')
 
     assert result.output == 'Hello from thought test'
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=1, output_tokens=2))
 
 
 @pytest.mark.vcr()

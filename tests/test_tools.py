@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
-from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -30,6 +30,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -165,9 +166,12 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -204,9 +208,12 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -251,9 +258,12 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -298,9 +308,12 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -343,9 +356,12 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -394,9 +410,12 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -433,9 +452,12 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -463,9 +485,12 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -511,9 +536,12 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -552,9 +580,12 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -602,9 +633,12 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -620,14 +654,14 @@ def test_init_tool_plain():
         call_args.append(x)
         return x + 1
 
-    agent = Agent('test', tools=[Tool(plain_tool)], retries=7)
+    agent = Agent('test', tools=[Tool(plain_tool)], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
     assert agent._function_toolset.tools['plain_tool'].max_retries == 7
 
-    agent_infer = Agent('test', tools=[plain_tool], retries=7)
+    agent_infer = Agent('test', tools=[plain_tool], retries={'tools': 7, 'output': 7})
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
@@ -641,7 +675,9 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx():
-    agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
+    agent = Agent(
+        'test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries={'tools': 7, 'output': 7}
+    )
     result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
     assert agent._function_toolset.tools['ctx_tool'].takes_ctx is True
@@ -992,9 +1028,12 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -1069,9 +1108,12 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
             {
                 'description': None,
@@ -1089,9 +1131,12 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
         ]
     )
@@ -1182,9 +1227,12 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
             {
                 'description': None,
@@ -1201,9 +1249,12 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
         ]
     )
@@ -1243,9 +1294,12 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -1255,12 +1309,12 @@ def test_dynamic_tools_agent_wide():
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
-            return None
+            return []
         elif ctx.deps == 21:
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
@@ -1288,7 +1342,7 @@ def test_sync_prepare_tools_agent_wide():
             return []
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool_plain
     def foobar(x: int) -> str:
@@ -1318,7 +1372,7 @@ def test_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1347,7 +1401,7 @@ def test_function_tool_from_schema_with_ctx():
     assert pydantic_tool.takes_ctx is True
     assert pydantic_tool.function_schema.takes_ctx is True
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0, deps_type=str)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0}, deps_type=str)
     result = agent.run_sync('foobar', deps='Hello, ')
     assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is True
@@ -1369,7 +1423,7 @@ def test_function_tool_inconsistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
     with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
         agent.run_sync('foobar')
 
@@ -1394,7 +1448,7 @@ def test_async_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1416,7 +1470,7 @@ def test_tool_retries():
         prepare_tools_retries.append(retry)
         return tool_defs
 
-    agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
+    agent = Agent(TestModel(), retries={'tools': 3, 'output': 3}, capabilities=[PrepareTools(prepare_tool_defs)])
 
     async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
@@ -2593,7 +2647,7 @@ def test_tool_metadata():
 
 def test_retry_tool_until_last_attempt():
     model = TestModel()
-    agent = Agent(model, retries=2)
+    agent = Agent(model, retries={'tools': 2, 'output': 2})
 
     @agent.tool
     def always_fail(ctx: RunContext[None]) -> str:
@@ -2795,7 +2849,7 @@ async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
     import asyncio
 
-    agent = Agent(TestModel(), retries=2)
+    agent = Agent(TestModel(), retries={'tools': 2, 'output': 2})
 
     call_count = 0
 
@@ -2889,7 +2943,7 @@ async def test_tool_timeout_exceeds_retry_limit():
         # Always try to call the slow tool
         return ModelResponse(parts=[ToolCallPart(tool_name='always_slow_tool', args={}, tool_call_id='call-1')])
 
-    agent = Agent(FunctionModel(model_logic), retries=1)  # Only 1 retry allowed
+    agent = Agent(FunctionModel(model_logic), retries={'tools': 1, 'output': 1})  # Only 1 retry allowed
 
     @agent.tool_plain(timeout=0.05)
     async def always_slow_tool() -> str:
@@ -2995,7 +3049,10 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
         is_called.set()
 
         try:
-            await asyncio.sleep(1.0)
+            # Block until cancelled instead of sleeping a fixed duration: a sleep that races the
+            # `wait_for` timeouts below is flaky under CI load — if the loop is starved past the
+            # sleep, the tool returns normally and `is_cancelled` is never set.
+            await asyncio.Event().wait()
 
         except asyncio.CancelledError:
             is_cancelled.set()
@@ -3010,9 +3067,9 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
                 pass
 
     task = asyncio.create_task(run_agent())
-    await asyncio.wait_for(is_called.wait(), timeout=1.0)
+    await asyncio.wait_for(is_called.wait(), timeout=10)
     task.cancel()
-    await asyncio.wait_for(is_cancelled.wait(), timeout=1.0)
+    await asyncio.wait_for(is_cancelled.wait(), timeout=10)
 
 
 def test_tool_approved_with_metadata():
@@ -3826,6 +3883,121 @@ def test_single_base_model_arg_validator_accepts_wrapped_input():
     raw = validator.validate_python({'city': 'Mexico City'})
     wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
     assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
+def test_single_base_model_arg_validator_keeps_same_named_model_field():
+    """When the model has a field named like the parameter, unwrapped input is validated as-is.
+
+    `{argument: {...}}` here is genuine unwrapped input setting the `argument` field, not a wrapper
+    envelope, so it must not be unwrapped a second time.
+    """
+
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'count': 1}}) == {'argument': Payload(argument={'count': 1})}
+
+
+def test_single_base_model_arg_validator_unwraps_round_tripped_same_named_field():
+    """A model with a field named like the parameter still round-trips the already-wrapped shape.
+
+    When previously-validated args (`{argument: Payload(...)}`) are serialized out and re-validated
+    (e.g. across a Temporal activity boundary), the validator sees `{argument: {argument: ...}}`. The
+    unwrapped interpretation fails validation, so it falls back to unwrapping the envelope — keeping
+    validation idempotent even when the parameter name collides with a field name.
+    """
+
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'argument': {'count': 1}}}) == {
+        'argument': Payload(argument={'count': 1})
+    }
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_field_alias():
+    """Unwrapped input validates when the model's only field uses the parameter name as its alias.
+
+    `argument` is not a field *name*, but it is the field's validation alias, so it's a key the model
+    accepts and the input must be validated as-is rather than unwrapped as an envelope. This includes
+    the case where the field has a default and a dict value, where unwrapping would silently drop it.
+    """
+
+    class Inner(BaseModel):
+        x: int = 0
+
+    class Payload(BaseModel):
+        data: Inner = Field(alias='argument', default_factory=Inner)
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.data.x)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    expected = Payload.model_validate({'argument': {'x': 5}})
+    assert validator.validate_python({'argument': {'x': 5}}) == {'argument': expected}
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_alias_choice():
+    """A parameter name matching one of a field's `AliasChoices` is also recognized as a model key."""
+
+    class Payload(BaseModel):
+        city: str = Field(validation_alias=AliasChoices('argument', 'town'))
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    expected = Payload.model_validate({'argument': 'Mexico City'})
+    assert validator.validate_python({'argument': 'Mexico City'}) == {'argument': expected}
+
+
+def test_single_base_model_arg_tool_call_accepts_wrapped_input_with_defaults():
+    class Payload(BaseModel):
+        name: str = 'default_name'
+        value: int = 0
+
+    calls = 0
+    received: list[Payload] = []
+
+    async def model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'argument': {'name': 'actual_name', 'value': 42}},
+                        tool_call_id='call-1',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    def my_tool(argument: Payload) -> str:
+        received.append(argument)
+        return 'ok'
+
+    result = Agent(FunctionModel(model), tools=[my_tool]).run_sync('go')
+
+    assert result.output == 'done'
+    assert received == [Payload(name='actual_name', value=42)]
 
 
 def test_tool_ctx_agent():

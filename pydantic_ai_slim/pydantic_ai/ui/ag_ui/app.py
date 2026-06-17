@@ -6,11 +6,12 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Generic
 
-from typing_extensions import Self
+from typing_extensions import Self, deprecated
 
 from pydantic_ai import DeferredToolResults
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.builtin_tools import AbstractBuiltinTool
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -40,6 +41,19 @@ except ImportError as e:  # pragma: no cover
 class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
     """ASGI application for running Pydantic AI agents with AG-UI protocol support."""
 
+    @deprecated(
+        '`AGUIApp` is deprecated and will be removed in 2.0. Replace:\n'
+        '    app = AGUIApp(agent)\n'
+        'with a bare Starlette app:\n'
+        '    from starlette.applications import Starlette\n'
+        '    from starlette.routing import Route\n'
+        '    from pydantic_ai.ui.ag_ui import AGUIAdapter\n'
+        '    async def run_agent(request):\n'
+        '        return await AGUIAdapter.dispatch_request(request, agent=agent)\n'
+        '    app = Starlette(routes=[Route("/", run_agent, methods=["POST"])])\n'
+        'See <https://ai.pydantic.dev/ui/ag-ui/#migrating-from-deprecated-apis> for full before/after examples.',
+        category=PydanticAIDeprecationWarning,
+    )
     def __init__(
         self,
         agent: AbstractAgent[AgentDepsT, OutputDataT],
@@ -58,7 +72,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
+        capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None,
         on_complete: OnCompleteFunc[Any] | None = None,
         # Starlette parameters
         debug: bool = False,
@@ -68,6 +82,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         on_startup: Sequence[Callable[[], Any]] | None = None,
         on_shutdown: Sequence[Callable[[], Any]] | None = None,
         lifespan: Lifespan[Self] | None = None,
+        **_deprecated_kwargs: Any,
     ) -> None:
         """An ASGI application that handles every request by running the agent and streaming the response.
 
@@ -80,8 +95,11 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         Args:
             agent: The agent to run.
             ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
-            preserve_file_data: Whether to preserve agent-generated files and uploaded files
-                in AG-UI message conversion. See [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data].
+            preserve_file_data: Whether to keep client-submitted `UploadedFile` parts (which the
+                server resolves with its own credentials, so only enable for trusted frontends) and
+                to round-trip agent-generated files and uploaded files through AG-UI message
+                conversion. Defaults to `False`, which drops both. See
+                [`UIAdapter.preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data].
 
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
                 no output validators since output validators would expect an argument that matches the agent's
@@ -96,7 +114,9 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            builtin_tools: Optional additional builtin tools for this run.
+            capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for every
+                run handled by this app, merged with the agent's configured capabilities. Use
+                `capabilities=[NativeTool(...)]` to add provider-side native tools per app.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
@@ -118,6 +138,13 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
                 the other, not both.
         """
+        from ... import _utils
+
+        extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(_deprecated_kwargs, 'AGUIApp')
+        if extra_capabilities:
+            capabilities = [*(capabilities or ()), *extra_capabilities]
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         super().__init__(
             debug=debug,
             routes=routes,
@@ -152,7 +179,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                builtin_tools=builtin_tools,
+                capabilities=capabilities,
                 on_complete=on_complete,
             )
 

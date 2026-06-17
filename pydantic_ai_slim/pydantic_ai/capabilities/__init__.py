@@ -1,12 +1,22 @@
+import warnings
 from typing import Any, TypeAlias
 
 from pydantic_ai._run_context import AgentDepsT
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.native_tools._tool_search import (
+    ToolSearchFunc as ToolSearchFunc,
+    ToolSearchLocalStrategy as ToolSearchLocalStrategy,
+    ToolSearchNativeStrategy as ToolSearchNativeStrategy,
+    ToolSearchStrategy as ToolSearchStrategy,
+)
 from pydantic_ai.output import OutputContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
+from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
     AgentNode,
+    CapabilityDescription,
     CapabilityOrdering,
     CapabilityPosition,
     CapabilityRef,
@@ -22,14 +32,16 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from .builtin_or_local import BuiltinOrLocalTool
-from .builtin_tool import BuiltinTool
+from .capability import Capability
 from .combined import CombinedCapability
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
+from .instrumentation import Instrumentation
 from .mcp import MCP
+from .native_or_local import NativeOrLocalTool
+from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
@@ -45,6 +57,7 @@ from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
 from .wrapper import WrapperCapability
+from .x_search import XSearch
 
 AgentCapability: TypeAlias = AbstractCapability[AgentDepsT] | CapabilityFunc[AgentDepsT]
 """A capability or a [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] that takes a run context and returns one.
@@ -57,9 +70,10 @@ Functions are wrapped in a [`DynamicCapability`][pydantic_ai.capabilities.Dynami
 CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
-        BuiltinTool,
+        NativeTool,
         ImageGeneration,
         IncludeToolReturnSchemas,
+        Instrumentation,
         MCP,
         PrefixTools,
         PrepareTools,
@@ -67,9 +81,11 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         ReinjectSystemPrompt,
         SetToolMetadata,
         Thinking,
+        ToolSearch,
         Toolset,
         WebFetch,
         WebSearch,
+        XSearch,
     )
     if (name := cls.get_serialization_name()) is not None
 }
@@ -82,6 +98,7 @@ __all__ = [
     'AbstractCapability',
     'AgentCapability',
     'AgentNode',
+    'CapabilityDescription',
     'CapabilityFunc',
     'CapabilityOrdering',
     'CapabilityPosition',
@@ -97,10 +114,12 @@ __all__ = [
     'RawOutput',
     'WrapOutputValidateHandler',
     'WrapOutputProcessHandler',
-    'BuiltinTool',
-    'BuiltinOrLocalTool',
+    'NativeTool',
+    'NativeOrLocalTool',
+    'Capability',
     'CAPABILITY_TYPES',
     'ImageGeneration',
+    'Instrumentation',
     'HistoryProcessor',
     'IncludeToolReturnSchemas',
     'MCP',
@@ -113,10 +132,16 @@ __all__ = [
     'SetToolMetadata',
     'Thinking',
     'ThreadExecutor',
+    'ToolSearch',
+    'ToolSearchFunc',
+    'ToolSearchLocalStrategy',
+    'ToolSearchNativeStrategy',
+    'ToolSearchStrategy',
     'Toolset',
     'WebFetch',
     'WebSearch',
     'WrapperCapability',
+    'XSearch',
     'CombinedCapability',
     'DynamicCapability',
     'HandleDeferredToolCalls',
@@ -124,3 +149,21 @@ __all__ = [
     'Hooks',
     'OutputContext',
 ]
+
+
+_RENAMED_CAPABILITIES: dict[str, str] = {
+    'BuiltinTool': 'NativeTool',
+    'BuiltinOrLocalTool': 'NativeOrLocalTool',
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _RENAMED_CAPABILITIES:
+        new_name = _RENAMED_CAPABILITIES[name]
+        warnings.warn(
+            f'`pydantic_ai.capabilities.{name}` is deprecated, use `pydantic_ai.capabilities.{new_name}` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return globals()[new_name]
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

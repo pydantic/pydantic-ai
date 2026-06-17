@@ -67,7 +67,7 @@
       "tools-advanced",
       "toolsets",
       "deferred-tools",
-      "builtin-tools",
+      "native-tools",
       "common-tools",
       "third-party-tools"
     ]
@@ -243,27 +243,27 @@
         "slug": "graph"
       },
       {
-        "label": "Beta API",
+        "label": "Graph Builder",
         "items": [
           {
             "label": "Getting Started",
-            "slug": "graph/beta/index"
+            "slug": "graph/builder/index"
           },
           {
             "label": "Steps",
-            "slug": "graph/beta/steps"
+            "slug": "graph/builder/steps"
           },
           {
             "label": "Joins & Reducers",
-            "slug": "graph/beta/joins"
+            "slug": "graph/builder/joins"
           },
           {
             "label": "Decisions",
-            "slug": "graph/beta/decisions"
+            "slug": "graph/builder/decisions"
           },
           {
             "label": "Parallel Execution",
-            "slug": "graph/beta/parallel"
+            "slug": "graph/builder/parallel"
           }
         ]
       }
@@ -298,6 +298,10 @@
           {
             "label": "Restate",
             "slug": "durable_execution/restate"
+          },
+          {
+            "label": "Kitaru",
+            "slug": "durable_execution/kitaru"
           }
         ]
       },
@@ -393,7 +397,7 @@
         "items": [
           "api/ag_ui",
           "api/agent",
-          "api/builtin_tools",
+          "api/native_tools",
           "api/capabilities",
           "api/common_tools",
           "api/concurrency",
@@ -473,15 +477,15 @@
           "api/pydantic_graph/mermaid",
           "api/pydantic_graph/exceptions",
           {
-            "label": "Beta API",
+            "label": "Graph Builder",
             "items": [
-              "api/pydantic_graph/beta",
-              "api/pydantic_graph/beta_graph",
-              "api/pydantic_graph/beta_graph_builder",
-              "api/pydantic_graph/beta_step",
-              "api/pydantic_graph/beta_join",
-              "api/pydantic_graph/beta_decision",
-              "api/pydantic_graph/beta_node"
+              "api/pydantic_graph/graph_builder",
+              "api/pydantic_graph/graph_builder_graph",
+              "api/pydantic_graph/graph_builder_graph_builder",
+              "api/pydantic_graph/graph_builder_step",
+              "api/pydantic_graph/graph_builder_join",
+              "api/pydantic_graph/graph_builder_decision",
+              "api/pydantic_graph/graph_builder_node"
             ]
           }
         ]
