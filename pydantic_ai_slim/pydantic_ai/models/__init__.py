@@ -214,6 +214,14 @@ class ModelRequestContext:
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
 
+    time_to_first_chunk: float | None = None
+    """Streaming-only output channel: seconds from request issue to the first streamed chunk.
+
+    Set by the agent run's streaming handler (which owns the `StreamedResponse`) so the
+    instrumentation capability can record `gen_ai.client.operation.time_to_first_chunk`
+    without re-deriving it. `None` for non-streaming requests.
+    """
+
 
 class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""

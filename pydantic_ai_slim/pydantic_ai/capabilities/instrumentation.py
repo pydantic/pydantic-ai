@@ -274,7 +274,9 @@ class Instrumentation(AbstractCapability[Any]):
             self._last_formatted_instructions = current_instructions
 
             response = await handler(request_context)
-            finish(response)
+            # The streaming handler stamps `time_to_first_chunk` on the shared request context
+            # once the first chunk arrives; it stays None for non-streaming requests.
+            finish(response, time_to_first_chunk=request_context.time_to_first_chunk)
             return response
 
     # ------------------------------------------------------------------
