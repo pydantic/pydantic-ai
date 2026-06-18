@@ -114,6 +114,7 @@ nav:
           - Prefect: durable_execution/prefect.md
           - Restate: durable_execution/restate.md
           - Kitaru: durable_execution/kitaru.md
+          - Apache Airflow: durable_execution/airflow.md
       - UI Event Streams:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
