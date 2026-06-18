@@ -376,6 +376,28 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ```
 
+### Atlas Cloud
+
+[Atlas Cloud](https://www.atlascloud.ai/) is an OpenAI-compatible API gateway that provides access to 300+ models from a single endpoint, including DeepSeek, Qwen, Claude, GPT, and Gemini.
+
+Atlas Cloud doesn't have a dedicated provider class, so you can use it with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] by setting the `base_url` and `api_key`:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'deepseek-ai/deepseek-v4-pro',
+    provider=OpenAIProvider(
+        base_url='https://api.atlascloud.ai/v1',
+        api_key='your-atlas-cloud-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ### DeepSeek
 
 To use the [DeepSeek](https://deepseek.com) provider, first create an API key by following the [Quick Start guide](https://api-docs.deepseek.com/).
