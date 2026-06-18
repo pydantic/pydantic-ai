@@ -697,9 +697,14 @@ class TestReadBack:
         assert len(out) < 60_000
 
     async def test_read_slice_missing_handle(self, tmp_path: Path):
+        # A missing/wrong handle returns a guiding message (it does NOT raise): a bad
+        # handle must not consume a retry and escalate to a fatal UnexpectedModelBehavior.
         store = LocalFileStore(base_dir=tmp_path)
-        with pytest.raises(ModelRetry, match='No stored tool result'):
-            await _read_slice(store, 'missing/1.0', offset=0, limit=10, from_end=False, pattern=None)
+        out = await _read_slice(store, 'missing/1.0', offset=0, limit=10, from_end=False, pattern=None)
+        assert 'No stored tool result' in out
+        assert 're-run the original tool' in out
+        # The store's error (which can carry the resolved filesystem path) is not leaked.
+        assert str(tmp_path) not in out
 
     async def test_get_toolset_registers_read_tool(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
