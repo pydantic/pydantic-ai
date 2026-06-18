@@ -699,12 +699,14 @@ class StreamedResponse(ABC):
             ) -> AsyncIterator[ModelResponseStreamEvent]:
                 final_result_emitted = False
                 async for event in iterator:
-                    yield event
                     if isinstance(event, ModelResponseResetEvent):
+                        # Clear before yielding so reset consumers don't see stale state.
                         final_result_emitted = False
                         self.final_result_event = None
+                        yield event
                         continue
 
+                    yield event
                     if not final_result_emitted:
                         if (
                             final_result_event := _get_final_result_event(event, self.model_request_parameters)

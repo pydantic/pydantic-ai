@@ -1773,6 +1773,75 @@ async def test_response_handler_stream_cancel_delegates_to_current_stream() -> N
     assert stream.closed
 
 
+async def test_response_handler_streaming_clears_final_result_event_before_reset() -> None:
+    """Consumers handling a `ModelResponseResetEvent` must not observe stale `final_result_event`."""
+    fallback_model = FallbackModel(
+        empty_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    seen_at_reset: list[FinalResultEvent | None] = []
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as response:
+        async for event in response:
+            if isinstance(event, ModelResponseResetEvent):
+                seen_at_reset.append(response.final_result_event)
+
+    assert seen_at_reset == [None]
+
+
+async def test_response_handler_streaming_cancel_does_not_trigger_fallback() -> None:
+    """Cancel-class errors raised during teardown must not be swallowed by `fallback_on`,
+    which would open another upstream request.
+    """
+
+    class _CancelSentinel(Exception):
+        pass
+
+    @dataclass(kw_only=True)
+    class CancelRaisingStream(InstrumentedStreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            for event in self.events:
+                yield event
+            # Simulate a transport raising a cancel-class error after teardown.
+            raise _CancelSentinel('cancelled')
+
+        def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+            return (_CancelSentinel,)
+
+    cancelling_stream = CancelRaisingStream(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='cancelling',
+        events=[PartStartEvent(index=0, part=TextPart(content='partial'))],
+    )
+    fallback_attempts: list[str] = []
+
+    async def record_and_fallback_stream(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        fallback_attempts.append('opened')
+        yield 'should-not-be-reached'
+
+    # A response handler is required to route through `_FallbackStreamedResponse`;
+    # the broad exception handler is what would otherwise swallow the cancel-class error.
+    fallback_model = FallbackModel(
+        InstrumentedStreamModel(cancelling_stream, model_name='cancelling'),
+        FunctionModel(stream_function=record_and_fallback_stream),
+        fallback_on=[Exception, reject_empty_text],
+    )
+
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as response:
+        events_seen = 0
+        async for _ in response:
+            events_seen += 1
+            if events_seen == 1:
+                await response.cancel()
+
+    assert fallback_attempts == [], 'cancel must not open the next candidate'
+
+
 def test_response_handler_sync() -> None:
     """Test response handler with synchronous run."""
 

@@ -117,8 +117,9 @@ class _FallbackStreamedResponse(StreamedResponse):
             self._current_model = model
             self._current_stream = stream
             self._current_prepared_parameters = prepared_parameters
-            # Rebind to the new candidate's parts manager once per candidate;
-            # the reference stays stable for the rest of this candidate's events.
+            # Mirror the active candidate's prepared params and parts manager so
+            # `FinalResultEvent` detection and part-end emission use the candidate's settings.
+            self.model_request_parameters = stream.model_request_parameters
             self._parts_manager = stream._parts_manager
             self._sync_current_stream()
             return
@@ -133,13 +134,13 @@ class _FallbackStreamedResponse(StreamedResponse):
                     yield event
             except Exception as exc:
                 self._sync_current_stream()
+                # Don't fall back on teardown errors from `cancel()` — would open another request.
+                if self.cancelled and isinstance(exc, current_stream.get_stream_cancel_errors()):
+                    raise
                 if await self._should_fallback_handler(exc):
                     self._exceptions.append(exc)
-                    # Yield the reset BEFORE `open_next_stream()` swaps the parts manager so
-                    # `iterator_with_part_end` (wrapping our events) closes the discarded part
-                    # against the rejected candidate's parts manager. Reordering these two lines
-                    # would cause the accepted candidate's content to leak into a part-end at the
-                    # old part index.
+                    # Yield reset before `open_next_stream` swaps the parts manager,
+                    # so the outer part-end closes against the rejected candidate.
                     yield ModelResponseResetEvent(discarded_response=current_stream.get())
                     await self.open_next_stream()
                     continue
@@ -150,7 +151,6 @@ class _FallbackStreamedResponse(StreamedResponse):
             response = current_stream.get()
             if await self._should_fallback_handler(response):
                 self._rejected_responses.append(response)
-                # See note above on ordering: emit the reset before swapping streams.
                 yield ModelResponseResetEvent(discarded_response=response)
                 await self.open_next_stream()
                 continue
@@ -172,10 +172,8 @@ class _FallbackStreamedResponse(StreamedResponse):
         return self._current_stream.get_stream_cancel_errors()
 
     def _sync_current_stream(self) -> None:
-        # Per-event mirror of the inner stream's mutable state. `_parts_manager` is rebound in
-        # `open_next_stream` (it doesn't change within a candidate). Provider id/details can be
-        # set lazily on the first chunk for some providers (e.g. OpenAI), so we keep mirroring
-        # them — once set they stay stable for the rest of the candidate.
+        # Mirror per-event mutable state. Provider id/details may be set lazily on the first
+        # chunk, so we keep mirroring them rather than binding once per candidate.
         if self._current_stream is None:
             return
         self._usage = self._current_stream.usage

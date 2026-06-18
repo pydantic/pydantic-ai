@@ -754,12 +754,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         async def stream_to_final(
                             stream: AgentStream,
                         ) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
-                            # We stop at the first `FinalResultEvent`. With a `FallbackModel`,
-                            # if a candidate produced output that was later rejected by a response
-                            # handler, the rejected `FinalResultEvent` has already broken this
-                            # loop and the user-supplied `event_stream_handler` will not see the
-                            # subsequent `ModelResponseResetEvent`. Handlers that need to react to
-                            # mid-stream resets should consume the raw event stream instead.
+                            # Breaks on the first `FinalResultEvent`, so a `FallbackModel`'s
+                            # later `ModelResponseResetEvent` won't reach `event_stream_handler`.
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
@@ -793,9 +789,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 by `StreamedRunResult._marked_completed`.
                                 """
                                 nonlocal final_result
-                                # Re-read the accepted candidate's final result event so the
-                                # committed `final_result`'s `tool_name`/`tool_call_id` point at
-                                # the accepted tool call id, not at one from a discarded candidate.
+                                # Relink tool ids to the accepted candidate's final result event,
+                                # in case a `FallbackModel` discarded the originally committed one.
                                 accepted_event = stream._raw_stream_response.final_result_event  # pyright: ignore[reportPrivateUsage]
                                 tool_name = accepted_event.tool_name if accepted_event else final_result.tool_name
                                 tool_call_id = (
