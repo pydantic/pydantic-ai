@@ -322,6 +322,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield ''.join(deltas)
 
     async def _stream_response_text_delta_items(self) -> AsyncIterator[tuple[str | None, int | None]]:
+        """Yield `(text, part_index)` pairs for each text chunk in the stream.
+
+        Yields `(None, None)` when a [`ModelResponseResetEvent`][pydantic_ai.messages.ModelResponseResetEvent]
+        arrives, so the caller can clear any accumulated text from the discarded response before
+        appending text from the next candidate.
+
+        The part index is currently unused by callers, but we retain it to make possible future
+        refactors (e.g. grouping deltas by part) simpler.
+        """
         msg = self.response
         for i, part in enumerate(msg.parts):
             if isinstance(part, _messages.TextPart) and part.content:
@@ -356,6 +365,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield None, None
 
     async def _stream_response_text_deltas(self, debounce_by: float | None) -> AsyncGenerator[str | None, None]:
+        """Debounce-grouped text deltas from `_stream_response_text_delta_items`.
+
+        Each group is collapsed into at most two yields: a `None` sentinel if the group contained
+        a reset (so the consumer can clear its accumulator), followed by the joined text of any
+        remaining items in the group. This preserves reset boundaries even when multiple text
+        chunks arrive within the same debounce window.
+        """
         async with _utils.group_by_temporal(self._stream_response_text_delta_items(), debounce_by) as group_iter:
             async for items in group_iter:
                 reset = False

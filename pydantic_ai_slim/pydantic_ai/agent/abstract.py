@@ -754,12 +754,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         async def stream_to_final(
                             stream: AgentStream,
                         ) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+                            # We stop at the first `FinalResultEvent`. With a `FallbackModel`,
+                            # if a candidate produced output that was later rejected by a response
+                            # handler, the rejected `FinalResultEvent` has already broken this
+                            # loop and the user-supplied `event_stream_handler` will not see the
+                            # subsequent `ModelResponseResetEvent`. Handlers that need to react to
+                            # mid-stream resets should consume the raw event stream instead.
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
-                                if isinstance(event, _messages.ModelResponseResetEvent):
-                                    final_result_event = None
-                                    continue
                                 if isinstance(event, _messages.FinalResultEvent):
                                     final_result_event = event
                                     break
@@ -790,16 +793,15 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 by `StreamedRunResult._marked_completed`.
                                 """
                                 nonlocal final_result
-                                if stream._raw_stream_response.final_result_event is not None:  # pyright: ignore[reportPrivateUsage]
-                                    final_result_event = stream._raw_stream_response.final_result_event  # pyright: ignore[reportPrivateUsage]
-                                    final_result = FinalResult(
-                                        final_result.output,
-                                        final_result_event.tool_name,
-                                        final_result_event.tool_call_id,
-                                    )
-                                final_result = FinalResult(
-                                    await stream.get_output(), final_result.tool_name, final_result.tool_call_id
+                                # Re-read the accepted candidate's final result event so the
+                                # committed `final_result`'s `tool_name`/`tool_call_id` point at
+                                # the accepted tool call id, not at one from a discarded candidate.
+                                accepted_event = stream._raw_stream_response.final_result_event  # pyright: ignore[reportPrivateUsage]
+                                tool_name = accepted_event.tool_name if accepted_event else final_result.tool_name
+                                tool_call_id = (
+                                    accepted_event.tool_call_id if accepted_event else final_result.tool_call_id
                                 )
+                                final_result = FinalResult(await stream.get_output(), tool_name, tool_call_id)
 
                                 # When we get here, the `ModelRequestNode` has completed streaming after the final result was found.
                                 # When running an agent with `agent.run`, we'd then move to `CallToolsNode` to execute the tool calls and

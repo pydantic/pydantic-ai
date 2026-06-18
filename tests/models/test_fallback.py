@@ -42,10 +42,11 @@ from pydantic_ai.messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     ThinkingPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
-from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
@@ -1503,7 +1504,7 @@ async def test_response_handler_streaming_reject_accept_events() -> None:
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(index=0, part=TextPart(content=' ')),
             ModelResponseResetEvent(
-                response=ModelResponse(
+                discarded_response=ModelResponse(
                     parts=[TextPart(content=' ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::empty_response_stream',
@@ -1532,7 +1533,7 @@ async def test_response_handler_streaming_mid_stream_exception_events() -> None:
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(index=0, part=TextPart(content='bad ')),
             ModelResponseResetEvent(
-                response=ModelResponse(
+                discarded_response=ModelResponse(
                     parts=[TextPart(content='bad ')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::partial_failure_response_stream',
@@ -1598,7 +1599,7 @@ async def test_response_handler_stream_response_skips_reset_only_group() -> None
     )
 
 
-async def test_response_handler_stream_event_handler_rearms_final_result_after_reset() -> None:
+async def test_response_handler_stream_event_handler_sees_reset_when_candidate_yields_no_final_result() -> None:
     fallback_model = FallbackModel(
         thinking_model_stream,
         success_model_stream,
@@ -1619,7 +1620,7 @@ async def test_response_handler_stream_event_handler_rearms_final_result_after_r
             PartStartEvent(index=0, part=ThinkingPart(content='thinking')),
             PartEndEvent(index=0, part=ThinkingPart(content='thinking')),
             ModelResponseResetEvent(
-                response=ModelResponse(
+                discarded_response=ModelResponse(
                     parts=[ThinkingPart(content='thinking')],
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::thinking_response_stream',
@@ -1631,6 +1632,59 @@ async def test_response_handler_stream_event_handler_rearms_final_result_after_r
             FinalResultEvent(tool_name=None, tool_call_id=None),
         ]
     )
+
+
+async def test_response_handler_streaming_structured_output_relinks_tool_call_id() -> None:
+    """When a candidate's structured-output tool call is rejected and a later candidate is
+    accepted, the committed `final_result` must reference the accepted candidate's
+    `tool_call_id` so the synthesized `ToolReturnPart` is tied to the accepted call. Without
+    relinking, the return part dangles against the discarded candidate's call id.
+    """
+
+    class Foo(BaseModel):
+        bar: str
+
+    bad_args = Foo(bar='bad').model_dump_json()
+    good_args = Foo(bar='good').model_dump_json()
+
+    async def bad_stream(_messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, tool_call_id='id-bad')}
+        yield {0: DeltaToolCall(json_args=bad_args)}
+
+    async def good_stream(_messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, tool_call_id='id-good')}
+        yield {0: DeltaToolCall(json_args=good_args)}
+
+    bad_model = FunctionModel(stream_function=bad_stream)
+    good_model = FunctionModel(stream_function=good_stream)
+
+    def reject_bad(response: ModelResponse) -> bool:
+        for part in response.parts:
+            if isinstance(part, ToolCallPart) and isinstance(part.args, str) and '"bad"' in part.args:
+                return True
+        return False
+
+    fallback_model = FallbackModel(bad_model, good_model, fallback_on=reject_bad)
+    agent = Agent(fallback_model, output_type=Foo)
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == Foo(bar='good')
+        messages = result.all_messages()
+
+    tool_returns = [part for msg in messages for part in msg.parts if isinstance(part, ToolReturnPart)]
+    assert tool_returns, 'expected a ToolReturnPart for the output tool call'
+    output_return = tool_returns[-1]
+    # `tool_call_id` mirrors the accepted candidate's tool call id (the rejected candidate's
+    # call id 'id-bad' has been discarded along with its parts).
+    assert output_return.tool_call_id == 'id-good'
+    # `content` should be 'Final result processed.' — this only happens when the run loop's
+    # committed `final_result.tool_call_id` matches the accepted call. If we forget to relink
+    # `final_result` to the accepted candidate's event in `on_complete`, the committed id
+    # stays at the rejected 'id-bad', the match fails, and we synthesize the
+    # "Output tool not used" status part instead.
+    assert output_return.content == 'Final result processed.'
 
 
 async def test_response_handler_stream_open_exception_uses_next_model() -> None:
