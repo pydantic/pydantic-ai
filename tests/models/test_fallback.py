@@ -596,23 +596,23 @@ class InstrumentedStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> str:  # pragma: no cover
         return self._model_name
 
     @property
-    def provider_name(self) -> str:
+    def provider_name(self) -> str:  # pragma: no cover
         return 'instrumented'
 
     @property
-    def provider_url(self) -> str:
+    def provider_url(self) -> str:  # pragma: no cover
         return 'https://example.com'
 
     @property
-    def timestamp(self) -> datetime:
+    def timestamp(self) -> datetime:  # pragma: no cover
         return self._timestamp
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        for event in self.events:
+        for event in self.events:  # pragma: no branch
             yield event
 
     async def close_stream(self) -> None:
@@ -629,15 +629,15 @@ class InstrumentedStreamModel(Model[None]):
         self._model_name = model_name
 
     @property
-    def provider(self) -> None:
+    def provider(self) -> None:  # pragma: no cover
         return None
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> str:  # pragma: no cover
         return self._model_name
 
     @property
-    def system(self) -> str:
+    def system(self) -> str:  # pragma: no cover
         return 'instrumented'
 
     async def request(
@@ -646,7 +646,7 @@ class InstrumentedStreamModel(Model[None]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        raise AssertionError('not used')
+        raise AssertionError('not used')  # pragma: no cover
 
     @asynccontextmanager
     async def request_stream(
@@ -1728,6 +1728,40 @@ async def test_response_handler_stream_all_candidates_rejected() -> None:
     assert isinstance(exc_info.value.exceptions[0], ResponseRejected)
 
 
+async def test_response_handler_stream_reraises_unmatched_exception() -> None:
+    """Mid-stream exceptions that aren't matched by `fallback_on` propagate, not fall back."""
+
+    class UnmatchedError(Exception):
+        pass
+
+    @dataclass(kw_only=True)
+    class RaisingStream(InstrumentedStreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            for event in self.events:
+                yield event
+            raise UnmatchedError('mid-stream')
+
+    raising_stream = RaisingStream(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='raising',
+        events=[PartStartEvent(index=0, part=TextPart('hi'))],
+    )
+    fallback_model = FallbackModel(
+        InstrumentedStreamModel(raising_stream, model_name='raising'),
+        success_model_stream,
+        # `ModelHTTPError` won't match `UnmatchedError`; the response handler is what
+        # routes through `_FallbackStreamedResponse`.
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    with pytest.raises(UnmatchedError, match='mid-stream'):
+        async with fallback_model.request_stream(
+            [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+        ) as response:
+            async for _ in response:
+                pass
+
+
 async def test_response_handler_stream_early_break_closes_inner_stream() -> None:
     stream = InstrumentedStreamedResponse(
         model_request_parameters=ModelRequestParameters(),
@@ -1819,8 +1853,8 @@ async def test_response_handler_streaming_cancel_does_not_trigger_fallback() -> 
     fallback_attempts: list[str] = []
 
     async def record_and_fallback_stream(_: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        fallback_attempts.append('opened')
-        yield 'should-not-be-reached'
+        fallback_attempts.append('opened')  # pragma: no cover
+        yield 'should-not-be-reached'  # pragma: no cover
 
     # A response handler is required to route through `_FallbackStreamedResponse`;
     # the broad exception handler is what would otherwise swallow the cancel-class error.
