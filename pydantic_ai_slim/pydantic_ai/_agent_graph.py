@@ -662,9 +662,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
                     await stream_done.wait()
-            first_chunk = sr._first_chunk_monotonic  # pyright: ignore[reportPrivateUsage]
-            if first_chunk is not None:
-                req_ctx.time_to_first_chunk = first_chunk - request_start
+            req_ctx.time_to_first_chunk = sr.time_to_first_chunk(request_start)
             response = sr.get()
             _handler_response = response
             return response

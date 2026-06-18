@@ -179,7 +179,7 @@ class InstrumentationSettings:
         self.time_to_first_chunk_histogram = self.meter.create_histogram(
             'gen_ai.client.operation.time_to_first_chunk',
             unit='s',
-            description='Time to receive the first chunk of a streaming response',
+            description='Time from issuing a streaming request to the first chunk being surfaced to the consumer',
         )
 
     def messages_to_otel_events(
@@ -399,9 +399,9 @@ class InstrumentedModel(WrapperModel):
         )
         with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
             response_stream: StreamedResponse | None = None
-            # OTel defines time_to_first_chunk as "from when the client issues the
-            # generation request to when the first chunk is received". Stamp the
-            # request-issue instant here, before the wrapped model opens the stream.
+            # Stamp the request-issue instant before the wrapped model opens the stream, so the
+            # `time_to_first_chunk` delta spans from when we issue the request to when the first
+            # chunk is surfaced to the consumer.
             request_start = time.perf_counter()
             try:
                 async with self.wrapped.request_stream(
@@ -413,7 +413,7 @@ class InstrumentedModel(WrapperModel):
                     yield response_stream
             finally:
                 if response_stream:  # pragma: no branch
-                    time_to_first_chunk: float | None = None
-                    if response_stream._first_chunk_monotonic is not None:  # pyright: ignore[reportPrivateUsage]
-                        time_to_first_chunk = response_stream._first_chunk_monotonic - request_start  # pyright: ignore[reportPrivateUsage]
-                    finish(response_stream.get(), time_to_first_chunk=time_to_first_chunk)
+                    finish(
+                        response_stream.get(),
+                        time_to_first_chunk=response_stream.time_to_first_chunk(request_start),
+                    )

@@ -495,8 +495,8 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
         ]
     )
 
-    # Streaming records the time-to-first-chunk histogram (value is wall-clock, so
-    # assert shape rather than snapshot a non-deterministic float).
+    # Streaming records the time-to-first-chunk histogram (value is non-deterministic, so
+    # assert shape rather than snapshot the float).
     ttft_metrics = [
         m for m in capfire.get_collected_metrics() if m['name'] == 'gen_ai.client.operation.time_to_first_chunk'
     ]
