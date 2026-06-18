@@ -245,6 +245,14 @@ class XaiModelSettings(ModelSettings, total=False):
     See https://docs.x.ai for details.
     """
 
+    xai_max_turns: int
+    """Maximum number of agentic turns the model can take.
+
+    When set, the model will automatically call tools up to this many turns before returning a final response.
+    Note that when parallel tool calls are enabled, multiple tool calls can occur within a single turn,
+    so `xai_max_turns` does not necessarily equal the total number of tool calls made.
+    """
+
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
@@ -263,6 +271,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_store_messages': 'store_messages',
     'xai_previous_response_id': 'previous_response_id',
     'xai_reasoning_effort': 'reasoning_effort',
+    'xai_max_turns': 'max_turns',
 }
 
 
