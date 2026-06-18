@@ -135,9 +135,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
-        # The `outcome` field on `RunFinishedEvent` only exists in ag-ui-protocol >= 0.1.19,
-        # and `ConfiguredBaseModel` forbids extra fields. So we branch instead of passing
-        # `outcome=None` on the old path.
+        # `RunFinishedEvent.outcome` only exists in ag-ui-protocol >= 0.1.19. `ConfiguredBaseModel`
+        # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
+        # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
+        # to omit it entirely.
         if HAS_INTERRUPTS:
             yield RunFinishedEvent(
                 thread_id=self.run_input.thread_id,
