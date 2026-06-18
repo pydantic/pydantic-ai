@@ -2123,7 +2123,10 @@ class ModelResponse:
     _: KW_ONLY
 
     usage: RequestUsage = field(default_factory=RequestUsage)
-    """Usage information for the request.
+    """Usage information for this single request, as a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
+
+    Run-level usage accumulated across all requests in a run (e.g. `requests`, `tool_calls`) lives on the run's
+    [`RunUsage`][pydantic_ai.usage.RunUsage], accessible via `result.usage()`; a `RunUsage` should not be assigned to this field.
 
     This has a default to make tests easier, and to support loading old messages where usage will be missing.
     """
