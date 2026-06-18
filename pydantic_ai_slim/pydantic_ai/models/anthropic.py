@@ -6,7 +6,6 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import cached_property
 from typing import Any, Literal, TypeAlias, cast, overload
 
 import pydantic_core
@@ -63,7 +62,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
@@ -496,7 +495,29 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider = infer_provider('gateway/anthropic' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        # Anthropic web-tool availability depends on both model support and the client/platform. Bake the
+        # client-specific narrowing into the profile once here, while a live client is guaranteed, rather
+        # than re-deriving it from `self.client` on every `profile` access — that keeps `profile`
+        # resolvable without a provider and keeps native-tool filtering on the common model-profile path.
+        profile = profile or provider.model_profile
+        if callable(profile):
+            profile = profile(model_name)
+        if profile is not None:
+            anthropic_profile = AnthropicModelProfile.from_profile(profile)
+            supported_native_tools = anthropic_profile.supported_native_tools
+            client = provider.client
+            if isinstance(client, _WEB_SEARCH_UNSUPPORTED_CLIENTS):
+                supported_native_tools -= {WebSearchTool}
+            if isinstance(client, _WEB_FETCH_UNSUPPORTED_CLIENTS):
+                supported_native_tools -= {WebFetchTool}
+            profile = replace(
+                anthropic_profile,
+                supported_native_tools=supported_native_tools,
+                anthropic_supports_web_tools_20260209=anthropic_profile.anthropic_supports_web_tools_20260209
+                and not isinstance(client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS),
+            )
+
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> AsyncAnthropicClient:
@@ -520,29 +541,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool, ToolSearchTool})
-
-    @cached_property
-    def profile(self) -> ModelProfile:
-        """The model profile.
-
-        Anthropic web-tool availability depends on both model support and the Anthropic client/platform.
-        Keep that reflected in the profile so native-tool filtering, fallback handling, and unsupported-tool
-        errors all use the common model-profile path.
-        """
-        profile = AnthropicModelProfile.from_profile(super().profile)
-        supported_native_tools = profile.supported_native_tools
-
-        if isinstance(self.client, _WEB_SEARCH_UNSUPPORTED_CLIENTS):
-            supported_native_tools -= {WebSearchTool}
-        if isinstance(self.client, _WEB_FETCH_UNSUPPORTED_CLIENTS):
-            supported_native_tools -= {WebFetchTool}
-
-        return replace(
-            profile,
-            supported_native_tools=supported_native_tools,
-            anthropic_supports_web_tools_20260209=profile.anthropic_supports_web_tools_20260209
-            and not isinstance(self.client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS),
-        )
 
     async def request(
         self,
@@ -2580,7 +2578,10 @@ def _anthropic_code_execution_tool_provider_details(
 
 
 def _anthropic_caller_provider_details(caller: Any | None) -> dict[str, Any]:
-    if caller is None:
+    # A `direct` caller is the implicit default (the server tool was invoked directly, not from within a
+    # code execution tool), so it carries no state worth round-tripping; only non-direct callers (e.g.
+    # `code_execution_*`) need to be preserved and re-emitted on replay.
+    if caller is None or caller.type == 'direct':
         return {}
     return {_ANTHROPIC_SERVER_TOOL_CALLER_DETAIL: caller.model_dump(mode='json')}
 
