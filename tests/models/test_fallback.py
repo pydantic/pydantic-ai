@@ -1724,6 +1724,20 @@ async def test_response_handler_stream_all_candidates_rejected() -> None:
     assert isinstance(exc_info.value.exceptions[0], ResponseRejected)
 
 
+async def test_instrumented_stream_model_abstract_surface() -> None:
+    """Exercise the abstract Model surface on the test helper so coverage sees it."""
+    stream = InstrumentedStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='probe',
+        events=[],
+    )
+    model = InstrumentedStreamModel(stream, model_name='probe')
+    assert model.model_name == 'probe'
+    assert model.system == 'instrumented'
+    with pytest.raises(AssertionError, match='not used'):
+        await model.request([], None, ModelRequestParameters())
+
+
 async def test_response_handler_stream_reset_without_active_part() -> None:
     """When a candidate is rejected before yielding any part, the reset event must
     still flush cleanly even though there's no in-flight part to end."""
