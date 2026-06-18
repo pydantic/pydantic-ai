@@ -6778,6 +6778,22 @@ class TestXSearchCapability:
         assert XSearch(allowed_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
         assert XSearch(excluded_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(excluded_x_handles=['h'])])
 
+    def test_xsearch_tool_allows_twenty_handles(self):
+        """XSearchTool accepts xAI's documented 20-handle limit."""
+        handles = [f'handle{i}' for i in range(20)]
+
+        assert XSearchTool(allowed_x_handles=handles).allowed_x_handles == handles
+        assert XSearchTool(excluded_x_handles=handles).excluded_x_handles == handles
+
+    def test_xsearch_tool_rejects_more_than_twenty_handles(self):
+        """XSearchTool rejects handle filters above xAI's documented limit."""
+        handles = [f'handle{i}' for i in range(21)]
+
+        with pytest.raises(ValueError, match='allowed_x_handles cannot contain more than 20 handles'):
+            XSearchTool(allowed_x_handles=handles)
+        with pytest.raises(ValueError, match='excluded_x_handles cannot contain more than 20 handles'):
+            XSearchTool(excluded_x_handles=handles)
+
     def test_xsearch_native_false_local_false_raises(self):
         """XSearch(native=False, local=False) → UserError."""
         with pytest.raises(UserError, match='both `native` and `local` cannot be False'):
