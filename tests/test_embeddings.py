@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, get_args
+from typing import Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -69,6 +70,7 @@ with try_import() as google_imports_successful:
         LatestGoogleVertexEmbeddingModelNames,
     )
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as voyageai_imports_successful:
     from pydantic_ai.embeddings.voyageai import (
@@ -1202,6 +1204,205 @@ class TestBedrock:
                 },
             }
         )
+
+
+@dataclass
+class _GoogleTaskPrefixCase:
+    id: str
+    model_name: str
+    input_type: Literal['query', 'document']
+    inputs: list[str]
+    settings: GoogleEmbeddingSettings
+    expected_texts: list[str]
+    expected_task_type: str | None
+    expected_warning: str | None = None
+
+
+# The `GoogleEmbeddingSettings(...)` calls are only evaluated when the `google` extra is installed.
+_GOOGLE_TASK_PREFIX_CASES: list[_GoogleTaskPrefixCase] = (
+    [
+        _GoogleTaskPrefixCase(
+            id='default-query',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['Hello, world!'],
+            settings=GoogleEmbeddingSettings(),
+            expected_texts=['task: search result | query: Hello, world!'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-query',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['Hello, world!'],
+            settings=GoogleEmbeddingSettings(google_task='question answering'),
+            expected_texts=['task: question answering | query: Hello, world!'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-with-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='search result', google_title='Greeting'),
+            expected_texts=['title: Greeting | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-no-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello', 'world'],
+            settings=GoogleEmbeddingSettings(),
+            expected_texts=['title: none | text: hello', 'title: none | text: world'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='symmetric-query',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='classification'),
+            expected_texts=['task: classification | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='symmetric-document-ignores-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='clustering', google_title='ignored'),
+            expected_texts=['task: clustering | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='symmetric-sentence-similarity-ignores-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='sentence similarity', google_title='ignored'),
+            expected_texts=['task: sentence similarity | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-empty-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_title=''),
+            expected_texts=['title: none | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='raw-passthrough',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['title: custom | text: hello'],
+            settings=GoogleEmbeddingSettings(google_task='raw'),
+            expected_texts=['title: custom | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='task-type-ignored-on-embedding-2',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='classification', google_task_type='RETRIEVAL_QUERY'),
+            expected_texts=['task: classification | query: hello'],
+            expected_task_type=None,
+            expected_warning='`google_task_type` is not supported by `gemini-embedding-2`',
+        ),
+        _GoogleTaskPrefixCase(
+            id='task-ignored-on-other-model',
+            model_name='gemini-embedding-2-preview',
+            input_type='query',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='classification'),
+            expected_texts=['hello'],
+            expected_task_type='RETRIEVAL_QUERY',
+            expected_warning='`google_task` is only supported by `gemini-embedding-2`',
+        ),
+    ]
+    if google_imports_successful()
+    else []
+)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.vcr
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _GOOGLE_TASK_PREFIX_CASES])
+async def test_google_task_prefix(case: _GoogleTaskPrefixCase, gemini_api_key: str, monkeypatch: pytest.MonkeyPatch):
+    """`google_task` builds the right text prefix (and `task_type`) for `gemini-embedding-2`.
+
+    Spies on `embed_content` to assert the exact text sent to the API for each
+    (task, input_type, title) combination, plus the warn-and-ignore behavior when
+    `google_task`/`google_task_type` are used on the wrong model.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key)
+    model = GoogleEmbeddingModel(case.model_name, provider=provider)
+    embedder = Embedder(model)
+
+    captured: dict[str, Any] = {}
+    real_embed_content = provider.client.aio.models.embed_content
+
+    async def spy(**kwargs: Any) -> Any:
+        captured['contents'] = kwargs['contents']
+        captured['config'] = kwargs['config']
+        return await real_embed_content(**kwargs)
+
+    monkeypatch.setattr(provider.client.aio.models, 'embed_content', spy)
+
+    async def run() -> EmbeddingResult:
+        if case.input_type == 'query':
+            return await embedder.embed_query(case.inputs, settings=case.settings)
+        return await embedder.embed_documents(case.inputs, settings=case.settings)
+
+    if case.expected_warning is not None:
+        with pytest.warns(UserWarning, match=case.expected_warning):
+            result = await run()
+    else:
+        result = await run()
+
+    sent_texts = [part.text for content in captured['contents'] for part in content.parts]
+    assert sent_texts == case.expected_texts
+    assert captured['config'].task_type == case.expected_task_type
+    assert captured['config'].title is None
+    assert len(result.embeddings) == len(case.inputs)
+    # The prefix is applied internally; the user gets their original (non-prefixed) text back.
+    assert result.inputs == case.inputs
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.vcr
+async def test_google_task_prefix_vertex(
+    allow_model_requests: None, vertex_provider: GoogleCloudProvider, monkeypatch: pytest.MonkeyPatch
+):  # pragma: lax no cover
+    """`google_task` builds the same `gemini-embedding-2` prefix against Google Cloud (Vertex) as against the Gemini API."""
+    model = GoogleEmbeddingModel('gemini-embedding-2', provider=vertex_provider)
+    embedder = Embedder(model)
+
+    captured: dict[str, Any] = {}
+    real_embed_content = vertex_provider.client.aio.models.embed_content
+
+    async def spy(**kwargs: Any) -> Any:
+        captured['contents'] = kwargs['contents']
+        captured['config'] = kwargs['config']
+        return await real_embed_content(**kwargs)
+
+    monkeypatch.setattr(vertex_provider.client.aio.models, 'embed_content', spy)
+
+    result = await embedder.embed_query(
+        'Hello, world!', settings=GoogleEmbeddingSettings(google_task='question answering')
+    )
+
+    sent_texts = [part.text for content in captured['contents'] for part in content.parts]
+    assert sent_texts == ['task: question answering | query: Hello, world!']
+    assert captured['config'].task_type is None
+    assert captured['config'].title is None
+    assert len(result.embeddings) == 1
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
