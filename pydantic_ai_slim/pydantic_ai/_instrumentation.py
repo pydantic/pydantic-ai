@@ -65,6 +65,34 @@ class CostCalculationFailedWarning(Warning):
     """Warning raised when cost calculation fails."""
 
 
+_warned_unknown_cost_models: set[str] = set()
+
+
+def warn_unknown_cost_model(model_id: str) -> None:
+    """Warn once per process that `model_id` has no pricing data, so `operation.cost` can't be set.
+
+    Deduplicating by model keeps the warning to one per unknown model instead of one per request,
+    regardless of the active `warnings` filter.
+    """
+    if model_id in _warned_unknown_cost_models:
+        return
+    _warned_unknown_cost_models.add(model_id)
+    warnings.warn(
+        f'No pricing data found for {model_id}; `operation.cost` will not be set. '
+        'Upgrade `genai-prices` or call `pydantic_ai.prices.update_in_background()` '
+        'to keep pricing up to date.',
+        CostCalculationFailedWarning,
+    )
+
+
+def warn_cost_calculation_failed(exc: Exception) -> None:
+    """Warn that an unexpected error (not missing pricing data) prevented computing `operation.cost`."""
+    warnings.warn(
+        f'Failed to get cost from response: {type(exc).__name__}: {exc}',
+        CostCalculationFailedWarning,
+    )
+
+
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
     """Read agent name, run ID, and conversation ID from OTel baggage and return as span attributes."""
     attrs: dict[str, Any] = {}
@@ -260,12 +288,12 @@ def open_model_request_span(
                 try:
                     price_calculation = response.cost()
                 except LookupError:
-                    pass
-                except Exception as e:
-                    warnings.warn(
-                        f'Failed to get cost from response: {type(e).__name__}: {e}',
-                        CostCalculationFailedWarning,
+                    model_id = (
+                        f'{response.provider_name}:{response_model}' if response.provider_name else str(response_model)
                     )
+                    warn_unknown_cost_model(model_id)
+                except Exception as e:
+                    warn_cost_calculation_failed(e)
 
                 if not span.is_recording():
                     return

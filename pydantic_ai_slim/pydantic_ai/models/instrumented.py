@@ -23,6 +23,7 @@ from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     GEN_AI_SYSTEM_ATTRIBUTE,
     TOKEN_HISTOGRAM_BOUNDARIES,
+    CostCalculationFailedWarning,
     event_to_dict,
     get_instructions,
     open_model_request_span,
@@ -41,7 +42,7 @@ from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
-__all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
+__all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel', 'CostCalculationFailedWarning'
 
 
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
