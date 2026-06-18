@@ -1728,6 +1728,34 @@ async def test_response_handler_stream_all_candidates_rejected() -> None:
     assert isinstance(exc_info.value.exceptions[0], ResponseRejected)
 
 
+async def test_response_handler_stream_reset_without_active_part() -> None:
+    """When a candidate is rejected before yielding any part, the reset event must
+    still flush cleanly even though there's no in-flight part to end."""
+
+    silent_stream = InstrumentedStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='silent',
+        events=[],
+    )
+    fallback_model = FallbackModel(
+        InstrumentedStreamModel(silent_stream, model_name='silent'),
+        success_model_stream,
+        fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    events: list[ModelResponseStreamEvent] = []
+    async with fallback_model.request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as response:
+        async for event in response:
+            events.append(event)
+
+    reset_indices = [i for i, e in enumerate(events) if isinstance(e, ModelResponseResetEvent)]
+    assert reset_indices, 'silent candidate should be rejected and produce a reset event'
+    # No PartEndEvent precedes the reset because the silent candidate never opened a part.
+    assert not any(isinstance(e, PartEndEvent) for e in events[: reset_indices[0]])
+
+
 async def test_response_handler_stream_reraises_unmatched_exception() -> None:
     """Mid-stream exceptions that aren't matched by `fallback_on` propagate, not fall back."""
 
