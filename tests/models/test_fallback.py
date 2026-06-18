@@ -596,23 +596,23 @@ class InstrumentedStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
 
     @property
-    def model_name(self) -> str:  # pragma: no cover
+    def model_name(self) -> str:
         return self._model_name
 
     @property
-    def provider_name(self) -> str:  # pragma: no cover
+    def provider_name(self) -> str:
         return 'instrumented'
 
     @property
-    def provider_url(self) -> str:  # pragma: no cover
+    def provider_url(self) -> str:
         return 'https://example.com'
 
     @property
-    def timestamp(self) -> datetime:  # pragma: no cover
+    def timestamp(self) -> datetime:
         return self._timestamp
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        for event in self.events:  # pragma: no branch
+        for event in self.events:
             yield event
 
     async def close_stream(self) -> None:
@@ -629,15 +629,11 @@ class InstrumentedStreamModel(Model[None]):
         self._model_name = model_name
 
     @property
-    def provider(self) -> None:  # pragma: no cover
-        return None
-
-    @property
-    def model_name(self) -> str:  # pragma: no cover
+    def model_name(self) -> str:
         return self._model_name
 
     @property
-    def system(self) -> str:  # pragma: no cover
+    def system(self) -> str:
         return 'instrumented'
 
     async def request(
@@ -646,7 +642,7 @@ class InstrumentedStreamModel(Model[None]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        raise AssertionError('not used')  # pragma: no cover
+        raise AssertionError('not used')
 
     @asynccontextmanager
     async def request_stream(
