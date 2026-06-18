@@ -1624,6 +1624,45 @@ def test_dump_load_roundtrip_tools() -> None:
     assert reloaded == original
 
 
+def test_dump_messages_tool_return_before_user_prompt_ordering() -> None:
+    """dump_messages must emit ToolMessage before UserMessage when ToolReturnPart precedes UserPromptPart.
+
+    Providers such as Anthropic/Bedrock reject requests where a tool_use block is not immediately
+    followed by a tool_result block, so the serialised ordering must match the original part order.
+    """
+    from ag_ui.core import ToolMessage, UserMessage
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call a tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='greet', tool_call_id='call_1', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='greet', tool_call_id='call_1', content='hello'),
+                UserPromptPart(content='Thanks'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='Done')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages)
+
+    # Locate the ToolMessage and UserMessage in the output
+    tool_positions = [i for i, m in enumerate(ag_ui_msgs) if isinstance(m, ToolMessage)]
+    user_positions = [i for i, m in enumerate(ag_ui_msgs) if isinstance(m, UserMessage)]
+
+    assert tool_positions, 'expected at least one ToolMessage'
+    assert user_positions, 'expected at least one UserMessage'
+    # The ToolMessage for call_1 must appear before the follow-up UserMessage
+    assert tool_positions[-1] < user_positions[-1], (
+        f'ToolMessage at index {tool_positions[-1]} should precede UserMessage at {user_positions[-1]}'
+    )
+
+    # Full round-trip must also be stable
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(messages, reloaded)
+    assert reloaded == messages
+
+
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
     """Test round-trip preserves multiple ThinkingParts with their metadata."""
     original: list[ModelMessage] = [

@@ -603,16 +603,30 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             else:
                 assert_never(part)
 
+        # Preserve ordering: tool results must precede the user prompt when they appear first
+        # in the original parts list (e.g. tool-return + follow-up user message in one request).
+        first_tool_idx = next((i for i, p in enumerate(msg.parts) if isinstance(p, ToolReturnPart)), None)
+        first_user_idx = next((i for i, p in enumerate(msg.parts) if isinstance(p, UserPromptPart)), None)
+        tool_before_user = first_tool_idx is not None and (
+            first_user_idx is None or first_tool_idx < first_user_idx
+        )
+
+        def _build_user_message() -> Message | None:
+            if not user_content:
+                return None
+            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+                return UserMessage(id=_new_message_id(), content=user_content[0].text)
+            return UserMessage(id=_new_message_id(), content=user_content)
+
         messages: list[Message] = []
         if system_content:
             messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
-        if user_content:
-            # Simplify to plain string if only single text item
-            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-                messages.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
-            else:
-                messages.append(UserMessage(id=_new_message_id(), content=user_content))
-        messages.extend(result)
+        if tool_before_user:
+            messages.extend(result)
+        if user_msg := _build_user_message():
+            messages.append(user_msg)
+        if not tool_before_user:
+            messages.extend(result)
         return messages
 
     @staticmethod
