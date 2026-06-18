@@ -196,7 +196,7 @@ def test_zai_settings_transformation(
     if extra_body is not None:
         settings['extra_body'] = extra_body
 
-    transformed = _zai_settings_to_openai_settings(settings, ModelRequestParameters(thinking=thinking))
+    transformed = _zai_settings_to_openai_settings(settings, ModelRequestParameters(thinking=thinking), 'glm-4.7')
     assert transformed == expected
 
 
@@ -210,3 +210,35 @@ def test_zai_thinking_silently_ignored_on_non_thinking_model(zai_api_key: str):
     model = ZaiModel('glm-4-32b-0414-128k', provider=ZaiProvider(api_key=zai_api_key))
     merged_settings, _ = model.prepare_request(ZaiModelSettings(thinking=True), ModelRequestParameters())
     assert merged_settings == {}
+
+
+@pytest.mark.parametrize(
+    'thinking,expected',
+    [
+        pytest.param(
+            'minimal',
+            {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'minimal'}},
+            id='minimal',
+        ),
+        pytest.param('low', {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'low'}}, id='low'),
+        pytest.param(
+            'medium', {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'medium'}}, id='medium'
+        ),
+        pytest.param('high', {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'high'}}, id='high'),
+        pytest.param(
+            'xhigh', {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'xhigh'}}, id='xhigh'
+        ),
+        # A bare `thinking=True` enables thinking but sends no effort, so Z.AI applies its own default.
+        pytest.param(True, {'extra_body': {'thinking': {'type': 'enabled'}}}, id='enabled-no-effort'),
+        pytest.param(False, {'extra_body': {'thinking': {'type': 'disabled'}}}, id='disabled'),
+    ],
+)
+def test_zai_reasoning_effort_on_glm_5_2(thinking: ThinkingLevel, expected: dict[str, Any]):
+    """On GLM-5.2+, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`.
+
+    Earlier GLM models collapse effort to thinking on/off (covered by `test_zai_settings_transformation`).
+    """
+    transformed = _zai_settings_to_openai_settings(
+        ZaiModelSettings(), ModelRequestParameters(thinking=thinking), 'glm-5.2'
+    )
+    assert transformed == expected
