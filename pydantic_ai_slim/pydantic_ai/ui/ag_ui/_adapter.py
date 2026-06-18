@@ -88,6 +88,7 @@ try:
         REASONING_VERSION,
         UPLOADED_FILE_ACTIVITY_TYPE,
         parse_ag_ui_version,
+        parse_builtin_tool_call_id,
         parse_encrypted_tool_kind,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value,
@@ -422,8 +423,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if tool_kind is not None:
                                 tool_kinds[tool_call_id] = tool_kind
 
-                            if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
-                                _, provider_name, original_id = tool_call_id.split('|', 2)
+                            builtin_id = parse_builtin_tool_call_id(tool_call_id)
+                            if builtin_id is not None:
+                                provider_name, original_id = builtin_id
                                 builder.add(
                                     NativeToolCallPart.narrow_type(
                                         NativeToolCallPart(
@@ -461,8 +463,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             getattr(tool_msg, 'encrypted_value', None)
                         ) or tool_kinds.get(tool_call_id)
 
-                    if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
-                        _, provider_name, original_id = tool_call_id.split('|', 2)
+                    builtin_id = parse_builtin_tool_call_id(tool_call_id)
+                    if builtin_id is not None:
+                        provider_name, original_id = builtin_id
                         content: Any = tool_msg.content
                         if isinstance(content, str):
                             try:
@@ -792,6 +795,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `NativeToolReturnPart.provider_details` is lost.
         - `tool_kind` is lost when `ag_ui_version < '0.1.13'` (no `encrypted_value` field), so
           typed tool parts reload as their base classes.
+        - `tool_kind` is not restored on error/denied tool returns (a typed return implies
+          success to its readers), so those reload as plain `ToolReturnPart`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.

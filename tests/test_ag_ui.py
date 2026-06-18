@@ -124,7 +124,11 @@ with try_import() as imports_successful:
 
     from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
-    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
+    from pydantic_ai.ui.ag_ui._utils import (
+        BUILTIN_TOOL_CALL_ID_PREFIX,
+        detect_ag_ui_version,
+        parse_ag_ui_version,
+    )
 
     # `handle_ag_ui_request` and `run_ag_ui` are shim-only helpers being removed in 2.0;
     # this file exercises them for 1.x coverage. Suppress the module-import deprecation
@@ -1830,6 +1834,28 @@ def test_load_tool_kind_unparseable_result_content_stays_plain() -> None:
     return_part = loaded[1].parts[0]
     assert type(return_part) is ToolReturnPart
     assert return_part.content == 'not json'
+
+
+def test_load_malformed_builtin_tool_call_id_degrades_to_plain() -> None:
+    """A client-supplied id starting with the builtin prefix but missing its `|` segments
+    degrades to plain tool call/return parts instead of raising on the tuple unpack."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id=BUILTIN_TOOL_CALL_ID_PREFIX,
+                        function=FunctionCall(name='web_search', arguments='{}'),
+                    )
+                ],
+            ),
+            ToolMessage(id='msg-2', tool_call_id=BUILTIN_TOOL_CALL_ID_PREFIX, content='{}'),
+        ]
+    )
+
+    assert type(loaded[0].parts[0]) is ToolCallPart
+    assert type(loaded[1].parts[0]) is ToolReturnPart
 
 
 @pytest.mark.parametrize('ag_ui_version', ['0.1.10', '0.1.13'])
