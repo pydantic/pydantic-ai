@@ -711,6 +711,30 @@ def test_anthropic_web_tools_20260209_respects_client_support(
     assert sorted(beta_features) == expected_betas
 
 
+def test_anthropic_init_with_explicit_profile_instance_narrows_web_tools():
+    """A non-callable `profile` instance is still narrowed by the client at construction."""
+    provider = AnthropicProvider(
+        anthropic_client=_mock_anthropic_client(
+            AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
+        )
+    )
+    profile = provider.model_profile('claude-sonnet-4-6')
+    m = AnthropicModel('claude-sonnet-4-6', provider=provider, profile=profile)
+    assert WebSearchTool not in m.profile.supported_native_tools
+
+
+def test_anthropic_init_with_profile_resolving_to_none():
+    """A `profile` spec that resolves to `None` skips client narrowing without error."""
+    m = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(
+            anthropic_client=_mock_anthropic_client(AsyncAnthropic, 'https://api.anthropic.com')
+        ),
+        profile=lambda _: None,
+    )
+    assert m._profile is None  # pyright: ignore[reportPrivateUsage]
+
+
 def test_anthropic_vertex_web_search_uses_previous_version():
     m = AnthropicModel(
         'claude-sonnet-4-6',

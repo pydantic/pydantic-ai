@@ -2598,7 +2598,7 @@ def _add_anthropic_caller_param(
         return
 
     caller_type = caller.get('type')
-    if caller_type in ('direct', 'code_execution_20250825', 'code_execution_20260120'):
+    if caller_type in ('direct', 'code_execution_20250825', 'code_execution_20260120'):  # pragma: lax no cover
         block['caller'] = caller
 
 
