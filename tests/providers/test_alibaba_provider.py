@@ -1,7 +1,9 @@
 import httpx
 import pytest
 
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import BinaryContent, DocumentUrl
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 
 from ..conftest import TestEnv, try_import
@@ -9,10 +11,14 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers import infer_provider
     from pydantic_ai.providers.alibaba import AlibabaProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.anyio,
+]
 
 
 def test_alibaba_provider_init():
@@ -64,6 +70,8 @@ def test_qwen_omni_profile_audio_uri():
     profile = provider.model_profile('qwen-omni-turbo')
     assert isinstance(profile, OpenAIModelProfile)
     assert profile.openai_chat_audio_input_encoding == 'uri'
+    # The document-input flag must survive the omni branch's `.update()` merge.
+    assert profile.openai_chat_supports_document_input is False
 
 
 def test_qwen_non_omni_profile_default():
@@ -92,3 +100,26 @@ def test_alibaba_provider_custom_base_url():
     provider = AlibabaProvider(api_key='test-key', base_url='https://custom.endpoint.com/v1')
     assert provider.base_url == 'https://custom.endpoint.com/v1'
     assert str(provider.client.base_url).rstrip('/') == 'https://custom.endpoint.com/v1'
+
+
+async def test_alibaba_document_input_not_supported(allow_model_requests: None):
+    provider = AlibabaProvider(api_key='test-key')
+    model = OpenAIChatModel(model_name='qwen-max', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='alibaba.*does not support document input'):
+        await agent.run(
+            [
+                'Summarize this document',
+                BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf'),
+            ]
+        )
+
+
+async def test_alibaba_document_url_input_not_supported(allow_model_requests: None):
+    provider = AlibabaProvider(api_key='test-key')
+    model = OpenAIChatModel(model_name='qwen-max', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='alibaba.*does not support document input'):
+        await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
