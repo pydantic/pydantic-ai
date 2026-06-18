@@ -8772,7 +8772,13 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
 
 
 async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):
-    """Pass Anthropic dynamic-filtering caller metadata back with web fetch history."""
+    """Pass Anthropic dynamic-filtering caller metadata back with web fetch history.
+
+    Unit (not VCR) test: it asserts the `caller` re-emitted onto the *outgoing* second request's
+    `server_tool_use` and `web_fetch_tool_result` blocks via `get_mock_chat_completion_kwargs`. The VCR
+    cassette matcher isn't sensitive to the request body, so a recording wouldn't catch a regression in
+    that replayed payload; capturing the mock client's call kwargs is what pins it.
+    """
     code_tool_id = 'srvtoolu_code'
     fetch_tool_id = 'srvtoolu_fetch'
     fetch_caller = BetaServerToolCaller20260120(tool_id=code_tool_id, type='code_execution_20260120')

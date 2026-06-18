@@ -130,6 +130,7 @@ try:
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
+        BetaDirectCaller,
         BetaFileDocumentSourceParam,
         BetaFileImageSourceParam,
         BetaImageBlockParam,
@@ -158,6 +159,8 @@ try:
         BetaRequestDocumentBlockParam,
         BetaRequestMCPServerToolConfigurationParam,
         BetaRequestMCPServerURLDefinitionParam,
+        BetaServerToolCaller,
+        BetaServerToolCaller20260120,
         BetaServerToolUseBlock,
         BetaServerToolUseBlockParam,
         BetaSignatureDelta,
@@ -1451,9 +1454,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     name='web_search',
                                     input=response_part.args_as_dict(),
                                 )
-                                _add_anthropic_caller_param(
-                                    cast(dict[str, Any], server_tool_use_block_param), response_part
-                                )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name in (
                                 CodeExecutionTool.kind,
@@ -1467,9 +1468,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     name=anthropic_tool_name,
                                     input=response_part.args_as_dict(),
                                 )
-                                _add_anthropic_caller_param(
-                                    cast(dict[str, Any], server_tool_use_block_param), response_part
-                                )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == WebFetchTool.kind:
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
@@ -1478,9 +1477,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     name='web_fetch',
                                     input=response_part.args_as_dict(),
                                 )
-                                _add_anthropic_caller_param(
-                                    cast(dict[str, Any], server_tool_use_block_param), response_part
-                                )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == ToolSearchTool.kind:
                                 if tool_use_id in orphan_tool_search_call_ids:
@@ -1531,9 +1528,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     name=native_name,
                                     input=wire_input,
                                 )
-                                _add_anthropic_caller_param(
-                                    cast(dict[str, Any], server_tool_use_block_param), response_part
-                                )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
@@ -1565,7 +1560,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                         response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                     ),
                                 )
-                                _add_anthropic_caller_param(cast(dict[str, Any], block), response_part)
+                                _add_anthropic_caller_param(block, response_part)
                                 assistant_content_params.append(block)
                             elif response_part.tool_name in (
                                 CodeExecutionTool.kind,
@@ -1618,7 +1613,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                         response_part.content,  # pyright: ignore[reportUnknownMemberType]
                                     ),
                                 )
-                                _add_anthropic_caller_param(cast(dict[str, Any], block), response_part)
+                                _add_anthropic_caller_param(block, response_part)
                                 assistant_content_params.append(block)
                             elif isinstance(response_part, NativeToolSearchReturnPart):
                                 assistant_content_params.append(
@@ -2577,7 +2572,9 @@ def _anthropic_code_execution_tool_provider_details(
     return {_ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL: tool_name}
 
 
-def _anthropic_caller_provider_details(caller: Any | None) -> dict[str, Any]:
+def _anthropic_caller_provider_details(
+    caller: BetaDirectCaller | BetaServerToolCaller | BetaServerToolCaller20260120 | None,
+) -> dict[str, Any]:
     # A `direct` caller is the implicit default (the server tool was invoked directly, not from within a
     # code execution tool), so it carries no state worth round-tripping; only non-direct callers (e.g.
     # `code_execution_*`) need to be preserved and re-emitted on replay.
@@ -2587,7 +2584,7 @@ def _anthropic_caller_provider_details(caller: Any | None) -> dict[str, Any]:
 
 
 def _add_anthropic_caller_param(
-    block: dict[str, Any],
+    block: BetaServerToolUseBlockParam | BetaWebSearchToolResultBlockParam | BetaWebFetchToolResultBlockParam,
     part: NativeToolCallPart | NativeToolReturnPart,
 ) -> None:
     if part.provider_details is None:
@@ -2597,9 +2594,10 @@ def _add_anthropic_caller_param(
     if not _utils.is_str_dict(caller):
         return
 
-    caller_type = caller.get('type')
-    if caller_type in ('direct', 'code_execution_20250825', 'code_execution_20260120'):  # pragma: lax no cover
-        block['caller'] = caller
+    # Re-emit whatever caller `_anthropic_caller_provider_details` stored. That producer only stores
+    # genuine SDK callers, so replaying the stored value as-is keeps the read/write paths symmetric and
+    # forward-compatible with new caller types, rather than dropping any not in a hardcoded allow-list.
+    block['caller'] = caller  # pyright: ignore[reportGeneralTypeIssues]
 
 
 def _get_anthropic_code_execution_tool_name(
