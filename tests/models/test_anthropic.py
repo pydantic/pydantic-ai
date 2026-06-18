@@ -150,6 +150,11 @@ with try_import() as imports_successful:
 
 if not imports_successful():  # pragma: lax no cover
     AsyncAnthropicBedrock = AsyncAnthropicBedrockMantle = AsyncAnthropicVertex = AsyncAnthropicFoundry = None
+    if not TYPE_CHECKING:
+        # `AsyncAnthropic` is referenced in a module-level `pytest.param`, so it must resolve at collection
+        # time even without `anthropic` installed; guarded from the type checker to keep it typed as the class
+        # at its `cast`/annotation sites (which only execute inside tests skipped when `anthropic` is absent).
+        AsyncAnthropic = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
