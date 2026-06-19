@@ -101,6 +101,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'ollama',
         'openrouter',
         'ovhcloud',
+        'perplexity',
         'sambanova',
         'together',
         'vercel',
@@ -1108,6 +1109,10 @@ def infer_model(  # noqa: C901
         from .ollama import OllamaModel
 
         return OllamaModel(model_name, provider=provider)
+    elif model_kind == 'perplexity':
+        from .perplexity import PerplexityModel
+
+        return PerplexityModel(model_name, provider=provider)
     elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
         from .openai import OpenAIChatModel
 

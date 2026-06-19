@@ -36,6 +36,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.outlines import OutlinesProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+    from pydantic_ai.providers.perplexity import PerplexityProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.xai import XaiProvider
@@ -45,6 +46,7 @@ with try_import() as imports_successful:
         ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
+        ('perplexity', PerplexityProvider, 'PERPLEXITY_API_KEY'),
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
