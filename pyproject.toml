@@ -182,6 +182,8 @@ include = [
     "clai/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
+    ".github/scripts/ci_duration.py",
+    ".github/scripts/test_ci_duration.py",
     ".github/scripts/pydantic_ai_gh_aw_shim/**/*.py",
     ".github/scripts/test_pydantic_ai_runner.py",
 ]
@@ -234,6 +236,8 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
+".github/scripts/ci_duration.py" = ["D"]
+".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 
 [tool.pyright]
@@ -250,6 +254,8 @@ include = [
     "tests",
     "examples",
     "clai",
+    ".github/scripts/ci_duration.py",
+    ".github/scripts/test_ci_duration.py",
     ".github/scripts/pydantic_ai_gh_aw_shim",
     ".github/scripts/test_pydantic_ai_runner.py",
 ]
@@ -262,6 +268,7 @@ executionEnvironments = [
     # `extraPaths` lets pyright resolve the shim package (which sits next to
     # the test file, not under the project root) the same way the runtime
     # `sys.path.insert(...)` at the top of the test does.
+    { root = ".github/scripts/test_ci_duration.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = ".github/scripts/test_pydantic_ai_runner.py", extraPaths = [".github/scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
 ]
 exclude = [
@@ -276,7 +283,7 @@ files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "docs/.hooks"]
+testpaths = ["tests", "docs/.hooks", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
 filterwarnings = [
     "error",

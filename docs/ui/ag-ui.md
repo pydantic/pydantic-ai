@@ -242,6 +242,59 @@ uvicorn ag_ui_state:app --host 0.0.0.0 --port 9000
 AG-UI frontend tools are seamlessly provided to the Pydantic AI agent, enabling rich
 user experiences with frontend user interfaces.
 
+### Tool approval (interrupts)
+
+Tools declared with `requires_approval=True` map onto AG-UI's [interrupt-aware run lifecycle](https://docs.ag-ui.com/concepts/interrupts). When the model proposes such a call, the run pauses and the adapter ends the SSE stream with a `RUN_FINISHED` event whose `outcome.type` is `"interrupt"` and whose `outcome.interrupts[]` describes each pending approval. The client renders an approval UI from that list and POSTs the next `RunAgentInput` with a `resume[]` array of `ResumeEntry` items addressing each interrupt.
+
+The mapping the adapter applies (matching the AG-UI Python SDK field names):
+
+| AG-UI direction         | Pydantic AI source / sink                                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `Interrupt.reason`      | Always `"tool_call"` for `requires_approval=True` tools                                                         |
+| `Interrupt.tool_call_id`| The `ToolCallPart.tool_call_id` of the proposed call                                                            |
+| `Interrupt.id`          | `f"int-{tool_call_id}"` (round-trips back to `tool_call_id` on resume)                                          |
+| `Interrupt.metadata`    | `DeferredToolRequests.metadata.get(tool_call_id)`                                                               |
+| `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`                                                |
+| `payload.approved=True` | [`ToolApproved`][pydantic_ai.tools.ToolApproved]                                                                |
+| `payload.editedArgs`    | [`ToolApproved.override_args`][pydantic_ai.tools.ToolApproved.override_args] (fully replaces the proposed args) |
+| `payload.approved=False`| [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message=payload.reason`                                      |
+| `status="cancelled"`    | [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message="Cancelled by user."` regardless of payload          |
+
+The agent must include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in its `output_type` so the run can pause cleanly instead of erroring on the proposed call:
+
+```python {title="ag_ui_tool_approval.py"}
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
+from pydantic_ai import Agent
+from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    """Delete a file. Pauses on a `RUN_FINISHED` interrupt outcome until the user approves."""
+    return f'deleted {path}'
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
+```
+
+On the resumed turn the agent re-executes the tool against the **original** `tool_call_id`, so only a `TOOL_CALL_RESULT` event is emitted for that id — no fresh `TOOL_CALL_START`. This preserves the audit trail the AG-UI spec requires.
+
+See [Deferred tools and human-in-the-loop tool approval](../deferred-tools.md) for the underlying Pydantic AI primitive that also works outside AG-UI.
+
+!!! note "Version requirement"
+    Interrupts require `ag-ui-protocol >= 0.1.19` ([PR #1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569)). On older installs the adapter silently falls back to emitting a bare `RUN_FINISHED` event without an outcome, and `resume[]` is ignored even if a client sends it.
+
 ### Events
 
 Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by returning a

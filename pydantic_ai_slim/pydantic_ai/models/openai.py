@@ -1003,6 +1003,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
                 # OpenAI SDK type stubs incorrectly use 'in-memory' but API requires 'in_memory', so we have to use `Any` to not hit type errors
                 prompt_cache_retention: Any = model_settings.get('openai_prompt_cache_retention', OMIT)
+                # Most providers only accept one of `max_completion_tokens` (OpenAI, incl. o-series) or
+                # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
+                max_tokens = model_settings.get('max_tokens', OMIT)
+                supports_max_completion_tokens = profile.openai_chat_supports_max_completion_tokens
                 return await self.client.chat.completions.create(
                     model=self.model_name,
                     messages=openai_messages,
@@ -1012,7 +1016,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     stream=stream,
                     stream_options=self._get_stream_options(model_settings) if stream else OMIT,
                     stop=model_settings.get('stop_sequences', OMIT),
-                    max_completion_tokens=model_settings.get('max_tokens', OMIT),
+                    max_completion_tokens=max_tokens if supports_max_completion_tokens else OMIT,
+                    max_tokens=OMIT if supports_max_completion_tokens else max_tokens,
                     timeout=model_settings.get('timeout', NOT_GIVEN),
                     response_format=response_format or OMIT,
                     seed=model_settings.get('seed', OMIT),
@@ -3464,6 +3469,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on `output_text.done`.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
+            mcp_list_tools_return_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
@@ -3471,6 +3477,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             async for chunk in self._response:
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
+                    # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
+                    # Backfill mcp_list_tools results missing from streamed output_item.done events (see #5419).
+                    for item in chunk.response.output:
+                        if (
+                            isinstance(item, responses.response_output_item.McpListTools)
+                            and item.id not in mcp_list_tools_return_ids
+                        ):
+                            _, return_part = _map_mcp_list_tools(item, self.provider_name)
+                            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                            mcp_list_tools_return_ids.add(item.id)
+
                     self._usage += self._map_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
 
@@ -3735,6 +3752,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=f'{chunk.item.id}-return', part=return_part
                         )
+                        mcp_list_tools_return_ids.add(chunk.item.id)
                     elif isinstance(chunk.item, ResponseCompactionItem):
                         # Replace the preliminary part from the "added" event with the
                         # final encrypted_content for round-tripping.
