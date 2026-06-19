@@ -48,6 +48,21 @@ class GrokModelProfile(ModelProfile):
     grok_reasoning_efforts: frozenset[GrokReasoningEffort] = frozenset()
     """Native `reasoning_effort` values supported by the Grok model."""
 
+    grok_send_back_thinking_parts: Literal['auto', 'tags'] = 'auto'
+    """How unsigned or foreign-provider thinking parts in history are sent back to xAI.
+
+    Signed, same-provider thinking parts are always sent back natively via `reasoning_content`/
+    `encrypted_content`. This setting only governs parts that *can't* be sent natively — those without a
+    signature, or produced by a different provider (e.g. another model in a `FallbackModel` chain, or
+    rebuilt by a history processor):
+
+    * `'auto'` (default): such parts are dropped. xAI does not re-absorb `<think>` tags from history, so
+    re-rendering them as text teaches the model to mimic the format in its user-visible answers, leaking
+    reasoning to end users.
+    * `'tags'`: such parts are re-rendered as text wrapped in the `thinking_tags`, the behavior from
+    before this setting existed.
+    """
+
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""

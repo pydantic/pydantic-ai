@@ -3825,7 +3825,8 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
     # Include user-supplied `<think>` tags to confirm they are treated as plain user text.
     result2 = await agent.run('Second question <think>user think</think>', message_history=message_history)
 
-    # Verify kwargs - second call should have ThinkingPart mapped with reasoning_content
+    # Verify kwargs - the unsigned, foreign-provider thinking part is dropped by default
+    # (`grok_send_back_thinking_parts='auto'`) rather than re-rendered as `<think>` text.
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
@@ -3841,18 +3842,6 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
                 'model': XAI_REASONING_MODEL,
                 'messages': [
                     {'content': [{'text': 'First question'}], 'role': 'ROLE_USER'},
-                    {
-                        'content': [
-                            {
-                                'text': """\
-<think>
-First reasoning
-</think>\
-"""
-                            }
-                        ],
-                        'role': 'ROLE_ASSISTANT',
-                    },
                     {'content': [{'text': 'first response'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'Second question <think>user think</think>'}], 'role': 'ROLE_USER'},
                 ],
@@ -3919,6 +3908,48 @@ First reasoning
             ),
         ]
     )
+
+
+async def test_xai_send_back_thinking_parts_tags(allow_model_requests: None):
+    """`grok_send_back_thinking_parts='tags'` re-renders unsigned/foreign thinking parts as `<think>` text."""
+    response1 = create_response(
+        content='first response',
+        reasoning_content='First reasoning',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='second response',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+
+    mock_client = MockXai.create_mock([response1, response2])
+    profile = GrokModelProfile(grok_send_back_thinking_parts='tags')
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client), profile=profile)
+    agent = Agent(m)
+
+    result1 = await agent.run('First question')
+    result2 = await agent.run('Second question', message_history=result1.new_messages())
+
+    assert get_mock_chat_create_kwargs(mock_client)[1]['messages'] == snapshot(
+        [
+            {'content': [{'text': 'First question'}], 'role': 'ROLE_USER'},
+            {
+                'content': [
+                    {
+                        'text': """\
+<think>
+First reasoning
+</think>\
+"""
+                    }
+                ],
+                'role': 'ROLE_ASSISTANT',
+            },
+            {'content': [{'text': 'first response'}], 'role': 'ROLE_ASSISTANT'},
+            {'content': [{'text': 'Second question'}], 'role': 'ROLE_USER'},
+        ]
+    )
+    assert result2.output == 'second response'
 
 
 async def test_xai_thinking_part_with_content_and_signature_in_history(allow_model_requests: None):

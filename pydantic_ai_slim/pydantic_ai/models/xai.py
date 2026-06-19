@@ -461,7 +461,8 @@ class XaiModel(Model[AsyncClient]):
         """Map a `ThinkingPart` into a single xAI assistant message.
 
         - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
-        - Non-xAI (or non-native) thinking is preserved by wrapping in the model profile's thinking tags
+        - Non-xAI (or non-native) thinking is dropped by default, or re-rendered in the model profile's
+          thinking tags when `grok_send_back_thinking_parts='tags'`
         """
         if item.provider_name == self.system and (item.content or item.signature):
             msg = assistant('')
@@ -470,7 +471,10 @@ class XaiModel(Model[AsyncClient]):
             if item.signature:
                 msg.encrypted_content = item.signature
             return msg
-        elif item.content:
+        elif item.content and GrokModelProfile.from_profile(self.profile).grok_send_back_thinking_parts == 'tags':
+            # xAI does not re-absorb `<think>` tags from history, so re-rendering an unsigned/foreign part
+            # as text teaches the model to mimic the format in its user-visible output. `'auto'` drops
+            # these; `'tags'` opts back in.
             start_tag, end_tag = self.profile.thinking_tags
             return assistant('\n'.join([start_tag, item.content, end_tag]))
         else:
