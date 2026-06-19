@@ -48,7 +48,7 @@ from .._agent_graph import (
 from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._template import TemplateStr, validate_from_spec_args
+from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._dynamic import wrap_capability_funcs
@@ -59,6 +59,7 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
+from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
 from ..tools import (
     AgentDepsT,
@@ -111,6 +112,7 @@ if TYPE_CHECKING:
 __all__ = (
     'AbstractAgent',
     'Agent',
+    'AgentInstructions',
     'AgentModelSettings',
     'AgentRetries',
     'AgentRun',
@@ -865,7 +867,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         The file format is inferred from the extension (`.yaml`/`.yml` or `.json`)
         unless overridden with the `fmt` argument.
 
-        All other arguments are forwarded to [`from_spec`][pydantic_ai.Agent.from_spec].
+        All other arguments are forwarded to [`from_spec`][pydantic_ai.agent.Agent.from_spec].
         """
         extra_capabilities = _utils.consume_deprecated_builtin_tools_as_capabilities(
             _deprecated_kwargs, 'Agent.from_file'

@@ -14,3 +14,13 @@
             - capture_run_messages
             - InstrumentationSettings
             - EventStreamHandler
+            - AgentInstructions
+            - AgentModelSettings
+            - CallToolsNode
+            - ModelRequestNode
+            - UserPromptNode
+
+::: pydantic_ai.agent.spec
+    options:
+        members:
+            - AgentSpec
