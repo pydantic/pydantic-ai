@@ -9834,6 +9834,54 @@ def test_agent_native_tools_runtime_vs_agent_level():
     )
 
 
+def test_agent_rejects_conflicting_agent_level_native_tool_ids():
+    with pytest.raises(UserError, match="Duplicate native tool id 'mcp_server:mcp.example.com-api'"):
+        Agent(
+            model=TestModel(),
+            capabilities=[
+                NativeTool(
+                    MCPServerTool(
+                        id='mcp.example.com-api',
+                        url='https://mcp.example.com/tenant-a/api',
+                        authorization_token='Bearer tenant-a',
+                    )
+                ),
+                NativeTool(
+                    MCPServerTool(
+                        id='mcp.example.com-api',
+                        url='https://mcp.example.com/tenant-b/api',
+                        authorization_token='Bearer tenant-b',
+                    )
+                ),
+            ],
+        )
+
+
+def test_agent_rejects_conflicting_run_level_native_tool_ids():
+    agent = Agent(model=TestModel())
+
+    with pytest.raises(UserError, match="Duplicate native tool id 'mcp_server:mcp.example.com-api'"):
+        agent.run_sync(
+            'Hello',
+            capabilities=[
+                NativeTool(
+                    MCPServerTool(
+                        id='mcp.example.com-api',
+                        url='https://mcp.example.com/tenant-a/api',
+                        authorization_token='Bearer tenant-a',
+                    )
+                ),
+                NativeTool(
+                    MCPServerTool(
+                        id='mcp.example.com-api',
+                        url='https://mcp.example.com/tenant-b/api',
+                        authorization_token='Bearer tenant-b',
+                    )
+                ),
+            ],
+        )
+
+
 def test_agent_override_native_tools_empty_runs_with_test_model():
     """Test that agent-level native tools can be removed when overriding the model."""
     model = TestModel()
