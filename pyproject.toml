@@ -306,6 +306,11 @@ filterwarnings = [
     "ignore:`Agent.*\\(instrument=\\.\\.\\.\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
     # `AgentSpec.instrument` field is deprecated in favor of an `Instrumentation` capability entry.
     "ignore:`AgentSpec.instrument` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
+    # `pydantic_ai.mcp` prefers `httpx2`; HTTP MCP server construction warns when falling back
+    # to `httpx`. `httpx2` is not yet on PyPI, so every existing MCP HTTP test would trip the
+    # warning. The dedicated test (`tests/v2/test_mcp_httpx2_deprecation.py`) covers the
+    # emission. Remove this entry once `httpx2` is the default and the fallback is dropped in v2.
+    "ignore:Using `httpx` with `pydantic_ai.mcp` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning",
     # Provider.__del__ emits ResourceWarning when GC'd with an open HTTP client.
     # Most tests create providers without async context managers, so this is expected.
     "ignore:.*was garbage collected with an open HTTP client:ResourceWarning",
