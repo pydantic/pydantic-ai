@@ -1790,12 +1790,16 @@ async def process_tool_calls(  # noqa: C901
             metadata=deferred_metadata,
         )
 
+        for call in [*deferred_calls['external'], *deferred_calls['unapproved']]:
+            yield _messages.DeferredToolCallEvent(call, args_valid=True, requests=deferred_tool_requests)
+
         # Let capability handlers resolve deferred calls inline (one shot).
         # Results are fed back through the existing tool-execution pipeline so that
         # approvals, denials, retries, and ToolReturn unwrapping all behave identically
         # to the UserPromptNode resume path.
         handler_results = await tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
         if handler_results is not None:
+            yield _messages.DeferredToolResultEvent(results=handler_results)
             handler_tool_call_results = handler_results.to_tool_call_results()
             resolved_calls = [
                 call

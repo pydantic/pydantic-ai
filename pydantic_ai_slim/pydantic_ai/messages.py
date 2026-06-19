@@ -2920,6 +2920,41 @@ class OutputToolResultEvent(ToolResultEvent):
     """Event type identifier, used as a discriminator."""
 
 
+# Deferred tool types live in `_deferred.py` to break the circular import
+# chain (tools → _function_schema → _run_context → messages).  Same late-import
+# pattern as `_tool_search` above.
+from ._deferred import (  # noqa: E402
+    DeferredToolRequests as DeferredToolRequests,
+    DeferredToolResults as DeferredToolResults,
+)
+
+
+@dataclass(repr=False)
+class DeferredToolCallEvent(ToolCallEvent):
+    """An event indicating that a tool call has been deferred for external resolution or approval."""
+
+    requests: DeferredToolRequests = field(kw_only=True)
+    """The full batch of deferred requests, including all calls and approvals in this resolution group."""
+
+    event_kind: Literal['deferred_tool_call'] = 'deferred_tool_call'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass(repr=False)
+class DeferredToolResultEvent:
+    """An event indicating that deferred tool calls have been resolved by a handler."""
+
+    results: DeferredToolResults
+    """The resolved results for the deferred tool calls."""
+
+    _: KW_ONLY
+
+    event_kind: Literal['deferred_tool_result'] = 'deferred_tool_result'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @deprecated(
     '`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.'
 )
@@ -2957,6 +2992,8 @@ HandleResponseEvent = Annotated[
     | FunctionToolResultEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
+    | DeferredToolCallEvent
+    | DeferredToolResultEvent
     | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
     | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     pydantic.Discriminator('event_kind'),

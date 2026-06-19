@@ -470,3 +470,12 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 - [Advanced Tool Features](tools-advanced.md) - Custom schemas, dynamic tools, and execution details
 - [Toolsets](toolsets.md) - Managing collections of tools, including `ExternalToolset` for external tools
 - [Message History](message-history.md) - Understanding how to work with message history for deferred tools
+
+## Observing deferred tool events in a stream
+
+When consuming an agent run via [`agent.iter()`][pydantic_ai.agent.Agent.iter] or [`node.stream()`][pydantic_ai.agent.ModelRequestNode.stream], two additional [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s are emitted for every deferred tool interaction:
+
+- [`DeferredToolCallEvent`][pydantic_ai.messages.DeferredToolCallEvent] — fired once per deferred call (external or approval-required), carrying the [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and the full [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] batch it belongs to.
+- [`DeferredToolResultEvent`][pydantic_ai.messages.DeferredToolResultEvent] — fired once per batch after the handler (or caller) has resolved the calls, carrying the [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults].
+
+These events let stream consumers observe deferred tool lifecycles (for logging, UI updates, etc.) without needing to couple to the deferred handler itself.
