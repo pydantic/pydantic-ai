@@ -18,7 +18,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypedDict, TypeVar, assert_never
 
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
@@ -1486,7 +1486,32 @@ class NativeToolReturnPart(BaseToolReturnPart):
         return _narrow_return(part, _NATIVE_RETURN_NARROWERS, tool_kind)
 
 
-error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
+if TYPE_CHECKING:
+    _RetryErrorDetails: TypeAlias = pydantic_core.ErrorDetails
+else:
+
+    class _RetryErrorDetails(TypedDict, total=False):
+        """Runtime-loose form of [`pydantic_core.ErrorDetails`][pydantic_core.ErrorDetails].
+
+        `pydantic_core.ErrorDetails` is a `TypedDict` that marks every key except `ctx`/`url` as
+        required, so it is not enforced when a `RetryPromptPart` is constructed but *is* enforced by
+        `ModelMessagesTypeAdapter` on (de)serialization. `RetryPromptPart.content` is populated from
+        several sources that legitimately omit some of those keys, e.g.
+        `ValidationError.errors(include_input=False)`, custom validators that build their own dicts,
+        or older persisted history. Validating/serializing against this `total=False` shape keeps
+        message history round-tripping (and stops the `PydanticSerializationUnexpectedValue`
+        warning) while the public, static type stays `ErrorDetails` for tooling.
+        """
+
+        type: str
+        loc: tuple[int | str, ...]
+        msg: str
+        input: Any
+        ctx: dict[str, Any]
+        url: str
+
+
+error_details_ta = pydantic.TypeAdapter(list[_RetryErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
 @dataclass(repr=False)
@@ -1505,7 +1530,7 @@ class RetryPromptPart:
     * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     """
 
-    content: list[pydantic_core.ErrorDetails] | str
+    content: list[_RetryErrorDetails] | str
     """Details of why and how the model should retry.
 
     If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a list of
