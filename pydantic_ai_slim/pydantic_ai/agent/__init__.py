@@ -68,6 +68,7 @@ from ..tools import (
     DocstringFormat,
     GenerateToolJsonSchema,
     NativeToolFunc,
+    RequiresApprovalFunc,
     RunContext,
     SystemPromptFunc,
     Tool,
@@ -2197,7 +2198,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         sequential: bool = False,
-        requires_approval: bool = False,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2219,7 +2220,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         sequential: bool = False,
-        requires_approval: bool = False,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2277,6 +2278,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                Can also be a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable that
+                receives the run context and validated arguments and returns a metadata dict to require approval,
+                or `None` to run the tool directly.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
@@ -2332,7 +2336,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         sequential: bool = False,
-        requires_approval: bool = False,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2354,7 +2358,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         sequential: bool = False,
-        requires_approval: bool = False,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] = False,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
@@ -2413,6 +2417,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                Can also be a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable that
+                receives the run context and validated arguments and returns a metadata dict to require approval,
+                or `None` to run the tool directly.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.

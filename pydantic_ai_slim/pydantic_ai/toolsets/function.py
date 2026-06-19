@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
@@ -11,12 +12,13 @@ from pydantic.json_schema import GenerateJsonSchema
 from .._instructions import prepare_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
-from ..exceptions import ModelRetry, UserError
+from ..exceptions import ApprovalRequired, ModelRetry, UserError
 from ..messages import InstructionPart
 from ..tools import (
     ArgsValidatorFunc,
     DocstringFormat,
     GenerateToolJsonSchema,
+    RequiresApprovalFunc,
     SystemPromptFunc,
     Tool,
     ToolFuncContext,
@@ -39,6 +41,13 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     If the tool takes longer than this, a retry prompt is returned to the model.
     Defaults to None (no timeout).
+    """
+
+    requires_approval: bool | RequiresApprovalFunc[AgentDepsT] = False
+    """Whether this tool requires human-in-the-loop approval.
+
+    When this is a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc], it's evaluated
+    against the validated arguments before execution to decide whether the call should be deferred for approval.
     """
 
 
@@ -69,7 +78,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         sequential: bool = False,
-        requires_approval: bool = False,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] = False,
         metadata: dict[str, Any] | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -98,6 +107,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
                 Applies to all tools, unless overridden when adding a tool.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                Can also be a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable for conditional approval.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 Applies to all tools, unless overridden when adding a tool.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -160,7 +170,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
-        requires_approval: bool | None = None,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
@@ -182,7 +192,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
-        requires_approval: bool | None = None,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
@@ -245,6 +255,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                Can also be a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable for conditional approval.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -315,7 +326,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
-        requires_approval: bool | None = None,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
@@ -337,7 +348,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
-        requires_approval: bool | None = None,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
@@ -401,6 +412,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                Can also be a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable for conditional approval.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -486,7 +498,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
         sequential: bool | None = None,
-        requires_approval: bool | None = None,
+        requires_approval: bool | RequiresApprovalFunc[AgentDepsT] | None = None,
         defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -527,6 +539,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                Can also be a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable for conditional approval.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
                 If `None`, the default value is determined by the toolset.
             defer_loading: Whether to hide this tool until it's discovered via tool search.
@@ -638,6 +651,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,
                 timeout=tool_def.timeout,
+                requires_approval=tool.requires_approval,
             )
         return tools
 
@@ -645,6 +659,17 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
+
+        # A callable `requires_approval` is evaluated immediately before execution using the final
+        # validated arguments, outside the execution timeout so approval policy latency isn't counted
+        # as tool execution time. `requires_approval=True` is handled upstream via `kind='unapproved'`.
+        approval = tool.requires_approval
+        if callable(approval) and not ctx.tool_call_approved:
+            metadata = approval(ctx, tool_args)
+            if inspect.isawaitable(metadata):
+                metadata = await metadata
+            if metadata is not None:
+                raise ApprovalRequired(metadata=metadata)
 
         # Per-tool timeout takes precedence over toolset timeout
         timeout = tool.timeout if tool.timeout is not None else self.timeout

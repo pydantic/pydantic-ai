@@ -90,9 +90,30 @@ The sections below describe the two kinds of deferred tools the handler can reso
 
 ## Human-in-the-Loop Tool Approval
 
-If a tool function always requires approval, you can pass the `requires_approval=True` argument to the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator, [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator, [`Tool`][pydantic_ai.tools.Tool] class, [`FunctionToolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator, or [`FunctionToolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] method. Inside the function, you can then assume that the tool call has been approved.
+If a tool function always requires approval, you can pass the `requires_approval=True` argument to the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator, [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator, [`Tool`][pydantic_ai.tools.Tool] class, [`FunctionToolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator, [`FunctionToolset.tool_plain`][pydantic_ai.toolsets.FunctionToolset.tool_plain] decorator, or [`FunctionToolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] method. Inside the function, you can then assume that the tool call has been approved.
 
 If whether a tool function requires approval depends on the tool call arguments or the agent [run context][pydantic_ai.tools.RunContext] (e.g. [dependencies](dependencies.md) or message history), you can raise the [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exception from the tool function. The [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] property will be `True` if the tool call has already been approved.
+
+As an alternative to raising `ApprovalRequired` from inside the function, you can pass a [`RequiresApprovalFunc`][pydantic_ai.tools.RequiresApprovalFunc] callable as the `requires_approval` argument to keep the approval policy next to the tool declaration. The callable receives the run context and the validated arguments, and returns a metadata dictionary to require approval (made available via [`DeferredToolRequests.metadata`][pydantic_ai.tools.DeferredToolRequests.metadata] keyed by `tool_call_id`), or `None` to run the tool directly. It's evaluated immediately before execution using the final validated arguments, and only when [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] is `False`:
+
+```python {title="tool_requires_approval_callable.py"}
+from typing import Any
+
+from pydantic_ai import Agent, DeferredToolRequests, RunContext
+
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+def needs_approval(ctx: RunContext[None], args: dict[str, Any]) -> dict[str, Any] | None:
+    if args['amount'] > 1000:
+        return {'amount': args['amount'], 'recipient': args['to']}
+    return None  # small transfers run without approval
+
+
+@agent.tool(requires_approval=needs_approval)
+def transfer(ctx: RunContext[None], amount: float, to: str) -> str:
+    return f'Transferred {amount} to {to}'
+```
 
 To require approval for calls to tools provided by a [toolset](toolsets.md) (like an [MCP server](mcp/client.md)), see the [`ApprovalRequiredToolset` documentation](toolsets.md#requiring-tool-approval).
 
