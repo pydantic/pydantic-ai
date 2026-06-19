@@ -779,12 +779,22 @@ def _map_usage(
         return usage.RequestUsage()
 
     usage_data = response_usage.model_dump(exclude_none=True)
-    details = {
+    details: dict[str, int] = {
         k: v
         for k, v in usage_data.items()
-        if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
+        if k not in {
+            'prompt_tokens', 'completion_tokens', 'total_tokens',
+            'completion_tokens_details', 'prompt_tokens_details',
+        }
         if isinstance(v, int)
     }
+    # Walk nested detail dicts (prompt_tokens_details, completion_tokens_details)
+    # to surface metrics like cached_tokens and reasoning_tokens.
+    for detail_key in ('prompt_tokens_details', 'completion_tokens_details'):
+        detail_dict = usage_data.get(detail_key, {}) or {}
+        for nested_k, nested_v in detail_dict.items():
+            if isinstance(nested_v, int):
+                details[nested_k] = nested_v
 
     return usage.RequestUsage.extract(
         dict(model=model, usage=usage_data),
