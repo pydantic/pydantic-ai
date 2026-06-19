@@ -19,7 +19,7 @@ from pydantic_ai import (
     Tool,
     ToolDefinition,
 )
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ParallelExecutionMode
@@ -31,7 +31,7 @@ from pydantic_monty import NOT_HANDLED, MountDir, OSAccess, OsFunction
 from typing_extensions import TypedDict
 
 from pydantic_ai_harness import CodeMode
-from pydantic_ai_harness.code_mode import CodeModeToolset
+from pydantic_ai_harness.code_mode import CodeModeToolset, default_run_code_instructions
 from pydantic_ai_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
     _SEARCH_TOOLS_MODIFIER,
     _TOOL_SEARCH_ADDENDUM,
@@ -235,6 +235,47 @@ class TestCodeMode:
         assert '"""Add two numbers."""' in description
         # The base description must tell the model to await tool calls.
         assert 'await' in description
+
+    async def test_instructions_appends_to_base_prose(self) -> None:
+        """`instructions` appends to the built-in prose, with the catalog still after it."""
+        toolset = _build_function_toolset(add)
+        wrapper = CodeMode[None](instructions='PROJECT NOTE').get_wrapper_toolset(toolset)
+        assert isinstance(wrapper, CodeModeToolset)
+        description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
+        assert description is not None
+        assert 'Monty' in description  # built-in prose kept
+        assert 'PROJECT NOTE' in description  # the caller's addition
+        assert 'async def add(*, a: int, b: int) -> int' in description  # catalog preserved
+        # Ordering: base prose, then the addition, then the catalog.
+        assert description.index('Monty') < description.index('PROJECT NOTE') < description.index('async def add')
+
+    async def test_dangerously_replace_instructions_replaces_base_prose(self) -> None:
+        """`dangerously_replace_instructions` replaces the built-in prose; the catalog is still appended."""
+        toolset = _build_function_toolset(add)
+        wrapper = CodeMode[None](dangerously_replace_instructions='CUSTOM RUN_CODE PROSE').get_wrapper_toolset(toolset)
+        assert isinstance(wrapper, CodeModeToolset)
+        description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
+        assert description is not None
+        assert description.startswith('CUSTOM RUN_CODE PROSE')
+        assert 'async def add(*, a: int, b: int) -> int' in description  # catalog preserved
+        assert 'Monty' not in description  # built-in prose replaced
+
+    async def test_dangerously_replace_builds_on_exported_default(self) -> None:
+        """`default_run_code_instructions()` is exported so a replacement can start from the real base."""
+        toolset = _build_function_toolset(add)
+        custom = default_run_code_instructions() + '\n\nPROJECT NOTE'
+        wrapper = CodeMode[None](dangerously_replace_instructions=custom).get_wrapper_toolset(toolset)
+        assert isinstance(wrapper, CodeModeToolset)
+        description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
+        assert description is not None
+        assert 'Monty' in description  # the default prose was kept
+        assert 'PROJECT NOTE' in description  # the caller's addition
+        assert 'async def add' in description  # catalog preserved
+
+    def test_instructions_and_replace_are_mutually_exclusive(self) -> None:
+        """Setting both `instructions` and `dangerously_replace_instructions` raises `UserError`."""
+        with pytest.raises(UserError, match='mutually exclusive'):
+            CodeMode[None](instructions='a', dangerously_replace_instructions='b')
 
     async def test_run_code_executes_call_through_monty(self) -> None:
         """End-to-end: `run_code` runs Python in Monty and dispatches to a sync wrapped tool."""
