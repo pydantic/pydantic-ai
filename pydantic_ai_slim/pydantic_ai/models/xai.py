@@ -246,11 +246,16 @@ class XaiModelSettings(ModelSettings, total=False):
     """
 
     xai_max_turns: int
-    """Maximum number of agentic turns the model can take.
+    """Maximum number of agentic turns xAI's server-side tool loop may take.
 
-    When set, the model will automatically call tools up to this many turns before returning a final response.
-    Note that when parallel tool calls are enabled, multiple tool calls can occur within a single turn,
-    so `xai_max_turns` does not necessarily equal the total number of tool calls made.
+    Only affects requests that use xAI's server-side native tools (e.g. web search, code
+    execution, X search): xAI iterates up to this many turns — calling those server-side tools
+    and processing their results — before returning a final response. It has no effect on ordinary
+    client-side tools or on Pydantic AI's own agent loop; use [`UsageLimits`][pydantic_ai.usage.UsageLimits]
+    to bound those.
+
+    With parallel tool calls enabled, multiple tool calls can occur within a single turn, so
+    `xai_max_turns` does not necessarily equal the total number of tool calls made.
     """
 
 
