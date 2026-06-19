@@ -549,6 +549,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             | DocumentInputContent
         ] = []
 
+        def _flush_user_content(target: list[Message]) -> None:
+            """Flush buffered user_content into target as one or more UserMessages."""
+            nonlocal user_content
+            if user_content:
+                if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+                    target.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
+                else:
+                    target.append(UserMessage(id=_new_message_id(), content=user_content))
+                user_content = []
+
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
                 system_content.append(part.content)
@@ -583,12 +593,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             elif isinstance(part, ToolReturnPart):
                 # Flush buffered user content before tool returns so
                 # messages preserve the original ModelRequest.parts order.
-                if user_content:
-                    if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-                        result.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
-                    else:
-                        result.append(UserMessage(id=_new_message_id(), content=user_content))
-                    user_content = []
+                _flush_user_content(result)
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
@@ -614,12 +619,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         messages: list[Message] = []
         if system_content:
             messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
-        if user_content:
-            # Simplify to plain string if only single text item
-            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-                messages.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
-            else:
-                messages.append(UserMessage(id=_new_message_id(), content=user_content))
+        _flush_user_content(messages)
         messages.extend(result)
         return messages
 

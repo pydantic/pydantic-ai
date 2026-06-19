@@ -792,6 +792,8 @@ def _map_usage(
     # to surface metrics like cached_tokens and reasoning_tokens.
     for detail_key in ('prompt_tokens_details', 'completion_tokens_details'):
         detail_dict = usage_data.get(detail_key, {}) or {}
+        if not isinstance(detail_dict, dict):
+            detail_dict = {}
         for nested_k, nested_v in detail_dict.items():
             if isinstance(nested_v, int):
                 details[nested_k] = nested_v
