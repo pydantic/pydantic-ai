@@ -293,6 +293,14 @@ This is why Pydantic AI Harness is a separate package from [Pydantic AI](https:/
 - [Toolsets](https://ai.pydantic.dev/toolsets/) -- building tools for capabilities
 - [API reference](https://ai.pydantic.dev/api/capabilities/) -- full API docs
 
+## Part of the Pydantic Stack
+
+The Pydantic Stack is everything you need to ship production-grade AI agents:
+
+- [Pydantic AI](https://pydantic.dev/pydantic-ai?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai-harness) - Type-safe agent framework
+- [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai-harness) - AI-first, full-stack observability
+- [Logfire AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai-harness) - Unified LLM proxy
+
 ## License
 
 MIT -- see [LICENSE](LICENSE).
