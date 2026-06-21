@@ -105,7 +105,7 @@ jobs:
           github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
-        && 'ubicloud-premium-4'
+        && 'ubicloud-standard-4'
         || 'ubuntu-latest'
       }}
     timeout-minutes: 20
@@ -174,7 +174,7 @@ jobs:
           github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
-        && 'ubicloud-premium-4'
+        && 'ubicloud-standard-4'
         || 'ubuntu-latest'
       }}
     timeout-minutes: 20
