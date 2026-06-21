@@ -135,6 +135,27 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
     mock_profiles['openai'].assert_called_once_with('unknown-provider/some-model')
 
 
+def test_model_profile_multiple_system_messages():
+    """Models without a recognized provider prefix default to merging system messages (vLLM compat)."""
+    provider = LiteLLMProvider(api_key='test-key')
+
+    # No prefix → conservative default for strict backends (e.g. vLLM)
+    for model in ['my-custom-model', 'llama2-70b', 'gpt-3.5-turbo']:
+        profile = provider.model_profile(model)
+        assert isinstance(profile, OpenAIModelProfile)
+        assert profile.openai_chat_supports_multiple_system_messages is False, model
+
+    # Unknown prefix → also conservative
+    profile = provider.model_profile('unknown-provider/some-model')
+    assert isinstance(profile, OpenAIModelProfile)
+    assert profile.openai_chat_supports_multiple_system_messages is False
+
+    # Recognized provider prefix → use the provider's own setting (True for openai)
+    profile = provider.model_profile('openai/gpt-4o')
+    assert isinstance(profile, OpenAIModelProfile)
+    assert profile.openai_chat_supports_multiple_system_messages is True
+
+
 async def test_create_http_client_usage(mocker: MockerFixture):
     # Create a real AsyncClient for the mock
     async with httpx.AsyncClient() as mock_client:

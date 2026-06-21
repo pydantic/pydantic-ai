@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from dataclasses import replace
 from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -67,12 +68,14 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         }
 
         profile = None
+        has_recognized_prefix = False
 
         # Check if model name contains a provider prefix (e.g., "anthropic/claude-3")
         if '/' in model_name:
             provider_prefix, model_suffix = model_name.split('/', 1)
             if provider_prefix in provider_to_profile:
                 profile = provider_to_profile[provider_prefix](model_suffix)
+                has_recognized_prefix = True
 
         # If no profile found, default to OpenAI profile
         if profile is None:
@@ -80,7 +83,15 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
 
         # As LiteLLMProvider is used with OpenAIModel, which uses OpenAIJsonSchemaTransformer,
         # we maintain that behavior
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        result = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+
+        # Models without a recognized provider prefix are often custom backends (e.g. vLLM deployments)
+        # that require exactly one system message at the start of the conversation. Default to merging
+        # consecutive system messages to avoid "System message must be at the beginning" errors.
+        if not has_recognized_prefix:
+            result = replace(result, openai_chat_supports_multiple_system_messages=False)
+
+        return result
 
     @overload
     def __init__(
