@@ -95,8 +95,8 @@ jobs:
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
-    # Use Depot 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
-    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
+    # Use Ubicloud 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
+    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
     runs-on: >-
       ${{
         !contains(github.event.pull_request.labels.*.name, 'ci:slow')
@@ -105,7 +105,7 @@ jobs:
           github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
-        && 'depot-ubuntu-24.04-4'
+        && 'ubicloud-premium-4'
         || 'ubuntu-latest'
       }}
     timeout-minutes: 20
@@ -161,8 +161,8 @@ jobs:
 
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions)
-    # Use Depot 4-core runners for maintainers or opted in via 'ci:fast' label
-    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Depot outages)
+    # Use Ubicloud 4-core runners for maintainers or opted in via 'ci:fast' label
+    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
     runs-on: >-
       ${{
         !contains(github.event.pull_request.labels.*.name, 'ci:slow')
@@ -170,7 +170,7 @@ jobs:
           github.event.pull_request.head.repo.full_name == github.repository
           || contains(github.event.pull_request.labels.*.name, 'ci:fast')
         )
-        && 'depot-ubuntu-24.04-4'
+        && 'ubicloud-premium-4'
         || 'ubuntu-latest'
       }}
     timeout-minutes: 20
