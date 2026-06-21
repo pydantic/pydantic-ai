@@ -7,6 +7,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
+    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -22,6 +23,7 @@ from pydantic_ai import (
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
     RequestUsage,
     RetryPromptPart,
     TextContent,
@@ -458,6 +460,26 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     part = ThinkingPart(content='')
     result_part = chained.apply(part)
     assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
+
+
+def test_thinking_part_delta_callable_provider_details_serializable():
+    delta1 = ThinkingPartDelta(content_delta='first', provider_details=lambda d: {**(d or {}), 'first': True})
+    delta2 = ThinkingPartDelta(content_delta=' second', provider_details=lambda d: {**(d or {}), 'second': True})
+    chained = delta2.apply(delta1)
+    assert isinstance(chained, ThinkingPartDelta)
+    assert callable(chained.provider_details)
+
+    event = PartDeltaEvent(index=0, delta=chained)
+    adapter = cast(TypeAdapter[AgentStreamEvent], TypeAdapter(AgentStreamEvent))
+    serialized = adapter.dump_json(event)
+
+    assert b'"provider_details":null' in serialized
+
+    dict_event = PartDeltaEvent(
+        index=0,
+        delta=ThinkingPartDelta(content_delta='dict', provider_details={'provider': 'detail'}),
+    )
+    assert b'"provider_details":{"provider":"detail"}' in adapter.dump_json(dict_event)
 
 
 def test_pre_usage_refactor_messages_deserializable():
