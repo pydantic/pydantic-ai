@@ -206,7 +206,16 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: uv sync --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct
+      # llama-cpp-python ships sdist-only on PyPI, so `--resolution lowest-direct`
+      # floats its (transitive) version to the latest release and recompiles it
+      # (~3 min) on every run — the build never caches because the version churns.
+      # Install the prebuilt CPU wheel from the maintainer's official index and
+      # forbid source builds, so uv picks the newest version that ships a wheel.
+      # CI-only: not applied to local dev or the published package metadata.
+      - run: >-
+          uv sync --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct
+          --index https://abetlen.github.io/llama-cpp-python/whl/cpu
+          --no-build-package llama-cpp-python
         env:
           UV_FROZEN: "0"
 
