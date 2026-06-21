@@ -148,7 +148,11 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
+      # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
+      # instead of 4). `logical` uses all vCPUs; ~39% faster on premium-4, no-op
+      # on ubuntu-latest (already 4). See PR benchmark.
+      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
@@ -206,7 +210,8 @@ jobs:
         env:
           UV_FROZEN: "0"
 
-      - run: uv run --no-sync coverage run -m pytest --durations=100 -n auto --dist=loadgroup
+      # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
+      - run: uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
