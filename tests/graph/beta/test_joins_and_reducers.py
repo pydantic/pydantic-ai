@@ -81,6 +81,39 @@ async def test_reduce_list_append():
     assert sorted(result) == ['item-1', 'item-2', 'item-3', 'item-4']
 
 
+async def test_downstream_join_id_non_empty_map_reuses_parent_reducer():
+    """Test that downstream_join_id doesn't fire an empty join before map results."""
+    g = GraphBuilder(output_type=list[int])
+    join_inputs_seen: list[list[int]] = []
+
+    @g.step
+    async def generate_numbers(ctx: StepContext[None, None, None]) -> list[int]:
+        return [1, 2, 3]
+
+    @g.step
+    async def passthrough(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    @g.step
+    async def after_join(ctx: StepContext[None, None, list[int]]) -> list[int]:
+        join_inputs_seen.append(sorted(ctx.inputs))
+        return ctx.inputs
+
+    g.add(
+        g.edge_from(g.start_node).to(generate_numbers),
+        g.edge_from(generate_numbers).map(downstream_join_id=collect.id).to(passthrough),
+        g.edge_from(passthrough).to(collect),
+        g.edge_from(collect).to(after_join),
+        g.edge_from(after_join).to(g.end_node),
+    )
+
+    result = await g.build().run()
+    assert sorted(result) == [1, 2, 3]
+    assert join_inputs_seen == [[1, 2, 3]]
+
+
 async def test_reduce_dict_update():
     """Test reduce_dict_update that merges dictionaries."""
     g = GraphBuilder(state_type=SimpleState, output_type=dict[str, int])

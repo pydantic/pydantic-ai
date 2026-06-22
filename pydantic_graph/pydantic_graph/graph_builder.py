@@ -1005,7 +1005,18 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             if (join_id := node.downstream_join_id) is not None:
                 join_node = self.graph.nodes[join_id]
                 assert isinstance(join_node, Join)
-                self.active_reducers[(join_id, node_run_id)] = JoinState(join_node.initial_factory(), fork_stack)
+                parent_fork_id = self.graph.get_parent_fork(join_id).fork_id
+                for fsi in reversed(fork_stack):
+                    if fsi.fork_id == parent_fork_id:
+                        fork_run_id = fsi.node_run_id
+                        break
+                else:
+                    if node.id == parent_fork_id:
+                        fork_run_id = node_run_id
+                    else:  # pragma: no cover
+                        raise RuntimeError('Parent fork run not found')
+                if (join_id, fork_run_id) not in self.active_reducers:
+                    self.active_reducers[(join_id, fork_run_id)] = JoinState(join_node.initial_factory(), fork_stack)
 
             # Eagerly raise a clear error if the input value is not iterable as expected
             if _is_any_iterable(inputs):
