@@ -334,7 +334,7 @@ async def group_by_temporal(
                 'soft_max_interval must be a positive number'
             )
             buffer: list[T] = []
-            group_start_time = time.monotonic()
+            group_start_time = None
 
             while True:
                 if group_start_time is None:
