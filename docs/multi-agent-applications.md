@@ -5,7 +5,7 @@ There are roughly five levels of complexity when building applications with Pyda
 1. Single agent workflows — what most of the `pydantic_ai` documentation covers
 2. [Agent delegation](#agent-delegation) — agents using another agent via tools
 3. [Programmatic agent hand-off](#programmatic-agent-hand-off) — one agent runs, then application code calls another agent
-4. [Graph based control flow](graph.md) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
+4. [Graph based control flow](https://ai.pydantic.dev/graph) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
 5. [Deep Agents](#deep-agents) — autonomous agents with planning, file operations, task delegation, and sandboxed code execution
 
 Of course, you can combine multiple strategies in a single application.
@@ -321,7 +321,7 @@ graph TB
 
 ## Pydantic Graphs
 
-See the [graph](graph.md) documentation on when and how to use graphs.
+See the [graph](https://ai.pydantic.dev/graph) documentation on when and how to use graphs.
 
 ## Deep Agents
 
