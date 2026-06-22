@@ -1400,7 +1400,10 @@ class NativeToolReturnPart(BaseToolReturnPart):
         return narrower(part) if narrower else part
 
 
-error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
+_RetryPromptErrorDetails: TypeAlias = Sequence[dict[str, Any] | pydantic_core.ErrorDetails]
+
+
+error_details_ta = pydantic.TypeAdapter(_RetryPromptErrorDetails, config=pydantic.ConfigDict(defer_build=True))
 
 
 @dataclass(repr=False)
@@ -1419,7 +1422,7 @@ class RetryPromptPart:
     * an output validator raised a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception
     """
 
-    content: list[pydantic_core.ErrorDetails] | str
+    content: _RetryPromptErrorDetails | str
     """Details of why and how the model should retry.
 
     If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a list of

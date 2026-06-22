@@ -1610,3 +1610,24 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     response = part.model_response()
     assert '"input": 42' in response
     assert '"name"' in response
+
+
+def test_retry_prompt_partial_error_details_round_trip():
+    content: list[dict[str, Any]] = [
+        {'type': 'missing', 'loc': ('without_input',), 'msg': 'Field required'},
+        {'type': 'value_error', 'loc': ('without_ctx_url',), 'msg': 'Value error', 'input': 'bad'},
+        {'type': 'int_parsing', 'loc': ['json', 'list', 0], 'msg': 'Input should be a valid integer', 'input': 'x'},
+    ]
+    message = ModelRequest(parts=[RetryPromptPart(content=content, tool_name='tool', tool_call_id='call_1')])
+
+    serialized = ModelMessagesTypeAdapter.dump_json([message])
+    [deserialized] = ModelMessagesTypeAdapter.validate_json(serialized)
+
+    assert isinstance(deserialized, ModelRequest)
+    [part] = deserialized.parts
+    assert isinstance(part, RetryPromptPart)
+    assert part.content == [
+        {'type': 'missing', 'loc': ['without_input'], 'msg': 'Field required'},
+        {'type': 'value_error', 'loc': ['without_ctx_url'], 'msg': 'Value error', 'input': 'bad'},
+        {'type': 'int_parsing', 'loc': ['json', 'list', 0], 'msg': 'Input should be a valid integer', 'input': 'x'},
+    ]
