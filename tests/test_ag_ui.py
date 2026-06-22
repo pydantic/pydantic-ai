@@ -1608,6 +1608,32 @@ def test_dump_load_roundtrip_thinking() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_thinking_without_id_preserves_generated_id() -> None:
+    original: list[ModelMessage] = [ModelResponse(parts=[ThinkingPart(content='Working through it...')])]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reasoning_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ReasoningMessage))
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    reloaded_response = reloaded[0]
+
+    assert isinstance(reloaded_response, ModelResponse)
+    assert len(reloaded_response.parts) == 1
+    reloaded_part = reloaded_response.parts[0]
+    assert isinstance(reloaded_part, ThinkingPart)
+    assert reloaded_part.id == reasoning_msg.id
+
+
+def test_dump_messages_thinking_uses_existing_part_id() -> None:
+    ag_ui_msgs = AGUIAdapter.dump_messages(
+        [ModelResponse(parts=[ThinkingPart(content='Working through it...', id='thinking-1')])],
+        ag_ui_version='0.1.13',
+    )
+
+    reasoning_msg = next(msg for msg in ag_ui_msgs if isinstance(msg, ReasoningMessage))
+
+    assert reasoning_msg.id == 'thinking-1'
+
+
 def test_dump_load_roundtrip_tools() -> None:
     """Test full round-trip for tool calls and returns."""
     original: list[ModelMessage] = [
