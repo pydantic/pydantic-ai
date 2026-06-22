@@ -8,8 +8,8 @@ from typing import Any, cast
 import pydantic_ai._utils as _utils
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 try:

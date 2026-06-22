@@ -699,6 +699,7 @@ class CachePoint:
 
     - Anthropic
     - Amazon Bedrock (Converse API)
+    - OpenRouter (Anthropic and Gemini models)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
@@ -711,6 +712,7 @@ class CachePoint:
 
     * Anthropic — see https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
     * Amazon Bedrock (Converse API) — see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    * OpenRouter with Anthropic models (automatically omitted for Gemini models, which do not support explicit TTL).
     """
 
 
@@ -776,6 +778,7 @@ class UploadedFile:
 
     Supported by:
     - `GoogleModel`: used as `video_metadata` for video files
+    - `OpenAIResponsesModel`: `UploadedFile.vendor_metadata['detail']` is used as `detail` setting for image files
     """
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
@@ -2096,7 +2099,10 @@ class ModelResponse:
     _: KW_ONLY
 
     usage: RequestUsage = field(default_factory=RequestUsage)
-    """Usage information for the request.
+    """Usage information for this single request, as a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
+
+    Run-level usage accumulated across all requests in a run (e.g. `requests`, `tool_calls`) lives on the run's
+    [`RunUsage`][pydantic_ai.usage.RunUsage], accessible via `result.usage()`; a `RunUsage` should not be assigned to this field.
 
     This has a default to make tests easier, and to support loading old messages where usage will be missing.
     """
