@@ -606,11 +606,15 @@ class GroqModel(Model[AsyncGroq]):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')
                         image_url_str = downloaded['data']
-                    image_url = ImageURL(url=image_url_str)
+                    image_url: ImageURL = {'url': image_url_str}
+                    if metadata := item.vendor_metadata:
+                        image_url['detail'] = metadata.get('detail', 'auto')
                     content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
-                        image_url = ImageURL(url=item.data_uri)
+                        image_url: ImageURL = {'url': item.data_uri}
+                        if metadata := item.vendor_metadata:
+                            image_url['detail'] = metadata.get('detail', 'auto')
                         content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     else:
                         raise NotImplementedError('Only images are supported for BinaryContent in Groq user prompts')
