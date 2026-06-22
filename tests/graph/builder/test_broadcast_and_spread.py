@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import anyio
 import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
@@ -168,6 +169,84 @@ async def test_map_non_empty_list_with_downstream_join_id():
     assert sorted(result) == [1, 2, 3]
     # `after_join` fired exactly once, with the fully reduced list
     assert state.values == [3]
+
+
+async def test_parallel_maps_with_downstream_join_id():
+    """Two independent map-and-join pipelines running in parallel, each with its own `downstream_join_id`.
+
+    Each join uses `preferred_parent_fork='closest'` so its reducer is keyed to its own map's fork run
+    rather than to the shared upstream broadcast; the two reducers therefore have distinct fork run ids and
+    can be active at the same time. When that happens, completing a task in one pipeline triggers a
+    completion check that encounters the *other* pipeline's reducer, whose parent fork run is absent from
+    the completing task's fork stack. That reducer must simply be skipped, and both pipelines must still
+    reduce correctly.
+
+    The two events force the completion order `a[0]` then `b` then `a[1]`, so pipeline A's reducer
+    is still active (awaiting its second item) when pipeline B's item completes — the only situation in
+    which the completion check sees a reducer keyed to a fork run outside the completing task's stack.
+    """
+    g = GraphBuilder(state_type=CounterState, output_type=list[list[int]])
+
+    a_started = anyio.Event()
+    b_done = anyio.Event()
+
+    @g.step
+    async def seed(ctx: StepContext[CounterState, None, None]) -> int:
+        return 0
+
+    @g.step
+    async def produce_a(ctx: StepContext[CounterState, None, int]) -> list[int]:
+        return [1, 2]
+
+    @g.step
+    async def produce_b(ctx: StepContext[CounterState, None, int]) -> list[int]:
+        return [3]
+
+    @g.step
+    async def identity_a(ctx: StepContext[CounterState, None, int]) -> int:
+        if ctx.inputs == 1:
+            a_started.set()  # pipeline A's reducer is about to be created
+        else:
+            await b_done.wait()  # hold A's second item until pipeline B has completed
+        return ctx.inputs
+
+    @g.step
+    async def identity_b(ctx: StepContext[CounterState, None, int]) -> int:
+        await a_started.wait()  # let pipeline A's reducer come into existence first
+        b_done.set()
+        return ctx.inputs
+
+    join_a = g.join(reduce_list_append, initial_factory=list[int], preferred_parent_fork='closest')
+    join_b = g.join(reduce_list_append, initial_factory=list[int], preferred_parent_fork='closest')
+    combine = g.join(reduce_list_append, initial_factory=list[list[int]])
+
+    @g.step
+    async def emit_a(ctx: StepContext[CounterState, None, list[int]]) -> list[int]:
+        return sorted(ctx.inputs)
+
+    @g.step
+    async def emit_b(ctx: StepContext[CounterState, None, list[int]]) -> list[int]:
+        return sorted(ctx.inputs)
+
+    g.add(
+        g.edge_from(g.start_node).to(seed),
+        g.edge_from(seed).to(produce_a, produce_b),
+    )
+    g.add_mapping_edge(produce_a, identity_a, downstream_join_id=join_a.id)
+    g.add_mapping_edge(produce_b, identity_b, downstream_join_id=join_b.id)
+    g.add(
+        g.edge_from(identity_a).to(join_a),
+        g.edge_from(identity_b).to(join_b),
+        g.edge_from(join_a).to(emit_a),
+        g.edge_from(join_b).to(emit_b),
+        g.edge_from(emit_a).to(combine),
+        g.edge_from(emit_b).to(combine),
+        g.edge_from(combine).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=CounterState())
+    assert sorted(result) == [[1, 2], [3]]
 
 
 async def test_nested_broadcasts():
