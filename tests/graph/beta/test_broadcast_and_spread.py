@@ -135,6 +135,41 @@ async def test_map_empty_list():
     assert result == []
 
 
+async def test_map_non_empty_list_with_downstream_join_id():
+    """A non-empty map with `downstream_join_id` must fire the join once with the fully reduced value."""
+    g = GraphBuilder(state_type=CounterState, output_type=list[int])
+
+    @g.step
+    async def produce(ctx: StepContext[CounterState, None, None]) -> list[int]:
+        return [1, 2, 3]
+
+    @g.step
+    async def identity(ctx: StepContext[CounterState, None, int]) -> int:
+        return ctx.inputs
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    @g.step
+    async def after_join(ctx: StepContext[CounterState, None, list[int]]) -> list[int]:
+        ctx.state.values.append(len(ctx.inputs))
+        return ctx.inputs
+
+    g.add(g.edge_from(g.start_node).to(produce))
+    g.add_mapping_edge(produce, identity, downstream_join_id=collect.id)
+    g.add(
+        g.edge_from(identity).to(collect),
+        g.edge_from(collect).to(after_join),
+        g.edge_from(after_join).to(g.end_node),
+    )
+
+    graph = g.build()
+    state = CounterState()
+    result = await graph.run(state=state)
+    assert sorted(result) == [1, 2, 3]
+    # `after_join` fired exactly once, with the fully reduced list
+    assert state.values == [3]
+
+
 async def test_nested_broadcasts():
     """Test nested broadcast operations."""
     g = GraphBuilder(state_type=CounterState, output_type=list[int])
