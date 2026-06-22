@@ -192,9 +192,7 @@ exception handlers, and response handlers — all of which can be sync or async.
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
 
-<!-- TODO(Marcelo): Do not skip this test. For some reason it becomes a flaky test if we don't skip it. -->
-
-```python {title="fallback_model.py" test="skip"}
+```python {title="fallback_model.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
@@ -207,7 +205,7 @@ fallback_model = FallbackModel(openai_model, anthropic_model)
 agent = Agent(fallback_model)
 response = agent.run_sync('What is the capital of France?')
 print(response.output)
-#> Paris
+#> The capital of France is Paris.
 
 print(response.all_messages())
 """
@@ -217,17 +215,19 @@ print(response.all_messages())
             UserPromptPart(
                 content='What is the capital of France?',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             )
         ],
-        kind='request',
+        timestamp=datetime.datetime(...),
+        run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
-        parts=[TextPart(content='Paris', part_kind='text')],
+        parts=[TextPart(content='The capital of France is Paris.')],
+        usage=RequestUsage(input_tokens=56, output_tokens=7),
         model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
-        kind='response',
-        provider_response_id=None,
+        run_id='...',
+        conversation_id='...',
     ),
 ]
 """
