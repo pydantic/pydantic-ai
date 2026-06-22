@@ -23,6 +23,7 @@ from ..messages import (
     FilePart,
     FileUrl,
     FinishReason,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1076,7 +1077,7 @@ class GoogleModel(Model[Client]):
                 message_parts: list[PartDict] = []
 
                 for part in m.parts:
-                    if isinstance(part, SystemPromptPart):
+                    if isinstance(part, SystemPromptPart | InstructionPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))

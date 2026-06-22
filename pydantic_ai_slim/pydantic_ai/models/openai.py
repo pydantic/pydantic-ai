@@ -48,6 +48,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1553,7 +1554,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
         for part in message.parts:
-            if isinstance(part, SystemPromptPart):
+            if isinstance(part, SystemPromptPart | InstructionPart):
                 system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
                 if system_prompt_role == 'developer':
                     yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
@@ -2778,7 +2779,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart):
+                    if isinstance(part, SystemPromptPart | InstructionPart):
                         openai_messages.append(
                             responses.EasyInputMessageParam(
                                 role=profile.openai_system_prompt_role or 'system', content=part.content

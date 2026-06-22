@@ -41,6 +41,7 @@ from ..messages import (
     InstructionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelResponseState,
@@ -1434,13 +1435,17 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     new_messages: list[ModelMessage] = list(messages[: first_request_idx + 1])
     changed = False
     for msg in messages[first_request_idx + 1 :]:
-        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
-            new_parts = [
-                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
-                if isinstance(part, SystemPromptPart)
-                else part
-                for part in msg.parts
-            ]
+        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart | InstructionPart) for p in msg.parts):
+            new_parts: list[ModelRequestPart] = []
+            for part in msg.parts:
+                if isinstance(part, SystemPromptPart):
+                    new_parts.append(
+                        UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
+                    )
+                elif isinstance(part, InstructionPart):
+                    new_parts.append(UserPromptPart(content=f'<system>{part.content}</system>'))
+                else:
+                    new_parts.append(part)
             new_messages.append(replace(msg, parts=new_parts))
             changed = True
         else:

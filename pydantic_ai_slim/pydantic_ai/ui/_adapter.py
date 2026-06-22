@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     BaseToolReturnPart,
     FileUrl,
     ForceDownloadMode,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -487,7 +488,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         stripped_system_prompt = False
         new_parts: list[ModelRequestPart] = []
         for part in parts:
-            if strip_system_prompt and isinstance(part, SystemPromptPart):
+            if strip_system_prompt and isinstance(part, SystemPromptPart | InstructionPart):
                 stripped_system_prompt = True
                 continue
             if isinstance(part, UserPromptPart) and not isinstance(part.content, str):

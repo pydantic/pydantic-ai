@@ -21,6 +21,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -455,7 +456,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         self, message: ModelRequest
     ) -> AsyncIterable[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         for part in message.parts:
-            if isinstance(part, SystemPromptPart):
+            if isinstance(part, SystemPromptPart | InstructionPart):
                 yield ChatCompletionInputMessage.parse_obj_as_instance({'role': 'system', 'content': part.content})  # type: ignore
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)

@@ -1544,6 +1544,15 @@ class InstructionPart:
         """Sort instruction parts with static (`dynamic=False`) before dynamic, preserving relative order."""
         return sorted(parts, key=lambda p: p.dynamic)
 
+    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+        return LogRecord(
+            attributes={'event.name': 'gen_ai.system.message'},
+            body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
+        )
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        return [_otel_messages.TextPart(type='text', **{'content': self.content} if settings.include_content else {})]
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -2035,6 +2044,7 @@ def _model_request_part_discriminator(v: Any) -> str | None:
 
 ModelRequestPart = Annotated[
     Annotated[SystemPromptPart, pydantic.Tag('system-prompt')]
+    | Annotated[InstructionPart, pydantic.Tag('instruction')]
     | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]

@@ -16,6 +16,7 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FinishReason,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -347,7 +348,7 @@ class CohereModel(Model[AsyncClientV2]):
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
         for part in message.parts:
-            if isinstance(part, SystemPromptPart):
+            if isinstance(part, SystemPromptPart | InstructionPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
                 if isinstance(part.content, str):

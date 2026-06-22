@@ -1512,12 +1512,40 @@ class TestInstructionParts:
         assert isinstance(msg, ModelRequest)
         assert msg.instructions == 'static part\n\ndynamic part'
 
+    def test_request_part_serialization_round_trip(self):
+        original = ModelRequest(parts=[InstructionPart(content='Use the short path.', dynamic=True)])
+
+        serialized = ModelMessagesTypeAdapter.dump_json([original])
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+        msg = deserialized[0]
+        assert isinstance(msg, ModelRequest)
+        assert msg.parts == original.parts
+
     def test_repr(self):
         """InstructionPart repr omits default values."""
         part = InstructionPart(content='hello')
         assert repr(part) == "InstructionPart(content='hello')"
         dynamic_part = InstructionPart(content='world', dynamic=True)
         assert repr(dynamic_part) == "InstructionPart(content='world', dynamic=True)"
+
+    def test_otel_event(self):
+        part = InstructionPart(content='Keep replies short.')
+
+        event = part.otel_event(InstrumentationSettings(include_content=True))
+        assert event.attributes == snapshot({'event.name': 'gen_ai.system.message'})
+        assert event.body == snapshot({'role': 'system', 'content': 'Keep replies short.'})
+
+        event_without_content = part.otel_event(InstrumentationSettings(include_content=False))
+        assert event_without_content.body == snapshot({'role': 'system'})
+
+    def test_otel_message_parts(self):
+        part = InstructionPart(content='Keep replies short.')
+
+        assert part.otel_message_parts(InstrumentationSettings(include_content=True)) == snapshot(
+            [{'type': 'text', 'content': 'Keep replies short.'}]
+        )
+        assert part.otel_message_parts(InstrumentationSettings(include_content=False)) == snapshot([{'type': 'text'}])
 
 
 def test_retry_prompt_strips_input_from_top_level_errors():
