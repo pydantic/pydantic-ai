@@ -322,9 +322,7 @@ class ModelResponsePartsManager:
         buffered = self._thinking_tag_buffer
         self._thinking_tag_buffer = ''
         if self._is_in_embedded_thinking(vendor_part_id):
-            yield from self._append_embedded_thinking_content(
-                vendor_part_id, buffered, provider_name, provider_details
-            )
+            yield from self._append_embedded_thinking_content(vendor_part_id, buffered, provider_name, provider_details)
         else:
             yield from self._handle_plain_text_delta(
                 vendor_part_id=vendor_part_id,
@@ -355,9 +353,12 @@ class ModelResponsePartsManager:
             existing_thinking_part_and_index = self._latest_part_if_of_type(ThinkingPart)
         else:
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
-            if part_index is None or not isinstance(self._parts[part_index], ThinkingPart):
+            if part_index is None:
                 raise UnexpectedModelBehavior('Cannot append embedded thinking content without a ThinkingPart')
-            existing_thinking_part_and_index = self._parts[part_index], part_index
+            part = self._parts[part_index]
+            if not isinstance(part, ThinkingPart):
+                raise UnexpectedModelBehavior('Cannot append embedded thinking content without a ThinkingPart')
+            existing_thinking_part_and_index = part, part_index
 
         if existing_thinking_part_and_index is None:
             raise UnexpectedModelBehavior('Cannot append embedded thinking content without a ThinkingPart')
