@@ -1,6 +1,14 @@
 # `pydantic_ai.profiles`
 
-::: pydantic_ai.profiles.ModelProfile
+::: pydantic_ai.profiles
+    options:
+      members:
+        - ModelProfile
+        - ModelProfileSpec
+        - merge_profile
+        - DEFAULT_PROFILE
+        - DEFAULT_PROMPTED_OUTPUT_TEMPLATE
+        - DEFAULT_THINKING_TAGS
 
 ::: pydantic_ai.profiles.openai
 

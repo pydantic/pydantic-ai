@@ -467,6 +467,8 @@ def parse_runner_class(runner_group_name: str | None, runner_name: str | None, l
     lower_values = ' '.join([runner_group_name or '', runner_name or '', *label_values]).lower()
     if 'depot' in lower_values:
         return 'depot'
+    if 'ubicloud' in lower_values:
+        return 'ubicloud'
     if 'github actions' in lower_values or 'ubuntu' in lower_values:
         return 'github-hosted'
     if 'self-hosted' in lower_values:
