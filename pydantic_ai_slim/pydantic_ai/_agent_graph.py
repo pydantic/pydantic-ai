@@ -1706,7 +1706,7 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
 
 
 def _same_request_parts_ignoring_system_prompts(
-    left: list[_messages.ModelRequestPart], right: list[_messages.ModelRequestPart]
+    left: Sequence[_messages.ModelRequestPart], right: Sequence[_messages.ModelRequestPart]
 ) -> bool:
     """Compare request parts while allowing capabilities to rewrite system prompts."""
     if left == right:
