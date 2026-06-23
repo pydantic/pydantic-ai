@@ -2,7 +2,11 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "pydantic-ai-slim[anthropic,mcp]>=1.95.1",
+#   "pydantic-ai-slim[anthropic,mcp]>=1.105.0",
+#   # The Bash/Read/Write/Edit tools are backed by harness FileSystem/Shell,
+#   # which ship as stable top-level modules from 0.4.0 onwards. Keep this in
+#   # sync with the lint-group pin in the root pyproject.toml.
+#   "pydantic-ai-harness>=0.4.0",
 #   "logfire",
 #   "opentelemetry-instrumentation-httpx",
 # ]
