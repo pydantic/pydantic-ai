@@ -37,6 +37,9 @@ class Equals(Evaluator[object, object, object]):
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> bool:
         return ctx.output == self.value
 
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
 
 @dataclass(repr=False)
 class EqualsExpected(Evaluator[object, object, object]):
@@ -48,6 +51,9 @@ class EqualsExpected(Evaluator[object, object, object]):
         if ctx.expected_output is None:
             return {}  # Only compare if expected output is provided
         return ctx.output == ctx.expected_output
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
 
 # _MAX_REASON_LENGTH = 500
@@ -140,6 +146,9 @@ class Contains(Evaluator[object, object, object]):
 
         return EvaluationReason(value=failure_reason is None, reason=failure_reason)
 
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
 
 @dataclass(repr=False)
 class IsInstance(Evaluator[object, object, object]):
@@ -158,6 +167,9 @@ class IsInstance(Evaluator[object, object, object]):
         if type(output).__qualname__ != type(output).__name__:
             reason += f' (qualname: {type(output).__qualname__})'
         return EvaluationReason(value=False, reason=reason)
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
 
 @dataclass(repr=False)
@@ -278,6 +290,9 @@ class HasMatchingSpan(Evaluator[object, object, object]):
         ctx: EvaluatorContext[object, object, object],
     ) -> bool:
         return ctx.span_tree.any(self.query)
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
 
 DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (

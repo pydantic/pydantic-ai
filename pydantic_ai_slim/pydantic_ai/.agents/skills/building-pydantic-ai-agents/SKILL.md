@@ -1,6 +1,6 @@
 ---
 name: building-pydantic-ai-agents
-description: Build AI agents with Pydantic AI — tools, capabilities, structured output, streaming, testing, and multi-agent patterns. Use when the user mentions Pydantic AI, imports pydantic_ai, or asks to build an AI agent, add tools/capabilities, stream output, define agents from YAML, or test agent behavior.
+description: Build AI agents with Pydantic AI — tools, capabilities (including on-demand loading), structured output, streaming, testing, and multi-agent patterns. Use when the user mentions Pydantic AI, imports pydantic_ai, or asks to build an AI agent, add tools/capabilities, defer capability loading, stream output, define agents from YAML, or test agent behavior.
 license: MIT
 compatibility: Requires Python 3.10+
 metadata:
@@ -22,6 +22,7 @@ Invoke this skill when:
 - User wants to stream agent events, delegate between agents, or test agent behavior
 - Code imports `pydantic_ai` or references Pydantic AI classes (`Agent`, `RunContext`, `Tool`)
 - User asks about hooks, lifecycle interception, or agent observability with Logfire
+- The agent design includes optional instructions, specialist workflows, long-tail tools, or any context the model does not need on most turns
 
 Do **not** use this skill for:
 - The Pydantic validation library alone (`pydantic`/`BaseModel` without agents)
@@ -181,7 +182,7 @@ hooks = Hooks()
 
 
 @hooks.on.before_model_request
-async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
     print(f'Sending {len(request_context.messages)} messages')
     return request_context
 
@@ -215,6 +216,7 @@ Load only the most relevant reference first. Read additional references only if 
 |---|---|
 | Create/configure agents, choose output types, use deps, define specs, or pick run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Bundle reusable behavior or intercept lifecycle events | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
+| Decide what should load eagerly vs on demand, apply progressive disclosure, defer capability loading, or explain `load_capability` | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Add function tools, toolsets, MCP servers, or explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Use provider-native web search, web fetch, or code execution | [Native Tools](./references/NATIVE-TOOLS.md) |
 | Use advanced tool features such as approval, retries, `ToolReturn`, validators, timeouts, or tool search | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
@@ -242,6 +244,7 @@ Load [Architecture and Decision Guide](./references/ARCHITECTURE.md) only when t
 ## Key Practices
 
 - **Python 3.10+** compatibility required
+- **Progressive disclosure by default**: For every capability, explicitly consider whether `defer_loading=True` would benefit the agent before choosing eager loading. Do not eagerly load specialist instructions, rarely used tool schemas, or domain context unless the model needs them on most turns. Prefer capabilities on demand for named instruction+tool bundles, and tool search for large flat tool catalogs.
 - **Observability**: Pydantic AI has first-class integration with Logfire for tracing agent runs, tool calls, and model requests. Add it with `logfire.instrument_pydantic_ai()`. For deeper HTTP-level visibility, `logfire.instrument_httpx(capture_all=True)` captures the exact payloads sent to model providers.
 - **Testing**: Use `TestModel` for deterministic tests, `FunctionModel` for custom logic
 
@@ -264,9 +267,10 @@ Load exactly one of these unless the task clearly spans multiple families:
 |---|---|
 | Core agent setup, output, deps, specs, models, run methods | [Agents Core](./references/AGENTS-CORE.md) |
 | Capabilities, hooks, and reusable behavior | [Capabilities and Hooks](./references/CAPABILITIES-AND-HOOKS.md) |
+| Progressive disclosure, deferred capabilities, capabilities on demand, and `load_capability` semantics | [Capabilities on Demand](./references/ON-DEMAND-CAPABILITIES.md) |
 | Function tools, toolsets, MCP, explicit search tools | [Tools Core](./references/TOOLS-CORE.md) |
 | Provider-native tools | [Native Tools](./references/NATIVE-TOOLS.md) |
-| Approval, retries, validators, timeouts, rich tool returns, deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
+| Approval, retries, validators, timeouts, rich tool returns, tool search, and tool-level deferred loading | [Tools Advanced](./references/TOOLS-ADVANCED.md) |
 | Multimodal input, message history, history processors | [Input and History](./references/INPUT-AND-HISTORY.md) |
 | Testing, request inspection, and Logfire debugging | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 | Multi-agent patterns, graphs, direct API, A2A, durable execution, embeddings, evals, third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |

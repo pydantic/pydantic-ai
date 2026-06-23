@@ -25,7 +25,11 @@ from .._utils import is_str_dict
 from ..exceptions import UnexpectedModelBehavior
 
 if TYPE_CHECKING:
-    from anthropic import AsyncAnthropicBedrock, RequestOptions, Timeout
+    from anthropic import (
+        AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
+        RequestOptions,
+        Timeout,
+    )
     from anthropic.types.anthropic_beta_param import AnthropicBetaParam
     from anthropic.types.beta import (
         BetaCacheControlEphemeralParam,

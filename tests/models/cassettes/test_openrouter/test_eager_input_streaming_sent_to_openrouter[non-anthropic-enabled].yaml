@@ -1,0 +1,109 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '316'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: hello
+        role: user
+      model: openai/gpt-5-mini
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get weather for a city
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '3395'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: Hello! How can I help you today?
+          reasoning: |-
+            **Crafting a friendly greeting**
+
+            The user just said "hello," which is a nice, simple greeting! I want to respond in a friendly way and maybe ask how I can help. There's no need for tools here; I can keep it concise. Perhaps I could provide options like asking a question, getting help, or just chatting. So, I think I'll respond with, "Hello! How can I help you today?" That feels welcoming and engaging!
+          reasoning_details:
+          - format: openai-responses-v1
+            index: 0
+            summary: |-
+              **Crafting a friendly greeting**
+
+              The user just said "hello," which is a nice, simple greeting! I want to respond in a friendly way and maybe ask how I can help. There's no need for tools here; I can keep it concise. Perhaps I could provide options like asking a question, getting help, or just chatting. So, I think I'll respond with, "Hello! How can I help you today?" That feels welcoming and engaging!
+            type: reasoning.summary
+          - data: gAAAAABqFPxl-9OL1xGxxcD6frAih2P49yLzdui0flBLSY83h7k9CtolIzv8xw-P15Sh54DuADh96fUIY3tuP1QHXOYtyPJe7R9IrFhQqCefCButmF446wcsUznt8jd19XHbDUTlYgsThnODrWAsT9m-NSYlyDDP58lymAz1NJRjSd9Fj3yct1EU67Q_DuByxaXRTGUFGjLIB6lQP6E0SzcS3KZjqjytg3mqm9MW2GV8M4xyABF4aya7zbDXvz6tGTOt4nSVTO-24vYMiIpLnh_Fa6BrenD_9xXzZYILDn42xda_YkYLmQXcvyYmpjLZwfp-PKeQDIztlpnO1AePfeDDg-eHjo_gGWj3ztOWE2ZjA9K4WDMe1wHuIu71tKQ_LQ55YSfWd43WhYr0X4wq5U-E8BpjUC8NjNSVY2XSyg6d3Eel-xI7n1kKqBTPlShGNM4ybgODwblWd_nIeLmLhA6oRxUAXmM85I1vki_X_-S_gSrG8CsOrycGVJwxL_4u41azc-ZLblwKXKth_aR-4w4Xza2SYJ4z3Anx-oZJcAp1D9RWahZ4KfxzsKP11HdGtK-_3wr_eo7umJFK5IOhHwCH0Kpf96AdJCxCUcmawLh5AGssbbmA8LY1rbpvGl2A4qvLrgphcMyptvDxs86Y7eRCyuCW-z6P_72Z-ZAYxDX7OGzPS02VVWEa0nGMZUVZIkgY1rquz13k-z8b9BJ2o95FjZx6_JWkYixUAhor7XnFdcxck6Dm_hI154TvhKQf2ZJYk5waaA2tNVHFcYXIrNx9CmsnUAzKiyPhDezNYDnltYhvpgm-9ngfjxXhDzSGjxsNGZf2HlIR0Yp2vFDVyDBOoySzGC9bC5f_9tCh070G-AD9X6XAEbVqAJQg7zDahq9Uz4ia61QFP_3gliqgMahKJWaEczIqvgercIidTSPE7uME3MXbV79BipYLXA6hk5UvjXrVfnGMv8YZR6nXwfRpjIJqz5UFVngJ9PLUxiKEvo7DmWpxbWDK2I2QhG-qiUrsRX9T51yomF7hMMzN6oYYbTPa26CEpakl-nk86xgpag-gUoMsQO-1Eq7Pe2dbMsqychvrrBW2h1H--5bT4uYjjEOX0B7cg9Yzmf7DWctmWlGe8yaPTimgUuE19hMZfIMauuUugkPe6C-AhrjBrTzin_jz_dLTkioWLYvlCkQ8OkviHKPMY5boTLGz3hXJysP2stXVr9Wmq5BVxeeqIDSahqAn-nk0YCMcHtarT0urv2Y1FNAaTTFu4FNZlqJVy_CJAhw9PkpxLzazjJFHC0OEaEWxltT7j7rp_Ei1i0NXKzAH0e5WGvYCvhjzQ_BW_lX5yc8Ybo1rxVBb6KcoFaA36EH_hZexbGnecz7yI4AaXiV-pTv6BTQ=
+            format: openai-responses-v1
+            id: rs_0d5df14fca7baea0016a14fc62b19081909f843ca70924e7d0
+            index: 1
+            type: reasoning.encrypted
+          refusal: null
+          role: assistant
+        native_finish_reason: completed
+      created: 1779760226
+      id: gen-1779760226-C99OKAW8snEPwIh2V1mn
+      model: openai/gpt-5-mini-2025-08-07
+      object: chat.completion
+      provider: OpenAI
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 92
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 64
+        cost: 0.00019325
+        cost_details:
+          upstream_inference_completions_cost: 0.000184
+          upstream_inference_cost: 0.00019325
+          upstream_inference_prompt_cost: 9.25e-06
+        is_byok: false
+        prompt_tokens: 37
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 129
+    status:
+      code: 200
+      message: OK
+version: 1

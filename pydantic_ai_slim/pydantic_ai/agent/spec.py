@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
-from pydantic import BaseModel, Field, model_serializer, model_validator
+from pydantic import BaseModel, Field, model_serializer
 from pydantic_core import from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
-from typing_extensions import Self
 
 from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
 from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.agent.abstract import AgentRetries
 from pydantic_ai.settings import ModelSettings
 
 if TYPE_CHECKING:
@@ -29,17 +27,6 @@ DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 """Default template for schema file paths, where {stem} is replaced with the spec filename stem."""
 
 _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
-
-LEGACY_CAPABILITY_NAMES: Mapping[str, str] = {
-    'BuiltinTool': 'NativeTool',
-    'BuiltinOrLocalTool': 'NativeOrLocalTool',
-}
-"""Deprecated capability spec names that warn on use and resolve to their renamed equivalents.
-
-`NativeOrLocalTool` is not in `CAPABILITY_TYPES` (it is a base class for subclassing, not
-direct spec construction). For `BuiltinOrLocalTool`, the warning fires telling the user
-about the rename, then resolution proceeds and fails with the usual "valid choices" error
-— consistent with what happens if they typed `NativeOrLocalTool` directly."""
 
 
 class AgentSpec(BaseModel):
@@ -54,36 +41,11 @@ class AgentSpec(BaseModel):
     deps_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
-    tool_retries: int | None = None
-    retries: int | None = Field(
-        default=None,
-        deprecated=(
-            '`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead. '
-            'In 1.x, setting `retries` on a spec still cascades to `output_retries` '
-            'when the latter is unset, matching `Agent(retries=...)` behavior.'
-        ),
-    )
-    output_retries: int | None = None
-    end_strategy: EndStrategy = 'early'
+    retries: int | AgentRetries | None = None
+    end_strategy: EndStrategy = 'graceful'
     tool_timeout: float | None = None
-    # `instrument` is deprecated in favor of an `Instrumentation` entry in `capabilities` —
-    # see the `_warn_instrument_deprecation` validator below for the emitted warning. We don't
-    # use Pydantic's `Field(deprecated=...)` because that always emits a plain `DeprecationWarning`;
-    # we want `PydanticAIDeprecationWarning` to match the rest of the project's deprecation surface.
-    instrument: bool | None = None
     metadata: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
-
-    @model_validator(mode='after')
-    def _warn_instrument_deprecation(self) -> Self:
-        if 'instrument' in self.model_fields_set:
-            warnings.warn(
-                '`AgentSpec.instrument` is deprecated, use `capabilities=[Instrumentation(...)]` instead. '
-                'In 1.x, setting `instrument` on a spec still resolves through the legacy instrumentation flow.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        return self
 
     @classmethod
     def from_file(
@@ -233,15 +195,9 @@ class AgentSpec(BaseModel):
             deps_schema: dict[str, Any] | None = None
             output_schema: dict[str, Any] | None = None
             model_settings: ModelSettings | None = None
-            tool_retries: int | None = None
-            retries: int | None = Field(
-                default=None,
-                deprecated='`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead.',
-            )
-            output_retries: int | None = None
-            end_strategy: EndStrategy = 'early'
+            retries: int | AgentRetries | None = None
+            end_strategy: EndStrategy = 'graceful'
             tool_timeout: float | None = None
-            instrument: bool | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
                 capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007
@@ -362,7 +318,6 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             label='capability',
             custom_types_param='custom_capability_types',
             instantiate=ctx.instantiate,
-            legacy_aliases=LEGACY_CAPABILITY_NAMES,
         )
     else:
         return load_from_registry(
@@ -371,7 +326,6 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
             label='capability',
             custom_types_param='custom_capability_types',
             instantiate=lambda cap_cls, args, kwargs: cap_cls.from_spec(*args, **kwargs),
-            legacy_aliases=LEGACY_CAPABILITY_NAMES,
         )
 
 

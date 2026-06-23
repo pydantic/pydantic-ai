@@ -1,19 +1,11 @@
 """Builder-based graph API: builder, graph runner, and mermaid rendering.
 
 This module is the canonical home for the builder-based graph API:
-[`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder] for declaratively
-constructing executable graphs, [`Graph`][pydantic_graph.graph_builder.Graph]
-and [`GraphRun`][pydantic_graph.graph_builder.GraphRun] for executing them, and
-the mermaid rendering helpers used by `Graph.render()`.
-
-The same public symbols are re-exported from `pydantic_graph` directly. The
-deprecated `pydantic_graph.beta.*` namespace also forwards here.
-
-The contents of three previously-separate modules are bundled here because they
-co-occupy the names (`graph`, `mermaid`) that the legacy `BaseNode`-based
-runner currently holds at the top level. In v2, after the legacy runner is
-removed, `Graph` and the mermaid helpers are expected to move out of this file
-to `pydantic_graph.graph` and `pydantic_graph.mermaid` respectively.
+[`GraphBuilder`][pydantic_graph.GraphBuilder] for declaratively constructing
+executable graphs, [`Graph`][pydantic_graph.Graph] and
+[`GraphRun`][pydantic_graph.GraphRun] for executing them, and the mermaid
+rendering helpers used by `Graph.render()`. The same public symbols are
+re-exported from `pydantic_graph` directly.
 """
 
 from __future__ import annotations as _annotations
@@ -286,6 +278,39 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
                     assert isinstance(event, EndMarker), 'Graph run should end with an EndMarker.'
                     return cast(EndMarker[OutputT], event).value
 
+    def run_sync(
+        self,
+        *,
+        state: StateT = None,
+        deps: DepsT = None,
+        inputs: InputT = None,
+        span: AbstractContextManager[AbstractSpan] | None = None,
+        infer_name: bool = True,
+    ) -> OutputT:
+        """Synchronously execute the graph and return the final output.
+
+        This is a convenience wrapper around [`run`][pydantic_graph.Graph.run] that runs the coroutine on the
+        current event loop via `loop.run_until_complete(...)`. As such, it cannot be called from inside async
+        code or when an event loop is already running.
+
+        Args:
+            state: The graph state instance
+            deps: The dependencies instance
+            inputs: The input data for the graph
+            span: Optional span for tracing/instrumentation
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The final output from the graph execution
+        """
+        if infer_name and self.name is None:
+            inferred_name = infer_obj_name(self, depth=2)
+            if inferred_name is not None:  # pragma: no branch
+                self.name = inferred_name
+        return _utils.get_event_loop().run_until_complete(
+            self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False)
+        )
+
     @asynccontextmanager
     async def iter(
         self,
@@ -295,7 +320,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         inputs: InputT = None,
         span: AbstractContextManager[AbstractSpan] | None = None,
         infer_name: bool = True,
-    ) -> AsyncIterator[GraphRun[StateT, DepsT, OutputT]]:
+    ) -> AsyncGenerator[GraphRun[StateT, DepsT, OutputT]]:
         """Create an iterator for step-by-step graph execution.
 
         This method allows for more fine-grained control over graph execution,
@@ -1521,17 +1546,16 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         matches: Callable[[Any], bool] | None = None,
     ) -> DecisionBranch[SourceNodeT]:
-        """Create a decision branch for BaseNode subclasses.
+        """Create a decision branch for `BaseNode` subclasses.
 
-        This is similar to match() but specifically designed for matching
-        against BaseNode types from the v1 system.
+        This is similar to `match()` but specifically designed for matching against `BaseNode` types.
 
         Args:
-            source: The BaseNode subclass to match against
+            source: The `BaseNode` subclass to match against
             matches: Optional custom matching function
 
         Returns:
-            A DecisionBranch for the BaseNode type
+            A `DecisionBranch` for the `BaseNode` type
         """
         node = NodeStep(source)
         path = Path(items=[DestinationMarker(node.id)])
@@ -1541,16 +1565,16 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         self,
         node_type: type[BaseNode[StateT, DepsT, GraphOutputT]],
     ) -> EdgePath[StateT, DepsT]:
-        """Create an edge path from a BaseNode class.
+        """Create an edge path from a `BaseNode` class.
 
-        This method integrates v1-style BaseNode classes into the v2 graph
-        system by analyzing their type hints and creating appropriate edges.
+        This method integrates a `BaseNode` subclass into the builder graph by
+        analyzing its `run` return type hints and creating appropriate edges.
 
         Args:
-            node_type: The BaseNode subclass to integrate
+            node_type: The `BaseNode` subclass to integrate
 
         Returns:
-            An EdgePath representing the node and its connections
+            An `EdgePath` representing the node and its connections
 
         Raises:
             GraphSetupError: If the node type is missing required type hints
@@ -2045,7 +2069,7 @@ def _build_placeholder_node_id_remapping(nodes: dict[NodeID, AnyNode]) -> dict[N
 
 def _update_node_with_id_remapping(node: AnyNode, node_id_remapping: dict[NodeID, NodeID]) -> AnyNode:
     # Note: it's a bit awkward that we mutate the provided nodes, but this is necessary to ensure that
-    # calls to `.as_node` reference the correct node_ids when relying on compatibility with the v1 API.
+    # calls to `.as_node` reference the correct node_ids when bridging from `BaseNode` subclasses.
     # We only mutate placeholder IDs so I _think_ this should generally be okay. I guess we can
     # rework it more carefully if it causes issues in the future..
     if isinstance(node, Step):
