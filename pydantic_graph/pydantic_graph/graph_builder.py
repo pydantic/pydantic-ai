@@ -983,6 +983,24 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
 
         return completed_fork_runs
 
+    def _get_join_parent_fork_run_id(
+        self,
+        join_id: JoinID,
+        fork_stack: ForkStack,
+        current_fork: Fork[Any, Any] | None = None,
+        current_fork_run_id: NodeRunID | None = None,
+    ) -> NodeRunID:
+        parent_fork_id = self.graph.get_parent_fork(join_id).fork_id
+        if current_fork is not None and parent_fork_id == current_fork.id:
+            assert current_fork_run_id is not None
+            return current_fork_run_id
+
+        for item in fork_stack[::-1]:
+            if item.fork_id == parent_fork_id:
+                return item.node_run_id
+
+        raise RuntimeError('Parent fork run not found')
+
     def _handle_path(self, path: Path, inputs: Any, fork_stack: ForkStack) -> Sequence[GraphTask]:
         if not path.items:
             return []  # pragma: no cover
@@ -1030,7 +1048,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             if (join_id := node.downstream_join_id) is not None:
                 join_node = self.graph.nodes[join_id]
                 assert isinstance(join_node, Join)
-                self.active_reducers[(join_id, node_run_id)] = JoinState(join_node.initial_factory(), fork_stack)
+                fork_run_id = self._get_join_parent_fork_run_id(join_id, fork_stack, node, node_run_id)
+                self.active_reducers[(join_id, fork_run_id)] = JoinState(join_node.initial_factory(), fork_stack)
 
             # Eagerly raise a clear error if the input value is not iterable as expected
             if _is_any_iterable(inputs):
