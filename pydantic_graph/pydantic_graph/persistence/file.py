@@ -28,7 +28,12 @@ from . import (
 
 @dataclass
 class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
-    """File based state persistence that hold graph run state in a JSON file."""
+    """File based state persistence that hold graph run state in a JSON file.
+
+    The JSON file is trusted application-internal state, not an authenticated store: it is read back without an
+    integrity check, so any actor with write access to it can alter the fields of the next node the graph runs.
+    Protect it with normal filesystem permissions and don't place it on a path a less-trusted process can write to.
+    """
 
     json_file: Path
     """Path to the JSON file where the snapshots are stored.
