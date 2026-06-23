@@ -10340,49 +10340,6 @@ async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropi
     assert exc_info.value.model_name == model_id
 
 
-async def test_anthropic_bedrock_count_tokens(env: TestEnv):
-    from anthropic import AsyncAnthropicBedrock
-
-    bedrock_client = AsyncAnthropicBedrock(
-        aws_access_key='test-access-key',
-        aws_secret_key='test-secret-key',
-        aws_region='us-east-1',
-    )
-    bedrock_client.post = AsyncMock(return_value={'inputTokens': 42})
-    provider = AnthropicProvider(anthropic_client=bedrock_client)
-    model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
-
-    result = await model.count_tokens(
-        [ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hello')])],
-        AnthropicModelSettings(
-            anthropic_betas=['custom-beta'],
-            extra_body={'metadata': {'purpose': 'test'}},
-            timeout=12.5,
-        ),
-        ModelRequestParameters(),
-    )
-
-    assert result.input_tokens == 42
-    bedrock_client.post.assert_awaited_once()
-    assert bedrock_client.post.call_args.args == ('/model/anthropic.claude-3-5-sonnet-20241022-v2:0/count-tokens',)
-    kwargs = bedrock_client.post.call_args.kwargs
-    assert kwargs['cast_to'] == dict[str, object]
-    assert kwargs['options']['headers']['Content-Type'] == 'application/json'
-    assert kwargs['options']['timeout'] == 12.5
-    content = json.loads(kwargs['content'])
-    body = base64.b64decode(content['input']['invokeModel']['body']).decode()
-    assert json.loads(body) == snapshot(
-        {
-            'anthropic_version': 'bedrock-2023-05-31',
-            'anthropic_beta': ['custom-beta'],
-            'max_tokens': 4096,
-            'metadata': {'purpose': 'test'},
-            'messages': [{'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}]}],
-            'system': 'You are helpful.',
-        }
-    )
-
-
 async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
     from anthropic import AsyncAnthropicBedrock
 
@@ -10401,6 +10358,64 @@ async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
             None,
             ModelRequestParameters(),
         )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_bedrock_count_tokens_real_api(allow_model_requests: None, vcr: Cassette):
+    """Bedrock token counting hits the low-level `/model/{model}/count-tokens` endpoint.
+
+    The Anthropic SDK blocks the high-level `count_tokens()` on Bedrock, so the request is
+    built and posted by `_anthropic_bedrock_count_tokens.count_tokens_via_bedrock`. Uses the
+    base model id `anthropic.claude-sonnet-4-...` because the `3.5-sonnet` id in the original
+    test is now end-of-life on Bedrock's CountTokens endpoint, and CRIS inference-profile ids
+    (`us.`/`eu.`/`global.`) aren't accepted there either.
+    """
+    from anthropic import AsyncAnthropicBedrock
+
+    bedrock_client = AsyncAnthropicBedrock(
+        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
+        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
+        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
+        aws_region=os.environ.get('AWS_REGION', 'us-east-1'),
+    )
+    model = AnthropicModel(
+        'anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=AnthropicProvider(anthropic_client=bedrock_client),
+    )
+
+    result = await model.count_tokens(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are helpful.'),
+                    UserPromptPart(content='How many tokens is this sentence?'),
+                ]
+            )
+        ],
+        AnthropicModelSettings(
+            anthropic_betas=['token-efficient-tools-2025-02-19'],
+            extra_body={'metadata': {'user_id': 'pydantic-ai-test'}},
+            timeout=12.5,
+        ),
+        ModelRequestParameters(),
+    )
+
+    assert result.input_tokens == snapshot(18)
+
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens')  # pyright: ignore[reportUnknownMemberType]
+    envelope = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    body = json.loads(base64.b64decode(envelope['input']['invokeModel']['body']))
+    assert body == snapshot(
+        {
+            'anthropic_version': 'bedrock-2023-05-31',
+            'max_tokens': 4096,
+            'messages': [{'role': 'user', 'content': [{'text': 'How many tokens is this sentence?', 'type': 'text'}]}],
+            'system': 'You are helpful.',
+            'anthropic_beta': ['token-efficient-tools-2025-02-19'],
+            'metadata': {'user_id': 'pydantic-ai-test'},
+        }
+    )
 
 
 def test_anthropic_process_response_server_tool_blocks(allow_model_requests: None):
