@@ -17,11 +17,17 @@ timeout = 30
 exclude_all_private = true
 exclude_loopback = true
 
-# Hosts that flake or hard-block automated checks; not worth failing the run over.
+# Relative doc links are resolved by mkdocs, not as filesystem paths; skip the
+# `file://` links lychee derives from them.
+scheme = ["https", "http"]
+
+# Login-gated or bot-blocking hosts that return non-2xx to automated checks even
+# though the links are valid in a browser; not worth failing the run over.
 exclude = [
   "platform\\.openai\\.com",
   "openai\\.com",
   "console\\.mistral\\.ai",
+  "dash\\.voyageai\\.com",
   "spec\\.modelcontextprotocol\\.io",
   "customerioforms\\.com",
 ]
