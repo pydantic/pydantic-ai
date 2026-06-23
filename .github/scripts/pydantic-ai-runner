@@ -3,11 +3,10 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #   "pydantic-ai-slim[anthropic,mcp]>=1.105.0",
-#   # The Bash/Read/Write/Edit tools are backed by harness FileSystem/Shell.
-#   # Those capabilities are on harness `main` but not yet on PyPI (the latest
-#   # release ships only `code_mode`), so pin the commit until a release carries
-#   # them, then switch this to a normal version constraint.
-#   "pydantic-ai-harness @ git+https://github.com/pydantic/pydantic-ai-harness@24fd30e70c0e12c4d4b4507b1643141830ba6cbf",
+#   # The Bash/Read/Write/Edit tools are backed by harness FileSystem/Shell,
+#   # which ship as stable top-level modules from 0.4.0 onwards. Keep this in
+#   # sync with the lint-group pin in the root pyproject.toml.
+#   "pydantic-ai-harness>=0.4.0",
 #   "logfire",
 #   "opentelemetry-instrumentation-httpx",
 # ]

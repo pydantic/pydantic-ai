@@ -701,7 +701,7 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptur
     ]
     with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
         shim._trim_tool_results(tiny_msgs)  # pyright: ignore[reportPrivateUsage]
-    assert not any('compaction trim' in m for m in caplog.messages)
+    assert not any('trim: deduped' in m for m in caplog.messages)
     caplog.clear()
 
     big = 'Z' * 20_000
@@ -717,7 +717,7 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptur
         msgs.append(ModelRequest(parts=[UserPromptPart(content=f't{i}')]))
     with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
         shim._trim_tool_results(msgs)  # pyright: ignore[reportPrivateUsage]
-    log_line = next((m for m in caplog.messages if 'compaction trim' in m), None)
+    log_line = next((m for m in caplog.messages if 'trim: deduped' in m), None)
     assert log_line is not None
     assert 'deduped 1' in log_line and 'truncated 2' in log_line and 'saved' in log_line
 
