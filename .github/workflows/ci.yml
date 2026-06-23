@@ -202,7 +202,11 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
-      - run: uv sync --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct
+      # The lint group carries pydantic-ai-harness (only needed to typecheck the
+      # gh-aw shim). It depends on pydantic-ai-slim, whose name is shadowed by the
+      # workspace member, which uv cannot re-resolve under lowest-direct. This job
+      # only runs pytest, so exclude that group.
+      - run: uv sync --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct --no-group lint
         env:
           UV_FROZEN: "0"
 
