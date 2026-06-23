@@ -81,6 +81,7 @@ with try_import() as mlxlm_imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='outlines not installed'),
     pytest.mark.anyio,
+    pytest.mark.xdist_group(name='outlines'),
     pytest.mark.filterwarnings(
         'ignore:`OutlinesModel` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),

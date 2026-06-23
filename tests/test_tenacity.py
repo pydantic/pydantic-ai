@@ -678,7 +678,7 @@ class TestConnectionPool:
     class AlwaysReturnHTTP429Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(429)
-            self.send_header('Retry-After', '1')
+            self.send_header('Retry-After', '0')
             self.end_headers()
             self.wfile.write(b'Rate limited')
 
@@ -702,7 +702,7 @@ class TestConnectionPool:
 
         retry_strategy = RetryConfig(
             stop=stop_after_attempt(5),
-            wait=wait_retry_after(max_wait=5, fallback_strategy=wait_fixed(2)),
+            wait=wait_retry_after(max_wait=0, fallback_strategy=wait_fixed(0)),
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             reraise=True,
         )
