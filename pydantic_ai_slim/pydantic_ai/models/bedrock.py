@@ -342,6 +342,22 @@ class BedrockModelSettings(ModelSettings, total=False):
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html>.
     """
 
+    bedrock_thinking_display: Literal['summarized', 'omitted']
+    """Whether to receive a summary of the model's thinking or only thinking signatures.
+
+    Honored only for models that use the Anthropic thinking variant (Claude on Bedrock).
+    Ignored for OpenAI/Qwen variants — the underlying API has no equivalent knob — matching
+    the precedent of `bedrock_supports_adaptive_thinking`. Applied to the thinking block
+    emitted from the unified `thinking` setting; ignored when a raw `thinking` dict is
+    supplied via `bedrock_additional_model_requests_fields` (the raw dict wins).
+
+    Defaults vary by model — when the model defaults to `'omitted'`, `thinking=True`
+    produces empty thinking content unless this is set to `'summarized'`. The model
+    still thinks (and is billed for) the same number of tokens regardless.
+
+    See [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#summarized-thinking) for more information.
+    """
+
     bedrock_cache_tool_definitions: bool | Literal['5m', '1h']
     """Whether to add a cache point after the last tool definition.
 
@@ -738,9 +754,12 @@ class BedrockConverseModel(Model[BaseClient]):
         variant = profile.bedrock_thinking_variant
 
         if variant == 'anthropic' and 'thinking' not in existing:
+            display = model_settings.get('bedrock_thinking_display')
             if profile.bedrock_supports_adaptive_thinking:
                 if thinking is not False:
                     existing['thinking'] = {'type': 'adaptive'}
+                    if display:
+                        existing['thinking']['display'] = display
                     # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
                     if (
                         profile.bedrock_supports_effort
@@ -752,6 +771,8 @@ class BedrockConverseModel(Model[BaseClient]):
                 existing['thinking'] = {'type': 'disabled'}
             else:
                 existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+                if display:
+                    existing['thinking']['display'] = display
         elif variant == 'openai' and 'reasoning_effort' not in existing:
             if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
                 existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]

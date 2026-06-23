@@ -295,6 +295,19 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
     """
 
+    anthropic_thinking_display: Literal['summarized', 'omitted']
+    """Whether to receive a summary of the model's thinking or only thinking signatures.
+
+    Applied to the thinking block emitted from the unified `thinking` setting;
+    ignored when `anthropic_thinking` is set explicitly (the raw dict wins).
+
+    Defaults vary by model — when the model defaults to `'omitted'`, `thinking=True`
+    produces empty thinking content unless this is set to `'summarized'`. The model
+    still thinks (and is billed for) the same number of tokens regardless.
+
+    See [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#summarized-thinking) for more information.
+    """
+
     anthropic_cache_tool_definitions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last tool definition.
 
@@ -655,9 +668,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
         profile = AnthropicModelProfile.from_profile(self.profile)
+        result: BetaThinkingConfigParam
         if profile.anthropic_supports_adaptive_thinking:
-            return {'type': 'adaptive'}
-        return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+            result = {'type': 'adaptive'}
+        else:
+            result = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+        if display := model_settings.get('anthropic_thinking_display'):
+            result['display'] = display
+        return result
 
     @overload
     async def _messages_create(
