@@ -135,6 +135,40 @@ async def test_map_empty_list():
     assert result == []
 
 
+async def test_map_with_downstream_join_id_non_empty_list():
+    """Test downstream_join_id does not emit the join initial value for non-empty maps."""
+    g = GraphBuilder(state_type=CounterState, output_type=list[int])
+    emitted: list[list[int]] = []
+
+    @g.step
+    async def generate_list(ctx: StepContext[CounterState, None, None]) -> list[int]:
+        return [1, 2, 3]
+
+    @g.step
+    async def identity(ctx: StepContext[CounterState, None, int]) -> int:
+        return ctx.inputs
+
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    @g.step
+    async def after_join(ctx: StepContext[CounterState, None, list[int]]) -> list[int]:
+        emitted.append(sorted(ctx.inputs))
+        return ctx.inputs
+
+    g.add_mapping_edge(generate_list, identity, downstream_join_id=collect.id)
+    g.add(
+        g.edge_from(g.start_node).to(generate_list),
+        g.edge_from(identity).to(collect),
+        g.edge_from(collect).to(after_join),
+        g.edge_from(after_join).to(g.end_node),
+    )
+
+    graph = g.build()
+    result = await graph.run(state=CounterState())
+    assert sorted(result) == [1, 2, 3]
+    assert emitted == [[1, 2, 3]]
+
+
 async def test_nested_broadcasts():
     """Test nested broadcast operations."""
     g = GraphBuilder(state_type=CounterState, output_type=list[int])
