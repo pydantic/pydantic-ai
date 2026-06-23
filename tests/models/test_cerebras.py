@@ -9,6 +9,7 @@ from vcr.cassette import Cassette
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.direct import model_request
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 
 from ..conftest import try_import
 
@@ -119,7 +120,7 @@ async def test_cerebras_zai_reasoning_replayed_as_think_tags(
 
     turn2_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assistant_messages = [m for m in turn2_body['messages'] if m.get('role') == 'assistant']
-    start_tag, end_tag = model.profile.thinking_tags
+    start_tag, end_tag = model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
     assert any(
         start_tag in (m.get('content') or '') and end_tag in (m.get('content') or '') for m in assistant_messages
     ), 'expected prior reasoning wrapped in think tags in the assistant content'

@@ -58,28 +58,36 @@ Useful `RunContext` fields include:
 
 ## Use MCP Servers
 
-Attach an MCP server as a toolset on the agent.
+For URL-based MCP servers, use the `MCP` capability — it runs the MCP server locally by default and lets you opt into the model provider's native MCP support with `native=True`. See the [MCP capability docs](https://ai.pydantic.dev/capabilities/#mcp).
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerStdio
+from pydantic_ai.capabilities import MCP
 
-server = MCPServerStdio('python', args=['mcp_server.py'], timeout=10)
-agent = Agent('openai:gpt-5.2', toolsets=[server])
-
-
-async def main():
-    async with agent:
-        result = await agent.run('What is the weather in Paris?')
-        print(result.output)
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[
+        MCP('https://mcp.example.com/api'),               # Streamable HTTP, local-only by default
+        MCP('https://mcp.example.com/other', native=True),  # opt into native with local fallback
+    ],
+)
 ```
 
-Default transport choices:
+The capability's first positional arg is the URL. To pass any other `MCPToolset` input — a `fastmcp.client.transports.*Transport`, pre-built `fastmcp.Client`, in-process `FastMCP` server, or local script path — use the `local=` keyword:
 
-- `MCPServerStdio` for local subprocess servers
-- `MCPServerStreamableHTTP` for HTTP servers
+```python
+from fastmcp.client.transports import StdioTransport
 
-`MCPServerSSE` still exists, but Streamable HTTP is the better default.
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import MCP
+
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[MCP(local=StdioTransport(command='python', args=['mcp_server.py']))],
+)
+```
+
+When you need to manage the toolset lifecycle yourself, share an MCP server across multiple agents, or use FastMCP-specific configuration that doesn't fit the capability shape, use [`MCPToolset`](https://ai.pydantic.dev/mcp/client/) directly and pass it via `toolsets=[...]`.
 
 ## Search with DuckDuckGo, Tavily, or Exa
 

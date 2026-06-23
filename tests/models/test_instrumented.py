@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Literal
 
 import pytest
-from opentelemetry._logs import NoOpLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
 from pydantic_ai import (
@@ -28,7 +27,6 @@ from pydantic_ai import (
     PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
-    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -37,8 +35,8 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai._instrumentation import event_to_dict
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
@@ -54,6 +52,18 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
     pytest.mark.anyio,
 ]
+
+
+def deprecated_instrumentation_settings(
+    version: Literal[2, 3, 4], *, include_binary_content: bool = True, include_content: bool = True
+) -> InstrumentationSettings:
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'Instrumentation format versions 2, 3, and 4 are deprecated',
+    ):
+        return InstrumentationSettings(
+            version=version, include_binary_content=include_binary_content, include_content=include_content
+        )
 
 
 class MyModel(Model):
@@ -144,13 +154,14 @@ class MyResponseStream(StreamedResponse):
 
 
 async def test_instrumented_model(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
     assert model.system == 'openai'
     assert model.model_name == 'gpt-4o'
     assert model.model_id == 'openai:gpt-4o'
 
     messages = [
         ModelRequest(
+            instructions='instructions',
             parts=[
                 SystemPromptPart('system_prompt'),
                 UserPromptPart('user_prompt'),
@@ -182,7 +193,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 16000000000,
+                'end_time': 2000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.provider.name': 'openai',
@@ -204,13 +215,65 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     },
                     'logfire.json_schema': {
                         'type': 'object',
-                        'properties': {'model_request_parameters': {'type': 'object'}},
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'gen_ai.system_instructions': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
                     },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat gpt-4o',
+                    'gen_ai.input.messages': [
+                        {'role': 'system', 'parts': [{'type': 'text', 'content': 'system_prompt'}]},
+                        {
+                            'role': 'user',
+                            'parts': [
+                                {'type': 'text', 'content': 'user_prompt'},
+                                {
+                                    'type': 'tool_call_response',
+                                    'id': 'tool_call_3',
+                                    'name': 'tool3',
+                                    'result': 'tool_return_content',
+                                },
+                                {
+                                    'type': 'tool_call_response',
+                                    'id': 'tool_call_4',
+                                    'name': 'tool4',
+                                    'result': """\
+retry_prompt1
+
+Fix the errors and try again.\
+""",
+                                },
+                                {
+                                    'type': 'text',
+                                    'content': """\
+Validation feedback:
+retry_prompt2
+
+Fix the errors and try again.\
+""",
+                                },
+                            ],
+                        },
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text3'}]},
+                    ],
+                    'gen_ai.output.messages': [
+                        {
+                            'role': 'assistant',
+                            'parts': [
+                                {'type': 'text', 'content': 'text1'},
+                                {'type': 'tool_call', 'id': 'tool_call_1', 'name': 'tool1', 'arguments': 'args1'},
+                                {'type': 'tool_call', 'id': 'tool_call_2', 'name': 'tool2', 'arguments': {'args2': 3}},
+                                {'type': 'text', 'content': 'text2'},
+                            ],
+                        }
+                    ],
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.response.id': 'response_id',
+                    'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
                     'gen_ai.usage.cache_creation.input_tokens': 10,
                     'gen_ai.usage.cache_read.input_tokens': 20,
                     'gen_ai.usage.details.reasoning_tokens': 30,
@@ -227,152 +290,13 @@ async def test_instrumented_model(capfire: CaptureLogfire):
         ]
     )
 
-    assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
-        [
-            {
-                'body': {'role': 'system', 'content': 'system_prompt'},
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'openai',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.system.message',
-                },
-                'timestamp': 2000000000,
-                'observed_timestamp': 3000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'openai',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.user.message',
-                },
-                'timestamp': 4000000000,
-                'observed_timestamp': 5000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'content': 'tool_return_content', 'role': 'tool', 'id': 'tool_call_3', 'name': 'tool3'},
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'openai',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.tool.message',
-                },
-                'timestamp': 6000000000,
-                'observed_timestamp': 7000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {
-                    'content': """\
-retry_prompt1
-
-Fix the errors and try again.\
-""",
-                    'role': 'tool',
-                    'id': 'tool_call_4',
-                    'name': 'tool4',
-                },
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'openai',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.tool.message',
-                },
-                'timestamp': 8000000000,
-                'observed_timestamp': 9000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {
-                    'content': """\
-Validation feedback:
-retry_prompt2
-
-Fix the errors and try again.\
-""",
-                    'role': 'user',
-                },
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'openai',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.user.message',
-                },
-                'timestamp': 10000000000,
-                'observed_timestamp': 11000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'role': 'assistant', 'content': 'text3'},
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'openai',
-                    'gen_ai.message.index': 1,
-                    'event.name': 'gen_ai.assistant.message',
-                },
-                'timestamp': 12000000000,
-                'observed_timestamp': 13000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {
-                    'index': 0,
-                    'message': {
-                        'role': 'assistant',
-                        'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'text', 'text': 'text2'}],
-                        'tool_calls': [
-                            {
-                                'id': 'tool_call_1',
-                                'type': 'function',
-                                'function': {'name': 'tool1', 'arguments': 'args1'},
-                            },
-                            {
-                                'id': 'tool_call_2',
-                                'type': 'function',
-                                'function': {'name': 'tool2', 'arguments': {'args2': 3}},
-                            },
-                        ],
-                    },
-                },
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {'gen_ai.system': 'openai', 'event.name': 'gen_ai.choice'},
-                'timestamp': 14000000000,
-                'observed_timestamp': 15000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-        ]
-    )
+    assert capfire.log_exporter.exported_logs_as_dicts() == snapshot([])
 
 
 async def test_instrumented_model_not_recording():
     model = InstrumentedModel(
         MyModel(),
-        InstrumentationSettings(tracer_provider=NoOpTracerProvider(), logger_provider=NoOpLoggerProvider()),
+        InstrumentationSettings(tracer_provider=NoOpTracerProvider()),
     )
 
     messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')], timestamp=IsDatetime())]
@@ -389,8 +313,26 @@ async def test_instrumented_model_not_recording():
     )
 
 
+def test_instrumentation_settings_rejects_removed_version():
+    with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, or 5'):
+        InstrumentationSettings(version=1)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize('version', [2, 3, 4])
+def test_instrumentation_settings_warns_for_deprecated_versions(version: Literal[2, 3, 4]):
+    settings = deprecated_instrumentation_settings(version=version)
+    assert settings.version == version
+
+
+def test_instrumentation_settings_current_version_does_not_warn(recwarn: pytest.WarningsRecorder):
+    InstrumentationSettings()
+    InstrumentationSettings(version=5)
+    deprecation_warnings = [w for w in recwarn if issubclass(w.category, PydanticAIDeprecationWarning)]
+    assert deprecation_warnings == []
+
+
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -427,7 +369,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 6000000000,
+                'end_time': 2000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.provider.name': 'openai',
@@ -449,10 +391,18 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     },
                     'logfire.json_schema': {
                         'type': 'object',
-                        'properties': {'model_request_parameters': {'type': 'object'}},
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
                     },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat gpt-4o',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt'}]}],
+                    'gen_ai.output.messages': [
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1text2'}]}
+                    ],
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.usage.input_tokens': 300,
@@ -463,40 +413,11 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
         ]
     )
 
-    assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
-        [
-            {
-                'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'openai',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.user.message',
-                },
-                'timestamp': 2000000000,
-                'observed_timestamp': 3000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1text2'}},
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {'gen_ai.system': 'openai', 'event.name': 'gen_ai.choice'},
-                'timestamp': 4000000000,
-                'observed_timestamp': 5000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-        ]
-    )
+    assert capfire.log_exporter.exported_logs_as_dicts() == snapshot([])
 
 
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -530,7 +451,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 7000000000,
+                'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.provider.name': 'openai',
@@ -552,10 +473,16 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     },
                     'logfire.json_schema': {
                         'type': 'object',
-                        'properties': {'model_request_parameters': {'type': 'object'}},
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
                     },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat gpt-4o',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt'}]}],
+                    'gen_ai.output.messages': [{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]}],
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.usage.input_tokens': 300,
@@ -567,7 +494,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'events': [
                     {
                         'name': 'exception',
-                        'timestamp': 6000000000,
+                        'timestamp': 2000000000,
                         'attributes': {
                             'exception.type': 'RuntimeError',
                             'exception.message': '',
@@ -580,43 +507,11 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
         ]
     )
 
-    assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
-        [
-            {
-                'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'openai',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.user.message',
-                },
-                'timestamp': 2000000000,
-                'observed_timestamp': 3000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1'}},
-                'severity_number': None,
-                'severity_text': None,
-                'attributes': {'gen_ai.system': 'openai', 'event.name': 'gen_ai.choice'},
-                'timestamp': 4000000000,
-                'observed_timestamp': 5000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-        ]
-    )
+    assert capfire.log_exporter.exported_logs_as_dicts() == snapshot([])
 
 
-@pytest.mark.parametrize('instrumentation_version', [1, 2])
-async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instrumentation_version: Literal[1, 2]):
-    model = InstrumentedModel(
-        MyModel(), InstrumentationSettings(event_mode='attributes', version=instrumentation_version)
-    )
+async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
     assert model.system == 'openai'
     assert model.model_name == 'gpt-4o'
 
@@ -647,259 +542,119 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
         ),
     )
 
-    if instrumentation_version == 1:
-        assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
-            [
-                {
-                    'name': 'chat gpt-4o',
-                    'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
-                    'parent': None,
-                    'start_time': 1000000000,
-                    'end_time': 2000000000,
-                    'attributes': {
-                        'gen_ai.operation.name': 'chat',
-                        'gen_ai.provider.name': 'openai',
-                        'gen_ai.system': 'openai',
-                        'gen_ai.request.model': 'gpt-4o',
-                        'server.address': 'example.com',
-                        'server.port': 8000,
-                        'model_request_parameters': {
-                            'function_tools': [],
-                            'native_tools': [],
-                            'output_mode': 'text',
-                            'output_object': None,
-                            'output_tools': [],
-                            'prompted_output_template': None,
-                            'allow_text_output': True,
-                            'allow_image_output': False,
-                            'instruction_parts': None,
-                            'thinking': None,
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
+        [
+            {
+                'name': 'chat gpt-4o',
+                'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
+                'parent': None,
+                'start_time': 1000000000,
+                'end_time': 2000000000,
+                'attributes': {
+                    'gen_ai.operation.name': 'chat',
+                    'gen_ai.provider.name': 'openai',
+                    'gen_ai.system': 'openai',
+                    'gen_ai.request.model': 'gpt-4o',
+                    'server.address': 'example.com',
+                    'server.port': 8000,
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'native_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'prompted_output_template': None,
+                        'allow_text_output': True,
+                        'allow_image_output': False,
+                        'instruction_parts': None,
+                        'thinking': None,
+                    },
+                    'gen_ai.request.temperature': 1,
+                    'logfire.msg': 'chat gpt-4o',
+                    'logfire.span_type': 'span',
+                    'gen_ai.input.messages': [
+                        {
+                            'role': 'system',
+                            'parts': [
+                                {'type': 'text', 'content': 'system_prompt'},
+                            ],
                         },
-                        'gen_ai.request.temperature': 1,
-                        'logfire.msg': 'chat gpt-4o',
-                        'logfire.span_type': 'span',
-                        'gen_ai.response.model': 'gpt-4o-2024-11-20',
-                        'gen_ai.usage.input_tokens': 100,
-                        'gen_ai.usage.output_tokens': 200,
-                        'events': [
-                            {
-                                'content': 'instructions',
-                                'role': 'system',
-                                'gen_ai.system': 'openai',
-                                'event.name': 'gen_ai.system.message',
-                            },
-                            {
-                                'event.name': 'gen_ai.system.message',
-                                'content': 'system_prompt',
-                                'role': 'system',
-                                'gen_ai.message.index': 0,
-                                'gen_ai.system': 'openai',
-                            },
-                            {
-                                'event.name': 'gen_ai.user.message',
-                                'content': 'user_prompt',
-                                'role': 'user',
-                                'gen_ai.message.index': 0,
-                                'gen_ai.system': 'openai',
-                            },
-                            {
-                                'event.name': 'gen_ai.tool.message',
-                                'content': 'tool_return_content',
-                                'role': 'tool',
-                                'name': 'tool3',
-                                'id': 'tool_call_3',
-                                'gen_ai.message.index': 0,
-                                'gen_ai.system': 'openai',
-                            },
-                            {
-                                'event.name': 'gen_ai.tool.message',
-                                'content': """\
-retry_prompt1
-
-Fix the errors and try again.\
-""",
-                                'role': 'tool',
-                                'name': 'tool4',
-                                'id': 'tool_call_4',
-                                'gen_ai.message.index': 0,
-                                'gen_ai.system': 'openai',
-                            },
-                            {
-                                'event.name': 'gen_ai.user.message',
-                                'content': """\
-Validation feedback:
-retry_prompt2
-
-Fix the errors and try again.\
-""",
-                                'role': 'user',
-                                'gen_ai.message.index': 0,
-                                'gen_ai.system': 'openai',
-                            },
-                            {
-                                'event.name': 'gen_ai.assistant.message',
-                                'role': 'assistant',
-                                'content': 'text3',
-                                'gen_ai.message.index': 1,
-                                'gen_ai.system': 'openai',
-                            },
-                            {
-                                'index': 0,
-                                'message': {
-                                    'role': 'assistant',
-                                    'content': [
-                                        {'kind': 'text', 'text': 'text1'},
-                                        {'kind': 'text', 'text': 'text2'},
-                                    ],
-                                    'tool_calls': [
-                                        {
-                                            'id': 'tool_call_1',
-                                            'type': 'function',
-                                            'function': {'name': 'tool1', 'arguments': 'args1'},
-                                        },
-                                        {
-                                            'id': 'tool_call_2',
-                                            'type': 'function',
-                                            'function': {'name': 'tool2', 'arguments': {'args2': 3}},
-                                        },
-                                    ],
+                        {
+                            'role': 'user',
+                            'parts': [
+                                {'type': 'text', 'content': 'user_prompt'},
+                                {
+                                    'type': 'tool_call_response',
+                                    'id': 'tool_call_3',
+                                    'name': 'tool3',
+                                    'result': 'tool_return_content',
                                 },
-                                'gen_ai.system': 'openai',
-                                'event.name': 'gen_ai.choice',
-                            },
-                        ],
-                        'gen_ai.usage.cache_creation.input_tokens': 10,
-                        'gen_ai.usage.cache_read.input_tokens': 20,
-                        'gen_ai.usage.details.reasoning_tokens': 30,
-                        'gen_ai.usage.details.cache_write_tokens': 10,
-                        'gen_ai.usage.details.cache_read_tokens': 20,
-                        'gen_ai.usage.details.input_audio_tokens': 10,
-                        'gen_ai.usage.details.cache_audio_read_tokens': 5,
-                        'gen_ai.usage.details.output_audio_tokens': 30,
-                        'logfire.json_schema': {
-                            'type': 'object',
-                            'properties': {'events': {'type': 'array'}, 'model_request_parameters': {'type': 'object'}},
-                        },
-                        'operation.cost': 0.002225,
-                        'gen_ai.response.id': 'response_id',
-                    },
-                },
-            ]
-        )
-    else:
-        assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
-            [
-                {
-                    'name': 'chat gpt-4o',
-                    'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
-                    'parent': None,
-                    'start_time': 1000000000,
-                    'end_time': 2000000000,
-                    'attributes': {
-                        'gen_ai.operation.name': 'chat',
-                        'gen_ai.provider.name': 'openai',
-                        'gen_ai.system': 'openai',
-                        'gen_ai.request.model': 'gpt-4o',
-                        'server.address': 'example.com',
-                        'server.port': 8000,
-                        'model_request_parameters': {
-                            'function_tools': [],
-                            'native_tools': [],
-                            'output_mode': 'text',
-                            'output_object': None,
-                            'output_tools': [],
-                            'prompted_output_template': None,
-                            'allow_text_output': True,
-                            'allow_image_output': False,
-                            'instruction_parts': None,
-                            'thinking': None,
-                        },
-                        'gen_ai.request.temperature': 1,
-                        'logfire.msg': 'chat gpt-4o',
-                        'logfire.span_type': 'span',
-                        'gen_ai.input.messages': [
-                            {
-                                'role': 'system',
-                                'parts': [
-                                    {'type': 'text', 'content': 'system_prompt'},
-                                ],
-                            },
-                            {
-                                'role': 'user',
-                                'parts': [
-                                    {'type': 'text', 'content': 'user_prompt'},
-                                    {
-                                        'type': 'tool_call_response',
-                                        'id': 'tool_call_3',
-                                        'name': 'tool3',
-                                        'result': 'tool_return_content',
-                                    },
-                                    {
-                                        'type': 'tool_call_response',
-                                        'id': 'tool_call_4',
-                                        'name': 'tool4',
-                                        'result': """\
+                                {
+                                    'type': 'tool_call_response',
+                                    'id': 'tool_call_4',
+                                    'name': 'tool4',
+                                    'result': """\
 retry_prompt1
 
 Fix the errors and try again.\
 """,
-                                    },
-                                    {
-                                        'type': 'text',
-                                        'content': """\
+                                },
+                                {
+                                    'type': 'text',
+                                    'content': """\
 Validation feedback:
 retry_prompt2
 
 Fix the errors and try again.\
 """,
-                                    },
-                                ],
-                            },
-                            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text3'}]},
-                        ],
-                        'gen_ai.output.messages': [
-                            {
-                                'role': 'assistant',
-                                'parts': [
-                                    {'type': 'text', 'content': 'text1'},
-                                    {'type': 'tool_call', 'id': 'tool_call_1', 'name': 'tool1', 'arguments': 'args1'},
-                                    {
-                                        'type': 'tool_call',
-                                        'id': 'tool_call_2',
-                                        'name': 'tool2',
-                                        'arguments': {'args2': 3},
-                                    },
-                                    {'type': 'text', 'content': 'text2'},
-                                ],
-                            }
-                        ],
-                        'gen_ai.response.model': 'gpt-4o-2024-11-20',
-                        'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
-                        'gen_ai.usage.input_tokens': 100,
-                        'gen_ai.usage.output_tokens': 200,
-                        'gen_ai.usage.cache_creation.input_tokens': 10,
-                        'gen_ai.usage.cache_read.input_tokens': 20,
-                        'gen_ai.usage.details.reasoning_tokens': 30,
-                        'gen_ai.usage.details.cache_write_tokens': 10,
-                        'gen_ai.usage.details.cache_read_tokens': 20,
-                        'gen_ai.usage.details.input_audio_tokens': 10,
-                        'gen_ai.usage.details.cache_audio_read_tokens': 5,
-                        'gen_ai.usage.details.output_audio_tokens': 30,
-                        'logfire.json_schema': {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.input.messages': {'type': 'array'},
-                                'gen_ai.output.messages': {'type': 'array'},
-                                'gen_ai.system_instructions': {'type': 'array'},
-                                'model_request_parameters': {'type': 'object'},
-                            },
+                                },
+                            ],
                         },
-                        'operation.cost': 0.002225,
-                        'gen_ai.response.id': 'response_id',
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text3'}]},
+                    ],
+                    'gen_ai.output.messages': [
+                        {
+                            'role': 'assistant',
+                            'parts': [
+                                {'type': 'text', 'content': 'text1'},
+                                {'type': 'tool_call', 'id': 'tool_call_1', 'name': 'tool1', 'arguments': 'args1'},
+                                {
+                                    'type': 'tool_call',
+                                    'id': 'tool_call_2',
+                                    'name': 'tool2',
+                                    'arguments': {'args2': 3},
+                                },
+                                {'type': 'text', 'content': 'text2'},
+                            ],
+                        }
+                    ],
+                    'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                    'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
+                    'gen_ai.usage.input_tokens': 100,
+                    'gen_ai.usage.output_tokens': 200,
+                    'gen_ai.usage.cache_creation.input_tokens': 10,
+                    'gen_ai.usage.cache_read.input_tokens': 20,
+                    'gen_ai.usage.details.reasoning_tokens': 30,
+                    'gen_ai.usage.details.cache_write_tokens': 10,
+                    'gen_ai.usage.details.cache_read_tokens': 20,
+                    'gen_ai.usage.details.input_audio_tokens': 10,
+                    'gen_ai.usage.details.cache_audio_read_tokens': 5,
+                    'gen_ai.usage.details.output_audio_tokens': 30,
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'gen_ai.system_instructions': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
                     },
+                    'operation.cost': 0.002225,
+                    'gen_ai.response.id': 'response_id',
                 },
-            ]
-        )
+            },
+        ]
+    )
 
     assert capfire.get_collected_metrics() == snapshot(
         [
@@ -992,132 +747,6 @@ Fix the errors and try again.\
     )
 
 
-def test_messages_to_otel_events_serialization_errors():
-    class Foo:
-        def __repr__(self):
-            return 'Foo()'
-
-    class Bar:
-        def __repr__(self):
-            raise ValueError('error!')
-
-    messages = [
-        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')]),
-        ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')], timestamp=IsDatetime()),
-    ]
-
-    settings = InstrumentationSettings()
-    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == [
-        {
-            'body': "{'role': 'assistant', 'tool_calls': [{'id': 'tool_call_id', 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
-            'gen_ai.message.index': 0,
-            'event.name': 'gen_ai.assistant.message',
-        },
-        {
-            'body': 'Unable to serialize: error!',
-            'gen_ai.message.index': 1,
-            'event.name': 'gen_ai.tool.message',
-        },
-    ]
-    assert settings.messages_to_otel_messages(messages) == snapshot(
-        [
-            {
-                'role': 'assistant',
-                'parts': [{'type': 'tool_call', 'id': 'tool_call_id', 'name': 'tool', 'arguments': {'arg': 'Foo()'}}],
-            },
-            {
-                'role': 'user',
-                'parts': [
-                    {
-                        'type': 'tool_call_response',
-                        'id': 'return_tool_call_id',
-                        'name': 'tool',
-                        'result': 'Unable to serialize: error!',
-                    }
-                ],
-            },
-        ]
-    )
-
-
-def test_messages_to_otel_events_instructions():
-    messages = [
-        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime()),
-        ModelResponse(parts=[TextPart('text1')]),
-    ]
-    settings = InstrumentationSettings()
-    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
-        [
-            {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
-            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
-            {
-                'role': 'assistant',
-                'content': 'text1',
-                'gen_ai.message.index': 1,
-                'event.name': 'gen_ai.assistant.message',
-            },
-        ]
-    )
-    assert settings.messages_to_otel_messages(messages) == snapshot(
-        [
-            {'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt'}]},
-            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
-        ]
-    )
-
-
-def test_messages_to_otel_events_instructions_multiple_messages():
-    messages = [
-        ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime()),
-        ModelResponse(parts=[TextPart('text1')]),
-        ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')], timestamp=IsDatetime()),
-    ]
-    settings = InstrumentationSettings()
-    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
-        [
-            {'content': 'instructions2', 'role': 'system', 'event.name': 'gen_ai.system.message'},
-            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
-            {
-                'role': 'assistant',
-                'content': 'text1',
-                'gen_ai.message.index': 1,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2, 'event.name': 'gen_ai.user.message'},
-        ]
-    )
-    assert settings.messages_to_otel_messages(messages) == snapshot(
-        [
-            {'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt'}]},
-            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
-            {'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt2'}]},
-        ]
-    )
-
-
-def test_messages_to_otel_events_compaction_part():
-    """CompactionPart is not a standard OTel GenAI convention type and is skipped in OTel events."""
-    from pydantic_ai.messages import CompactionPart
-
-    messages: list[ModelMessage] = [
-        ModelResponse(
-            parts=[CompactionPart(content='Summary of conversation.', provider_name='anthropic'), TextPart('response')]
-        ),
-    ]
-    settings = InstrumentationSettings()
-    # CompactionPart is skipped; only the TextPart appears
-    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
-        [
-            {
-                'role': 'assistant',
-                'content': 'response',
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.assistant.message',
-            }
-        ]
-    )
-
-
 def test_messages_to_otel_message_parts_compaction_part():
     """CompactionPart is skipped in otel_message_parts (not a standard GenAI convention type)."""
     from pydantic_ai.messages import CompactionPart
@@ -1131,8 +760,9 @@ def test_messages_to_otel_message_parts_compaction_part():
     assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
 
 
-def test_messages_to_otel_events_image_url(document_content: BinaryContent):
-    messages = [
+def test_messages_to_otel_messages_multimodal_v3(document_content: BinaryContent):
+    """Test that version 3 keeps the pre-v4 multimodal format."""
+    messages: list[ModelMessage] = [
         ModelRequest(
             parts=[UserPromptPart(content=['user_prompt', ImageUrl('https://example.com/image.png')])],
             timestamp=IsDatetime(),
@@ -1167,74 +797,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
         ModelResponse(parts=[TextPart('text1')]),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
-    settings = InstrumentationSettings()
-    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
-        [
-            {
-                'content': ['user_prompt', {'kind': 'image-url', 'url': 'https://example.com/image.png'}],
-                'role': 'user',
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'content': ['user_prompt2', {'kind': 'audio-url', 'url': 'https://example.com/audio.mp3'}],
-                'role': 'user',
-                'gen_ai.message.index': 1,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'content': ['user_prompt3', {'kind': 'document-url', 'url': 'https://example.com/document.pdf'}],
-                'role': 'user',
-                'gen_ai.message.index': 2,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'content': ['user_prompt4', {'kind': 'video-url', 'url': 'https://example.com/video.mp4'}],
-                'role': 'user',
-                'gen_ai.message.index': 3,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'content': [
-                    'user_prompt5',
-                    {'kind': 'image-url', 'url': 'https://example.com/image2.png'},
-                    {'kind': 'audio-url', 'url': 'https://example.com/audio2.mp3'},
-                    {'kind': 'document-url', 'url': 'https://example.com/document2.pdf'},
-                    {'kind': 'video-url', 'url': 'https://example.com/video2.mp4'},
-                ],
-                'role': 'user',
-                'gen_ai.message.index': 4,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'content': [
-                    'user_prompt6',
-                    {'kind': 'binary', 'binary_content': IsStr(), 'media_type': 'application/pdf'},
-                ],
-                'role': 'user',
-                'gen_ai.message.index': 5,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'role': 'assistant',
-                'content': 'text1',
-                'gen_ai.message.index': 6,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'role': 'assistant',
-                'content': [
-                    {
-                        'kind': 'binary',
-                        'media_type': 'application/pdf',
-                        'binary_content': IsStr(),
-                    }
-                ],
-                'gen_ai.message.index': 7,
-                'event.name': 'gen_ai.assistant.message',
-            },
-        ]
-    )
+    settings = deprecated_instrumentation_settings(version=3)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1299,6 +862,63 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             },
         ]
     )
+    settings_without_binary = deprecated_instrumentation_settings(version=3, include_binary_content=False)
+    assert settings_without_binary.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt'},
+                    {'type': 'image-url', 'url': 'https://example.com/image.png'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt2'},
+                    {'type': 'audio-url', 'url': 'https://example.com/audio.mp3'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt3'},
+                    {'type': 'document-url', 'url': 'https://example.com/document.pdf'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt4'},
+                    {'type': 'video-url', 'url': 'https://example.com/video.mp4'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt5'},
+                    {'type': 'image-url', 'url': 'https://example.com/image2.png'},
+                    {'type': 'audio-url', 'url': 'https://example.com/audio2.mp3'},
+                    {'type': 'document-url', 'url': 'https://example.com/document2.pdf'},
+                    {'type': 'video-url', 'url': 'https://example.com/video2.mp4'},
+                ],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'user_prompt6'},
+                    {'type': 'binary', 'media_type': 'application/pdf'},
+                ],
+            },
+            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
+            {
+                'role': 'assistant',
+                'parts': [
+                    {'type': 'binary', 'media_type': 'application/pdf'},
+                ],
+            },
+        ]
+    )
 
 
 def test_messages_to_otel_messages_multimodal_v4():
@@ -1319,7 +939,7 @@ def test_messages_to_otel_messages_multimodal_v4():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1370,7 +990,7 @@ def test_messages_to_otel_messages_multimodal_v4_no_content():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4, include_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1406,7 +1026,7 @@ def test_messages_to_otel_messages_binary_content_v4():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1451,7 +1071,7 @@ def test_messages_to_otel_messages_binary_content_v4_no_content():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4, include_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1481,7 +1101,7 @@ def test_messages_to_otel_messages_url_without_extension_v4():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1496,99 +1116,6 @@ def test_messages_to_otel_messages_url_without_extension_v4():
                     },
                 ],
             }
-        ]
-    )
-
-
-def test_messages_to_otel_events_without_binary_content(document_content: BinaryContent):
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])], timestamp=IsDatetime()),
-    ]
-    settings = InstrumentationSettings(include_binary_content=False)
-    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
-        [
-            {
-                'content': ['user_prompt6', {'kind': 'binary', 'media_type': 'application/pdf'}],
-                'role': 'user',
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.user.message',
-            }
-        ]
-    )
-    assert settings.messages_to_otel_messages(messages) == snapshot(
-        [
-            {
-                'role': 'user',
-                'parts': [
-                    {'type': 'text', 'content': 'user_prompt6'},
-                    {'type': 'binary', 'media_type': 'application/pdf'},
-                ],
-            }
-        ]
-    )
-
-
-def test_messages_to_otel_events_with_text_content():
-    messages = [
-        ModelRequest(
-            instructions='instructions',
-            parts=[UserPromptPart(content=['user_prompt', TextContent('text content', metadata={'key': 'value'})])],
-            timestamp=IsDatetime(),
-        ),
-        ModelResponse(parts=[TextPart('text1')]),
-    ]
-    settings_with_content = InstrumentationSettings()
-    assert [event_to_dict(e) for e in settings_with_content.messages_to_otel_events(messages)] == snapshot(
-        [
-            {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
-            {
-                'content': ['user_prompt', 'text content'],
-                'role': 'user',
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'role': 'assistant',
-                'content': 'text1',
-                'gen_ai.message.index': 1,
-                'event.name': 'gen_ai.assistant.message',
-            },
-        ]
-    )
-    assert settings_with_content.messages_to_otel_messages(messages) == snapshot(
-        [
-            {
-                'role': 'user',
-                'parts': [
-                    {'type': 'text', 'content': 'user_prompt'},
-                    {'type': 'text', 'content': 'text content'},
-                ],
-            },
-            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]},
-        ]
-    )
-    settings_without_content = InstrumentationSettings(include_content=False)
-    assert [event_to_dict(e) for e in settings_without_content.messages_to_otel_events(messages)] == snapshot(
-        [
-            {'role': 'system', 'event.name': 'gen_ai.system.message'},
-            {
-                'content': [{'kind': 'text'}, {'kind': 'text'}],
-                'role': 'user',
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'role': 'assistant',
-                'content': [{'kind': 'text'}],
-                'gen_ai.message.index': 1,
-                'event.name': 'gen_ai.assistant.message',
-            },
-        ]
-    )
-    assert settings_without_content.messages_to_otel_messages(messages) == snapshot(
-        [
-            {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'text'}]},
-            {'role': 'assistant', 'parts': [{'type': 'text'}]},
         ]
     )
 
@@ -1623,79 +1150,6 @@ def test_messages_without_content(document_content: BinaryContent):
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
     settings = InstrumentationSettings(include_content=False)
-    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
-        [
-            {
-                'role': 'system',
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.system.message',
-            },
-            {
-                'role': 'assistant',
-                'content': [{'kind': 'text'}],
-                'gen_ai.message.index': 1,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'content': [
-                    {'kind': 'text'},
-                    {'kind': 'video-url'},
-                    {'kind': 'image-url'},
-                    {'kind': 'audio-url'},
-                    {'kind': 'document-url'},
-                    {'kind': 'binary', 'media_type': 'application/pdf'},
-                ],
-                'role': 'user',
-                'gen_ai.message.index': 2,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'role': 'assistant',
-                'content': [{'kind': 'text'}],
-                'tool_calls': [
-                    {
-                        'id': IsStr(),
-                        'type': 'function',
-                        'function': {'name': 'my_tool'},
-                    }
-                ],
-                'gen_ai.message.index': 3,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'role': 'tool',
-                'id': 'tool_call_1',
-                'name': 'tool',
-                'gen_ai.message.index': 4,
-                'event.name': 'gen_ai.tool.message',
-            },
-            {
-                'role': 'tool',
-                'id': 'tool_call_2',
-                'name': 'tool',
-                'gen_ai.message.index': 5,
-                'event.name': 'gen_ai.tool.message',
-            },
-            {
-                'content': [{'kind': 'text'}, {'kind': 'binary', 'media_type': 'application/pdf'}],
-                'role': 'user',
-                'gen_ai.message.index': 6,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'content': {'kind': 'text'},
-                'role': 'user',
-                'gen_ai.message.index': 7,
-                'event.name': 'gen_ai.user.message',
-            },
-            {
-                'role': 'assistant',
-                'content': [{'kind': 'binary', 'media_type': 'application/pdf'}],
-                'gen_ai.message.index': 8,
-                'event.name': 'gen_ai.assistant.message',
-            },
-        ]
-    )
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {'role': 'system', 'parts': [{'type': 'text'}]},
@@ -1704,11 +1158,11 @@ def test_messages_without_content(document_content: BinaryContent):
                 'role': 'user',
                 'parts': [
                     {'type': 'text'},
-                    {'type': 'video-url'},
-                    {'type': 'image-url'},
-                    {'type': 'audio-url'},
-                    {'type': 'document-url'},
-                    {'type': 'binary', 'media_type': 'application/pdf'},
+                    {'type': 'uri', 'modality': 'video', 'mime_type': 'video/mp4'},
+                    {'type': 'uri', 'modality': 'image', 'mime_type': 'image/png'},
+                    {'type': 'uri', 'modality': 'audio', 'mime_type': 'audio/mpeg'},
+                    {'type': 'uri', 'mime_type': 'application/pdf'},
+                    {'type': 'blob', 'mime_type': 'application/pdf'},
                 ],
             },
             {
@@ -1720,9 +1174,9 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
-            {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'binary', 'media_type': 'application/pdf'}]},
+            {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'blob', 'mime_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
-            {'role': 'assistant', 'parts': [{'type': 'binary', 'media_type': 'application/pdf'}]},
+            {'role': 'assistant', 'parts': [{'type': 'blob', 'mime_type': 'application/pdf'}]},
         ]
     )
 
@@ -1734,32 +1188,6 @@ def test_message_with_thinking_parts():
         ModelResponse(parts=[ThinkingPart('thinking3'), TextPart('text3')]),
     ]
     settings = InstrumentationSettings()
-    assert [event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
-        [
-            {
-                'role': 'assistant',
-                'content': [
-                    {'kind': 'text', 'text': 'text1'},
-                    {'kind': 'thinking', 'text': 'thinking1'},
-                    {'kind': 'text', 'text': 'text2'},
-                ],
-                'gen_ai.message.index': 0,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'role': 'assistant',
-                'content': [{'kind': 'thinking', 'text': 'thinking2'}],
-                'gen_ai.message.index': 1,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'role': 'assistant',
-                'content': [{'kind': 'thinking', 'text': 'thinking3'}, {'kind': 'text', 'text': 'text3'}],
-                'gen_ai.message.index': 2,
-                'event.name': 'gen_ai.assistant.message',
-            },
-        ]
-    )
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -1777,17 +1205,6 @@ def test_message_with_thinking_parts():
             },
         ]
     )
-
-
-def test_deprecated_event_mode_warning():
-    with pytest.warns(
-        UserWarning,
-        match='event_mode is only relevant for version=1 which is deprecated and will be removed in a future release',
-    ):
-        settings = InstrumentationSettings(event_mode='logs')
-    assert settings.event_mode == 'logs'
-    assert settings.version == 1
-    assert InstrumentationSettings().version == 2
 
 
 async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
@@ -2021,7 +1438,12 @@ def test_cache_point_in_user_prompt():
                 'role': 'user',
                 'parts': [
                     {'type': 'text', 'content': 'context'},
-                    {'type': 'image-url', 'url': 'https://example.com/image.jpg'},
+                    {
+                        'type': 'uri',
+                        'modality': 'image',
+                        'mime_type': 'image/jpeg',
+                        'uri': 'https://example.com/image.jpg',
+                    },
                     {'type': 'text', 'content': 'question'},
                 ],
             }
@@ -2301,7 +1723,7 @@ def test_messages_to_otel_messages_file_part_v4(document_content: BinaryContent)
         ModelRequest(parts=[UserPromptPart(content='Generate a document')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -2330,7 +1752,7 @@ def test_messages_to_otel_messages_file_part_v4_no_content(document_content: Bin
         ModelRequest(parts=[UserPromptPart(content='Generate a document')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
-    settings = InstrumentationSettings(version=4, include_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -2366,7 +1788,7 @@ def test_messages_to_otel_messages_cache_point_v4():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -2396,7 +1818,7 @@ def test_messages_to_otel_messages_builtin_tool_v4():
             ]
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -2432,7 +1854,7 @@ def test_messages_to_otel_messages_binary_content_v4_no_binary():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4, include_binary_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_binary_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -2452,7 +1874,7 @@ def test_messages_to_otel_messages_file_part_v4_no_binary(document_content: Bina
         ModelRequest(parts=[UserPromptPart(content='Generate a document')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
     ]
-    settings = InstrumentationSettings(version=4, include_binary_content=False)
+    settings = deprecated_instrumentation_settings(version=4, include_binary_content=False)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -2480,7 +1902,7 @@ def test_messages_to_otel_messages_binary_content_v4_unknown_modality():
             timestamp=IsDatetime(),
         ),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -2501,7 +1923,7 @@ def test_messages_to_otel_messages_file_part_v4_unknown_modality():
         ModelRequest(parts=[UserPromptPart(content='Process file')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=unknown_content)]),
     ]
-    settings = InstrumentationSettings(version=4)
+    settings = deprecated_instrumentation_settings(version=4)
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
             {
@@ -2514,6 +1936,42 @@ def test_messages_to_otel_messages_file_part_v4_unknown_modality():
                 'role': 'assistant',
                 'parts': [
                     {'type': 'blob', 'mime_type': 'x-vendor/custom-format', 'content': unknown_content.base64},
+                ],
+            },
+        ]
+    )
+
+
+def test_messages_to_otel_messages_serialization_errors():
+    class Foo:
+        def __repr__(self) -> str:
+            return 'Foo()'
+
+    class Bar:
+        def __repr__(self) -> str:
+            raise ValueError('error!')
+
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('tool', {'arg': Foo()}, tool_call_id='tool_call_id')]),
+        ModelRequest(parts=[ToolReturnPart('tool', Bar(), tool_call_id='return_tool_call_id')], timestamp=IsDatetime()),
+    ]
+
+    settings = InstrumentationSettings()
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [{'type': 'tool_call', 'id': 'tool_call_id', 'name': 'tool', 'arguments': {'arg': 'Foo()'}}],
+            },
+            {
+                'role': 'user',
+                'parts': [
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'return_tool_call_id',
+                        'name': 'tool',
+                        'result': 'Unable to serialize: error!',
+                    }
                 ],
             },
         ]

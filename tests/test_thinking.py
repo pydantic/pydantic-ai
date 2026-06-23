@@ -19,10 +19,10 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
-from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import openai_model_profile
@@ -793,15 +793,15 @@ class TestOpenRouterThinkingTranslation:
     def test_provider_profile_propagates_thinking_capability(self, model_name: str, expected_always_enabled: bool):
         """OpenRouter's base profile sets `supports_thinking=True` so the gate forwards
         `thinking` to the transformer for every routed model; `thinking_always_enabled`
-        propagates from the sub-profile via `ModelProfile.update()` so always-on
-        upstream routes silently drop `thinking=False` at the gate — matching their
-        direct-route behavior per the `ModelProfile.thinking_always_enabled` docstring."""
+        propagates from the sub-profile via `merge_profile` so always-on upstream routes
+        silently drop `thinking=False` at the gate — matching their direct-route behavior
+        per the `ModelProfile.thinking_always_enabled` docstring."""
         from pydantic_ai.providers.openrouter import OpenRouterProvider
 
         profile = OpenRouterProvider.model_profile(model_name)
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is expected_always_enabled
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is expected_always_enabled
 
     def test_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on OpenRouter is passed through."""
@@ -1191,64 +1191,68 @@ class TestProfileThinkingCapabilities:
     """Model profiles correctly detect thinking-capable models."""
 
     def test_anthropic_profile_thinking_support(self):
+        from pydantic_ai.profiles.anthropic import anthropic_model_profile
+
         # All Anthropic models support thinking in our implementation
         profile = anthropic_model_profile('claude-3-7-sonnet')
         assert profile is not None
-        assert profile.supports_thinking is True
+        assert profile.get('supports_thinking', False) is True
 
         profile = anthropic_model_profile('claude-sonnet-4-5')
         assert profile is not None
-        assert profile.supports_thinking is True
+        assert profile.get('supports_thinking', False) is True
 
         # Newer models support adaptive thinking
         profile = anthropic_model_profile('claude-sonnet-4-6')
         assert profile is not None
-        assert isinstance(profile, AnthropicModelProfile)
-        assert profile.anthropic_supports_adaptive_thinking is True
+        assert isinstance(profile, dict)
+        assert profile.get('anthropic_supports_adaptive_thinking', False) is True
 
     @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
     def test_anthropic_profile_thinking_support_opus_47_plus(self, model_name: str):
+        from pydantic_ai.profiles.anthropic import anthropic_model_profile
+
         profile = anthropic_model_profile(model_name)
         assert profile is not None
-        assert isinstance(profile, AnthropicModelProfile)
-        assert profile.anthropic_supports_adaptive_thinking is True
-        assert profile.anthropic_supports_xhigh_effort is True
-        assert profile.anthropic_disallows_budget_thinking is True
-        assert profile.anthropic_supports_task_budgets is True
+        assert isinstance(profile, dict)
+        assert profile.get('anthropic_supports_adaptive_thinking', False) is True
+        assert profile.get('anthropic_supports_xhigh_effort', False) is True
+        assert profile.get('anthropic_disallows_budget_thinking', False) is True
+        assert profile.get('anthropic_supports_task_budgets', False) is True
 
     def test_google_profile_thinking_support(self):
         profile = google_model_profile('gemini-2.5-flash')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is False
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is False
 
         profile = google_model_profile('gemini-2.5-pro')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
 
         profile = google_model_profile('gemini-2.0-flash')
         assert profile is not None
-        assert profile.supports_thinking is False
+        assert profile.get('supports_thinking', False) is False
 
     def test_openai_profile_thinking_support(self):
         profile = openai_model_profile('o3')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
 
         profile = openai_model_profile('gpt-4o')
         assert profile is not None
-        assert profile.supports_thinking is False
+        assert profile.get('supports_thinking', False) is False
 
     def test_groq_profile_thinking_support(self):
         profile = groq_model_profile('deepseek-r1-distill-llama-70b')
         assert profile is not None
-        assert profile.supports_thinking is True
+        assert profile.get('supports_thinking', False) is True
 
         profile = groq_model_profile('llama-3.1-8b-instant')
         assert profile is not None
-        assert profile.supports_thinking is False
+        assert profile.get('supports_thinking', False) is False
 
     @pytest.mark.parametrize(
         'model_name',
@@ -1265,49 +1269,49 @@ class TestProfileThinkingCapabilities:
     def test_grok_43_profile_thinking_support(self, model_name: str):
         profile = grok_model_profile(model_name)
         assert profile is not None
-        assert isinstance(profile, GrokModelProfile)
-        assert profile.supports_thinking is True
-        assert profile.grok_reasoning_efforts == frozenset({'none', 'low', 'medium', 'high'})
+        assert isinstance(profile, dict)
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('grok_reasoning_efforts') == frozenset({'none', 'low', 'medium', 'high'})
 
     def test_grok_3_mini_profile_thinking_support(self):
         profile = grok_model_profile('grok-3-mini')
         assert profile is not None
-        assert isinstance(profile, GrokModelProfile)
-        assert profile.supports_thinking is True
-        assert profile.grok_reasoning_efforts == frozenset({'low', 'high'})
+        assert isinstance(profile, dict)
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('grok_reasoning_efforts') == frozenset({'low', 'high'})
 
     def test_grok_3_fast_profile_thinking_support(self):
         profile = grok_model_profile('grok-3-fast')
         assert profile is not None
-        assert isinstance(profile, GrokModelProfile)
-        assert profile.supports_thinking is False
-        assert profile.grok_reasoning_efforts == frozenset()
+        assert isinstance(profile, dict)
+        assert profile.get('supports_thinking', False) is False
+        assert profile.get('grok_reasoning_efforts') == frozenset()
 
     def test_cohere_profile_thinking_support(self):
         profile = cohere_model_profile('command-a-reasoning')
         assert profile is not None
-        assert profile.supports_thinking is True
+        assert profile.get('supports_thinking', False) is True
 
     def test_mistral_profile_thinking_support(self):
         profile = mistral_model_profile('magistral-medium')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
 
     def test_grok_profile_thinking_always_enabled(self):
         """grok-3-mini's `reasoning_effort` has no `'none'` value, so the profile
         is marked always-on and the gate drops `thinking=False`."""
         profile = grok_model_profile('grok-3-mini')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
 
         # grok-4 reasoning models reject `reasoning_effort` outright, so the profile
         # leaves thinking unsupported — guarding against accidental promotion to always-on.
         profile = grok_model_profile('grok-4')
         assert profile is not None
-        assert profile.supports_thinking is False
-        assert profile.thinking_always_enabled is False
+        assert profile.get('supports_thinking', False) is False
+        assert profile.get('thinking_always_enabled', False) is False
 
     @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
     def test_bedrock_openai_variant_thinking_always_enabled(self):
@@ -1316,8 +1320,8 @@ class TestProfileThinkingCapabilities:
 
         profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
 
     @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
     def test_bedrock_qwen_variant_thinking_always_enabled(self):
@@ -1327,8 +1331,8 @@ class TestProfileThinkingCapabilities:
 
         profile = BedrockProvider.model_profile('qwen.qwen3-32b-v1:0')
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
 
 
 class TestCrossProviderPortability:
