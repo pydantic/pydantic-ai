@@ -1,6 +1,7 @@
 import uuid
 from collections.abc import AsyncIterator
 from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -18,7 +19,7 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
@@ -1672,13 +1673,15 @@ async def test_history_processor_rebuild_resuming_without_prompt(
     assert result.new_messages() == result.all_messages()[-1:]
 
 
-async def test_history_processor_replace_resumed_request_falls_through(
+async def test_history_processor_replace_resumed_request_excludes_resumed_request(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """
     When a history processor replaces the resumed request with completely
-    different content, new_messages() falls back to run_id-based detection
-    to determine which messages belong to the current run.
+    different content, new_messages() still excludes it: the boundary is
+    tracked by the resumed request's position, not by re-matching the object,
+    so a full rewrite (changed identity and parts) cannot leak the resumed
+    request into new_messages().
     """
 
     def replace_all_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1744,9 +1747,172 @@ async def test_history_processor_replace_resumed_request_falls_through(
         ]
     )
 
-    # Falls back to run_id-based detection: the replaced request got run_id from
-    # the framework, so new_messages includes both it and the model response
-    assert result.new_messages() == result.all_messages()[-2:]
+    # The resumed request is excluded by position even though the processor
+    # rebuilt it with the current run_id; only the model response is new.
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_reinject_system_prompt_resuming_without_prompt_excludes_resumed_request(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    System-prompt reinjection (the UI adapters' default with `manage_system_prompt='server'`)
+    rebuilds the first request via `replace(...)`, prepending a `SystemPromptPart`. When
+    resuming without a new user prompt on the first turn, that first request *is* the resumed
+    request, so the rewrite changes both its identity and its `parts`. It must still be treated
+    as prior context and excluded from new_messages(). Regression test for the turn-1 leak in
+    https://github.com/pydantic/pydantic-ai/issues/6025.
+    """
+
+    agent = Agent(
+        function_model,
+        system_prompt='Server prompt',
+        capabilities=[ReinjectSystemPrompt(replace_existing=True)],
+    )
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    # The model received the resumed request with the server prompt reinjected into it.
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Server prompt', timestamp=IsDatetime()),
+                    UserPromptPart(content='Original prompt', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        ]
+    )
+    assert captured_messages == result.all_messages()
+    # The reinjected resumed request is excluded; only the model response is new.
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_history_processor_mutates_resumed_request_excludes_resumed_request(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    A history processor that rebuilds the trailing resumed request with any changed field
+    (here `metadata`) must not leak it into new_messages(). Re-matching the request by value
+    would fail on the changed field and fall back to run_id detection — which the framework
+    stamps on the resumed request — leaking it. Tracking the boundary by position excludes it
+    regardless of the rewrite. Covers the generalized leak described in
+    https://github.com/pydantic/pydantic-ai/issues/6025.
+    """
+
+    def touch_request_metadata(messages: list[ModelMessage]) -> list[ModelMessage]:
+        rebuilt: list[ModelMessage] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                rebuilt.append(replace(message, metadata={'touched': True}))
+            else:
+                rebuilt.append(message)
+        return rebuilt
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(touch_request_metadata)])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier question')]),
+        ModelResponse(parts=[TextPart(content='Earlier answer')]),
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+    # The resumed request reached the model carrying the mutated metadata...
+    assert result.all_messages()[-2].metadata == snapshot({'touched': True})
+    # ...but it is still excluded from new_messages(): only the model response is new.
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+def _user_request_present(messages: list[ModelMessage]) -> bool:
+    return any(isinstance(m, ModelRequest) and any(isinstance(p, UserPromptPart) for p in m.parts) for m in messages)
+
+
+async def test_reinject_system_prompt_resumed_tool_loop_excludes_resumed_request():
+    """
+    System-prompt reinjection rebuilds the resumed request in place on *every* step of a
+    multi-step resumed run (a tool-call loop). The resumed request must stay excluded from
+    new_messages() across all steps, while every message produced this run is included.
+    The pinned boundary is translated per step so the in-place rebuild never leaks it.
+    """
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(
+        model=FunctionModel(model_function, model_name='test'),
+        system_prompt='Server prompt',
+        capabilities=[ReinjectSystemPrompt(replace_existing=True)],
+    )
+
+    @agent.tool
+    async def my_tool(_ctx: RunContext) -> str:
+        return 'tool executed'
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Original prompt')])])
+
+    assert captured_messages == result.all_messages()
+    # The reinjected resumed request stays excluded; everything produced this run is new.
+    assert result.new_messages() == result.all_messages()[1:]
+    assert not _user_request_present(result.new_messages())
+
+
+async def test_history_processor_truncation_during_resumed_tool_loop_keeps_run_messages():
+    """
+    A "keep last N" history processor can drop the resumed request partway through a
+    multi-step resumed run (here a tool-call loop). Once the resumed request is gone the
+    pinned boundary must not exclude messages produced earlier in the same run: new_messages()
+    should return every surviving message. Regression for the stale-pinned-index case raised
+    in review of the position-based boundary fix.
+    """
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    def keep_last_two(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[-2:]
+
+    agent = Agent(
+        model=FunctionModel(model_function, model_name='test'),
+        capabilities=[ProcessHistory(keep_last_two)],
+    )
+
+    @agent.tool
+    async def my_tool(_ctx: RunContext) -> str:
+        return 'tool executed'
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Original prompt')])])
+
+    assert captured_messages == result.all_messages()
+    # The resumed request was truncated away, so every surviving message is from this run —
+    # in particular the first model response must not be dropped by a stale boundary.
+    assert result.new_messages() == result.all_messages()
+    assert not _user_request_present(result.new_messages())
 
 
 def test_takes_ctx_returns_false_for_untyped_processor():
