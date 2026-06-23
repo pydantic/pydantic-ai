@@ -6860,7 +6860,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     )
 
     # Get tools from model
-    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, beta_features = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -6870,6 +6870,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
 
     # Verify all parameters are passed correctly
     assert web_fetch_tool_param.get('type') == 'web_fetch_20250910'
+    assert 'web-fetch-2025-09-10' in beta_features
     assert web_fetch_tool_param.get('max_uses') == 5
     assert web_fetch_tool_param.get('allowed_domains') == ['example.com', 'ai.pydantic.dev']
     assert web_fetch_tool_param.get('blocked_domains') is None

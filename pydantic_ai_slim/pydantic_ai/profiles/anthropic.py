@@ -61,10 +61,11 @@ class AnthropicModelProfile(ModelProfile):
     mapped to `output_config.effort`.
     """
 
-    anthropic_supports_web_tools_20260209: bool = False
-    """Whether the model supports Anthropic's `web_search_20260209` and `web_fetch_20260209` tools.
+    anthropic_supports_dynamic_filtering: bool = False
+    """Whether the model supports Anthropic-managed dynamic filtering for web search/fetch.
 
-    These tool versions enable Anthropic-managed dynamic filtering for web search/fetch results.
+    When enabled, Pydantic AI selects the `web_search_20260209` / `web_fetch_20260209` tool versions,
+    which let Claude filter web results via code execution before they enter context.
     """
 
     anthropic_supports_xhigh_effort: bool = False
@@ -221,7 +222,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview')
     )
 
-    supports_web_tools_20260209 = model_name.startswith(
+    supports_dynamic_filtering = model_name.startswith(
         (
             'claude-fable-5',
             'claude-mythos-5',
@@ -260,7 +261,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supports_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
         anthropic_supports_effort=supports_effort,
-        anthropic_supports_web_tools_20260209=supports_web_tools_20260209,
+        anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,

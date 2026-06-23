@@ -307,17 +307,17 @@ def test_model_profile_opus():
         'claude-opus-4-8',
     ],
 )
-def test_model_profile_supports_web_tools_20260209(model_name: str):
+def test_model_profile_supports_dynamic_filtering(model_name: str):
     profile = anthropic_model_profile(model_name)
     assert isinstance(profile, AnthropicModelProfile)
-    assert profile.anthropic_supports_web_tools_20260209 is True
+    assert profile.anthropic_supports_dynamic_filtering is True
 
 
 @pytest.mark.parametrize('model_name', ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5'])
-def test_model_profile_does_not_support_20260209_web_tools(model_name: str):
+def test_model_profile_does_not_support_dynamic_filtering(model_name: str):
     profile = anthropic_model_profile(model_name)
     assert isinstance(profile, AnthropicModelProfile)
-    assert profile.anthropic_supports_web_tools_20260209 is False
+    assert profile.anthropic_supports_dynamic_filtering is False
 
 
 def test_model_profile_fable_5():

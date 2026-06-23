@@ -516,7 +516,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             profile = replace(
                 anthropic_profile,
                 supported_native_tools=supported_native_tools,
-                anthropic_supports_web_tools_20260209=anthropic_profile.anthropic_supports_web_tools_20260209
+                anthropic_supports_dynamic_filtering=anthropic_profile.anthropic_supports_dynamic_filtering
                 and not isinstance(client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS),
             )
 
@@ -1075,10 +1075,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_search_tool(
-        tool: WebSearchTool, supports_web_tools_20260209: bool
+        tool: WebSearchTool, supports_dynamic_filtering: bool
     ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
-        if supports_web_tools_20260209:
+        if supports_dynamic_filtering:
             return BetaWebSearchTool20260209Param(
                 name='web_search',
                 type='web_search_20260209',
@@ -1098,10 +1098,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, supports_web_tools_20260209: bool
+        tool: WebFetchTool, supports_dynamic_filtering: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
         citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
-        if supports_web_tools_20260209:
+        if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
                     name='web_fetch',
@@ -1136,16 +1136,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         profile = AnthropicModelProfile.from_profile(self.profile)
-        supports_web_tools_20260209 = profile.anthropic_supports_web_tools_20260209
+        supports_dynamic_filtering = profile.anthropic_supports_dynamic_filtering
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                tools.append(self._map_web_search_tool(tool, supports_web_tools_20260209))
+                tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, supports_web_tools_20260209)
+                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, supports_dynamic_filtering)
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:
                     beta_features.add(beta_feature)
