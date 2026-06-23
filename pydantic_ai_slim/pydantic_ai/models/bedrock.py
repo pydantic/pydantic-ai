@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import typing
 import warnings
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -89,6 +89,7 @@ if TYPE_CHECKING:
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
         ConverseStreamResponseTypeDef,
+        ConverseTokensRequestTypeDef,
         CountTokensRequestTypeDef,
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
@@ -113,7 +114,7 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except ClientError as e:
@@ -579,14 +580,25 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
         settings = cast(BedrockModelSettings, model_settings or {})
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
+        converse: ConverseTokensRequestTypeDef = {
+            'messages': bedrock_messages,
+            'system': system_prompt,
+        }
+        # No native-tool strip is needed here (unlike Anthropic's count_tokens, which must drop server tools):
+        # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
+        # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
+        tool_config = self._map_tool_config(model_request_parameters, settings)
+        if tool_config:
+            converse['toolConfig'] = tool_config
+        tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
+        self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        if additional_model_requests_fields := self._build_additional_model_request_fields(
+            settings, model_request_parameters
+        ):
+            converse['additionalModelRequestFields'] = additional_model_requests_fields
         params: CountTokensRequestTypeDef = {
             'modelId': remove_bedrock_geo_prefix(self.model_name),
-            'input': {
-                'converse': {
-                    'messages': bedrock_messages,
-                    'system': system_prompt,
-                },
-            },
+            'input': {'converse': converse},
         }
         with _map_api_errors(self.model_name):
             response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
@@ -599,7 +611,7 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -697,18 +709,32 @@ class BedrockConverseModel(Model[BaseClient]):
             provider_details=provider_details,
         )
 
-    def _translate_thinking(
+    def _build_additional_model_request_fields(
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> dict[str, Any] | None:
-        """Build thinking-related additionalModelRequestFields, using unified thinking as fallback."""
+        """Build `additionalModelRequestFields` from user-supplied fields plus unified `top_k` and `thinking`."""
         existing = dict(model_settings.get('bedrock_additional_model_requests_fields') or {})
+        profile = BedrockModelProfile.from_profile(self.profile)
+
+        # Bedrock's `inferenceConfig` has no `topK`, so unified `top_k` rides in the model-specific
+        # `additionalModelRequestFields` (shape varies per family). A user-supplied key wins.
+        if (top_k := model_settings.get('top_k')) is not None:
+            if profile.bedrock_top_k_variant == 'anthropic' and 'top_k' not in existing:
+                existing['top_k'] = top_k
+            elif profile.bedrock_top_k_variant == 'nova':
+                # Nova nests `topK` under `inferenceConfig`, so check that specific key (not the parent)
+                # and merge into a fresh dict to preserve any other user-supplied `inferenceConfig` fields
+                # without mutating the user's settings in place. A user-supplied `topK` wins.
+                inference_config: Mapping[str, Any] = existing.get('inferenceConfig') or {}
+                if isinstance(inference_config, dict) and 'topK' not in inference_config:
+                    existing['inferenceConfig'] = {**inference_config, 'topK': top_k}
+
         thinking = model_request_parameters.thinking
         if thinking is None:
             return existing or None
 
-        profile = BedrockModelProfile.from_profile(self.profile)
         variant = profile.bedrock_thinking_variant
 
         if variant == 'anthropic' and 'thinking' not in existing:
@@ -811,7 +837,9 @@ class BedrockConverseModel(Model[BaseClient]):
             elif (unified_tier := model_settings.get('service_tier')) and unified_tier != 'auto':
                 params['serviceTier'] = {'type': unified_tier}
 
-        if additional_model_requests_fields := self._translate_thinking(settings, model_request_parameters):
+        if additional_model_requests_fields := self._build_additional_model_request_fields(
+            settings, model_request_parameters
+        ):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
         with _map_api_errors(self.model_name):
@@ -865,10 +893,16 @@ class BedrockConverseModel(Model[BaseClient]):
             return None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                tool_choice = {'tool': {'name': next(iter(tool_names))}} if supports else {'auto': {}}
+                if supports:
+                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
+                else:
+                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = {'auto': {}}
             else:
+                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                 tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
         else:
             assert_never(resolved_tool_choice)
@@ -932,11 +966,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                         for item in part.content_items(mode=content_mode):
                             if isinstance(item, UploadedFile):
-                                if item.provider_name != self.system:
-                                    raise UserError(
-                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
-                                        f'Expected `provider_name` to be `{self.system!r}`.'
-                                    )
+                                self._validate_uploaded_file_provider(item)
                                 if not item.file_id.startswith('s3://'):
                                     raise UserError(
                                         f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
@@ -1210,11 +1240,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 elif isinstance(item, AudioUrl):
                     raise NotImplementedError('AudioUrl is not supported in Bedrock user prompts')
                 elif isinstance(item, UploadedFile):
-                    if item.provider_name != self.system:
-                        raise UserError(
-                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with BedrockConverseModel. '
-                            f'Expected `provider_name` to be `{self.system!r}`.'
-                        )
+                    self._validate_uploaded_file_provider(item)
                     if not item.file_id.startswith('s3://'):
                         raise UserError(
                             f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'

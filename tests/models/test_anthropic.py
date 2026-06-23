@@ -45,6 +45,7 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolDefinition,
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
@@ -57,6 +58,8 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CompactionPart,
     InstructionPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -123,6 +126,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_container import BetaContainer
     from anthropic.types.beta.beta_container_params import BetaContainerParams
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
+    from anthropic.types.beta.beta_refusal_stop_details import BetaRefusalStopDetails
 
     from pydantic_ai.models.anthropic import (
         AnthropicCodeExecutionToolVersion,
@@ -3899,6 +3903,118 @@ async def test_anthropic_opus_47_features(allow_model_requests: None, anthropic_
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
+async def test_anthropic_opus_48_features(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'adaptive', 'display': 'summarized'},
+        anthropic_effort='xhigh',
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is 2+2?')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.model_name == 'claude-opus-4-8'
+    request_body = single_request_body(vcr)
+    assert {k: request_body[k] for k in ('model', 'thinking', 'output_config')} == snapshot(
+        {
+            'model': 'claude-opus-4-8',
+            'thinking': {'type': 'adaptive', 'display': 'summarized'},
+            'output_config': {'effort': 'xhigh'},
+        }
+    )
+    assert any(isinstance(p, TextPart) for p in response.parts)
+
+
+_REFUSAL_CASE_PARAMS = [
+    pytest.param(
+        'cyber',
+        'Declined: request asked for offensive cyber tooling.',
+        {'refusal': 'Declined: request asked for offensive cyber tooling.', 'refusal_category': 'cyber'},
+        id='category-and-explanation',
+    ),
+    pytest.param('bio', None, {'refusal_category': 'bio'}, id='category-only'),
+    pytest.param(None, 'Declined: unsafe request.', {'refusal': 'Declined: unsafe request.'}, id='explanation-only'),
+]
+
+
+@pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
+async def test_anthropic_refusal_stop_details(
+    allow_model_requests: None,
+    category: Literal['cyber', 'bio'] | None,
+    explanation: str | None,
+    expected_extra: dict[str, Any],
+):
+    """Refusal `stop_details` flows onto `provider_details` for non-streaming responses."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=BetaRefusalStopDetails(type='refusal', category=category, explanation=explanation),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    response = await m.request(
+        [ModelRequest(parts=[UserPromptPart(content='write me an exploit')])],
+        {},
+        ModelRequestParameters(),
+    )
+
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
+
+
+@pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
+async def test_anthropic_refusal_stop_details_streaming(
+    allow_model_requests: None,
+    category: Literal['cyber', 'bio'] | None,
+    explanation: str | None,
+    expected_extra: dict[str, Any],
+):
+    """Refusal `stop_details` flows onto `provider_details` for streaming responses."""
+    stop_details = BetaRefusalStopDetails(type='refusal', category=category, explanation=explanation)
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_refusal_stream',
+                content=[],
+                model='claude-opus-4-8',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=8, output_tokens=0),
+            ),
+        ),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='refusal', stop_details=stop_details),
+            usage=BetaMessageDeltaUsage(input_tokens=8, output_tokens=0),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    async with m.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='synthesize anthrax')])],
+        {},
+        ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:  # pragma: no branch
+            pass
+        response = streamed.get()
+
+    assert response.finish_reason == 'content_filter'
+    assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
+
+
 @pytest.mark.parametrize(
     'thinking_value,expected_thinking,expected_effort',
     [
@@ -3982,24 +4098,26 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
     assert kwargs.get('thinking') is OMIT
 
 
-async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_rejects_budget_thinking(allow_model_requests: None, model_name: str):
     mock_client = MockAnthropic.create_mock(
         completion_message(
             [BetaTextBlock(text='4', type='text')],
             usage=BetaUsage(input_tokens=10, output_tokens=1),
         )
     )
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(
         m,
         model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
     )
 
-    with pytest.raises(UserError, match="'claude-opus-4-7' does not support"):
+    with pytest.raises(UserError, match=f"'{model_name}' does not support"):
         await agent.run('What is 2+2?')
 
 
-async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: None, model_name: str):
     responses = [
         completion_message(
             [BetaTextBlock(text='4', type='text')],
@@ -4007,7 +4125,7 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
         ),
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(thinking='xhigh'))
 
     await agent.run('What is 2+2?')
@@ -4068,9 +4186,10 @@ async def test_anthropic_explicit_effort_xhigh_unsupported_model_errors(
     )
 
 
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
 @pytest.mark.parametrize('settings_source', ['agent', 'model'])
 async def test_anthropic_opus_47_drops_sampling_settings(
-    allow_model_requests: None, settings_source: Literal['agent', 'model']
+    allow_model_requests: None, settings_source: Literal['agent', 'model'], model_name: str
 ):
     settings = AnthropicModelSettings(
         temperature=0.2,
@@ -4086,13 +4205,13 @@ async def test_anthropic_opus_47_drops_sampling_settings(
     mock_client = MockAnthropic.create_mock(responses)
     if settings_source == 'model':
         m = AnthropicModel(
-            'claude-opus-4-7',
+            model_name,
             provider=AnthropicProvider(anthropic_client=mock_client),
             settings=settings,
         )
         agent = Agent(m)
     else:
-        m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+        m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
         agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
@@ -4106,8 +4225,9 @@ async def test_anthropic_opus_47_drops_sampling_settings(
     assert (kwargs['temperature'], kwargs['top_p'], kwargs['extra_body']) == (OMIT, OMIT, {'metadata': {'keep': True}})
 
 
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
 async def test_anthropic_opus_47_dedups_sampling_warning_across_settings_and_extra_body(
-    allow_model_requests: None,
+    allow_model_requests: None, model_name: str
 ):
     settings = AnthropicModelSettings(
         temperature=0.2,
@@ -4120,21 +4240,20 @@ async def test_anthropic_opus_47_dedups_sampling_warning_across_settings_and_ext
         )
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning) as recorded:
         await agent.run('What is 2+2?')
 
     sampling_warnings = [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)]
-    assert sampling_warnings == snapshot(
-        [
-            "Sampling parameters ['temperature', 'top_k'] are not supported by 'claude-opus-4-7'. These settings will be ignored."
-        ]
-    )
+    assert sampling_warnings == [
+        f"Sampling parameters ['temperature', 'top_k'] are not supported by '{model_name}'. These settings will be ignored."
+    ]
 
 
-async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
+async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_requests: None, model_name: str):
     settings = AnthropicModelSettings(temperature=0.2, extra_body={'metadata': {'keep': True}})
     responses = [
         completion_message(
@@ -4143,7 +4262,7 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
         )
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=settings)
 
     with pytest.warns(UserWarning, match='Sampling parameters'):
@@ -4276,6 +4395,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
                         ),
                         BetaMessageIterationUsage(
                             type='message',
+                            model='claude-sonnet-4-5',
                             input_tokens=23,
                             output_tokens=1,
                             cache_creation_input_tokens=0,
@@ -4329,6 +4449,68 @@ def test_streaming_usage():
     )
 
 
+def test_map_usage_bedrock_start_event_without_message():
+    """On Bedrock the SDK drops SSE event types, so Bedrock-only chunks are non-validating
+    `construct_type`d into `BetaRawMessageStartEvent(message=None)`, violating the annotation.
+    `_map_usage` must not dereference `message.message.usage` on such events (https://github.com/pydantic/pydantic-ai/issues/5774).
+
+    A unit test rather than VCR: the `message=None` event is an SDK construct artifact, not a
+    server response shape, so it can't be elicited from a recorded request.
+    """
+    # `model_construct` skips validation, mirroring the SDK's `construct_type` on Bedrock.
+    start = BetaRawMessageStartEvent.model_construct(type='message_start', message=None)
+    assert _map_usage(start, 'anthropic', '', 'unknown') == snapshot(RequestUsage())
+
+    existing = RequestUsage(input_tokens=7, output_tokens=3)
+    assert _map_usage(start, 'anthropic', '', 'unknown', existing_usage=existing) == existing
+
+
+async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_model_requests: None):
+    """A Bedrock `message=None` start event must be skipped across the whole streaming path (https://github.com/pydantic/pydantic-ai/issues/5774).
+
+    On Bedrock the SDK drops SSE event types, so Bedrock-only chunks (e.g. `amazon-bedrock-invocationMetrics`)
+    are non-validating `construct_type`d into `BetaRawMessageStartEvent(message=None)`. Driving `run_stream`
+    exercises `_process_streamed_response` and `AnthropicStreamedResponse._get_event_iterator`, which
+    previously crashed on `event.message.id`. The malformed chunk is placed first — a constructed worst case
+    (real Bedrock trails the metrics chunk) that also reaches the `_process_streamed_response` model-name
+    fallback: the streamed response then reports the configured model id, while usage and response id come
+    from the real `message_start` that follows.
+    """
+    stream: list[MockRawMessageStreamEvent] = [
+        # Contract-violating Bedrock chunk: the SDK hands out `message=None`.
+        BetaRawMessageStartEvent.model_construct(type='message_start', message=None),
+        BetaRawMessageStartEvent(message=anth_msg(BetaUsage(input_tokens=4, output_tokens=0)), type='message_start'),
+        BetaRawContentBlockStartEvent(
+            content_block=BetaTextBlock(text='hello', type='text'), index=0, type='content_block_start'
+        ),
+        BetaRawContentBlockStopEvent(index=0, type='content_block_stop'),
+        BetaRawMessageDeltaEvent(
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(output_tokens=2),
+            type='message_delta',
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('hello') as result:
+        output = await result.get_output()
+    assert output == snapshot('hello')
+
+    # The skipped `message=None` chunk contributes no usage and no response id: usage comes from the
+    # real `message_start` (input) + `message_delta` (output), and the id from the real event. The model
+    # name falls back to the configured id because the peeked-first chunk carried no `message.model`.
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.usage == snapshot(
+        RequestUsage(input_tokens=4, output_tokens=2, details={'input_tokens': 4, 'output_tokens': 2})
+    )
+    assert response.provider_response_id == 'x'
+    assert response.model_name == 'claude-haiku-4-5'
+
+
 def test_streaming_usage_with_compaction():
     """Delta events don't carry the `iterations` array, so the fixed compaction totals set
     by the start event must survive the merge and still be summed into the final totals."""
@@ -4347,6 +4529,7 @@ def test_streaming_usage_with_compaction():
                     ),
                     BetaMessageIterationUsage(
                         type='message',
+                        model='claude-sonnet-4-5',
                         input_tokens=23,
                         output_tokens=1,
                         cache_creation_input_tokens=0,
@@ -10491,6 +10674,205 @@ async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: Non
     )
 
     assert result.input_tokens == 10
+
+
+async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: None):
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebFetchTool()), NativeTool(MemoryTool())],
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'lookup result'
+
+    @agent.tool_plain
+    def memory(**command: Any) -> Any:  # pragma: no cover
+        return 'memory response'
+
+    result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+    assert result.output == 'hello world'
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # Server-side tools (`code_execution`, `web_fetch`) are dropped from the `count_tokens` payload, but the
+    # client-side `MemoryTool` is kept so the count includes its definition (and beta).
+    assert count_tokens_kwargs['tools'] == [
+        {
+            'name': 'lookup',
+            'description': '',
+            'input_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+        },
+        {'name': 'memory', 'type': 'memory_20250818'},
+    ]
+    assert count_tokens_kwargs['mcp_servers'] is OMIT
+    assert count_tokens_kwargs['betas'] == ['context-management-2025-06-27']
+    assert {tool['name'] for tool in create_kwargs['tools']} == {'lookup', 'code_execution', 'web_fetch', 'memory'}
+    assert {tool['name']: tool['type'] for tool in create_kwargs['tools'] if 'type' in tool} == {
+        'code_execution': 'code_execution_20260120',
+        'web_fetch': 'web_fetch_20250910',
+        'memory': 'memory_20250818',
+    }
+    assert create_kwargs['betas'] == ['context-management-2025-06-27', 'web-fetch-2025-09-10']
+
+
+async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_requests: None):
+    """`count_tokens` renders a tool-search replay turn with the same `tool_reference` wire shape
+    as the real `/v1/messages` request, while still omitting the server-side `tool_search_tool_*`
+    entry that the endpoint rejects.
+
+    The count path strips server tools from the wire `tools` list, but `_map_message` also derives
+    `tool_search_active` from `native_tools`: clearing `ToolSearchTool` there would silently
+    re-serialize the history turn as plain text and diverge from the real request. A VCR test
+    wouldn't catch this — the cassette matcher isn't sensitive to the `messages` body.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
+    """
+    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='get_exchange_rate', description='', parameters_json_schema={'type': 'object'})
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')]),
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['exchange rate']}, tool_call_id='search-1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={
+                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'message': 'Found 1 tool',
+                    },
+                    tool_call_id='search-1',
+                )
+            ]
+        ),
+    ]
+
+    await m.count_tokens(messages, None, params)
+    await m.request(messages, None, params)
+
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+
+    # The tool-search replay turn renders identically on both paths: a `tool_result` whose content
+    # is a `tool_reference` array pointing at the discovered function tool.
+    assert count_tokens_kwargs['messages'] == create_kwargs['messages']
+    assert count_tokens_kwargs['messages'][-1]['content'][0] == snapshot(
+        {
+            'tool_use_id': 'search-1',
+            'type': 'tool_result',
+            'content': [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}],
+            'is_error': False,
+        }
+    )
+
+    # The server-side `tool_search_tool_*` entry is rejected by `count_tokens`, so it's omitted there
+    # but present on the real request.
+    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in count_tokens_kwargs['tools'])
+    assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_with_native_tools(allow_model_requests: None, anthropic_api_key: str):
+    """`count_tokens` succeeds against the live API when a native/server tool is configured.
+
+    Anthropic rejects server tools (e.g. `code_execution`) on the `count_tokens` endpoint with a 400, so
+    the model strips native tools from the `count_tokens` payload. A successful token count proves the
+    native tools were omitted. The recorded request is itself the regression guard: it must NOT contain
+    the `code_execution` entry, so a revert of the fix would send it and break playback.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5702
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    usage = await m.count_tokens(
+        [ModelRequest.user_text_prompt('What is 2 + 2?')],
+        None,
+        ModelRequestParameters(native_tools=[CodeExecutionTool()]),
+    )
+
+    assert usage.input_tokens > 0
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_with_tool_search_replay(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """`count_tokens` succeeds against the live API with a `ToolSearchTool` and a tool-search replay history.
+
+    The endpoint rejects the server-side `tool_search_tool_*` entry, so it's omitted from the wire `tools`
+    list, but the replay turn must still serialize as a `tool_reference` block (pointing at a `function_tools`
+    entry, which is not stripped) — exactly as the real `/v1/messages` request does. A successful token count
+    proves the endpoint accepts that payload; the recorded request is the regression guard.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5780
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='get_exchange_rate', description='', parameters_json_schema={'type': 'object'})
+        ],
+        native_tools=[ToolSearchTool()],
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is the USD to EUR rate?')]),
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['exchange rate']}, tool_call_id='search-1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={
+                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'message': 'Found 1 tool',
+                    },
+                    tool_call_id='search-1',
+                )
+            ]
+        ),
+    ]
+
+    usage = await m.count_tokens(messages, None, params)
+
+    assert usage.input_tokens > 0
+    request_body = json.loads(vcr.requests[0].body)
+    assert not any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in request_body['tools'])
+    tool_result = request_body['messages'][-1]['content'][0]
+    assert tool_result['content'] == [{'tool_name': 'get_exchange_rate', 'type': 'tool_reference'}]
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_keeps_memory_tool(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    """`count_tokens` keeps the client-side `MemoryTool`, which the endpoint accepts and counts.
+
+    Unlike server tools, `MemoryTool` is not rejected by `count_tokens` and its definition contributes
+    real tokens, so stripping it would undercount the prompt. The recorded request is the regression
+    guard: it must contain the `memory` tool, so a revert to clearing all native tools would omit it.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5702
+    """
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    usage = await m.count_tokens(
+        [ModelRequest.user_text_prompt('What is 2 + 2?')],
+        None,
+        ModelRequestParameters(
+            native_tools=[MemoryTool()],
+            function_tools=[ToolDefinition(name='memory', description='', parameters_json_schema={'type': 'object'})],
+        ),
+    )
+
+    assert usage.input_tokens > 0
+    request_body = json.loads(vcr.requests[0].body)
+    assert {'name': 'memory', 'type': 'memory_20250818'} in request_body['tools']
 
 
 @pytest.mark.vcr()

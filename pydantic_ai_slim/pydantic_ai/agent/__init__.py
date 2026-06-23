@@ -6,7 +6,7 @@ import dataclasses
 import functools
 import inspect
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import copy
@@ -16,11 +16,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
+from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
+from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 
 from .. import (
     _agent_graph,
@@ -43,6 +45,7 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
+from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
@@ -66,6 +69,7 @@ from ..tools import (
     GenerateToolJsonSchema,
     NativeToolFunc,
     RunContext,
+    SystemPromptFunc,
     Tool,
     ToolDefinition,
     ToolFuncContext,
@@ -80,6 +84,7 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
+from ..toolsets._tool_search import parse_discovered_tools
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -172,7 +177,7 @@ class _ResolvedSpec:
     """Result of resolving an AgentSpec for use at run/override time."""
 
     capability: CombinedCapability[Any] | None
-    instructions: list[str | _system_prompt.SystemPromptFunc[Any]]
+    instructions: list[str | SystemPromptFunc[Any]]
     model: str | None
     model_settings: ModelSettings | None
     metadata: dict[str, Any] | None
@@ -237,7 +242,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
-    _instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = dataclasses.field(repr=False)
+    _instructions: list[str | SystemPromptFunc[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -439,6 +444,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._root_capability = CombinedCapability(capabilities)
 
+        # Validate the statically-provided capabilities eagerly so misconfiguration (a deferred
+        # capability without an `id`, or duplicate ids) fails fast here in `Agent(...)` instead of
+        # on the first run. Capabilities supplied per-run or resolved by `for_run` (e.g. capability
+        # functions) can only be checked at run time, in `_build_run_capabilities`.
+        static_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self._root_capability.apply(static_capabilities.append)
+        _validate_capability_ids(static_capabilities)
+
         self.model_settings = model_settings
 
         self._output_type = output_type
@@ -540,9 +553,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_builtin_tools: ContextVar[_utils.Option[Sequence[AgentNativeTool[AgentDepsT]]]] = ContextVar(
             '_override_builtin_tools', default=None
         )
-        self._override_instructions: ContextVar[
-            _utils.Option[list[str | _system_prompt.SystemPromptFunc[AgentDepsT]]]
-        ] = ContextVar('_override_instructions', default=None)
+        self._override_instructions: ContextVar[_utils.Option[list[str | SystemPromptFunc[AgentDepsT]]]] = ContextVar(
+            '_override_instructions', default=None
+        )
         self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
             '_override_metadata', default=None
         )
@@ -1059,7 +1072,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
-    ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then returns an
@@ -1371,6 +1384,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Per-run capability: re-extract get_*() if for_run returns a different instance
         run_capability = await effective_capability.for_run(initial_ctx)
+        capabilities_dict = _build_run_capabilities(run_capability)
+        # Inject the loader only if a deferred capability is present AND `for_run` didn't already
+        # return one, mirroring the `has_capability_type` guard used for instrumentation above.
+        # Without it, a `for_run` result that already carries a loader would get double-wrapped
+        # (cf. #5047) — a second loader toolset then errors on the reserved `load_capability` name.
+        if any(
+            capability.defer_loading is True for capability in capabilities_dict.values()
+        ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
+            run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
+            capabilities_dict = _build_run_capabilities(run_capability)
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
 
         if run_capability is not effective_capability:
@@ -1461,6 +1484,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             return parts or None
 
+        # The deferred capabilities the model has already loaded in prior steps; the graph
+        # refreshes this from history before each model request, so the seed only matters
+        # for pre-first-step access. Non-deferred capabilities are folded in by the
+        # `RunContext.available_capability_ids` property.
+        loaded_capability_ids = parse_loaded_capabilities(message_history) if message_history else set[str]()
+        discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT](
             user_deps=deps,
             agent=self,
@@ -1476,6 +1506,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_validators=output_validators,
             validation_context=self._validation_context,
             root_capability=run_capability,
+            capabilities=capabilities_dict,
+            loaded_capability_ids=loaded_capability_ids,
+            discovered_tool_names=discovered_tool_names,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             tracer=tracer,
@@ -1759,7 +1792,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
@@ -1940,18 +1973,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
 
     @overload
-    def instructions(
-        self, /
-    ) -> Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]: ...
+    def instructions(self, /) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
         self,
-        func: _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        func: SystemPromptFunc[AgentDepsT] | None = None,
         /,
-    ) -> (
-        Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]
-        | _system_prompt.SystemPromptFunc[AgentDepsT]
-    ):
+    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
@@ -1980,8 +2008,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if func is None:
 
             def decorator(
-                func_: _system_prompt.SystemPromptFunc[AgentDepsT],
-            ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
+                func_: SystemPromptFunc[AgentDepsT],
+            ) -> SystemPromptFunc[AgentDepsT]:
                 self._instructions.append(func_)
                 return func_
 
@@ -2037,18 +2065,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     @overload
     def system_prompt(
         self, /, *, dynamic: bool = False
-    ) -> Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]: ...
+    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def system_prompt(
         self,
-        func: _system_prompt.SystemPromptFunc[AgentDepsT] | None = None,
+        func: SystemPromptFunc[AgentDepsT] | None = None,
         /,
         *,
         dynamic: bool = False,
-    ) -> (
-        Callable[[_system_prompt.SystemPromptFunc[AgentDepsT]], _system_prompt.SystemPromptFunc[AgentDepsT]]
-        | _system_prompt.SystemPromptFunc[AgentDepsT]
-    ):
+    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register a system prompt function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
@@ -2083,8 +2108,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if func is None:
 
             def decorator(
-                func_: _system_prompt.SystemPromptFunc[AgentDepsT],
-            ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
+                func_: SystemPromptFunc[AgentDepsT],
+            ) -> SystemPromptFunc[AgentDepsT]:
                 runner = _system_prompt.SystemPromptRunner[AgentDepsT](func_, dynamic=dynamic)
                 self._system_prompt_functions.append(runner)
                 if dynamic:  # pragma: lax no cover
@@ -2523,7 +2548,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _get_instructions(
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
-        cap_instructions: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] | None = None,
+        cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] | None = None,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         """Prepare agent-level instructions, splitting them into literal strings and functions.
 
@@ -2830,7 +2855,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     )
     async def run_mcp_servers(
         self, model: models.Model | models.KnownModelName | str | None = None
-    ) -> AsyncIterator[None]:
+    ) -> AsyncGenerator[None]:
         """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
 
         Deprecated: use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] instead.
@@ -2912,6 +2937,55 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
     for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:
         if not has_capability_type(capabilities, cap_type):
             capabilities.append(cap_type())
+
+
+def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:
+    """Validate capability `id`s and return the set of explicit ones.
+
+    Rejects deferred capabilities that lack an explicit `id` and explicit ids used by more than
+    one capability. Shared by two call sites: construction-time validation over the
+    statically-provided capabilities (so misconfiguration fails fast in `Agent(...)` rather than
+    on the first run), and run-time assembly in `_build_run_capabilities`, which also covers
+    capabilities supplied per-run or returned by `for_run` and so can't be checked at construction.
+    """
+    explicit_ids: set[str] = set()
+    for cap in capabilities:
+        if cap.defer_loading is True and cap.id is None:
+            raise exceptions.UserError(
+                'Deferred capabilities must use stable explicit `id` values. '
+                'Pass `id=...` when using `defer_loading=True`.'
+            )
+        if cap.id is None:
+            continue
+        if cap.id in explicit_ids:
+            raise exceptions.UserError(
+                f'Capability id {cap.id!r} is used by multiple capabilities. '
+                'Capability ids must be unique within a run.'
+            )
+        explicit_ids.add(cap.id)
+    return explicit_ids
+
+
+def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
+    capabilities: list[AbstractCapability[AgentDepsT]] = []
+    capability.apply(capabilities.append)
+
+    explicit_ids = _validate_capability_ids(capabilities)
+
+    by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
+    for cap in capabilities:
+        capability_id = cap.id
+        if capability_id is None:
+            base_id = to_snake(type(cap).__name__)
+            capability_id = base_id
+            suffix = 2
+            while capability_id in by_id or capability_id in explicit_ids:
+                capability_id = f'{base_id}_{suffix}'
+                suffix += 1
+
+        by_id[capability_id] = cap
+
+    return by_id
 
 
 def _validate_spec(

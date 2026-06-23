@@ -155,6 +155,7 @@ class ModelSettings(TypedDict, total=False):
     * Gemini
     * Anthropic
     * Cohere
+    * Bedrock (Anthropic and Amazon Nova models only)
     """
 
     timeout: float | Timeout
@@ -226,6 +227,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Gemini
     * Outlines (LlamaCpp, VLLMOffline)
+    * xAI
     """
 
     presence_penalty: float

@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -101,7 +101,7 @@ except ImportError as e:  # pragma: lax no cover
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except SDKError as e:
@@ -226,7 +226,7 @@ class MistralModel(Model[Mistral]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(

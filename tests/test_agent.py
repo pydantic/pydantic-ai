@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -1271,6 +1271,7 @@ def test_response_tuple():
                 },
                 outer_typed_dict_key='response',
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1345,6 +1346,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1422,6 +1424,7 @@ class Bar(BaseModel):
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
             ToolDefinition(
                 name='final_result_Bar',
@@ -1433,6 +1436,7 @@ class Bar(BaseModel):
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
         ]
     )
@@ -1483,6 +1487,7 @@ def test_output_type_with_two_descriptions():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1529,6 +1534,7 @@ def test_output_type_tool_output_union():
                 outer_typed_dict_key='response',
                 strict=False,
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1568,6 +1574,7 @@ def test_output_type_function():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1608,6 +1615,7 @@ def test_output_type_function_with_run_context():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1649,6 +1657,7 @@ def test_output_type_bound_instance_method():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1691,6 +1700,7 @@ def test_output_type_bound_instance_method_with_run_context():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1911,6 +1921,7 @@ def test_output_type_async_function():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1950,6 +1961,7 @@ def test_output_type_function_with_custom_tool_name():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -1989,6 +2001,7 @@ def test_output_type_function_or_model():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
             ToolDefinition(
                 name='final_result_Weather',
@@ -2000,6 +2013,7 @@ def test_output_type_function_or_model():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
         ]
     )
@@ -2198,6 +2212,7 @@ def test_output_type_multiple_custom_tools():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
             ToolDefinition(
                 name='return_weather',
@@ -2209,6 +2224,7 @@ def test_output_type_multiple_custom_tools():
                     'type': 'object',
                 },
                 kind='output',
+                defer_loading=False,
             ),
         ]
     )
@@ -2271,6 +2287,7 @@ def test_output_type_structured_dict():
                 },
                 description='A person',
                 kind='output',
+                defer_loading=False,
             ),
             ToolDefinition(
                 name='final_result_Animal',
@@ -2282,9 +2299,179 @@ def test_output_type_structured_dict():
                 },
                 description='An animal',
                 kind='output',
+                defer_loading=False,
             ),
         ]
     )
+
+
+class Apple(BaseModel):
+    color: str
+
+
+class Banana(BaseModel):
+    length: float
+
+
+def test_output_type_union_text_fallback():
+    """A list `output_type` in tool mode can also be satisfied by the union JSON envelope
+    returned as a text part, parsed via the union processor.
+    """
+
+    def return_apple_as_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Tool mode is active (output tools are offered), yet we return the union envelope as
+        # text rather than a tool call to exercise the auto-schema text fallback.
+        assert info.model_request_parameters.output_mode == 'tool'
+        assert info.output_tools
+        text = '{"result": {"kind": "Apple", "data": {"color": "red"}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(return_apple_as_text), output_type=[Apple, Banana])
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Apple(color='red'))
+
+
+def test_output_type_union_text_fallback_invalid_data_retries():
+    """When the union envelope text has the right `kind` but `data` that doesn't match that
+    member's schema, validation fails and the model is re-prompted with the validation error.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Correct `kind`, but `data` is missing the required `color` field for `Apple`.
+            text = '{"result": {"kind": "Apple", "data": {"length": 12.0}}}'
+        else:
+            text = '{"result": {"kind": "Apple", "data": {"color": "green"}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=[Apple, Banana])
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Apple(color='green'))
+    assert calls == 2
+
+    retry_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    assert retry_parts == snapshot(
+        [
+            RetryPromptPart(
+                content=[{'type': 'missing', 'loc': ('color',), 'msg': 'Field required', 'input': {'length': 12.0}}],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+def test_output_type_union_text_fallback_invalid_kind_retries():
+    """When the union envelope text carries a `kind` that doesn't match any allowed output type,
+    the discriminated union fails to validate and the model is re-prompted.
+
+    The same validation guards `PromptedOutput`, the realistic route to an invalid `kind`: there
+    the envelope schema is only advertised in the prompt (its `const` discriminator is never
+    enforced by the provider), so a weaker model can plausibly flub the `kind` value.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # `kind` is not one of the allowed discriminator values (`Apple` / `Banana`).
+            text = '{"result": {"kind": "Cherry", "data": {"color": "red"}}}'
+        else:
+            text = '{"result": {"kind": "Banana", "data": {"length": 6.0}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=[Apple, Banana])
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Banana(length=6.0))
+    assert calls == 2
+
+    retry_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    assert retry_parts == snapshot(
+        [
+            RetryPromptPart(
+                content=[
+                    {
+                        'type': 'literal_error',
+                        'loc': ('result', 'kind'),
+                        'msg': "Input should be 'Apple' or 'Banana'",
+                        'input': 'Cherry',
+                    }
+                ],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+def test_prompted_output_union_invalid_kind_retries():
+    """`PromptedOutput` is the realistic route to an unknown `kind`: the envelope schema is only
+    advertised in the prompt (no output tools, no provider-enforced `const` discriminator), so a
+    model can plausibly emit a `kind` outside the registered set. The shared `UnionOutputProcessor`
+    must still reject it as a regular `ValidationError` and re-prompt, exactly as the tool-mode text
+    fallback does in `test_output_type_union_text_fallback_invalid_kind_retries`.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        # Prompted mode, not the tool-mode text fallback: no output tools are offered.
+        assert info.model_request_parameters.output_mode == 'prompted'
+        assert not info.output_tools
+        if calls == 1:
+            # `kind` is not one of the allowed discriminator values (`Apple` / `Banana`).
+            text = '{"result": {"kind": "Cherry", "data": {"color": "red"}}}'
+        else:
+            text = '{"result": {"kind": "Banana", "data": {"length": 6.0}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput([Apple, Banana]))
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Banana(length=6.0))
+    assert calls == 2
+
+    retry_parts = [p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart)]
+    assert retry_parts == snapshot(
+        [
+            RetryPromptPart(
+                content=[
+                    {
+                        'type': 'literal_error',
+                        'loc': ('result', 'kind'),
+                        'msg': "Input should be 'Apple' or 'Banana'",
+                        'input': 'Cherry',
+                    }
+                ],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+def test_output_type_union_text_fallback_invalid_kind_exhausts_retries():
+    """When the union envelope text keeps carrying an unknown `kind` past the retry budget, the
+    run raises `UnexpectedModelBehavior` — the invalid `kind` is fully absorbed by the retry
+    machinery and never surfaces as a raw `KeyError` from the `_processors` lookup.
+    """
+
+    def return_invalid_kind(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        text = '{"result": {"kind": "Cherry", "data": {"color": "red"}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(return_invalid_kind), output_type=[Apple, Banana], retries={'output': 1})
+    # `pytest.raises(UnexpectedModelBehavior)` would not catch a `KeyError`, so reaching this
+    # means the bad `kind` was routed through retry exhaustion, not the old crash path.
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
+        agent.run_sync('What fruit is it?')
 
 
 def test_output_type_structured_dict_nested():
@@ -2422,6 +2609,7 @@ def test_default_structured_output_mode():
                 },
                 description='The final response which ends this conversation',
                 kind='output',
+                defer_loading=False,
             )
         ]
     )
@@ -7569,10 +7757,12 @@ def test_override_toolsets():
         return 'Hello from foo'
 
     available_tools: list[list[str]] = []
+    available_tools_property: list[set[str]] = []
 
     async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal available_tools
         available_tools.append([tool_def.name for tool_def in tool_defs])
+        available_tools_property.append(ctx.available_tool_names)
         return tool_defs
 
     agent = Agent('test', toolsets=[foo_toolset], capabilities=[PrepareTools(prepare_tools)])
@@ -7583,6 +7773,7 @@ def test_override_toolsets():
 
     result = agent.run_sync('Hello')
     assert available_tools[-1] == snapshot(['baz', 'foo'])
+    assert available_tools_property[-1] == {'baz', 'foo'}
     assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo"}')
 
     bar_toolset = FunctionToolset()
@@ -11142,7 +11333,7 @@ async def test_image_output_validator_model_retry():
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext | None = None,
-        ) -> AsyncIterator[StreamedResponse]:
+        ) -> AsyncGenerator[StreamedResponse]:
             yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
 
     image_profile = ModelProfile(supports_image_output=True)
@@ -11215,7 +11406,7 @@ async def test_image_output_validators_run_stream():
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext | None = None,
-        ) -> AsyncIterator[StreamedResponse]:
+        ) -> AsyncGenerator[StreamedResponse]:
             yield ImageStreamedResponse(model_request_parameters=model_request_parameters)
 
     image_profile = ModelProfile(supports_image_output=True)
