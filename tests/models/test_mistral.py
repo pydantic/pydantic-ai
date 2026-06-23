@@ -11,6 +11,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     BinaryContent,
@@ -64,6 +65,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.mistral import (
         MistralModel,
+        MistralModelSettings,
         MistralStreamedResponse,
         _map_content,  # pyright: ignore[reportPrivateUsage]
     )
@@ -91,7 +93,6 @@ class MockMistralAI:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockCompletionEvent] | Sequence[Sequence[MockCompletionEvent]] | None = None
     index: int = 0
-    last_kwargs: dict[str, Any] | None = None
 
     @cached_property
     def sdk_configuration(self) -> MockSdkConfiguration:
@@ -121,7 +122,6 @@ class MockMistralAI:
     async def chat_completions_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
-        self.last_kwargs = _kwargs
         if stream or self.stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
@@ -281,22 +281,6 @@ async def test_multiple_completions(allow_model_requests: None):
             ),
         ]
     )
-
-
-async def test_non_streaming_forwards_penalties(allow_model_requests: None):
-    completion = completion_message(MistralAssistantMessage(content='hello'))
-    mock_client = MockMistralAI.create_mock(completion)
-    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
-    agent = Agent(model=model)
-
-    await agent.run(
-        'hello',
-        model_settings={'presence_penalty': 0.5, 'frequency_penalty': 0.25},
-    )
-
-    assert mock_client.last_kwargs is not None
-    assert mock_client.last_kwargs['presence_penalty'] == 0.5
-    assert mock_client.last_kwargs['frequency_penalty'] == 0.25
 
 
 async def test_three_completions(allow_model_requests: None):
@@ -2479,6 +2463,19 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_mistral_forwards_penalties(allow_model_requests: None, mistral_api_key: str, vcr: Cassette):
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m, model_settings=MistralModelSettings(presence_penalty=0.5, frequency_penalty=0.25))
+
+    result = await agent.run('hello')
+
+    assert result.output
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['presence_penalty'] == 0.5
+    assert sent['frequency_penalty'] == 0.25
 
 
 @pytest.mark.vcr()
