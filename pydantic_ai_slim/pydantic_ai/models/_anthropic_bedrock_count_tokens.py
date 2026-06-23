@@ -105,13 +105,16 @@ async def count_tokens_via_bedrock(
     quoted_model = urllib.parse.quote(model, safe=':')
     encoded_body = base64.b64encode(to_json(body)).decode()
     content = to_json({'input': {'invokeModel': {'body': encoded_body}}})
+    # `cast_to=object` (not `dict[str, object]`): the SDK passes `cast_to` to `issubclass()`, which
+    # raises `TypeError` on a subscripted generic under Python 3.10. `object` returns the raw parsed
+    # JSON body, which we validate explicitly below.
     response = await client.post(
         f'/model/{quoted_model}/count-tokens',
-        cast_to=dict[str, object],
+        cast_to=object,
         content=content,
         options=options,
     )
 
-    if not isinstance(input_tokens := response.get('inputTokens'), int):
-        raise UnexpectedModelBehavior('Unexpected Bedrock count tokens response')
-    return BetaMessageTokensCount(input_tokens=input_tokens)
+    if is_str_dict(response) and isinstance(input_tokens := response.get('inputTokens'), int):
+        return BetaMessageTokensCount(input_tokens=input_tokens)
+    raise UnexpectedModelBehavior('Unexpected Bedrock count tokens response')

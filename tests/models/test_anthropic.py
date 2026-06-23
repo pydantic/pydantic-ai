@@ -10475,6 +10475,10 @@ async def test_anthropic_bedrock_count_tokens_real_api(allow_model_requests: Non
     test is now end-of-life on Bedrock's CountTokens endpoint, and CRIS inference-profile ids
     (`us.`/`eu.`/`global.`) aren't accepted there either.
     """
+    # `AsyncAnthropicBedrock`'s SigV4 signer imports `botocore` at request-prep time, which only
+    # ships under the `bedrock` extra (not in the default `pydantic-ai` install on v2).
+    pytest.importorskip('botocore')
+
     from anthropic import AsyncAnthropicBedrock
 
     bedrock_client = AsyncAnthropicBedrock(
