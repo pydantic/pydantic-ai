@@ -227,8 +227,22 @@ jobs:
         env:
           UV_FROZEN: "0"
 
+      - run: mkdir .coverage
+
       # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
-      - run: uv run --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct pytest --durations=100 -n logical --dist=loadgroup
+      # Coverage is collected here because version-gated fallback branches (e.g.
+      # `except ImportError` stubs for older `ag-ui-protocol`) only execute under
+      # the lowest pinned deps, so this run is their sole coverage source.
+      - run: uv run --all-extras --no-extra outlines-vllm-offline --resolution lowest-direct coverage run -m pytest --durations=100 -n logical --dist=loadgroup
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-lowest-versions
+
+      - name: store coverage files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ matrix.python-version }}-lowest-versions
+          path: .coverage
+          include-hidden-files: true
 
   test-examples:
     name: test examples on ${{ matrix.python-version }}
@@ -255,7 +269,7 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [test, test-lowest-versions]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
