@@ -568,14 +568,13 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     def _metadata_panel(
         self, baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None
     ) -> RenderableType | None:
-        """Wrap a table with an experiment metadata panel if metadata exists.
+        """Build an experiment metadata panel if metadata exists.
 
         Args:
-            table: The table to wrap
-            baseline: Optional baseline report for diff metadata
+            baseline: Optional baseline report for diff metadata.
 
         Returns:
-            Either the table unchanged or a Group with Panel and Table
+            A `Panel` with the experiment (or diff) metadata, or `None` if there is no metadata to show.
         """
         if baseline is None:
             # Single report - show metadata if present

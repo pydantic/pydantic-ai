@@ -588,7 +588,7 @@ usage (tokens, requests, and tool calls) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
-Consider the following example, where we limit the number of response tokens:
+Consider the following example, where we limit the number of output tokens:
 
 ```py
 from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
