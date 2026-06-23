@@ -1649,3 +1649,35 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     response = part.model_response()
     assert '"input": 42' in response
     assert '"name"' in response
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(
+            [{'type': 'missing', 'loc': ('x',), 'msg': 'Field required'}],
+            id='minimal',
+        ),
+        pytest.param(
+            [{'type': 'missing', 'loc': ('x',), 'msg': 'Field required', 'input': dict[str, object]()}],
+            id='framework-generated',
+        ),
+        pytest.param(
+            [{'type': 'missing', 'loc': ['x'], 'msg': 'Field required'}],
+            id='json-normalized-loc',
+        ),
+    ],
+)
+def test_retry_prompt_partial_error_details_round_trip(content: list[dict[str, object]]):
+    part = RetryPromptPart(content=content, tool_name='foo', tool_call_id='call_1')
+    messages: list[ModelMessage] = [ModelRequest(parts=[part])]
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+    reserialized = ModelMessagesTypeAdapter.dump_json(deserialized)
+    reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
+
+    assert reloaded == deserialized
+    deserialized_part = deserialized[0].parts[0]
+    assert isinstance(deserialized_part, RetryPromptPart)
+    assert deserialized_part.content == [{**content[0], 'loc': ['x']}]
