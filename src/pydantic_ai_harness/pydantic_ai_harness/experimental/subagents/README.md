@@ -6,7 +6,7 @@
 > experimental path -- there is no top-level export:
 >
 > ```python
-> from pydantic_ai_harness.experimental.subagents import SubAgents
+> from pydantic_ai_harness.experimental.subagents import SubAgent, SubAgents
 > ```
 >
 > Importing any experimental capability emits a `HarnessExperimentalWarning`. Silence **all**
@@ -27,23 +27,25 @@ A single agent that does everything accumulates a large tool set and a long cont
 
 ## The solution
 
-`SubAgents` takes a name-to-agent mapping and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent. The available sub-agents are listed in the system prompt as a static instruction, so the listing stays in the cached prefix.
+`SubAgents` takes a sequence of `SubAgent` entries and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent. The available sub-agents are listed in the system prompt as a static instruction, so the listing stays in the cached prefix.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.experimental.subagents import SubAgents
+from pydantic_ai_harness.experimental.subagents import SubAgent, SubAgents
 
 researcher = Agent('anthropic:claude-sonnet-4-6', name='researcher', description='Researches a topic and reports findings')
 writer = Agent('anthropic:claude-sonnet-4-6', name='writer', description='Turns notes into polished prose')
 
 orchestrator = Agent(
     'anthropic:claude-opus-4-7',
-    capabilities=[SubAgents(agents={'researcher': researcher, 'writer': writer})],
+    capabilities=[SubAgents(agents=[SubAgent(researcher), SubAgent(writer)])],
 )
 
 result = orchestrator.run_sync('Research the history of TLS and write a one-paragraph summary.')
 print(result.output)
 ```
+
+A delegate's name -- how the parent model refers to it, and how it is listed in the prompt -- is the agent's own `name`, or a `SubAgent(name=...)` override. Two delegates resolving to the same name is an error, and an agent with no name and no override is rejected.
 
 ## The tool
 
@@ -65,22 +67,21 @@ print(result.output)
 
 ## Per-delegate run controls
 
-`limits` maps a sub-agent name to a `SubAgentLimits`, giving one delegate its own budgets without touching the others. A name absent from `limits` runs with the `SubAgents` defaults.
+Each `SubAgent` carries its own budgets, so one delegate's controls do not touch the others. A `SubAgent` with no controls set runs with the `SubAgents` defaults.
 
 ```python
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.experimental.subagents import SubAgentLimits, SubAgents
+from pydantic_ai_harness.experimental.subagents import SubAgent, SubAgents
 
 # reproducer and librarian are Agent instances, as in the example above.
 orchestrator = Agent(
     'anthropic:claude-opus-4-7',
     capabilities=[
         SubAgents(
-            agents={'reproducer': reproducer, 'librarian': librarian},
-            limits={
-                'reproducer': SubAgentLimits(usage_limits=UsageLimits(request_limit=35), timeout_seconds=600, max_calls=1),
-                'librarian': SubAgentLimits(usage_limits=UsageLimits(request_limit=18), timeout_seconds=300, max_calls=2),
-            },
+            agents=[
+                SubAgent(reproducer, usage_limits=UsageLimits(request_limit=35), timeout_seconds=600, max_calls=1),
+                SubAgent(librarian, usage_limits=UsageLimits(request_limit=18), timeout_seconds=300, max_calls=2),
+            ]
         )
     ],
 )
@@ -103,20 +104,30 @@ Hard errors propagate to stop the whole run. A `UsageLimitExceeded` from a child
 
 ## Discovery
 
-The sub-agents are listed in the system prompt via `get_instructions`, using each agent's `description` (or a per-name `descriptions` override). A sub-agent with no description is listed by name alone.
+The sub-agents are listed in the system prompt via `get_instructions`, using each agent's `description` (or a `SubAgent(description=...)` override). A sub-agent with no description is listed by name alone.
 
 ## Configuration
 
 ```python
 SubAgents(
-    agents={},             # Mapping[str, AbstractAgent[AgentDepsT, Any]] -- name -> agent
-    descriptions=None,     # optional per-name description overrides for the prompt listing
+    agents=(),             # Sequence[SubAgent[AgentDepsT]] -- each pairs an agent with its run controls
     forward_usage=True,    # share the parent's usage with sub-agent runs
     inherit_tools=False,   # expose the parent's own tools to sub-agents (capability tools excluded)
     shared_capabilities=(),# capabilities applied to every sub-agent run
     event_stream_handler=None,  # forwarded to each sub-agent run to stream its events
     tool_name='delegate_task',
-    limits={},             # Mapping[str, SubAgentLimits] -- per-delegate run controls
+)
+```
+
+```python
+SubAgent(
+    agent,                 # AbstractAgent[AgentDepsT, Any] -- the child agent to run
+    name=None,             # delegate name; defaults to the agent's own `name`
+    description=None,      # prompt-listing description; defaults to the agent's own `description`
+    usage_limits=None,     # per-delegation request/token budget (isolated accounting)
+    timeout_seconds=None,  # per-delegation wall-clock budget
+    max_calls=None,        # max delegations to this sub-agent per parent run
+    on_failure=None,       # steering message for soft degradations of this delegate
 )
 ```
 

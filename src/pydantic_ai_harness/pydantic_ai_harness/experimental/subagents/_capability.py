@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
+from pydantic_ai.agent import AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 
-from pydantic_ai_harness.experimental.subagents._toolset import SubAgentLimits, SubAgentToolset
+from pydantic_ai_harness.experimental.subagents._toolset import SubAgent, SubAgentToolset
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -26,6 +26,13 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     conversation), and the available sub-agents are listed in the system prompt
     as a static, cache-stable instruction.
 
+    Sub-agents are passed as a sequence of `SubAgent` entries, each pairing an
+    agent with its per-delegate run controls (a `usage_limits` budget, a
+    wall-clock `timeout_seconds`, a per-run `max_calls` budget, an `on_failure`
+    steering message, and optional `name`/`description` overrides). A delegate's
+    name is its `SubAgent.name`, or the agent's own `name` when unset; two
+    delegates resolving to the same name is an error.
+
     The parent's `deps` are forwarded to each sub-agent (sub-agents therefore
     share the parent's `AgentDepsT`), and by default the parent's `usage` is
     shared so usage limits apply across the whole agent tree. Optionally, the
@@ -33,34 +40,23 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     applied to every sub-agent run (`shared_capabilities`), and sub-agent events
     can be streamed to a handler (`event_stream_handler`).
 
-    Per-delegate run controls (a `usage_limits` budget, a wall-clock
-    `timeout_seconds`, a per-run `max_calls` budget, and an `on_failure` steering
-    message) are configured via `limits`, keyed by sub-agent name. See
-    `SubAgentLimits`.
-
     ```python
     from pydantic_ai import Agent
-    from pydantic_ai_harness.experimental.subagents import SubAgents
+    from pydantic_ai_harness.experimental.subagents import SubAgent, SubAgents
 
     researcher = Agent('anthropic:claude-sonnet-4-6', name='researcher', description='Researches topics')
     writer = Agent('anthropic:claude-sonnet-4-6', name='writer', description='Writes prose')
 
     orchestrator = Agent(
         'anthropic:claude-opus-4-7',
-        capabilities=[SubAgents(agents={'researcher': researcher, 'writer': writer})],
+        capabilities=[SubAgents(agents=[SubAgent(researcher), SubAgent(writer)])],
     )
     ```
     """
 
-    agents: Mapping[str, AbstractAgent[AgentDepsT, Any]] = field(
-        default_factory=dict[str, 'AbstractAgent[AgentDepsT, Any]']
-    )
-    """Mapping of sub-agent name to the agent that runs when it's delegated to."""
-
-    descriptions: Mapping[str, str] | None = None
-    """Optional per-name description overrides for the system-prompt listing.
-
-    When a name is absent here, the agent's own `description` is used (if any)."""
+    agents: Sequence[SubAgent[AgentDepsT]] = ()
+    """The sub-agents to expose, each a `SubAgent` pairing an agent with its
+    per-delegate run controls. See `SubAgent`."""
 
     forward_usage: bool = True
     """If `True`, the parent run's `usage` is shared with each sub-agent run, so
@@ -83,26 +79,31 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     tool_name: str = 'delegate_task'
     """Name of the delegate tool exposed to the model."""
 
-    limits: Mapping[str, SubAgentLimits] = field(default_factory=dict[str, SubAgentLimits])
-    """Per-delegate run controls, keyed by sub-agent name. A name absent here runs
-    with no per-delegate controls (the `SubAgents` defaults). See `SubAgentLimits`
-    for `usage_limits`, `timeout_seconds`, `max_calls`, and `on_failure`."""
+    _by_name: dict[str, SubAgent[AgentDepsT]] = field(
+        default_factory=dict[str, 'SubAgent[AgentDepsT]'], init=False, repr=False, compare=False
+    )
+    """Sub-agents keyed by resolved name, built in `__post_init__` and passed to
+    the toolset. Insertion order matches `agents` for a stable prompt listing."""
 
     _call_counts: dict[str, dict[str, int]] = field(
         default_factory=dict[str, 'dict[str, int]'], init=False, repr=False, compare=False
     )
     """Run-scoped delegation counts (run_id -> name -> count), shared with the
-    toolset and cleared per run in `wrap_run`. Backs `SubAgentLimits.max_calls`."""
+    toolset and cleared per run in `wrap_run`. Backs `SubAgent.max_calls`."""
 
     def __post_init__(self) -> None:
-        # A limits entry for an unknown name would silently run unbudgeted, defeating
-        # the point of configuring a budget; fail fast on the likely typo instead.
-        unknown = set(self.limits) - set(self.agents)
-        if unknown:
-            raise ValueError(
-                f'`limits` names sub-agents not in `agents`: {", ".join(sorted(unknown))}. '
-                f'Available sub-agents: {", ".join(sorted(self.agents)) or "(none)"}.'
-            )
+        by_name: dict[str, SubAgent[AgentDepsT]] = {}
+        for sub_agent in self.agents:
+            name = sub_agent.resolved_name
+            if name is None:
+                raise ValueError('Sub-agent has no name: give its `Agent` a `name`, or set `SubAgent(name=...)`.')
+            if name in by_name:
+                raise ValueError(
+                    f'Duplicate sub-agent name {name!r}. Each sub-agent needs a distinct name; '
+                    f'set `SubAgent(name=...)` to disambiguate.'
+                )
+            by_name[name] = sub_agent
+        self._by_name = by_name
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Run the parent agent, then drop this run's delegation counts so they don't accumulate."""
@@ -113,12 +114,11 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static, cache-stable listing of the available sub-agents."""
-        if not self.agents:
+        if not self._by_name:
             return None
-        overrides = self.descriptions or {}
         lines: list[str] = []
-        for name, agent in self.agents.items():
-            description = overrides.get(name) or agent.description
+        for name, sub_agent in self._by_name.items():
+            description = sub_agent.description or sub_agent.agent.description
             lines.append(f'- {name}: {description}' if description else f'- {name}')
         listing = '\n'.join(lines)
         return (
@@ -129,16 +129,15 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Toolset providing the delegate tool, or `None` when no sub-agents are configured."""
-        if not self.agents:
+        if not self._by_name:
             return None
         return SubAgentToolset(
-            agents=self.agents,
+            agents=self._by_name,
             forward_usage=self.forward_usage,
             inherit_tools=self.inherit_tools,
             shared_capabilities=self.shared_capabilities,
             event_stream_handler=self.event_stream_handler,
             tool_name=self.tool_name,
-            limits=self.limits,
             call_counts=self._call_counts,
         )
 

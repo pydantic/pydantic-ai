@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Generic
 
 from pydantic_ai.agent import AbstractAgent, EventStreamHandler
 from pydantic_ai.capabilities import AgentCapability
@@ -20,13 +20,28 @@ from pydantic_ai.usage import UsageLimits
 
 
 @dataclass(frozen=True)
-class SubAgentLimits:
-    """Per-delegate run controls for one named sub-agent.
+class SubAgent(Generic[AgentDepsT]):
+    """One delegate: a child agent plus its per-delegate run controls.
 
-    Every field is optional; an unset field leaves the corresponding behaviour
-    at the `SubAgents` default. Pass a mapping of sub-agent name to
-    `SubAgentLimits` as `SubAgents(limits=...)`.
+    Pass a sequence of these as `SubAgents(agents=[...])`. The delegate's name --
+    how the parent model refers to it, and how it is listed in the system prompt --
+    is `name` when set, otherwise the agent's own `name`. An agent with neither is
+    rejected by `SubAgents`.
+
+    Every control below is optional; an unset field leaves the corresponding
+    behaviour at the `SubAgents` default.
     """
+
+    agent: AbstractAgent[AgentDepsT, Any]
+    """The agent that runs when this delegate is invoked."""
+
+    name: str | None = None
+    """Name the parent model uses to delegate to this agent. Defaults to the
+    agent's own `name` when unset."""
+
+    description: str | None = None
+    """Description for the system-prompt listing. Defaults to the agent's own
+    `description` when unset; a delegate with neither is listed by name alone."""
 
     usage_limits: UsageLimits | None = None
     """Request/token budget for one delegation. When set, the child runs with
@@ -53,6 +68,11 @@ class SubAgentLimits:
     failures soft: a child error returns this message as a normal tool result
     instead of raising a parent `ModelRetry`."""
 
+    @property
+    def resolved_name(self) -> str | None:
+        """The delegate's name: `name` if set, else the agent's own `name`."""
+        return self.name or self.agent.name
+
 
 def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
     """Whether `toolset`'s tree contains a `CapabilityOwnedToolset`."""
@@ -75,29 +95,27 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     `deps` are forwarded; its `usage` is shared when enabled; its tools are
     inherited when enabled; any `shared_capabilities` are applied to every
     sub-agent run; and sub-agent events are streamed to `event_stream_handler`
-    when one is set. Per-delegate run controls come from `limits`.
+    when one is set. Per-delegate run controls come from each `SubAgent`.
     """
 
     def __init__(
         self,
         *,
-        agents: Mapping[str, AbstractAgent[AgentDepsT, Any]],
+        agents: Mapping[str, SubAgent[AgentDepsT]],
         forward_usage: bool,
         inherit_tools: bool,
         shared_capabilities: Sequence[AgentCapability[AgentDepsT]],
         event_stream_handler: EventStreamHandler[AgentDepsT] | None,
         tool_name: str,
-        limits: Mapping[str, SubAgentLimits],
         call_counts: dict[str, dict[str, int]],
     ) -> None:
         super().__init__()
-        self._agents: dict[str, AbstractAgent[AgentDepsT, Any]] = dict(agents)
+        self._agents: dict[str, SubAgent[AgentDepsT]] = dict(agents)
         self._forward_usage = forward_usage
         self._inherit_tools = inherit_tools
         self._shared_capabilities = list(shared_capabilities)
         self._event_stream_handler = event_stream_handler
         self._tool_name = tool_name
-        self._limits = dict(limits)
         # Run-scoped delegation counts, keyed by run_id then sub-agent name.
         # Shared with the capability, which clears each run's entry in wrap_run.
         self._call_counts = call_counts
@@ -152,38 +170,33 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 listed in the instructions.
             task: The complete, self-contained instruction for the sub-agent.
         """
-        agent = self._agents.get(agent_name)
-        if agent is None:
+        sub_agent = self._agents.get(agent_name)
+        if sub_agent is None:
             available = ', '.join(sorted(self._agents))
             raise ModelRetry(f'Unknown sub-agent {agent_name!r}. Available sub-agents: {available}.')
 
-        limits = self._limits.get(agent_name)
-        if (
-            limits is not None
-            and limits.max_calls is not None
-            and self._budget_exhausted(ctx, agent_name, limits.max_calls)
-        ):
+        if sub_agent.max_calls is not None and self._budget_exhausted(ctx, agent_name, sub_agent.max_calls):
             return self._steer(
-                limits,
+                sub_agent.on_failure,
                 f'Delegate budget for {agent_name!r} is exhausted for this run '
-                f'({limits.max_calls} call(s)). Synthesize from existing evidence and '
+                f'({sub_agent.max_calls} call(s)). Synthesize from existing evidence and '
                 f'choose the next action; do not delegate to {agent_name!r} again.',
             )
 
         toolsets = self._inherited_toolsets(ctx) if self._inherit_tools else None
         capabilities = self._shared_capabilities or None
         usage_limits: UsageLimits | None
-        if limits is not None and limits.usage_limits is not None:
+        if sub_agent.usage_limits is not None:
             # Isolated accounting so the per-child budget counts only this child.
             own_budget = True
             usage = None
-            usage_limits = limits.usage_limits
+            usage_limits = sub_agent.usage_limits
         else:
             own_budget = False
             usage = ctx.usage if self._forward_usage else None
             usage_limits = None
 
-        run = agent.run(
+        run = sub_agent.agent.run(
             task,
             deps=ctx.deps,
             usage=usage,
@@ -192,34 +205,34 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             capabilities=capabilities,
             event_stream_handler=self._event_stream_handler,
         )
-        timeout = limits.timeout_seconds if limits is not None else None
+        timeout = sub_agent.timeout_seconds
         try:
             result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
         except asyncio.TimeoutError:
             return self._steer(
-                limits,
+                sub_agent.on_failure,
                 f'Sub-agent {agent_name!r} exceeded its {timeout}s time budget. '
                 f'Treat this as a recoverable observation and decide from existing evidence.',
             )
         except UsageLimitExceeded:
             if own_budget:
                 return self._steer(
-                    limits,
+                    sub_agent.on_failure,
                     f'Sub-agent {agent_name!r} reached its usage budget. '
                     f'Treat this as a recoverable observation and decide from existing evidence.',
                 )
             # A shared/parent usage limit means the whole tree is out of budget.
             raise
         except (ModelRetry, UnexpectedModelBehavior) as exc:
-            if limits is not None and limits.on_failure is not None:
-                return limits.on_failure
+            if sub_agent.on_failure is not None:
+                return sub_agent.on_failure
             # Soft sub-agent failures come back to the parent as a retry it can react to.
             raise ModelRetry(f'Sub-agent {agent_name!r} failed: {exc}') from exc
         return str(result.output)
 
     @staticmethod
-    def _steer(limits: SubAgentLimits | None, default: str) -> str:
+    def _steer(on_failure: str | None, default: str) -> str:
         """A soft steering message: the delegate's `on_failure` override, else `default`."""
-        if limits is not None and limits.on_failure is not None:
-            return limits.on_failure
+        if on_failure is not None:
+            return on_failure
         return default
