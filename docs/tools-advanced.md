@@ -526,6 +526,38 @@ The `args_validator` parameter lets you define custom validation that runs after
 
 The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, or raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure.
 
+Use `args_before_validator` when you need to normalize raw tool-call arguments before Pydantic validates them. This is useful when a model returns a field as a JSON string even though your tool schema expects an object.
+
+```python {title="args_before_validator.py"}
+import json
+from typing import Any
+
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, RunContext
+
+
+class Command(BaseModel):
+    action: str
+    path: str
+
+
+agent = Agent('test')
+
+
+def decode_command_arg(ctx: RunContext[object], args: str | dict[str, Any]) -> str | dict[str, Any]:
+    if isinstance(args, dict) and isinstance(args.get('command'), str):
+        return {**args, 'command': json.loads(args['command'])}
+    return args
+
+
+@agent.tool_plain(args_before_validator=decode_command_arg)
+def memory(command: Command) -> str:
+    return command.path
+```
+
+The `args_before_validator` hook receives the raw `str | dict[str, Any]` arguments and returns the raw arguments to pass into schema validation. It runs before `args_validator`, and both hooks can be sync or async functions.
+
 ```python {title="args_validator_approval.py"}
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
 
@@ -557,9 +589,9 @@ _(This example is complete, it can be run "as is")_
 
 When validation fails, the error message is sent back to the LLM as a retry prompt. This respects the `retries` setting on the tool. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred, while failed validation triggers a retry just like regular tools.
 
-The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
+The `args_before_validator` and `args_validator` parameters are available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset].
 
-The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]. This reflects all validation — both schema validation and custom `args_validator` validation (if configured): `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. tool calls skipped due to the `'early'` end strategy, or deferred tool calls resolved without execution).
+The validation result is exposed via the `args_valid` field on [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]. This reflects all validation — `args_before_validator`, schema validation, and custom `args_validator` validation (if configured): `True` means all validation passed, `False` means validation failed, and `None` means validation was not performed (e.g. tool calls skipped due to the `'early'` end strategy, or deferred tool calls resolved without execution).
 
 ### Parallel tool calls & concurrency
 

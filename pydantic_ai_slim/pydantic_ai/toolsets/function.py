@@ -13,6 +13,7 @@ from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
 from ..messages import InstructionPart
 from ..tools import (
+    ArgsBeforeValidatorFunc,
     ArgsValidatorFunc,
     DocstringFormat,
     GenerateToolJsonSchema,
@@ -155,6 +156,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        args_before_validator: ArgsBeforeValidatorFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
@@ -177,6 +179,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        args_before_validator: ArgsBeforeValidatorFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
@@ -233,6 +236,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
                 return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
+            args_before_validator: custom method to normalize raw tool-call arguments before schema validation.
+                The validator receives [`RunContext`][pydantic_ai.tools.RunContext] and the raw arguments,
+                then returns the arguments to pass into Pydantic validation.
+                See [`ArgsBeforeValidatorFunc`][pydantic_ai.tools.ArgsBeforeValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing.
@@ -269,6 +276,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 description=description,
                 retries=retries,
                 prepare=prepare,
+                args_before_validator=args_before_validator,
                 args_validator=args_validator,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
@@ -298,6 +306,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        args_before_validator: ArgsBeforeValidatorFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
@@ -319,6 +328,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_before_validator: ArgsBeforeValidatorFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
@@ -370,6 +380,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_before_validator: custom method to normalize raw tool-call arguments before schema validation.
+                The validator receives [`RunContext`][pydantic_ai.tools.RunContext] and the raw arguments,
+                then returns the arguments to pass into Pydantic validation.
+                See [`ArgsBeforeValidatorFunc`][pydantic_ai.tools.ArgsBeforeValidatorFunc].
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument — even though the
@@ -414,6 +428,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 description=description,
                 retries=retries,
                 prepare=prepare,
+                args_before_validator=args_before_validator,
                 args_validator=args_validator,
                 docstring_format=docstring_format,
                 require_parameter_descriptions=require_parameter_descriptions,
@@ -470,6 +485,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        args_before_validator: ArgsBeforeValidatorFunc[AgentDepsT] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
@@ -504,6 +520,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
                 return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
+            args_before_validator: custom method to normalize raw tool-call arguments before schema validation.
+                The validator receives [`RunContext`][pydantic_ai.tools.RunContext] and the raw arguments,
+                then returns the arguments to pass into Pydantic validation.
+                See [`ArgsBeforeValidatorFunc`][pydantic_ai.tools.ArgsBeforeValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing.
@@ -553,6 +573,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             description=description,
             max_retries=retries,
             prepare=prepare,
+            args_before_validator=args_before_validator,
             args_validator=args_validator,
             docstring_format=docstring_format,
             require_parameter_descriptions=require_parameter_descriptions,
@@ -624,6 +645,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 tool_def=tool_def,
                 max_retries=max_retries,
                 args_validator=tool.function_schema.validator,
+                args_before_validator_func=tool.args_before_validator,
                 args_validator_func=tool.args_validator,
                 call_func=tool.function_schema.call,
                 is_async=tool.function_schema.is_async,

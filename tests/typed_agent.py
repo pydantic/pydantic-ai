@@ -14,7 +14,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import PrepareTools, Thinking, WebSearch
 from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, RawToolArgs, ToolDefinition
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
@@ -91,6 +91,36 @@ def ok_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
     return f'{ctx.deps.foo} {x} {y}'
 
 
+# args_before_validator: matching deps
+def args_before_validator_ok(ctx: RunContext[MyDeps], args: RawToolArgs) -> RawToolArgs:
+    return args
+
+
+@typed_agent.tool(args_before_validator=args_before_validator_ok)
+def ok_tool_args_before_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_before_validator: wrong deps
+def args_before_validator_wrong_deps(ctx: RunContext[int], args: RawToolArgs) -> RawToolArgs:
+    return args
+
+
+@typed_agent.tool(args_before_validator=args_before_validator_wrong_deps)  # type: ignore[arg-type]
+def wrong_deps_tool_args_before_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_before_validator: wrong return type
+def args_before_validator_wrong_return(ctx: RunContext[MyDeps], args: RawToolArgs) -> int:
+    return 1
+
+
+@typed_agent.tool(args_before_validator=args_before_validator_wrong_return)  # type: ignore[arg-type]
+def wrong_return_tool_args_before_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
 # args_validator: wrong params
 def args_validator_wrong_params(ctx: RunContext[MyDeps], a: float) -> None:
     pass
@@ -118,6 +148,26 @@ def plain_args_validator_ok(ctx: RunContext[MyDeps], x: str) -> None:
 
 @typed_agent.tool_plain(args_validator=plain_args_validator_ok)
 def ok_tool_plain_args_validator(x: str) -> str:
+    return x
+
+
+# args_before_validator on tool_plain: matching deps
+def plain_args_before_validator_ok(ctx: RunContext[MyDeps], args: RawToolArgs) -> RawToolArgs:
+    return args
+
+
+@typed_agent.tool_plain(args_before_validator=plain_args_before_validator_ok)
+def ok_tool_plain_args_before_validator(x: str) -> str:
+    return x
+
+
+# args_before_validator on tool_plain: wrong deps
+def plain_args_before_validator_wrong_deps(ctx: RunContext[int], args: RawToolArgs) -> RawToolArgs:
+    return args
+
+
+@typed_agent.tool_plain(args_before_validator=plain_args_before_validator_wrong_deps)  # type: ignore[arg-type]
+def wrong_deps_tool_plain_args_before_validator(x: str) -> str:
     return x
 
 
@@ -344,6 +394,22 @@ def tool_init_validator_ok(ctx: RunContext[int], x: str, y: int) -> None:
 
 
 Tool(foobar_ctx, args_validator=tool_init_validator_ok)
+
+
+# Tool constructor with args_before_validator: matching deps
+def tool_init_before_validator_ok(ctx: RunContext[int], args: RawToolArgs) -> RawToolArgs:
+    return args
+
+
+Tool[int](foobar_ctx, args_before_validator=tool_init_before_validator_ok)
+
+
+# Tool constructor with args_before_validator: wrong deps
+def tool_init_before_validator_wrong_deps(ctx: RunContext[str], args: RawToolArgs) -> RawToolArgs:
+    return args
+
+
+Tool[int](foobar_ctx, args_before_validator=tool_init_before_validator_wrong_deps)  # type: ignore[arg-type]
 
 
 # Tool constructor with args_validator: wrong params
