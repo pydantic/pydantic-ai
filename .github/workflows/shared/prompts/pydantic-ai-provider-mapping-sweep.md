@@ -10,15 +10,7 @@ commit is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI Provider Mapping Sweep
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)), a provider-agnostic Python
-GenAI agent framework. Model integrations live in
+Model integrations live in
 `pydantic_ai_slim/pydantic_ai/models/` and providers in
 `pydantic_ai_slim/pydantic_ai/providers/`.
 
@@ -67,6 +59,29 @@ be triggered by code you wrote and observed to fail.
 - Behavior already tracked by an open issue — **search issues first**.
 - Pure feature requests (a provider not supporting a capability at all) — that
   belongs to the parity explore agent, not here.
+
+## Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues using the MCP
+GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[provider-mapping-sweep]" OR "[bug-hunter]"
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <chosen-provider>
+```
+
+If a matching issue covers the same mapping bug, call `mcp__safeoutputs__noop`.
+
+## Sandbox notes
+
+- Read the provider file in full (or large ranges). Model files are typically
+  800–1500 lines — read them in 1–2 calls.
+- Do NOT spend time trying to import provider SDK type stubs (`mypy_boto3_*`,
+  etc.) — they are not installed. Instead, grep the raw
+  `botocore/data/*/service-2.json` or use `WebFetch` on the provider's API docs.
+- Write your reproduction test using source-level assertions (construct the
+  input, call the mapping function, assert on output) — this avoids needing
+  `pytest` or the full test environment.
 
 ## Quality Gate — When to Noop
 

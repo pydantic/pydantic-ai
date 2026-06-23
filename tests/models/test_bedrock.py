@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import json
 import os
 from datetime import date, datetime, timezone
 from itertools import count
@@ -62,11 +63,13 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from botocore.exceptions import ClientError
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
+    from vcr.cassette import Cassette
 
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -343,6 +346,60 @@ async def test_bedrock_inference_profile_count_tokens(
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
     assert result.input_tokens > 0
     assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+
+
+async def test_bedrock_count_tokens_additional_model_requests_fields(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`count_tokens` forwards `bedrock_additional_model_requests_fields` to `input.converse` and Bedrock accepts it.
+
+    Here it carries `anthropic_beta: ['context-1m-2025-08-07']`, the header used to opt into Claude's 1M context window.
+    """
+    settings: BedrockModelSettings = {
+        'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
+    }
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
+    )
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
+
+    sent = single_request_body(vcr)
+    assert sent['input']['converse']['additionalModelRequestFields'] == {'anthropic_beta': ['context-1m-2025-08-07']}
+
+
+async def test_bedrock_count_tokens_tool_config(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`count_tokens` forwards `toolConfig` to `input.converse`, mirroring the real request so tool schemas are counted."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a location',
+        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
+    )
+    params = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('What is the weather in Paris?')], None, params)
+    assert result.input_tokens > 0
+
+    sent = single_request_body(vcr)
+    assert sent['input']['converse']['toolConfig'] == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'get_weather',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {'location': {'type': 'string'}}}},
+                        'description': 'Get the weather for a location',
+                    }
+                }
+            ],
+            'toolChoice': {'auto': {}},
+        }
+    )
 
 
 async def test_bedrock_stream_non_http_error():
@@ -2313,19 +2370,27 @@ Mexico City is an important cultural, financial, and political center for the co
     )
 
 
-async def test_bedrock_output_tool_with_thinking_raises(allow_model_requests: None, bedrock_provider: BedrockProvider):
+@pytest.mark.parametrize(
+    'thinking_field',
+    [
+        pytest.param({'type': 'enabled', 'budget_tokens': 1024}, id='enabled'),
+        pytest.param({'type': 'adaptive'}, id='adaptive'),
+    ],
+)
+async def test_bedrock_output_tool_with_thinking_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, thinking_field: dict[str, Any]
+):
     """Bedrock does not support output tools (tool_choice=required) with thinking enabled.
 
     Uses the legacy `bedrock_additional_model_requests_fields` form. See
     `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
-    Fixes https://github.com/pydantic/pydantic-ai/issues/3092.
+    Fixes https://github.com/pydantic/pydantic-ai/issues/3092 (`enabled`) and
+    https://github.com/pydantic/pydantic-ai/issues/5650 (`adaptive`).
     """
     m = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-20250514-v1:0',
         provider=bedrock_provider,
-        settings=BedrockModelSettings(
-            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-        ),
+        settings=BedrockModelSettings(bedrock_additional_model_requests_fields={'thinking': thinking_field}),
     )
 
     agent = Agent(m, output_type=ToolOutput(int))
@@ -2714,6 +2779,250 @@ async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockPr
             },
         ]
     )
+
+
+async def test_bedrock_thinking_high_openai_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking='high'` flows through to `additionalModelRequestFields.reasoning_effort`."""
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='high'))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'high'}
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content=IsStr()), TextPart(content=IsStr())],
+                usage=RequestUsage(input_tokens=IsInstance(int), output_tokens=IsInstance(int)),
+                model_name='openai.gpt-oss-120b-1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_thinking_true_openai_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=True` maps to the default effort `'medium'` on the wire, exercising
+    the `OPENAI_REASONING_EFFORT_MAP[True]` branch in isolation from `'high'`."""
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=True))
+    await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'medium'}
+
+
+async def test_bedrock_thinking_false_openai_variant_silent_drop(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=False` on gpt-oss is silently dropped — Converse rejects
+    `reasoning_effort='none'`, so the profile is always-on."""
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert 'reasoning_effort' not in sent.get('additionalModelRequestFields', {})
+
+
+async def test_bedrock_thinking_high_qwen_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking='high'` flows through to `additionalModelRequestFields.reasoning_config`."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='high'))
+    result = await agent.run('Reply with the single word: ok')
+
+    # `single_request_body` not used here because qwen3-32b wraps its initial reply in
+    # `<think>` tags, leaving empty visible text and triggering pydantic-ai's
+    # output-validation retry — the cassette captures two recorded interactions. We
+    # only need to assert on the wire shape of the first one.
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
+    # Loose response-shape pin: at least one ThinkingPart survives the
+    # validation-retry roundtrip and reaches the final response.
+    assert any(isinstance(p, ThinkingPart) for p in result.response.parts)
+
+
+async def test_bedrock_thinking_false_qwen_variant_silent_drop(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=False` on qwen3 is silently dropped — Converse exposes only
+    `reasoning_config ∈ {low, high}` with no disable, so the profile is always-on."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert 'reasoning_config' not in sent.get('additionalModelRequestFields', {})
+
+
+async def test_bedrock_thinking_true_qwen_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=True` → `reasoning_config='high'` on the wire (Qwen accepts only `{low, high}`)."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=True))
+    await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
+
+
+async def test_bedrock_top_k_anthropic_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """Unified `top_k` rides in `additionalModelRequestFields` as a flat `top_k` for Anthropic models.
+
+    Bedrock's `inferenceConfig` has no `topK` field, so the setting can only reach Claude here.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_k=20))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'top_k': 20}
+    assert 'topK' not in sent['inferenceConfig']
+    assert result.output == IsStr()
+
+
+async def test_bedrock_top_k_nova_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """Unified `top_k` rides in `additionalModelRequestFields` nested under `inferenceConfig.topK` for Nova models."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_k=20))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'inferenceConfig': {'topK': 20}}
+    assert result.output == IsStr()
+
+
+async def test_bedrock_top_k_user_field_takes_precedence(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """A user-supplied `bedrock_additional_model_requests_fields['top_k']` is never clobbered by unified `top_k`.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(top_k=20, bedrock_additional_model_requests_fields={'top_k': 5})
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['additionalModelRequestFields'] == {'top_k': 5}
+
+
+async def test_bedrock_top_k_nova_merges_with_user_inference_config(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """For Nova, unified `top_k` merges into a user-supplied `inferenceConfig` without dropping its other fields.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin. The Nova
+    branch checks the nested `topK` key (not the parent `inferenceConfig`), so an unrelated field doesn't suppress it.
+    A user-supplied `topK` still wins.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    user_inference_config = {'maxTokens': 100}
+    model_settings = BedrockModelSettings(
+        top_k=20, bedrock_additional_model_requests_fields={'inferenceConfig': user_inference_config}
+    )
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['additionalModelRequestFields'] == {'inferenceConfig': {'maxTokens': 100, 'topK': 20}}
+    # The user's settings dict is not mutated in place.
+    assert user_inference_config == {'maxTokens': 100}
+
+
+async def test_bedrock_top_k_nova_user_top_k_takes_precedence(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """A user-supplied `inferenceConfig['topK']` is never clobbered by unified `top_k` for Nova.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(
+        top_k=20, bedrock_additional_model_requests_fields={'inferenceConfig': {'topK': 5}}
+    )
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['additionalModelRequestFields'] == {'inferenceConfig': {'topK': 5}}
+
+
+async def test_bedrock_top_k_unsupported_family_dropped(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Models without a `bedrock_top_k_variant` (e.g. Mistral) silently drop `top_k`.
+
+    No-network: Bedrock 400s on an unrecognized `additionalModelRequestFields` key, so forwarding `top_k`
+    to a family that doesn't accept it would be a regression — the field must be absent here.
+    """
+    model = BedrockConverseModel('mistral.mistral-large-2402-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_k=20))
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert 'additionalModelRequestFields' not in kwargs
 
 
 async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -101,10 +101,10 @@ try:
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
-        AsyncAnthropicBedrock,
-        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicFoundry,
-        AsyncAnthropicVertex,
+        AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
         AsyncStream,
         Omit,
         omit as OMIT,
@@ -242,7 +242,7 @@ _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
@@ -356,11 +356,11 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
     anthropic_task_budget: AnthropicTaskBudget
-    """Task budget configuration for Claude Opus 4.7 beta requests.
+    """Task budget configuration for Claude Opus 4.7 / 4.8 beta requests.
 
     Maps to `output_config.task_budget`. This setting is currently only supported on
-    `claude-opus-4-7`, and Pydantic AI automatically enables Anthropic's required
-    task-budget beta when it is present.
+    `claude-opus-4-7` and `claude-opus-4-8`, and Pydantic AI automatically enables
+    Anthropic's required task-budget beta when it is present.
 
     Omit `remaining` unless you are intentionally carrying a budget across compaction
     or other rewritten context.
@@ -408,7 +408,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_speed: Literal['standard', 'fast']
     """The inference speed mode for this request.
 
-    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6 only).
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, and 4.8).
     On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
     Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
     see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
@@ -559,7 +559,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -850,11 +850,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(self.client, AsyncAnthropicBedrock):
             raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
 
+        # Anthropic docs: https://platform.claude.com/docs/en/api/messages-count-tokens
+        # The `count_tokens` endpoint rejects server-side tools (`web_search`, `code_execution`,
+        # `web_fetch`, `tool_search`) and the `mcp_servers` param with a 400, so restrict the wire
+        # `tools` list to client-side tools like `MemoryTool`, which are accepted and contribute
+        # real tokens. This undercounts the prompt by the server tools' definitions, but it's the
+        # only way to get a count until Anthropic supports them.
+        # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
+        count_tokens_parameters = replace(
+            model_request_parameters,
+            native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
+        )
+
         # standalone function to make it easier to override
-        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
-        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
+        tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, count_tokens_parameters)
+        tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
+        # Map messages with the UNMODIFIED params so `tool_search_active` stays True and tool-search
+        # replay history renders the same `tool_reference` wire shape as `/v1/messages`; those
+        # references point at `function_tools`, which aren't stripped here, so they stay valid.
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages)
         self._apply_explicit_message_caching(model_settings, anthropic_messages)
@@ -939,6 +954,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if raw_finish_reason := response.stop_reason:  # pragma: no branch
             provider_details = {'finish_reason': raw_finish_reason}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+        if response.stop_details is not None:
+            provider_details = provider_details or {}
+            if response.stop_details.explanation is not None:
+                provider_details['refusal'] = response.stop_details.explanation
+            if response.stop_details.category is not None:
+                provider_details['refusal_category'] = response.stop_details.category
         if response.container:
             provider_details = provider_details or {}
             provider_details['container_id'] = response.container.id
@@ -967,9 +988,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         assert isinstance(first_chunk, BetaRawMessageStartEvent)
 
+        # On Bedrock the SDK drops SSE event types, so a leading Bedrock-only chunk
+        # (e.g. `amazon-bedrock-invocationMetrics`) is non-validating `construct_type`d
+        # into `BetaRawMessageStartEvent(message=None)`. Fall back to the configured model
+        # name rather than dereference `first_chunk.message.model` (https://github.com/pydantic/pydantic-ai/issues/5774). The
+        # iterator below skips these `message=None` events.
+        model_name = first_chunk.message.model if first_chunk.message is not None else self.model_name  # pyright: ignore[reportUnnecessaryComparison]
+
         return AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=first_chunk.message.model,
+            _model_name=model_name,
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self._provider.base_url,
@@ -1109,6 +1137,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tool_defs = model_request_parameters.tool_defs
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        supports_forced_tool_choice = AnthropicModelProfile.from_profile(
+            self.profile
+        ).anthropic_supports_forced_tool_choice
 
         tool_choice: BetaToolChoiceParam
 
@@ -1117,18 +1148,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_choice = {'type': 'auto'} if resolved_tool_choice == 'auto' else {'type': 'none'}
         elif resolved_tool_choice == 'required':
             supports = _support_tool_forcing(
-                model_settings, model_request_parameters, resolved_tool_choice, "tool_choice='required'"
+                model_settings,
+                model_request_parameters,
+                resolved_tool_choice,
+                "tool_choice='required'",
+                supports_forced_tool_choice=supports_forced_tool_choice,
             )
             tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(model_settings, model_request_parameters, resolved_tool_choice)
+            supports = _support_tool_forcing(
+                model_settings,
+                model_request_parameters,
+                resolved_tool_choice,
+                supports_forced_tool_choice=supports_forced_tool_choice,
+            )
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
                 else:
-                    # Forcing not supported (e.g. thinking enabled): filter so the model can only
-                    # see the requested tool, since `auto` alone wouldn't restrict the choice.
+                    # Forcing not supported (thinking enabled, or a model that rejects it outright):
+                    # filter so the model can only see the requested tool, since `auto` alone
+                    # wouldn't restrict the choice.
                     # Breaks caching, but Anthropic doesn't support limiting tools via API arg.
                     tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
                     tool_choice = {'type': 'auto'}
@@ -1229,11 +1270,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
                         for item in request_part.content_items(mode='str'):
                             if isinstance(item, UploadedFile):
-                                if item.provider_name != self.system:
-                                    raise UserError(
-                                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
-                                        f'Expected `provider_name` to be `{self.system!r}`.'
-                                    )
+                                self._validate_uploaded_file_provider(item)
                                 if item.media_type.startswith('image/'):
                                     tool_result_content.append(
                                         BetaImageBlockParam(
@@ -1867,11 +1904,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 elif isinstance(item, CachePoint):
                     yield item
                 elif isinstance(item, UploadedFile):
-                    if item.provider_name != self.system:
-                        raise UserError(
-                            f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with AnthropicModel. '
-                            f'Expected `provider_name` to be `{self.system!r}`.'
-                        )
+                    self._validate_uploaded_file_provider(item)
                     if item.media_type.startswith('image/'):
                         yield BetaImageBlockParam(
                             source=BetaFileImageSourceParam(file_id=item.file_id, type='file'),
@@ -1951,7 +1984,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not profile.anthropic_supports_task_budgets:
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
-                'Anthropic task budgets are currently only supported on `claude-opus-4-7`.'
+                'Anthropic task budgets are currently only supported on `claude-opus-4-7` and `claude-opus-4-8`.'
             )
 
         return task_budget
@@ -1979,6 +2012,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
 
+@dataclass(init=False)
 class AnthropicCompaction(AbstractCapability[AgentDepsT]):
     """Compaction capability for Anthropic models.
 
@@ -2091,6 +2125,13 @@ def _map_usage(
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
+        if message.message is None:  # pyright: ignore[reportUnnecessaryComparison]
+            # On Bedrock the Anthropic SDK drops SSE event types, so Bedrock-only chunks
+            # (e.g. `amazon-bedrock-invocationMetrics`) are non-validating `construct_type`d
+            # into `BetaRawMessageStartEvent(message=None)`, violating the type annotation.
+            # The metrics chunk's token counts duplicate the canonical `message_start` /
+            # `message_delta` usage, so dropping them here avoids double-counting.
+            return existing_usage or usage.RequestUsage()
         response_usage = message.message.usage
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
@@ -2136,6 +2177,11 @@ class AnthropicStreamedResponse(StreamedResponse):
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in self._response:
                 if isinstance(event, BetaRawMessageStartEvent):
+                    if event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
+                        # See `_map_usage`: Bedrock emits type-less chunks the SDK constructs
+                        # as `BetaRawMessageStartEvent(message=None)`. Skip them entirely so we
+                        # don't dereference `event.message.id` / `.container` below.
+                        continue
                     self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
                     self.provider_response_id = event.message.id
                     if event.message.container:
@@ -2296,6 +2342,12 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    if event.delta.stop_details is not None:
+                        self.provider_details = self.provider_details or {}
+                        if event.delta.stop_details.explanation is not None:
+                            self.provider_details['refusal'] = event.delta.stop_details.explanation
+                        if event.delta.stop_details.category is not None:
+                            self.provider_details['refusal_category'] = event.delta.stop_details.category
                     if event.delta.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.delta.container.id
@@ -2713,11 +2765,14 @@ def _support_tool_forcing(
     model_request_parameters: ModelRequestParameters,
     resolved_tool_choice: ResolvedToolChoice,
     context: str = 'forcing specific tools',
+    *,
+    supports_forced_tool_choice: bool = True,
 ) -> bool:
-    """Some `tool_choice` settings aren't compatible with thinking mode in Anthropic.
+    """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
-    Only 'auto' and 'none' are compatible with thinking mode. But we only raise an error if the user explicitly set those.
-    Otherwise the value may come from the `tool_choice` resolution logic, in which case we fall back softly.
+    Thinking mode rejects forcing, and some models (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
+    We only raise an error if the user explicitly set a forcing value; a forcing value that came
+    from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
     # Mirror the dual-check pattern from prepare_request(); also check params.thinking
@@ -2729,11 +2784,13 @@ def _support_tool_forcing(
         elif model_settings.get('thinking'):
             thinking_enabled = True
 
-    if not thinking_enabled:
+    if supports_forced_tool_choice and not thinking_enabled:
         return True
 
     explicit_choice = model_settings.get('tool_choice')
     if explicit_choice == 'required' or isinstance(explicit_choice, list):
+        if not supports_forced_tool_choice:
+            raise UserError(f"Anthropic does not support {context} for this model. Use `tool_choice='auto'`.")
         raise UserError(
             f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
         )

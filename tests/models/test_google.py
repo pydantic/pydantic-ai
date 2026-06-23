@@ -6,7 +6,8 @@ import json
 import os
 import random
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import date, timezone
 from decimal import Decimal
 from typing import Any, cast
@@ -16,6 +17,7 @@ from httpx import AsyncClient as HttpxAsyncClient, Timeout
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -59,6 +61,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    UnexpectedModelBehavior,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -537,10 +540,27 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
 
 
 async def test_google_model_max_tokens(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
+    # With thinking disabled, the model spends its tiny budget on visible output, so it returns the partial
+    # text generated before the `max_tokens` limit is hit, with `finish_reason=MAX_TOKENS` and no error.
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    settings = GoogleModelSettings(max_tokens=5, google_thinking_config={'thinking_budget': 0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is')
+
+
+async def test_google_model_max_tokens_thinking_model_empty_response(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    # Unlike the non-thinking case above, a thinking model spends the tiny token budget on hidden reasoning
+    # and returns no content parts with `finish_reason=MAX_TOKENS`, which the agent graph surfaces as a clear
+    # `UnexpectedModelBehavior`.
+    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
+    with pytest.raises(
+        UnexpectedModelBehavior, match=r'Model token limit \(\d+\) exceeded before any response was generated'
+    ):
+        await agent.run('What is the capital of France?')
 
 
 async def test_google_model_top_p(allow_model_requests: None, google_provider: GoogleProvider):
@@ -1061,8 +1081,8 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=17,
-                    output_tokens=533,
+                    input_tokens=136,
+                    output_tokens=414,
                     details={
                         'thoughts_tokens': 213,
                         'tool_use_prompt_tokens': 119,
@@ -1143,8 +1163,8 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=209,
-                    output_tokens=623,
+                    input_tokens=495,
+                    output_tokens=337,
                     details={
                         'thoughts_tokens': 131,
                         'tool_use_prompt_tokens': 286,
@@ -1211,8 +1231,8 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=17,
-                    output_tokens=755,
+                    input_tokens=119,
+                    output_tokens=653,
                     details={
                         'thoughts_tokens': 412,
                         'tool_use_prompt_tokens': 102,
@@ -1393,8 +1413,8 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=249,
-                    output_tokens=860,
+                    input_tokens=568,
+                    output_tokens=541,
                     details={
                         'thoughts_tokens': 301,
                         'tool_use_prompt_tokens': 319,
@@ -1478,8 +1498,8 @@ async def test_google_model_web_fetch_tool(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=32,
-                    output_tokens=2483,
+                    input_tokens=2427,
+                    output_tokens=88,
                     details={
                         'thoughts_tokens': 47,
                         'tool_use_prompt_tokens': 2395,
@@ -3091,6 +3111,28 @@ async def test_google_vertexai_model_usage_limit_exceeded(
         )
 
 
+async def test_google_vertexai_count_tokens_forwards_native_tools(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
+):  # pragma: lax no cover
+    """Vertex `count_tokens` forwards native tools, mirroring the real request for an accurate count.
+
+    Unlike `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects
+    them (#5704), the Vertex `countTokens` endpoint accepts them (#5781).
+    """
+    model = GoogleModel('gemini-2.5-flash', provider=vertex_provider)
+    agent = Agent(model, instructions='You are a helpful chatbot.', capabilities=[NativeTool(WebSearchTool())])
+
+    result = await agent.run(
+        'What is the capital of France?',
+        usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
+    )
+
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
+    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    assert result.output == snapshot('The capital of France is Paris.')
+
+
 def test_map_usage():
     assert (
         _metadata_as_usage(
@@ -4245,6 +4287,122 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
     assert events == snapshot([PartStartEvent(index=0, part=TextPart(content='streamed text'))])
 
 
+def _usage_chunk(
+    *,
+    candidates: int,
+    text: str,
+    cached: int | None = None,
+    thoughts: int | None = None,
+    with_metadata: bool = True,
+) -> GenerateContentResponse:
+    data: dict[str, Any] = {
+        'response_id': 'resp-1',
+        'model_version': 'gemini-test',
+        'candidates': [{'content': {'role': 'model', 'parts': [{'text': text}]}}],
+    }
+    if with_metadata:
+        data['usage_metadata'] = GenerateContentResponseUsageMetadata(
+            prompt_token_count=20025,
+            candidates_token_count=candidates,
+            cached_content_token_count=cached,
+            thoughts_token_count=thoughts,
+        )
+    return GenerateContentResponse.model_validate(data)
+
+
+async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> RequestUsage:
+    async def response_iterator() -> AsyncIterator[GenerateContentResponse]:
+        for chunk in chunks:
+            yield chunk
+
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(response_iterator())),
+        _timestamp=IsDatetime(),
+        _provider_name='google',
+        _provider_url='',
+    )
+
+    async for _ in streamed_response._get_event_iterator():  # pyright: ignore[reportPrivateUsage]
+        pass
+
+    return streamed_response.usage
+
+
+@dataclass
+class _UsageRetentionCase:
+    id: str
+    # A factory rather than a built list: the chunks construct google.genai types, which are only
+    # importable when the `google` extra is installed. Building them at collection time would raise
+    # `NameError` in jobs without the extra (where this test is skipped anyway).
+    make_chunks: Callable[[], list[GenerateContentResponse]]
+    expected: RequestUsage
+
+
+_USAGE_RETENTION_CASES = [
+    _UsageRetentionCase(
+        id='cached_tokens_dropped_by_later_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(cached=None, candidates=10, text='lo'),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=10,
+                details={'cached_content_tokens': 16365},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='metadata_dropped_by_later_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo', with_metadata=False),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=5,
+                details={'cached_content_tokens': 16365},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='details_only_fields_dropped_by_later_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, thoughts=100, candidates=5, text='hel'),
+            _usage_chunk(cached=None, thoughts=None, candidates=10, text='lo'),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=10,
+                details={'cached_content_tokens': 16365, 'thoughts_tokens': 100},
+            )
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _USAGE_RETENTION_CASES])
+async def test_gemini_streamed_response_usage_retained_across_chunks(case: _UsageRetentionCase):
+    """Gemini streams usage as cumulative snapshots, but a later chunk can drop a field an earlier one
+    carried (#5205): a gateway/proxy omits `cached_content_token_count`, a Vertex-direct stream omits
+    `usage_metadata` entirely, or a `details`-only field like `thoughts_tokens` disappears. The
+    accumulated usage must survive instead of resetting to zero.
+
+    These are deterministic unit tests rather than VCR tests because the direct Gemini APIs (GLA and
+    Vertex) always carry the field on the final usage chunk, so a real recording would pass even
+    without the cross-chunk merge.
+    """
+    assert await _stream_gemini_usage(case.make_chunks()) == case.expected
+
+
 async def _cleanup_file_search_store(store: Any, client: Any) -> None:  # pragma: lax no cover
     """Helper function to clean up a file search store if it exists."""
     if store is not None and store.name is not None:
@@ -4341,8 +4499,8 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=15,
-                        output_tokens=585,
+                        input_tokens=303,
+                        output_tokens=297,
                         details={
                             'thoughts_tokens': 257,
                             'tool_use_prompt_tokens': 288,
@@ -4415,8 +4573,8 @@ Here are some key facts about the Eiffel Tower:
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=46,
-                        output_tokens=2709,
+                        input_tokens=1482,
+                        output_tokens=1273,
                         details={
                             'thoughts_tokens': 980,
                             'tool_use_prompt_tokens': 1436,
@@ -4519,8 +4677,8 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=15,
-                        output_tokens=1549,
+                        input_tokens=785,
+                        output_tokens=779,
                         details={
                             'thoughts_tokens': 742,
                             'tool_use_prompt_tokens': 770,

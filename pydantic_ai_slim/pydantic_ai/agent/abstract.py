@@ -10,7 +10,7 @@ from collections.abc import (
     AsyncIterator,
     Awaitable,
     Callable,
-    Iterator,
+    Generator,
     Mapping,
     Sequence,
 )
@@ -426,9 +426,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             wrapped = agent_run.ctx.deps.root_capability.wrap_run_event_stream(run_ctx, stream=stream)
                             if _handler is not None:
                                 await _handler(run_ctx, wrapped)
-                            else:
-                                async for _ in wrapped:
-                                    pass
+                            # If the handler returns normally, drain whatever it left unconsumed so the
+                            # node can finish through any stream wrappers. Cancellation paths interrupt
+                            # the handler and do not reach this drain.
+                            async for _ in wrapped:
+                                pass
                     return await agent_run._advance_graph(n)  # pyright: ignore[reportPrivateUsage]
 
                 _stream_step = _stream_and_advance
@@ -671,7 +673,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
         **_deprecated_kwargs: Any,
-    ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
@@ -804,9 +806,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream_to_final(stream))
                         if event_stream_handler is not None:
                             await event_stream_handler(run_ctx, wrapped)
-                        else:
-                            async for _ in wrapped:
-                                pass
+                        # Drain after the handler (same as the `run()` path) so the response is fully
+                        # built and any `wrap_run_event_stream` wrapper finalizes; cancellation/`break`
+                        # interrupt the handler and don't reach here.
+                        async for _ in wrapped:
+                            pass
 
                         if final_result_event is not None:
                             final_result = FinalResult(
@@ -879,9 +883,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         wrapped = cap.wrap_run_event_stream(run_ctx, stream=stream)
                         if event_stream_handler is not None:
                             await event_stream_handler(run_ctx, wrapped)
-                        else:
-                            async for _ in wrapped:
-                                pass
+                        # Drain `wrapped` after the handler, same as the `ModelRequestNode` branch above:
+                        # `CallToolsNode.stream()` self-drains its own events, but `wrapped` is a separate
+                        # `wrap_run_event_stream` layer that must finalize here too, to match the `run()` path.
+                        async for _ in wrapped:
+                            pass
 
                 # Advance graph with remaining hooks (before_node_run already fired above).
                 # Rebuild run_ctx after streaming so hooks see post-streaming state (e.g. run_step).
@@ -1386,7 +1392,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
+    ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then returns an
@@ -1498,7 +1504,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
@@ -1544,7 +1550,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    def parallel_tool_call_execution_mode(mode: tool_manager.ParallelExecutionMode = 'parallel') -> Iterator[None]:
+    def parallel_tool_call_execution_mode(mode: tool_manager.ParallelExecutionMode = 'parallel') -> Generator[None]:
         """Set the parallel execution mode during the context.
 
         Args:
@@ -1559,14 +1565,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     @staticmethod
     @contextmanager
     @deprecated('Use `parallel_execution_mode("sequential")` instead.')
-    def sequential_tool_calls() -> Iterator[None]:
+    def sequential_tool_calls() -> Generator[None]:
         """Run tool calls sequentially during the context."""
         with ToolManager.parallel_execution_mode('sequential'):
             yield
 
     @staticmethod
     @contextmanager
-    def using_thread_executor(executor: Executor) -> Iterator[None]:
+    def using_thread_executor(executor: Executor) -> Generator[None]:
         """Use a custom executor for running sync functions in threads during the context.
 
         By default, sync tool functions and other sync callbacks are run in threads using

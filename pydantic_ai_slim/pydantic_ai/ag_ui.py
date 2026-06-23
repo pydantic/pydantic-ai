@@ -14,7 +14,7 @@ from . import DeferredToolResults
 from ._warnings import PydanticAIDeprecationWarning
 from .agent import AbstractAgent
 from .agent.abstract import AgentMetadata
-from .messages import ModelMessage
+from .messages import ForceDownloadMode, ModelMessage
 from .models import KnownModelName, Model
 from .output import OutputSpec
 from .settings import ModelSettings
@@ -84,6 +84,7 @@ async def handle_ag_ui_request(
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
     manage_system_prompt: Literal['server', 'client'] = 'server',
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+    allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
 ) -> Response:
     """Handle an AG-UI request by running the agent and returning a streaming response.
 
@@ -91,8 +92,11 @@ async def handle_ag_ui_request(
         agent: The agent to run.
         request: The Starlette request (e.g. from FastAPI) containing the AG-UI run input.
         ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
-        preserve_file_data: Whether to preserve agent-generated files and uploaded files
-            in AG-UI message conversion. See [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data].
+        preserve_file_data: Whether to keep client-submitted `UploadedFile` parts (which the
+            server resolves with its own credentials, so only enable for trusted frontends) and
+            to round-trip agent-generated files and uploaded files through AG-UI message
+            conversion. Defaults to `False`, which drops both. See
+            [`UIAdapter.preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data].
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
@@ -113,6 +117,9 @@ async def handle_ag_ui_request(
         manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
         allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
             [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
+        allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts from
+            the client (beyond `False`, which is always allowed). See
+            [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
 
     Returns:
         A streaming Starlette response with AG-UI protocol events.
@@ -137,6 +144,7 @@ async def handle_ag_ui_request(
         on_complete=on_complete,
         manage_system_prompt=manage_system_prompt,
         allowed_file_url_schemes=allowed_file_url_schemes,
+        allowed_file_url_force_download=allowed_file_url_force_download,
     )
 
 
@@ -162,6 +170,7 @@ def run_ag_ui(
     on_complete: OnCompleteFunc[BaseEvent] | None = None,
     manage_system_prompt: Literal['server', 'client'] = 'server',
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+    allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
 ) -> AsyncIterator[str]:
     """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
@@ -170,8 +179,11 @@ def run_ag_ui(
         run_input: The AG-UI run input containing thread_id, run_id, messages, etc.
         accept: The accept header value for the run.
         ag_ui_version: AG-UI protocol version controlling thinking/reasoning event format.
-        preserve_file_data: Whether to preserve agent-generated files and uploaded files
-            in AG-UI message conversion. See [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data].
+        preserve_file_data: Whether to keep client-submitted `UploadedFile` parts (which the
+            server resolves with its own credentials, so only enable for trusted frontends) and
+            to round-trip agent-generated files and uploaded files through AG-UI message
+            conversion. Defaults to `False`, which drops both. See
+            [`UIAdapter.preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data].
 
         output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
             output validators since output validators would expect an argument that matches the agent's output type.
@@ -192,6 +204,9 @@ def run_ag_ui(
         manage_system_prompt: Who owns the system prompt. See [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
         allowed_file_url_schemes: URL schemes allowed for file URL parts from the client. See
             [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
+        allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts from
+            the client (beyond `False`, which is always allowed). See
+            [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
 
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
@@ -204,6 +219,7 @@ def run_ag_ui(
         preserve_file_data=preserve_file_data,
         manage_system_prompt=manage_system_prompt,
         allowed_file_url_schemes=allowed_file_url_schemes,
+        allowed_file_url_force_download=allowed_file_url_force_download,
     )
     return adapter.encode_stream(
         adapter.run_stream(

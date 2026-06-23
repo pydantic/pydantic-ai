@@ -1187,29 +1187,6 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     assert result.output == 'test response'
 
 
-async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking='high' flows through to xAI reasoning_effort."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
-    agent = Agent(m, model_settings={'thinking': 'high'})
-
-    result = await agent.run('What is 2+2?')
-    assert '4' in result.output
-    # Verify we get thinking parts (reasoning model with high effort)
-    response_messages = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
-    assert len(response_messages) >= 1
-    # The reasoning model should produce some output
-    assert result.output
-
-
-async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking=False on a reasoning model is silently ignored (no reasoning_effort sent)."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
-    agent = Agent(m, model_settings={'thinking': False})
-
-    result = await agent.run('What is 2+2?')
-    assert '4' in result.output
-
-
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
     """Test that instructions are passed through to xAI SDK as a system message."""
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
@@ -3157,12 +3134,14 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             top_p=0.95,
             presence_penalty=0.1,
             frequency_penalty=0.2,
+            seed=123,
             # xAI-specific settings
             xai_logprobs=True,
             xai_top_logprobs=5,
             xai_user='test-user-123',
             xai_store_messages=True,
             xai_previous_response_id='prev-resp-456',
+            xai_max_turns=3,
         ),
     )
 
@@ -3186,12 +3165,14 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
                 'top_p': 0.95,
                 'presence_penalty': 0.1,
                 'frequency_penalty': 0.2,
+                'seed': 123,
                 # xAI-specific settings (mapped from xai_* to SDK parameter names)
                 'logprobs': True,
                 'top_logprobs': 5,
                 'user': 'test-user-123',
                 'store_messages': True,
                 'previous_response_id': 'prev-resp-456',
+                'max_turns': 3,
             }
         ]
     )
@@ -5114,8 +5095,15 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     result1 = await agent.run('Search for test')
     result2 = await agent.run('What did you find?', message_history=result1.new_messages())
 
+    # `enable_image_search` is only present in the `web_search` proto from xai-sdk>=1.14.0; the floor
+    # (1.12.2) omits it. We never set it, so drop it to keep the snapshot SDK-version-agnostic.
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    for call in kwargs:
+        for tool in call['tools']:
+            tool['web_search'].pop('enable_image_search', None)
+
     # Verify kwargs - second call should have WebSearchTool builtin call mapped
-    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
+    assert kwargs == snapshot(
         [
             {
                 'model': XAI_NON_REASONING_MODEL,

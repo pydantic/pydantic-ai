@@ -10,16 +10,6 @@ commit is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI Regression Detector
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)). It is a `uv` workspace; the
-checkout has full git history (`fetch-depth: 0`).
-
 ## Objective
 
 Find one **behavioral regression** — something that worked in a recent
@@ -59,6 +49,21 @@ only "looks risky" in the diff is not a finding.
   `v2`-labeled work) — those are not regressions.
 - Speculation without an old-passes/new-fails reproduction.
 - Behavior already tracked by an open issue — **search issues first**.
+
+## Deduplication — mandatory BEFORE filing an issue
+
+Search for existing issues using the MCP
+GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+
+```
+mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[regression-detector]" OR "regression"
+```
+
+If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
+
+## Sandbox notes
+
+- Use the native `Grep` tool for codebase search.
 
 ## Quality Gate — When to Noop
 

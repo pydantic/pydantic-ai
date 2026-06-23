@@ -243,6 +243,9 @@ If desired, this marker class can be used alongside one or more [`ToolOutput`](#
 
 Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
+!!! note
+    When streaming, [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does **not** apply the `TextOutput` function. To stream the value it produces, use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] instead. See [Streaming Text](#streaming-text) for details.
+
 ```python {title="text_output_function.py"}
 from pydantic_ai import Agent, TextOutput
 
@@ -323,7 +326,7 @@ If you'd like to change the name of the output tool, pass a custom description t
 
 When using output tools, each tool gets its own retry counter — the output side of the agent retry budget (set with [`AgentRetries`][pydantic_ai.agent.AgentRetries] via `Agent(retries={'output': N})`, or per-run via `agent.run(retries={'output': N})`) is the *default per-tool limit*. To override the limit for an individual output tool, pass [`max_retries`][pydantic_ai.output.ToolOutput.max_retries] on `ToolOutput`: `ToolOutput(Fruit, max_retries=2)`. See [How output retries are enforced](agent.md#how-output-retries-are-enforced) for the relationship to the text-output path's global budget.
 
-To dynamically modify or filter the available output tools during an agent run, you can define an agent-wide `prepare_output_tools` function that will be called ahead of each step of a run. This function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step). This is analogous to the [`prepare_tools` function](tools-advanced.md#prepare-tools) for non-output tools.
+To dynamically modify or filter the available output tools during an agent run, you can define an agent-wide `prepare_output_tools` function that will be called ahead of each step of a run. This function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions, following the same return-value rules as the [`prepare_tools` function](tools-advanced.md#prepare-tools). This is analogous to `prepare_tools` for non-output tools.
 
 ```python {title="tool_output.py"}
 from pydantic import BaseModel
@@ -759,6 +762,8 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+The optional `debounce_by` argument of [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] controls how long Pydantic AI groups incoming chunks before yielding. The default `0.1` groups chunks for up to 0.1 seconds; pass `None` to yield as soon as each chunk arrives. Debouncing is especially helpful for long structured responses, where it reduces the overhead of validating each chunk as it arrives.
+
 We can also stream text as deltas rather than the entire text in each item:
 
 ```python {title="streamed_delta_hello_world.py"}
@@ -786,6 +791,9 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 !!! warning "Output message not included in `messages`"
     The final output message will **NOT** be added to result messages if you use `.stream_text(delta=True)`,
     see [Messages and chat history](message-history.md) for more information.
+
+!!! note "`stream_text()` skips `TextOutput` functions"
+    [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] does **not** apply [`TextOutput`](#text-output) functions. With `delta=False` it applies [output validators](#output-validator-functions) to each accumulated text snapshot, so a validator can transform what's yielded; with `delta=True` it yields the raw text deltas and skips validators. To stream the value produced by your `TextOutput` function, use [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] instead.
 
 ### Streaming Structured Output
 
@@ -1005,7 +1013,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
     Pydantic AI does not clean up incomplete tool calls in interrupted responses. Passing interrupted history directly into another run can therefore fail or lead to retries if the model was in the middle of emitting a tool call when cancellation happened. For now, applications that reuse interrupted history should inspect `state='interrupted'` responses and apply their own policy.
 
 !!! info "Usage tracking for cancelled streams"
-    Token usage reported by `usage()` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.
+    Token usage reported by `usage` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.
     For OpenAI chat completions, [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings] can improve in-stream usage reporting by requesting cumulative usage data with each chunk, but cancelled-stream usage is still best-effort.
 
 ## Examples

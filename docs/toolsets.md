@@ -366,9 +366,9 @@ _(This example is complete, it can be run "as is")_
 
 ### Dynamic Tool Definitions {#preparing-tool-definitions}
 
-[`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the  agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns a list of modified `ToolDefinition`s.
+[`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns the tool definitions to expose for that step.
 
-This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets.
+This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets, following the same return-value rules.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
@@ -938,7 +938,7 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 !!! warning "Deprecated in 1.x, removed in 2.0"
     `pydantic_ai.ext.aci` (`tool_from_aci` and `ACIToolset`) is deprecated and will be removed in 2.0 (see [#5467](https://github.com/pydantic/pydantic-ai/pull/5467)). Wrap ACI.dev tools yourself using [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema] against `aci.ACI().functions.get_definition(...)`, or call the upstream `aci-sdk` integration directly.
 
-If you'd like to use tools from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the [`ACIToolset`][pydantic_ai.ext.aci.ACIToolset] [toolset](toolsets.md) which takes a list of ACI tool names as well as the `linked_account_owner_id`. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
+If you'd like to use tools from the [ACI.dev tool library](https://github.com/aipotheosis-labs/aci) with Pydantic AI, you can use the [`ACIToolset`][pydantic_ai.ext.aci.ACIToolset] [toolset](toolsets.md) which takes a list of ACI tool names as well as the `linked_account_owner_id`. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
 
 You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
 

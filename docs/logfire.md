@@ -244,6 +244,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
 - [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
 - [Respan](https://respan.ai/docs/integrations/pydantic-ai)
+- [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
 
 ## Advanced usage
 

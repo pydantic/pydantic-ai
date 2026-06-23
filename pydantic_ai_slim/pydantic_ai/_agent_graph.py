@@ -5,7 +5,7 @@ import dataclasses
 import inspect
 from asyncio import Task
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -24,17 +24,21 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager, ValidatedToolCall
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_graph import BaseNode, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import End, NodeRunEndT
 from pydantic_graph.graph_builder import Graph
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._deferred_capabilities import parse_loaded_capabilities
+from ._instructions import normalize_toolset_instructions
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResult,
     DeferredToolResults,
     RunContext,
@@ -197,6 +201,16 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     validation_context: Any | Callable[[RunContext[DepsT]], Any]
 
     root_capability: AbstractCapability[DepsT]
+
+    capabilities: dict[str, AbstractCapability[DepsT]]
+
+    # Invariant: these two sets are shared by reference into every `RunContext` this run (their
+    # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
+    # place — never reassigned. The per-step refresh and the `load_capability` tool body rely on
+    # that shared identity. Reassigning either (here, or by passing it to a `replace(ctx, ...=...)`)
+    # would silently break in-step capability loads / tool reveals.
+    loaded_capability_ids: set[str]
+    discovered_tool_names: set[str]
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -451,18 +465,7 @@ async def _get_instructions(
         parts.extend(base)
 
     toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
-    if toolset_result:
-        # The top-level toolset is always a CombinedToolset which returns a list,
-        # but the return type also allows a single str or InstructionPart for custom subclasses.
-        items = [toolset_result] if isinstance(toolset_result, (str, _messages.InstructionPart)) else toolset_result
-        for item in items:
-            if isinstance(item, _messages.InstructionPart):
-                if item.content.strip():
-                    parts.append(item)
-            else:
-                # Plain str from toolsets: treat as dynamic (external/changeable source)
-                if item.strip():
-                    parts.append(_messages.InstructionPart(content=item, dynamic=True))
+    parts.extend(normalize_toolset_instructions(toolset_result))
 
     return parts or None
 
@@ -492,10 +495,12 @@ async def _prepare_request_parameters(
 
     run_context = build_run_context(ctx)
 
+    raw_native_tools: list[AgentNativeTool[DepsT]] = list(ctx.deps.native_tools)
+
     # resolve dynamic native tools
     native_tools: list[AbstractNativeTool] = []
-    if ctx.deps.native_tools:
-        for tool in ctx.deps.native_tools:
+    if raw_native_tools:
+        for tool in raw_native_tools:
             if isinstance(tool, AbstractNativeTool):
                 native_tools.append(tool)
             else:
@@ -602,7 +607,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def stream(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
-    ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
+    ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
         assert not self._did_stream, 'stream() should only be called once per node'
 
         try:
@@ -850,6 +855,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
+        _refresh_loaded_capability_ids(ctx)
+
+        _refresh_discovered_tool_names(ctx)
+
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,
@@ -1072,7 +1081,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     @asynccontextmanager
     async def stream(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[AsyncIterator[_messages.HandleResponseEvent]]:
+    ) -> AsyncGenerator[AsyncIterator[_messages.HandleResponseEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
         stream = self._run_stream(ctx)
         yield stream
@@ -1405,11 +1414,46 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         conversation_id=ctx.state.conversation_id,
         metadata=ctx.state.metadata,
         tool_manager=ctx.deps.tool_manager,
+        capabilities=ctx.deps.capabilities,
+        loaded_capability_ids=ctx.deps.loaded_capability_ids,
+        discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
+    # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the
+    # shared identity of `loaded_capability_ids`/`discovered_tool_names` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add either set here — forking the object would
+    # silently break in-step capability loads / tool reveals.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
+
+
+def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh the history-derived loaded capability ids from the current graph state."""
+    # The `load_capability` tool (and therefore any `LoadCapability*` history parts) only exists
+    # when a deferred capability is configured — the same condition that injects the loader. Without
+    # one, the set can never change during the run, so the seeded value stays in sync without rescanning.
+    # (`discovered_tool_names` has no equally-cheap guard: tool search is auto-injected and its trigger
+    # is "deferred tools exist", which isn't known without resolving toolsets, so its refresh stays
+    # unconditional.)
+    if not any(capability.defer_loading is True for capability in ctx.deps.capabilities.values()):
+        return
+
+    loaded_capability_ids = parse_loaded_capabilities(ctx.state.message_history)
+
+    # Mutate in place (not reassign): this set is shared by reference with the run's `RunContext`
+    # copies made via `replace(ctx, ...)`, so clear + update keeps them all in sync.
+    ctx.deps.loaded_capability_ids.clear()
+    ctx.deps.loaded_capability_ids.update(loaded_capability_ids)
+
+
+def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Refresh the history-derived discovered tool names from the current graph state."""
+    discovered_tool_names = parse_discovered_tools(ctx.state.message_history)
+
+    # Mutate in place (not reassign), for the same shared-by-reference reason as the set above.
+    ctx.deps.discovered_tool_names.clear()
+    ctx.deps.discovered_tool_names.update(discovered_tool_names)
 
 
 def build_validation_context(
@@ -1706,7 +1750,7 @@ async def process_tool_calls(  # noqa: C901
         if final_result:
             # If the run was already determined to end on deferred tool calls,
             # we shouldn't insert return parts as the deferred tools will still get a real result.
-            if not isinstance(final_result.output, _output.DeferredToolRequests):
+            if not isinstance(final_result.output, DeferredToolRequests):
                 for call in calls:
                     output_parts.append(
                         _messages.ToolReturnPart(
@@ -1740,7 +1784,7 @@ async def process_tool_calls(  # noqa: C901
                         yield _messages.FunctionToolResultEvent(e.tool_retry)
 
     if not final_result and deferred_calls:
-        deferred_tool_requests: _output.DeferredToolRequests | None = _output.DeferredToolRequests(
+        deferred_tool_requests: DeferredToolRequests | None = DeferredToolRequests(
             calls=deferred_calls['external'],
             approvals=deferred_calls['unapproved'],
             metadata=deferred_metadata,
@@ -1797,7 +1841,7 @@ async def process_tool_calls(  # noqa: C901
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
             if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
                 if deferred_tool_requests is None:
-                    deferred_tool_requests = _output.DeferredToolRequests()
+                    deferred_tool_requests = DeferredToolRequests()
                 deferred_tool_requests.calls.extend(new_deferred_calls['external'])
                 deferred_tool_requests.approvals.extend(new_deferred_calls['unapproved'])
                 deferred_tool_requests.metadata.update(new_deferred_metadata)
@@ -2018,7 +2062,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 
 
 @contextmanager
-def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
+def capture_run_messages() -> Generator[list[_messages.ModelMessage]]:
     """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
     Useful when a run may raise an exception, see [model errors](../agent.md#model-errors) for more information.

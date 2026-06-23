@@ -16,6 +16,60 @@ if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
 
+def get_first_post_body(cassette: Cassette) -> dict[str, Any]:
+    """Return the first POST request body in a VCR cassette, parsed as JSON.
+
+    Some VCR serializers (e.g. the project's custom JSON body serializer used for
+    huggingface cassettes) deserialize `request.body` to a dict ahead of time;
+    others leave it as raw bytes/str. Handle both shapes.
+    """
+    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        if request.method != 'POST':  # pyright: ignore[reportUnknownMemberType]
+            continue
+        body = request.body  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        if not body:
+            continue  # pragma: no cover
+        if isinstance(body, dict):
+            return body  # pyright: ignore[reportUnknownVariableType]
+        parsed: dict[str, Any] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
+        return parsed
+    return {}  # pragma: no cover
+
+
+def single_request_body(cassette: Cassette) -> dict[str, Any]:
+    """Decode the JSON body of the single recorded request in `cassette`.
+
+    Use this for cassette-backed tests that send exactly one request and want to
+    assert directly on the wire body (e.g. that a specific field survived
+    translation). Asserts the single-request invariant — tests with intentional
+    multi-request cassettes should access `cassette.requests` directly.
+    """
+    requests = cassette.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'  # pyright: ignore[reportUnknownArgumentType]
+    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+
+
+# Provider-specific cassette extractors — group new ones under this header so the module
+# doesn't grow into a flat bag of `get_<provider>_*` helpers.
+
+
+def get_bedrock_tool_config_from_cassette(cassette: Cassette) -> dict[str, Any]:
+    """Return the `toolConfig` from the first POST request body in a Bedrock VCR cassette."""
+    return get_first_post_body(cassette).get('toolConfig', {})
+
+
+def get_bedrock_tool_names_from_cassette(cassette: Cassette) -> list[str]:
+    """Extract Bedrock tool definition names from the first recorded POST request body."""
+    tools: list[dict[str, Any]] = get_bedrock_tool_config_from_cassette(cassette).get('tools', [])
+    return [tool['toolSpec']['name'] for tool in tools if 'toolSpec' in tool]
+
+
+def get_cohere_tool_names_from_cassette(cassette: Cassette) -> list[str]:
+    """Extract Cohere tool definition names from the first recorded POST request body."""
+    tools: list[dict[str, Any]] = get_first_post_body(cassette).get('tools', [])
+    return [tool['function']['name'] for tool in tools if 'function' in tool]
+
+
 def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
     """Get all request bodies from a VCR cassette as strings."""
     bodies: list[str] = []

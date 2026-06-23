@@ -11,9 +11,12 @@ import logging
 import os
 import pathlib
 
-MAX_TOOL_OUTPUT = 16000
+MAX_TOOL_OUTPUT = 50_000
 """Cap on any native tool's stringified result. Larger outputs are clipped with
-a `…[truncated N chars]` suffix so the model knows it didn't see everything."""
+a `…[truncated N chars]` suffix so the model knows it didn't see everything.
+
+50 000 chars (~500 lines of typical Python) lets most files be read in one shot
+without requiring the model to loop over small offset/limit chunks."""
 
 CONTEXT_FILE_NAMES = ('AGENTS.md', 'CLAUDE.md')
 MAX_CONTEXT_FILE_CHARS = 8000
