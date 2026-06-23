@@ -1,0 +1,27 @@
+# Configuration for the scheduled docs link check (see link-check.yml).
+# Tuned to avoid false positives from sites that block bots or rate-limit, so the
+# issue it opens only lists genuinely broken links.
+
+# Some sites return 403/429 to non-browser clients even though the link is fine.
+accept = ["200..=299", "403", "429"]
+
+# Browser-like UA reduces bot-blocking 403s.
+user_agent = "Mozilla/5.0 (compatible; lychee link checker)"
+
+max_redirects = 10
+max_retries = 3
+retry_wait_time = 2
+timeout = 30
+
+# Don't check localhost example URLs or form-submission endpoints.
+exclude_all_private = true
+exclude_loopback = true
+
+# Hosts that flake or hard-block automated checks; not worth failing the run over.
+exclude = [
+  "platform\\.openai\\.com",
+  "openai\\.com",
+  "console\\.mistral\\.ai",
+  "spec\\.modelcontextprotocol\\.io",
+  "customerioforms\\.com",
+]
