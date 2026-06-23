@@ -663,6 +663,42 @@ async def test_map_text_content_input(allow_model_requests: None, groq_api_key: 
     )
 
 
+async def test_image_url_detail_vendor_metadata(allow_model_requests: None):
+    part = UserPromptPart(
+        content=[
+            BinaryContent(
+                data=b'fake',
+                media_type='image/png',
+                vendor_metadata={'detail': 'high'}
+            ),
+            ImageUrl(
+                url='http://example.com/redacted',
+                vendor_metadata={'detail': 'low'}
+            )
+        ]
+    )
+    mock_client = MockGroq.create_mock(completion_message(ChatCompletionMessage(content='world', role='assistant')))
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    
+    out: list[Any] = []
+    async for item in m._map_user_message(ModelRequest(parts=[part])):  # pyright: ignore[reportPrivateUsage]
+        out.append(item)
+        
+    assert len(out) == 1
+    user_msg = out[0]
+    assert user_msg['role'] == 'user'
+    
+    content = user_msg['content']
+    assert isinstance(content, list)
+    assert len(content) == 2
+    
+    assert content[0]['type'] == 'image_url'
+    assert content[0]['image_url'].get('detail') == 'high'
+    
+    assert content[1]['type'] == 'image_url'
+    assert content[1]['image_url'].get('detail') == 'low'
+
+
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)

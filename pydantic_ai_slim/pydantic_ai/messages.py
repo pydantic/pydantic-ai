@@ -212,6 +212,7 @@ class FileUrl(ABC):
 
     Supported by:
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    - `GroqModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
@@ -525,6 +526,7 @@ class BinaryContent:
 
     Supported by:
     - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    - `GroqModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
