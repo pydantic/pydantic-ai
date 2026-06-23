@@ -19,6 +19,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.profiles import ModelProfile
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr
@@ -161,6 +162,56 @@ def test_handle_text_deltas_with_think_tags():
             TextPart(content='post-thinking', part_kind='text'),
         ]
     )
+
+
+def test_handle_text_deltas_with_think_tags_split_across_chunks():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ModelProfile().thinking_tags
+    start_tag, end_tag = thinking_tags
+
+    list(manager.handle_text_delta(vendor_part_id='content', content=start_tag[:1], thinking_tags=thinking_tags))
+    list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=start_tag[1:] + '\nthinking content',
+            thinking_tags=thinking_tags,
+        )
+    )
+    list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=end_tag + '\nNormal content.',
+            thinking_tags=thinking_tags,
+        )
+    )
+
+    parts = manager.get_parts()
+    assert len(parts) == 2
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content.strip() == 'thinking content'
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content.strip() == 'Normal content.'
+
+
+def test_handle_text_deltas_with_think_tags_single_chunk_with_trailing_text():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    thinking_tags = ModelProfile().thinking_tags
+    start_tag, end_tag = thinking_tags
+
+    list(
+        manager.handle_text_delta(
+            vendor_part_id='content',
+            content=f'{start_tag}\nthinking content{end_tag}\nNormal content.',
+            thinking_tags=thinking_tags,
+        )
+    )
+
+    parts = manager.get_parts()
+    assert len(parts) == 2
+    assert isinstance(parts[0], ThinkingPart)
+    assert parts[0].content.strip() == 'thinking content'
+    assert isinstance(parts[1], TextPart)
+    assert parts[1].content.strip() == 'Normal content.'
 
 
 def test_handle_tool_call_deltas():
