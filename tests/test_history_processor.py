@@ -18,7 +18,7 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
@@ -1669,6 +1669,51 @@ async def test_history_processor_rebuild_resuming_without_prompt(
         ]
     )
 
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+async def test_reinject_system_prompt_resuming_without_prompt_excludes_resumed_request(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    When resuming from UI-provided message history without a new user prompt,
+    system prompt reinjection may rebuild the resumed `ModelRequest`. It should
+    still be treated as prior history and excluded from new_messages().
+    """
+
+    agent = Agent(
+        function_model,
+        system_prompt='Server prompt',
+        capabilities=[ReinjectSystemPrompt(replace_existing=True)],
+    )
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='Server prompt',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Original prompt',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        ]
+    )
+    assert captured_messages == result.all_messages()
     assert result.new_messages() == result.all_messages()[-1:]
 
 

@@ -1698,11 +1698,22 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
     # Intentionally excludes run_id: the resumed request may not have
     # run_id set yet when this comparison is performed.
     return (
-        message.parts == request.parts
+        _same_request_parts_ignoring_system_prompts(message.parts, request.parts)
         and message.timestamp == request.timestamp
         and message.instructions == request.instructions
         and message.metadata == request.metadata
     )
+
+
+def _same_request_parts_ignoring_system_prompts(
+    left: list[_messages.ModelRequestPart], right: list[_messages.ModelRequestPart]
+) -> bool:
+    """Compare request parts while allowing capabilities to rewrite system prompts."""
+    if left == right:
+        return True
+    left_without_system = [part for part in left if not isinstance(part, _messages.SystemPromptPart)]
+    right_without_system = [part for part in right if not isinstance(part, _messages.SystemPromptPart)]
+    return left_without_system == right_without_system
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
