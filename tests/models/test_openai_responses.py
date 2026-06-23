@@ -66,6 +66,7 @@ with try_import() as imports_successful:
     from openai import AsyncOpenAI
     from openai.types import responses as resp
     from openai.types.responses import ResponseFunctionWebSearch
+    from openai.types.responses.response import IncompleteDetails
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import ResponseOutputText
@@ -11506,6 +11507,51 @@ async def test_openai_responses_refusal_non_streaming(allow_model_requests: None
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
     assert response_msg['provider_details']['refusal'] == "I can't help with that request."
+
+
+async def test_openai_responses_content_filter_plain_text_non_streaming(allow_model_requests: None):
+    """A content-policy block reported as plain text + incomplete_details.reason='content_filter'
+    (no structured ResponseOutputRefusal) should still trigger ContentFilterError (#5221)."""
+    c = resp.Response(
+        id='resp_cf',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[
+            ResponseOutputMessage(
+                id='msg_cf',
+                content=cast(
+                    list[Content],
+                    [ResponseOutputText(text='Filtered partial answer.', type='output_text', annotations=[])],
+                ),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+        status='incomplete',
+        incomplete_details=IncompleteDetails(reason='content_filter'),
+    )
+
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        ContentFilterError,
+        match=re.escape("Content filter triggered. Refusal: 'Filtered partial answer.'"),
+    ) as exc_info:
+        await agent.run('harmful prompt')
+
+    assert exc_info.value.body is not None
+    body_json = json.loads(exc_info.value.body)
+    response_msg = body_json[0]
+    assert response_msg['parts'] == []
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details']['refusal'] == 'Filtered partial answer.'
 
 
 async def test_openai_responses_refusal_streaming(allow_model_requests: None):
