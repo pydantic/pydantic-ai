@@ -3141,6 +3141,7 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             xai_user='test-user-123',
             xai_store_messages=True,
             xai_previous_response_id='prev-resp-456',
+            xai_max_turns=3,
         ),
     )
 
@@ -3171,6 +3172,7 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
                 'user': 'test-user-123',
                 'store_messages': True,
                 'previous_response_id': 'prev-resp-456',
+                'max_turns': 3,
             }
         ]
     )
