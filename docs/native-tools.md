@@ -177,14 +177,14 @@ _(This example is complete, it can be run "as is")_
     `web_search_20250305` otherwise.
     The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
     a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
-    See the [Anthropic web search docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search-tool)
-    and [tool reference](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-reference)
+    See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
+    and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
     Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209`.
     For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
-    [server tools docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
+    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## X Search Tool
 
@@ -599,14 +599,14 @@ _(This example is complete, it can be run "as is")_
     Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
     `AsyncAnthropicVertex`.
     See the
-    [Anthropic web fetch docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool)
-    and [tool reference](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/tool-reference)
+    [Anthropic web fetch docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)
+    and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
     for current model support and platform availability.
 
     Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
     Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209`.
     For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
-    [server tools docs](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
+    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## Memory Tool
 
