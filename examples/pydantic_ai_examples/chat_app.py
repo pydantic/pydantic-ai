@@ -161,7 +161,7 @@ class Database:
         cls, file: Path = THIS_DIR / '.chat_app_messages.sqlite'
     ) -> AsyncGenerator[Database]:
         with logfire.span('connect to DB'):
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             executor = ThreadPoolExecutor(max_workers=1)
             con = await loop.run_in_executor(executor, cls._connect, file)
             slf = cls(con, loop, executor)
