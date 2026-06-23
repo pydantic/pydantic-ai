@@ -5,6 +5,7 @@ import re
 from collections.abc import AsyncIterator
 from datetime import timezone
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
@@ -954,3 +955,113 @@ def test_usage_limits_preserves_explicit_zero():
     # When only current arg is set, should use it
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100
+
+
+# ── per_request_input_tokens_limit ──────────────────────────────────────
+
+
+def test_per_request_input_tokens_limit_post_response() -> None:
+    """When count_tokens_before_request=False (default), the limit is checked
+    against the provider-reported input_tokens after the response."""
+    test_agent = Agent(TestModel())
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 5 (request_input_tokens=51)'),
+    ):
+        test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=5))
+
+
+def test_per_request_input_tokens_limit_not_exceeded() -> None:
+    """When per-request input tokens are below the limit, no error is raised."""
+    test_agent = Agent(TestModel())
+
+    result = test_agent.run_sync('Hello', usage_limits=UsageLimits(per_request_input_tokens_limit=100))
+    assert result.output == 'success (no tool calls)'
+
+
+def test_per_request_input_tokens_limit_multiple_requests() -> None:
+    """The limit is per-request, not cumulative.
+
+    Each request's input tokens are checked independently, so a run with
+    many small requests (each under the per-request limit) succeeds even
+    though the cumulative total would exceed the per-request limit.
+    """
+
+    call_count = 0
+
+    async def tool_a(ctx: RunContext[None]) -> str:
+        nonlocal call_count
+        call_count += 1
+        return 'done'
+
+    async def tool_b(ctx: RunContext[None]) -> str:
+        nonlocal call_count
+        call_count += 1
+        return 'done'
+
+    agent = Agent(
+        TestModel(call_tools=['tool_a', 'tool_b']),
+        tools=[tool_a, tool_b],
+    )
+
+    result = agent.run_sync(
+        'run tools',
+        usage_limits=UsageLimits(per_request_input_tokens_limit=100),
+    )
+    assert call_count == 2
+    # Each request had modest input tokens, under the 100 limit.
+    # The cumulative total does not trigger the per-request limit.
+    assert result.output is not None
+
+
+def test_check_per_request_input_tokens_unit() -> None:
+    """Unit test for the check_per_request_input_tokens method."""
+    limits = UsageLimits(per_request_input_tokens_limit=10)
+
+    # Under limit — no error
+    limits.check_per_request_input_tokens(5)
+    limits.check_per_request_input_tokens(10)
+
+    # Over limit — raises
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape('Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens=11)'),
+    ):
+        limits.check_per_request_input_tokens(11)
+
+    # None limit — never raises
+    unlimited = UsageLimits(per_request_input_tokens_limit=None)
+    unlimited.check_per_request_input_tokens(1_000_000)
+
+
+def test_per_request_input_tokens_limit_with_count_before() -> None:
+    """When count_tokens_before_request=True and the counted tokens exceed the
+    per-request limit, the error is raised before the model call."""
+
+    counted = 200
+
+    # TestModel doesn't implement count_tokens, so we patch it on the instance.
+    async def fake_count_tokens(
+        messages: list[ModelMessage],
+        model_settings: Any,
+        model_request_parameters: Any,
+    ) -> RequestUsage:
+        return RequestUsage(input_tokens=counted)
+
+    model = TestModel()
+    model.count_tokens = fake_count_tokens
+
+    agent = Agent(model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=re.escape(f'Exceeded the per_request_input_tokens_limit of 10 (request_input_tokens={counted})'),
+    ):
+        agent.run_sync(
+            'Hello',
+            usage_limits=UsageLimits(
+                per_request_input_tokens_limit=10,
+                count_tokens_before_request=True,
+            ),
+        )
