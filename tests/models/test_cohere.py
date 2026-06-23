@@ -203,28 +203,6 @@ async def test_request_simple_usage(allow_model_requests: None):
     )
 
 
-async def test_request_usage_with_cached_tokens(allow_model_requests: None):
-    c = completion_message(
-        AssistantMessageResponse(
-            content=[TextAssistantMessageResponseContentItem(text='world')],
-            role='assistant',
-        ),
-        usage=cohere.Usage(
-            tokens=cohere.UsageTokens(input_tokens=10, output_tokens=2),
-            billed_units=cohere.UsageBilledUnits(input_tokens=10, output_tokens=2),
-            cached_tokens=7,
-        ),
-    )
-    mock_client = MockAsyncClientV2.create_mock(c)
-    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
-    agent = Agent(m)
-
-    result = await agent.run('Hello')
-    # The Cohere v2 API reports prompt-cache hits via usage.cached_tokens; it must
-    # be surfaced as cache_read_tokens (previously silently dropped by _map_usage).
-    assert result.usage.cache_read_tokens == 7
-
-
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         AssistantMessageResponse(
@@ -528,6 +506,14 @@ async def test_request_simple_success_with_vcr(allow_model_requests: None, co_ap
     agent = Agent(m)
     result = await agent.run('hello')
     assert result.output == snapshot('Hello! How can I assist you today?')
+
+
+@pytest.mark.vcr()
+async def test_request_usage_with_cached_tokens(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant. ' * 400)
+    result = await agent.run('Say hi in one word.')
+    assert result.usage.cache_read_tokens == snapshot(2928)
 
 
 @pytest.mark.vcr()
