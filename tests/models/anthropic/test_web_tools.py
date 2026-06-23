@@ -17,7 +17,7 @@ from pydantic_ai import Agent, NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import AbstractNativeTool, WebFetchTool, WebSearchTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, WebFetchTool, WebSearchTool
 
 from ..._inline_snapshot import snapshot
 from ...cassette_utils import single_request_body
@@ -163,7 +163,7 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
     params = ModelRequestParameters(native_tools=case.native_tools)
 
     if case.rejected_tool is not None:
-        assert case.rejected_tool not in m.profile.supported_native_tools
+        assert case.rejected_tool not in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         with pytest.raises(
             UserError, match=rf"Native tool\(s\) \['{case.rejected_tool.__name__}'\] not supported by this model"
         ):
@@ -175,8 +175,8 @@ def test_anthropic_web_tools_client_support(case: ClientSupportCase):
     assert sorted(beta_features) == case.expected_betas
 
 
-def test_anthropic_init_with_explicit_profile_instance_narrows_web_tools():
-    """A non-callable `profile` instance is still narrowed by the client at construction."""
+def test_anthropic_explicit_profile_instance_narrows_web_tools():
+    """A non-callable `profile` instance is still narrowed by the client when resolved."""
     provider = AnthropicProvider(
         anthropic_client=_mock_anthropic_client(
             AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
@@ -184,19 +184,7 @@ def test_anthropic_init_with_explicit_profile_instance_narrows_web_tools():
     )
     profile = provider.model_profile('claude-sonnet-4-6')
     m = AnthropicModel('claude-sonnet-4-6', provider=provider, profile=profile)
-    assert WebSearchTool not in m.profile.supported_native_tools
-
-
-def test_anthropic_init_with_profile_resolving_to_none():
-    """A `profile` spec that resolves to `None` skips client narrowing without error."""
-    m = AnthropicModel(
-        'claude-sonnet-4-6',
-        provider=AnthropicProvider(
-            anthropic_client=_mock_anthropic_client(AsyncAnthropic, 'https://api.anthropic.com')
-        ),
-        profile=lambda _: None,
-    )
-    assert m._profile is None  # pyright: ignore[reportPrivateUsage]
+    assert WebSearchTool not in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
 async def test_anthropic_web_fetch_20260209_caller_pass_history_back(env: TestEnv, allow_model_requests: None):

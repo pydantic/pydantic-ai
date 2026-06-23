@@ -14,3 +14,4 @@ These integrations are co-maintained by the Pydantic and vendor teams and only u
 Additional external SDK integrations:
 
 - [Kitaru](./kitaru.md)
+- [Apache Airflow](./airflow.md)
