@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-from dataclasses import replace
 from typing import overload
 
 import httpx
@@ -9,6 +8,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
 
@@ -38,7 +38,7 @@ class MistralProvider(Provider[Mistral]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile:
-        return replace(mistral_model_profile(model_name) or ModelProfile(), supports_inline_system_prompts=True)
+        return merge_profile(mistral_model_profile(model_name), ModelProfile(supports_inline_system_prompts=True))
 
     @overload
     def __init__(self, *, mistral_client: Mistral | None = None) -> None: ...

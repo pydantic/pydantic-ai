@@ -509,6 +509,16 @@ async def test_request_simple_success_with_vcr(allow_model_requests: None, co_ap
 
 
 @pytest.mark.vcr()
+async def test_request_usage_with_cached_tokens(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    # Long instructions so the prompt crosses Cohere's prompt-cache threshold and the API reports a hit.
+    long_instructions = 'You are a helpful assistant. ' * 400
+    agent = Agent(m, instructions=long_instructions)
+    result = await agent.run('Say hi in one word.')
+    assert result.usage.cache_read_tokens == snapshot(2928)
+
+
+@pytest.mark.vcr()
 async def test_cohere_model_instructions(allow_model_requests: None, co_api_key: str):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
 

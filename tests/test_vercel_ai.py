@@ -127,12 +127,6 @@ pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -2826,7 +2820,7 @@ async def test_tool_approval_request_emission():
             )
         }
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -2921,7 +2915,7 @@ async def test_sdk_version_5_does_not_emit_approval_chunks():
             )
         }
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -3316,7 +3310,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
     ) -> AsyncIterator[DeltaToolCalls | str]:
         yield 'File deleted successfully.'
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -3513,7 +3507,7 @@ async def test_dispatch_request_with_tool_approval():
             )
         }
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -8156,7 +8150,7 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
     agent = Agent(model=TestModel())
 
     @agent.system_prompt
-    def dynamic_prompt(ctx: RunContext[None]) -> str:
+    def dynamic_prompt(ctx: RunContext) -> str:
         return 'Dynamic system prompt from Vercel'
 
     request = SubmitMessage(

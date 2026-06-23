@@ -88,10 +88,10 @@ from . import (
 from .shared import logger, reset_context_state
 
 # Type aliases for the public surface — the shim runs `None`-deps agents
-# throughout, so every `RunContext` is concretely `RunContext[None]`.
+# throughout, so every `RunContext` is concretely `RunContext[object]`.
 MessagePart: TypeAlias = ModelRequestPart | ModelResponsePart
-ToolPredicate: TypeAlias = Callable[[RunContext[None], ToolDefinition], bool | Awaitable[bool]]
-TaskCallable: TypeAlias = Callable[[RunContext[None], str, str], Awaitable[str]]
+ToolPredicate: TypeAlias = Callable[[RunContext[object], ToolDefinition], bool | Awaitable[bool]]
+TaskCallable: TypeAlias = Callable[[RunContext[object], str, str], Awaitable[str]]
 
 # Placeholder bearer token sent to the AWF api-proxy. The proxy strips this
 # header and injects the real `ANTHROPIC_API_KEY` on the outbound wire — so
@@ -330,7 +330,7 @@ def _is_synthetic_summary(message: ModelMessage) -> bool:
     )
 
 
-async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]) -> list[ModelMessage]:
     """Cheap trim first; LLM-summarise the middle as fallback if still over budget."""
     if len(messages) <= COMPACTION_KEEP_RECENT:
         return messages
@@ -562,13 +562,13 @@ def _mcp_tool_allowed(server: str, allowed: frozenset[str]) -> ToolPredicate:
     """Allow-list predicate matching gh-aw's `mcp__<server>__<tool>` form (or `mcp__<server>` wildcard)."""
     server_wildcard = f'mcp__{server}' in allowed
 
-    def predicate(_ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         return server_wildcard or tool_def.name in allowed
 
     return predicate
 
 
-def _apply_claude_mcp_prefix(entry: AbstractToolset[None]) -> AbstractToolset[None]:
+def _apply_claude_mcp_prefix(entry: AbstractToolset[object]) -> AbstractToolset[object]:
     """Swap the default `<server>_<tool>` prefix for Claude Code's `mcp__<server>__<tool>` wire form.
 
     The trailing `_` combines with `PrefixedToolset`'s `_` separator to
@@ -579,7 +579,7 @@ def _apply_claude_mcp_prefix(entry: AbstractToolset[None]) -> AbstractToolset[No
     return dataclasses.replace(entry, prefix=f'mcp__{entry.prefix}_')
 
 
-def build_mcp_servers(args: Args) -> list[AbstractToolset[None]]:
+def build_mcp_servers(args: Args) -> list[AbstractToolset[object]]:
     """Load gh-aw's MCP config, re-prefix to Claude Code wire format, and apply the allow-list filter."""
     path = args.mcp_config or os.environ.get('GH_AW_MCP_CONFIG')
     if not path or not os.path.isfile(path):
@@ -594,10 +594,10 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[None]]:
         logger.warning('MCP config %r is malformed: %r — running without external tools', path, exc)
         return []
 
-    servers: list[AbstractToolset[None]] = []
+    servers: list[AbstractToolset[object]] = []
     for entry in loaded:
         name = (entry.wrapped.id if isinstance(entry, PrefixedToolset) else entry.id) or '<unnamed>'
-        toolset = _apply_claude_mcp_prefix(cast('AbstractToolset[None]', entry))
+        toolset = _apply_claude_mcp_prefix(cast('AbstractToolset[object]', entry))
         if args.allowed_tools is not None:
             toolset = toolset.filtered(_mcp_tool_allowed(name, args.allowed_tools))
             logger.info('registered MCP server %r (allow-list filtered)', name)
@@ -611,7 +611,7 @@ def _claude_code_tool_predicate(allowed: frozenset[str] | None, permission_mode:
     """Allow-list + `plan`-mode filter for the Claude Code toolset."""
     plan = permission_mode == 'plan'
 
-    def predicate(_ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         name = tool_def.name
         if allowed is not None and name not in allowed:
             return False
@@ -627,7 +627,7 @@ def select_claude_code_toolset(
     permission_mode: str | None,
     *,
     task: TaskCallable | None,
-) -> AbstractToolset[None]:
+) -> AbstractToolset[object]:
     """Build the Claude Code toolset; `task=None` for sub-agents so they can't recurse."""
     return build_claude_code_toolset(task=task).filtered(_claude_code_tool_predicate(allowed, permission_mode))
 
@@ -685,7 +685,7 @@ def emit_result(
 MAX_LIVE_TOOL_RESULT_CHARS = 100
 
 
-async def _stream_events(_ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+async def _stream_events(_ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
     """Emit tool_use / tool_result stream-json as events fire."""
     async for event in events:
         if isinstance(event, ToolCallEvent):
@@ -757,7 +757,7 @@ def log_safe_outputs_state() -> None:
         logger.info('  safe-output: %s', ln[:300])
 
 
-async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
+async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     """Claude's `Task` tool: spawn a read-only sub-agent on `ctx.model`."""
     logger.info('Task spawn: %s', description[:120])
     # Fresh dedupe set per sub-agent — otherwise inheriting the parent's
@@ -793,8 +793,8 @@ async def _run_with_timeout(
     prompt: str,
     model: Model,
     label: str,
-    claude_code_toolset: AbstractToolset[None],
-    mcp_servers: list[AbstractToolset[None]],
+    claude_code_toolset: AbstractToolset[object],
+    mcp_servers: list[AbstractToolset[object]],
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
@@ -818,13 +818,13 @@ async def run(
     prompt: str,
     model: Model,
     label: str,
-    claude_code_toolset: AbstractToolset[None],
-    mcp_servers: list[AbstractToolset[None]],
+    claude_code_toolset: AbstractToolset[object],
+    mcp_servers: list[AbstractToolset[object]],
     session_id: str,
 ) -> int:
     """Run one agent turn and emit Claude-shape stream-json. Always emits a `result` line."""
     reset_context_state()
-    agent: Agent[None, str] = Agent(
+    agent: Agent[object, str] = Agent(
         model,
         instructions=[INSTRUCTIONS, prompt],
         toolsets=[claude_code_toolset, *mcp_servers],
