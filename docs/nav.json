@@ -302,6 +302,10 @@
           {
             "label": "Kitaru",
             "slug": "durable_execution/kitaru"
+          },
+          {
+            "label": "Apache Airflow",
+            "slug": "durable_execution/airflow"
           }
         ]
       },
