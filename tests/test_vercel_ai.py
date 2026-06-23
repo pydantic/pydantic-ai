@@ -1882,7 +1882,7 @@ async def test_run_stream_load_capability_tool_kind_metadata(sdk_version: Litera
     agent = Agent(
         model=FunctionModel(stream_function=stream_function),
         capabilities=[
-            Capability[None](
+            Capability[object](
                 id='refunds',
                 description='Refund tools.',
                 instructions='Refund instructions.',

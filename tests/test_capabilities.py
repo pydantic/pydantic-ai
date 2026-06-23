@@ -2831,7 +2831,7 @@ async def test_load_capability_invalid_dict_args_recovers_via_retry() -> None:
     agent = Agent(
         FunctionModel(model_fn),
         capabilities=[
-            Capability[None](
+            Capability[object](
                 id='refunds',
                 description='Refund tools.',
                 instructions='Refund instructions.',
