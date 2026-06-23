@@ -885,6 +885,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def __repr__(self) -> str:
         return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r})'
 
+    def display_banner(self) -> None:
+        """Display a banner with logo, agent info, and next steps.
+
+        Prints to stderr once per agent instance. Subsequent calls are no-ops.
+        Called automatically on the first `run()` / `run_sync()` / `iter()` call.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-5.2', name='my_agent')
+        agent.display_banner()
+        ```
+        """
+        from .._display import display_agent_banner
+
+        display_agent_banner(self)
+
     @overload
     def iter(
         self,
@@ -1048,6 +1066,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
+
+        # Display agent banner on first run (once per agent instance, process-wide)
+        from .._display import display_agent_banner
+
+        display_agent_banner(self)
 
         # Tool retries cannot be overridden per run: `int` is treated as the output budget. An explicit
         # `retries={'tools': ...}` is rejected so the value isn't silently dropped.
