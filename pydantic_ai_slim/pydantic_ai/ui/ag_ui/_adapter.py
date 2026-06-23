@@ -707,7 +707,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
         - `RetryPromptPart` becomes `ToolReturnPart` with `outcome='failed'` (or `UserPromptPart`
-          when it has no `tool_name`) on reload, since the protocol has no separate retry concept.
+          when it has no `tool_name`) on reload, since the protocol has no separate retry concept;
+          the reloaded result is therefore presented to the model as a definitive failure rather
+          than a request to correct and retry.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.
         - `FilePart` is silently dropped unless `preserve_file_data=True`.

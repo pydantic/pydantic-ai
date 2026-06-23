@@ -802,7 +802,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         (`ToolOutputAvailablePart` / `ToolOutputErrorPart` / `ToolOutputDeniedPart`), but a
         `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='failed'` on reload (or a user
         text part when it has no `tool_name`), since the protocol has no separate retry concept —
-        both a retry prompt and a `ToolFailed` result map to `ToolOutputErrorPart`.
+        both a retry prompt and a `ToolFailed` result map to `ToolOutputErrorPart`. A reloaded retry
+        is therefore presented to the model as a definitive failure rather than a request to correct
+        and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
+        format if you need retry semantics to survive a round-trip.
 
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the

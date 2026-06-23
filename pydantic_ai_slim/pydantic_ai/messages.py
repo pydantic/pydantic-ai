@@ -1152,12 +1152,14 @@ class BaseToolReturnPart:
 
     - `'success'`: The tool executed successfully.
     - `'failed'`: The tool raised an error during execution.
-    - `'denied'`: The tool call was denied by the approval mechanism.
+    - `'denied'`: The tool call was denied, either by the approval mechanism or by a capability
+      returning `ToolDenied` for a deferred call.
 
     Only `'failed'` is mapped to a provider's native error channel (e.g. Anthropic `is_error`,
-    Bedrock `status='error'`). A denial is a deliberate policy block rather than a runtime error,
-    so it's sent as an ordinary result to avoid nudging the model to re-attempt a call that stays
-    blocked until the user approves it.
+    Bedrock `status='error'`). A denial is a deliberate policy decision rather than a runtime error,
+    so it's sent as an ordinary result: for a call awaiting approval this avoids nudging the model to
+    re-attempt one that stays blocked until the user approves it, while a one-off `ToolDenied` is
+    simply reported back for the model to react to.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
