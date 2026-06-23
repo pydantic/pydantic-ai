@@ -760,6 +760,32 @@ class TestCodeMode:
         assert 'async def later' in description
         assert 'later' not in tools
 
+    async def test_framework_tool_kind_tool_not_sandboxed(self) -> None:
+        """Framework control tools with `tool_kind` stay native even when CodeMode wraps all user tools."""
+        td_loader = ToolDefinition(
+            name='load_capability',
+            description='Load a deferred capability.',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'capability_id': {'type': 'string'}},
+                'required': ['capability_id'],
+            },
+            return_schema={'type': 'string'},
+            tool_kind='capability-load',
+        )
+        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_loader])
+        wrapper = CodeMode[None]().get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def get_user' in description
+        assert 'load_capability' not in description
+        assert 'load_capability' in tools
+        assert tools['load_capability'].tool_def.tool_kind == 'capability-load'
+
     async def test_unless_native_tool_not_sandboxed(self) -> None:
         """Tools annotated with `unless_native` stay native so `Model.prepare_request` can filter them."""
         td_fallback = ToolDefinition(
@@ -960,6 +986,54 @@ class TestCodeMode:
 
         # The agent's final output reflects the value flowing through the sandbox.
         assert result.output == 'sum is 10'
+
+    async def test_deferred_capability_loader_stays_native_with_tools_all(self) -> None:
+        """Regression for the deferred-capability bootstrap (issue #276).
+
+        With `CodeMode(tools='all')` and a deferred capability configured, the
+        framework-managed `load_capability` tool must reach the model as a native call
+        (alongside `run_code`) so the model can reveal the capability. The deferred
+        member tool stays hidden -- it is neither folded into `run_code` nor surfaced as
+        a plain tool until loaded.
+
+        (The native-vs-sandbox split per tool kind is covered directly at the toolset
+        level by `test_framework_tool_kind_tool_not_sandboxed` and
+        `test_tool_search_toolset_deferred_tool_not_in_run_code`; this exercises the
+        end-to-end path through `Agent`.)
+        """
+        from pydantic_ai.capabilities import Capability
+
+        capability = Capability[None](
+            id='demo',
+            description='Demo deferred capability.',
+            instructions='Use demo_tool.',
+            defer_loading=True,
+        )
+
+        @capability.tool_plain
+        def demo_tool() -> str:  # pyright: ignore[reportUnusedFunction]
+            return 'ok'  # pragma: no cover - deferred tool stays hidden, body is not invoked
+
+        model = TestModel(call_tools=[])
+        agent: Agent[None, str] = Agent(
+            model,
+            capabilities=[capability, CodeMode[None](tools='all')],
+        )
+        await agent.run('inspect tools')
+
+        assert model.last_model_request_parameters is not None
+        by_name = {td.name: td for td in model.last_model_request_parameters.function_tools}
+
+        # The bootstrap tool is a native call alongside `run_code`, not buried in the sandbox.
+        assert 'load_capability' in by_name
+        assert 'run_code' in by_name
+
+        # The deferred member tool stays hidden until loaded: not folded into `run_code`
+        # and not surfaced as a plain native tool.
+        assert 'demo_tool' not in by_name
+        run_code_desc = by_name['run_code'].description or ''
+        assert 'demo_tool' not in run_code_desc
+        assert 'load_capability' not in run_code_desc
 
     # ---------------------------------------------------------------------------
     # Capability registration
@@ -2064,7 +2138,7 @@ class TestDynamicCatalog:
         await cap.after_tool_execute(
             ctx,
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
-            tool_def=_search_tool_def_with_kind(),
+            tool_def=_search_tool_def(),
             args={},
             result={'discovered_tools': [{'name': 'weather', 'description': '...'}]},
         )
@@ -2086,7 +2160,7 @@ class TestDynamicCatalog:
         await cap.after_tool_execute(
             ctx,
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
-            tool_def=_search_tool_def_with_kind(),
+            tool_def=_search_tool_def(),
             args={},
             result={'discovered_tools': [{'name': 'weather'}]},
         )
@@ -2100,7 +2174,7 @@ class TestDynamicCatalog:
         await cap.after_tool_execute(
             ctx,
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
-            tool_def=_search_tool_def_with_kind(),
+            tool_def=_search_tool_def(),
             args={},
             result={'discovered_tools': []},
         )
@@ -2133,7 +2207,7 @@ class TestDynamicCatalog:
             await cap.after_tool_execute(
                 ctx,
                 call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id=cid),
-                tool_def=_search_tool_def_with_kind(),
+                tool_def=_search_tool_def(),
                 args={},
                 result=result,
             )
@@ -2332,11 +2406,6 @@ class TestDynamicCatalog:
         assert result.output == 'got 7'
 
 
-def _search_tool_def_with_kind(name: str = 'search_tools') -> ToolDefinition:
-    """A `search_tools` ToolDefinition carrying `tool_kind='tool-search'` (the announcement trigger)."""
-    return ToolDefinition(name=name, description='', parameters_json_schema={}, tool_kind='tool-search')
-
-
 def _unused_os_callback(fn: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
     """An `os` callback for tests that only assert description/forwarding, never run code."""
     return NOT_HANDLED  # pragma: no cover - never invoked by these tests
@@ -2530,13 +2599,18 @@ class TestCodeModeOSAccess:
 
 
 def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
-    """Create a ToolDefinition mimicking the search_tools tool from ToolSearchToolset."""
+    """Create a ToolDefinition mimicking the search_tools tool from ToolSearchToolset.
+
+    Carries `tool_kind='tool-search'`, matching what pydantic-ai emits (since 1.95.0);
+    CodeMode routes it native off `tool_kind`, not its name.
+    """
     from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME
 
     return ToolDefinition(
         name=_SEARCH_TOOLS_NAME,
         description=description,
         parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
+        tool_kind='tool-search',
     )
 
 
