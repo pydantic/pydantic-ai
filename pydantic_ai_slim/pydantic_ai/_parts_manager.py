@@ -326,10 +326,9 @@ class ModelResponsePartsManager:
                 vendor_part_id, buffered, provider_name, provider_details
             )
         else:
-            yield from self._handle_text_delta_with_thinking_tags(
+            yield from self._handle_plain_text_delta(
                 vendor_part_id=vendor_part_id,
                 content=buffered,
-                thinking_tags=thinking_tags,
                 id=id,
                 provider_name=provider_name,
                 provider_details=provider_details,

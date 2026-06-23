@@ -169,28 +169,46 @@ def test_handle_text_deltas_with_think_tags_split_across_chunks():
     thinking_tags = ModelProfile().thinking_tags
     start_tag, end_tag = thinking_tags
 
-    list(manager.handle_text_delta(vendor_part_id='content', content=start_tag[:1], thinking_tags=thinking_tags))
-    list(
+    events = list(manager.handle_text_delta(vendor_part_id='content', content=start_tag[:1], thinking_tags=thinking_tags))
+    assert events == []
+
+    events = list(
         manager.handle_text_delta(
             vendor_part_id='content',
             content=start_tag[1:] + '\nthinking content',
             thinking_tags=thinking_tags,
         )
     )
-    list(
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start'),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='\nthinking content', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+        ]
+    )
+
+    events = list(
         manager.handle_text_delta(
             vendor_part_id='content',
             content=end_tag + '\nNormal content.',
             thinking_tags=thinking_tags,
         )
     )
+    assert events == snapshot(
+        [
+            PartStartEvent(index=1, part=TextPart(content='\nNormal content.', part_kind='text'), event_kind='part_start'),
+        ]
+    )
 
     parts = manager.get_parts()
     assert len(parts) == 2
     assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content.strip() == 'thinking content'
+    assert parts[0].content == '\nthinking content'
     assert isinstance(parts[1], TextPart)
-    assert parts[1].content.strip() == 'Normal content.'
+    assert parts[1].content == '\nNormal content.'
 
 
 def test_handle_text_deltas_with_think_tags_single_chunk_with_trailing_text():
@@ -198,20 +216,31 @@ def test_handle_text_deltas_with_think_tags_single_chunk_with_trailing_text():
     thinking_tags = ModelProfile().thinking_tags
     start_tag, end_tag = thinking_tags
 
-    list(
+    events = list(
         manager.handle_text_delta(
             vendor_part_id='content',
             content=f'{start_tag}\nthinking content{end_tag}\nNormal content.',
             thinking_tags=thinking_tags,
         )
     )
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=ThinkingPart(content='', part_kind='thinking'), event_kind='part_start'),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='\nthinking content', part_delta_kind='thinking'),
+                event_kind='part_delta',
+            ),
+            PartStartEvent(index=1, part=TextPart(content='\nNormal content.', part_kind='text'), event_kind='part_start'),
+        ]
+    )
 
     parts = manager.get_parts()
     assert len(parts) == 2
     assert isinstance(parts[0], ThinkingPart)
-    assert parts[0].content.strip() == 'thinking content'
+    assert parts[0].content == '\nthinking content'
     assert isinstance(parts[1], TextPart)
-    assert parts[1].content.strip() == 'Normal content.'
+    assert parts[1].content == '\nNormal content.'
 
 
 def test_handle_tool_call_deltas():
