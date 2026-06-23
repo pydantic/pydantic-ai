@@ -94,6 +94,7 @@ class MockGroq:
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
     base_url: str = 'https://api.groq.com'
+    calls: list[dict[str, Any]] | None = None
 
     @cached_property
     def chat(self) -> Any:
@@ -112,8 +113,11 @@ class MockGroq:
         return cast(AsyncGroq, cls(stream=stream))
 
     async def chat_completions_create(
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
+        if self.calls is None:
+            self.calls = []
+        self.calls.append(kwargs)
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
@@ -665,6 +669,30 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     )
     assert result.output == snapshot(
         'The fruit depicted in the image is a potato. Although commonly mistaken as a vegetable, potatoes are technically fruits because they are the edible, ripened ovary of a flower, containing seeds. However, in culinary and everyday contexts, potatoes are often referred to as a vegetable due to their savory flavor and uses in dishes. The botanical classification of a potato as a fruit comes from its origin as the tuberous part of the Solanum tuberosum plant, which produces flowers and subsequently the potato as a fruit that grows underground.'
+    )
+
+
+async def test_image_detail_vendor_metadata(allow_model_requests: None):
+    c = completion_message(ChatCompletionMessage(content='done', role='assistant'))
+    mock_client = MockGroq(completions=c)
+    model = GroqModel(
+        'meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(groq_client=cast(AsyncGroq, mock_client))
+    )
+    agent = Agent(model)
+
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'low'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'high'})
+
+    await agent.run(['Describe these inputs.', image_url, binary_image])
+
+    assert mock_client.calls is not None
+    message_content = cast(list[dict[str, Any]], mock_client.calls[0]['messages'][0]['content'])
+    image_parts = [item['image_url'] for item in message_content if item['type'] == 'image_url']
+    assert image_parts == snapshot(
+        [
+            {'url': 'https://example.com/image.png', 'detail': 'low'},
+            {'url': 'data:image/png;base64,iVBORw==', 'detail': 'high'},
+        ]
     )
 
 
