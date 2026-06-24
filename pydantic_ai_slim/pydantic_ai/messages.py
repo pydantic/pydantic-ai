@@ -1094,6 +1094,7 @@ def _tool_return_content_discriminator(value: Any) -> str:
     if isinstance(value, Mapping):
         if (
             'kind' in value
+            and isinstance(value['kind'], str)
             and value['kind'] in _MULTIMODAL_KINDS
             and any(field in value for field in _MULTIMODAL_FIELDS)
         ):

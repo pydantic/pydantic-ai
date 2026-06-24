@@ -1401,6 +1401,36 @@ def test_tool_return_dict_reusing_kind_without_type_field_stays_mapping(content:
     assert part.content == content
 
 
+@pytest.mark.parametrize(
+    'kind',
+    [
+        pytest.param([1, 2], id='kind-list'),
+        pytest.param({'x': 'y'}, id='kind-dict'),
+        pytest.param(bytearray(b'binary'), id='kind-bytearray'),
+    ],
+)
+@pytest.mark.parametrize('nested', [False, True], ids=['top-level', 'nested-in-sequence'])
+def test_tool_return_dict_unhashable_kind_stays_mapping(kind: object, nested: bool):
+    """A client dict whose `kind` is unhashable must not crash the discriminator with a `TypeError`.
+
+    The discriminator's `kind in _MULTIMODAL_KINDS` membership test raises `TypeError` on an unhashable
+    `kind` (`list`/`dict`/`bytearray`); the `isinstance(kind, str)` guard routes it to the `mapping`
+    branch instead, where it round-trips as a plain mapping — the same graceful handling of malformed
+    client input as the `_js_binary_to_bytes` hardening.
+    """
+    inner: dict[str, Any] = {'kind': kind, 'media_type': 'image/png', 'data': 'YWJj'}
+    content: Any = [inner] if nested else inner
+    dumped = {
+        'parts': [{'tool_name': 't', 'content': content, 'tool_call_id': 'c', 'part_kind': 'tool-return'}],
+        'kind': 'request',
+    }
+
+    loaded = ModelMessagesTypeAdapter.validate_python([dumped])
+    part = loaded[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.content == content
+
+
 def test_tool_return_part_list_structure_preserved():
     single_dict = {'result': 'found'}
     single_item_list = [{'result': 'found'}]
