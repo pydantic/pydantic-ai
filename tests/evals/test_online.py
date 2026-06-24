@@ -1811,6 +1811,9 @@ async def test_sampling_context_input_based_sampling():
 @pytest.mark.anyio
 async def test_correlated_sampling_subset_property():
     """In correlated mode, lower-rate evaluator calls are a subset of higher-rate ones."""
+    import random
+
+    random.seed(0)
     collector_high = Collector()
     collector_low = Collector()
     config = OnlineEvalConfig(sampling_mode='correlated')
