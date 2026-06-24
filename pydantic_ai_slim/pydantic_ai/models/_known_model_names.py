@@ -529,6 +529,8 @@ KnownModelName = TypeAliasType(
         'zai:glm-4.7-flash',
         'zai:glm-4.7-flashx',
         'zai:glm-5',
+        'zai:glm-5.1',
+        'zai:glm-5.2',
         'test',
     ],
 )
