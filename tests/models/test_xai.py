@@ -554,7 +554,7 @@ async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: 
                 parts=[
                     ThinkingPart(
                         content='The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
-                        signature='GJCe9vsHibcXXnMEJBO8niRUm+Ck1qzNQdoR39nAGJEOnQxqWkHqbqmXrDQxjnjtDRlSWzZZQlwMn/buNigQ2UI7y/4clsu/RtOJS74m0vXR83X+uDrZ5mtD+TR22Kg2z24oHGiC5TTPp2Kso6bNii192qqAyqo96/S1rsW7mACuC0SiiGlodJJ0+mNhkmchVfh4KqkIeXGpwhwpLgaVEAWGoxuUARTvWN4mkBV+ady0zIvc/L6BnNzYWTBf7swgCUPCoOQjim1K6HbbmGWrHBN3VPDt0OBAu2Iud+sUZjQ6qrXR6tQEPyqNkW/e+7eDwBYFLf2H4iy075uxyLRXEYfjUchvelN8UArVhWWsqj5OAQWiI+BIfxUG5RzxQbFaGXP0i2DODhOewSE+UmSpx8rn07crY/faMo/huR6sPKNviPLzvs3cB8nPUWSc/8+e6/I/s4bTp6ucZjRkDU9DoQQVSnehc/Wus4af5B2OZbDD3cSU9KgiVCOEk9pPG2uaWiYlMuRJ4kxJdoVo02FYuZzA6EzzshWU+MxGaFNIo6UrRuoty17dALyPBdFe9nes3Abp5WNXNGTaTayJCyFUVXAfTgByRfZw0kxJMmJpgS3860tWCOVTKqNhFm/eiUZuLNAZA+zbEj6SOzLldFQ8NeA1cEzLG6OqL29Trsro157V/6lrC60',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
                     ToolCallPart(
@@ -592,7 +592,7 @@ async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: 
                 parts=[
                     ThinkingPart(
                         content='The tool returned: "It is sunny and 25°C."\n',
-                        signature='2E7rMf5LocXcKv4G20Oigq9xtL11f/ardvNfOMoTwyWC3KogBeXOiNLAsae4N4V2HAhclkF01utl0vVSY8Ad0hkezMP8+pPKoO2hA6JJh5ZwnbWd25uLDtaoMm3JAmMb6fCZqkwAf33uzxc/lnSQ5Msxd3JY4CwghvFZEzU/a022M+0gWFyZjzJmJWUk5zD39hrHfZZr9xd3G1RxM3KoGN6ZXCA2+YL1oL1htcSBkUafo2XSkF6WN7vMpOqPSD0JI2zaAdJ3BzByVdJDTr27gi9E',
+                        signature=IsStr(),
                         provider_name='xai',
                     ),
                     TextPart(content='It is sunny and 25°C in London.'),
@@ -630,7 +630,7 @@ async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: 
                     }
                 ],
                 'reasoning_content': 'The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
-                'encrypted_content': 'GJCe9vsHibcXXnMEJBO8niRUm+Ck1qzNQdoR39nAGJEOnQxqWkHqbqmXrDQxjnjtDRlSWzZZQlwMn/buNigQ2UI7y/4clsu/RtOJS74m0vXR83X+uDrZ5mtD+TR22Kg2z24oHGiC5TTPp2Kso6bNii192qqAyqo96/S1rsW7mACuC0SiiGlodJJ0+mNhkmchVfh4KqkIeXGpwhwpLgaVEAWGoxuUARTvWN4mkBV+ady0zIvc/L6BnNzYWTBf7swgCUPCoOQjim1K6HbbmGWrHBN3VPDt0OBAu2Iud+sUZjQ6qrXR6tQEPyqNkW/e+7eDwBYFLf2H4iy075uxyLRXEYfjUchvelN8UArVhWWsqj5OAQWiI+BIfxUG5RzxQbFaGXP0i2DODhOewSE+UmSpx8rn07crY/faMo/huR6sPKNviPLzvs3cB8nPUWSc/8+e6/I/s4bTp6ucZjRkDU9DoQQVSnehc/Wus4af5B2OZbDD3cSU9KgiVCOEk9pPG2uaWiYlMuRJ4kxJdoVo02FYuZzA6EzzshWU+MxGaFNIo6UrRuoty17dALyPBdFe9nes3Abp5WNXNGTaTayJCyFUVXAfTgByRfZw0kxJMmJpgS3860tWCOVTKqNhFm/eiUZuLNAZA+zbEj6SOzLldFQ8NeA1cEzLG6OqL29Trsro157V/6lrC60',
+                'encrypted_content': IsStr(),
             }
         ]
     )
