@@ -46,19 +46,32 @@ existing suite. The bug must be one you triggered and observed.
 
 - Speculation without a failing reproduction.
 - By-design lossy fields explicitly documented as such.
-- Behavior already tracked by an open issue — **search issues first**.
+- Behavior already tracked by an open issue or fixed by an open PR — **search both first**.
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-Search for existing issues using the MCP
-GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+The gap may already be tracked by an open **issue** or already fixed by an
+open **PR** — check both. Use the MCP GitHub tools (not `gh` CLI — it's
+blocked by the firewall proxy).
+
+**(a) Existing issues** — by sweep signature and by the specific
+boundary/function you investigated:
 
 ```
 mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[roundtrip-sweep]" OR "round-trip" OR "serialize"
 ```
 
-Also search for the specific boundary/function you plan to investigate. If a
-matching issue already exists, call `mcp__safeoutputs__noop` immediately.
+**(b) Existing PRs** — a fix may already be open (and even approved). Search
+open PRs touching the failing symbol or file:
+
+```
+mcp__github__search_pull_requests repo:pydantic/pydantic-ai is:pr is:open <failing symbol / file path>
+```
+
+If a matching open issue or PR exists, call `mcp__safeoutputs__noop`
+immediately instead of filing. If a PR looks related but you cannot confirm it
+covers this exact gap, still file but add a **`Possibly addressed by #<N>`**
+line near the top of the issue body linking that PR.
 
 ## Sandbox notes
 
