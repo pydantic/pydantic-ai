@@ -33,9 +33,11 @@ from pydantic_ai.realtime import (
     Transcript,
     TruncateOutput,
     TurnComplete,
+    Usage,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 pytestmark = pytest.mark.anyio
 
@@ -361,6 +363,32 @@ async def test_manual_turn_control_helpers_forward_to_connection() -> None:
     await session.create_response()
     await session.clear_audio()
     assert conn.sent == [CommitAudio(), CreateResponse(), ClearAudio()]
+
+
+async def test_session_accumulates_usage_and_requests() -> None:
+    conn = FakeRealtimeConnection(
+        [
+            Usage(usage=RequestUsage(input_tokens=10, output_tokens=5)),
+            Usage(usage=RequestUsage(input_tokens=3, output_tokens=2)),
+            TurnComplete(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+    _ = [e async for e in session]
+    assert session.usage.input_tokens == 13
+    assert session.usage.output_tokens == 7
+    assert session.usage.requests == 2
+
+
+async def test_session_counts_tool_calls() -> None:
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t', tool_name='f', args='{}'), TurnComplete()])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'ok'
+
+    session = RealtimeSession(conn, runner)
+    _ = [e async for e in session]
+    assert session.usage.tool_calls == 1
 
 
 async def test_truncate_output_helper_forwards_to_connection() -> None:

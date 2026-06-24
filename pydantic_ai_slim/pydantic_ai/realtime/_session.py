@@ -3,11 +3,14 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pydantic_core
+from opentelemetry.trace import Span, SpanKind
 
+from ..usage import RunUsage
 from ._base import (
     AudioInput,
     CancelResponse,
@@ -15,6 +18,7 @@ from ._base import (
     CommitAudio,
     CreateResponse,
     ImageInput,
+    InputTranscript,
     RealtimeConnection,
     RealtimeInput,
     RealtimeSessionEvent,
@@ -23,11 +27,25 @@ from ._base import (
     ToolCallCompleted,
     ToolCallStarted,
     ToolResult,
+    Transcript,
     TruncateOutput,
+    Usage,
 )
+
+if TYPE_CHECKING:
+    from ..models.instrumented import InstrumentationSettings
 
 ToolRunner = Callable[[str, dict[str, Any], str], Awaitable[str]]
 """Async callable executing a tool given its name, parsed arguments, and call id; returns the string result."""
+
+
+def _transcript_message(event: RealtimeSessionEvent) -> dict[str, Any] | None:
+    """Map a final transcript event to an OpenTelemetry GenAI message, or `None` for anything else."""
+    if isinstance(event, InputTranscript) and event.is_final and event.text:
+        return {'role': 'user', 'parts': [{'type': 'text', 'content': event.text}]}
+    if isinstance(event, Transcript) and event.is_final and event.text:
+        return {'role': 'assistant', 'parts': [{'type': 'text', 'content': event.text}]}
+    return None
 
 
 def _parse_tool_args(raw: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -72,10 +90,18 @@ class RealtimeSession:
         tool_runner: ToolRunner,
         *,
         background_tools: Iterable[str] = (),
+        instrumentation: InstrumentationSettings | None = None,
+        model_name: str | None = None,
+        agent_name: str | None = None,
     ) -> None:
         self._connection = connection
         self._tool_runner = tool_runner
         self._background_tools = frozenset(background_tools)
+        self._instrumentation = instrumentation
+        self._model_name = model_name
+        self._agent_name = agent_name
+        self.usage = RunUsage()
+        """Cumulative token usage and tool-call counts for the session, updated as events stream in."""
 
     async def send(self, content: RealtimeInput) -> None:
         """Feed content into the underlying connection."""
@@ -127,6 +153,25 @@ class RealtimeSession:
         await self._connection.send(CancelResponse())
 
     async def _run_tool(self, call: ToolCall) -> str:
+        settings = self._instrumentation
+        if settings is None:
+            return await self._execute_tool(call)
+        attributes: dict[str, Any] = {
+            'gen_ai.operation.name': 'execute_tool',
+            'gen_ai.tool.name': call.tool_name,
+            'gen_ai.tool.call.id': call.tool_call_id,
+        }
+        if settings.include_content:
+            attributes['gen_ai.tool.call.arguments'] = call.args
+        with settings.tracer.start_as_current_span(
+            f'execute_tool {call.tool_name}', attributes=attributes, kind=SpanKind.INTERNAL
+        ) as span:
+            result = await self._execute_tool(call)
+            if settings.include_content:
+                span.set_attribute('gen_ai.tool.call.result', result)
+            return result
+
+    async def _execute_tool(self, call: ToolCall) -> str:
         args, error = _parse_tool_args(call.args)
         if error is not None:
             result = error
@@ -140,6 +185,47 @@ class RealtimeSession:
         return result
 
     async def __aiter__(self) -> AsyncIterator[RealtimeSessionEvent]:
+        settings = self._instrumentation
+        if settings is None:
+            async for event in self._stream():
+                yield event
+            return
+        # Open a session-level span; tool spans created in the pump task inherit it through the
+        # OpenTelemetry context that `asyncio.create_task` copies.
+        attributes: dict[str, Any] = {'gen_ai.operation.name': 'realtime'}
+        if self._model_name:
+            attributes['gen_ai.request.model'] = self._model_name
+        if self._agent_name:
+            attributes['gen_ai.agent.name'] = self._agent_name
+        span_name = f'realtime {self._model_name}' if self._model_name else 'realtime'
+        with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
+            # The conversation transcript, captured turn-by-turn so it lands on the span as messages.
+            messages: list[dict[str, Any]] = []
+            try:
+                async for event in self._stream():
+                    if settings.include_content and (message := _transcript_message(event)) is not None:
+                        messages.append(message)
+                    yield event
+            finally:
+                self._finalize_span(settings, span, attributes, messages)
+
+    def _finalize_span(
+        self,
+        settings: InstrumentationSettings,
+        span: Span,
+        base_attributes: dict[str, Any],
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Attach cumulative usage and the conversation transcript to the session span."""
+        span.set_attributes(self.usage.opentelemetry_attributes())
+        if messages:
+            span.set_attribute('gen_ai.input.messages', json.dumps(messages))
+        for token_type in ('input', 'output'):
+            tokens: int = getattr(self.usage, f'{token_type}_tokens')
+            if tokens:
+                settings.tokens_histogram.record(tokens, {**base_attributes, 'gen_ai.token.type': token_type})
+
+    async def _stream(self) -> AsyncIterator[RealtimeSessionEvent]:
         # Both the upstream connection and finished background tools feed a single queue, so a
         # background completion wakes the consumer immediately instead of waiting for the next
         # provider event (which may never come while the model is idle).
@@ -157,6 +243,7 @@ class RealtimeSession:
             try:
                 async for event in self._connection:
                     if isinstance(event, ToolCall):
+                        self.usage.tool_calls += 1
                         await queue.put(ToolCallStarted(tool_name=event.tool_name, tool_call_id=event.tool_call_id))
                         if event.tool_name in self._background_tools:
                             task = asyncio.create_task(run_background(event))
@@ -170,6 +257,9 @@ class RealtimeSession:
                                 )
                             )
                     else:
+                        if isinstance(event, Usage):
+                            self.usage.incr(event.usage)
+                            self.usage.requests += 1
                         await queue.put(event)
             except Exception as e:
                 pump_error = e

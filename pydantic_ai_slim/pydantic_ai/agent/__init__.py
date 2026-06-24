@@ -2682,7 +2682,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 tools=tool_defs,
                 model_settings=model_settings,
             ) as connection:
-                yield RealtimeSession(connection, tool_runner, background_tools=background_tools or set())
+                yield RealtimeSession(
+                    connection,
+                    tool_runner,
+                    background_tools=background_tools or set(),
+                    instrumentation=self._resolve_instrumentation_settings(),
+                    model_name=model.model_name,
+                    agent_name=self.name,
+                )
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.

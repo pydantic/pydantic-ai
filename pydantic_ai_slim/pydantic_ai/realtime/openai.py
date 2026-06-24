@@ -14,9 +14,10 @@ import asyncio
 import base64
 import json
 import os
+import random
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -31,6 +32,7 @@ except ImportError as _import_error:  # pragma: no cover
 
 from ..settings import ModelSettings, ToolChoice
 from ..tools import ToolDefinition
+from ..usage import RequestUsage
 from ._base import (
     AudioDelta,
     AudioInput,
@@ -40,10 +42,13 @@ from ._base import (
     CreateResponse,
     ImageInput,
     InputTranscript,
+    RateLimit,
+    RateLimits,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
+    Reconnected,
     SessionError,
     SpeechStarted,
     SpeechStopped,
@@ -53,6 +58,7 @@ from ._base import (
     Transcript,
     TruncateOutput,
     TurnComplete,
+    Usage,
 )
 
 DEFAULT_REALTIME_URL = 'wss://api.openai.com/v1/realtime'
@@ -86,6 +92,59 @@ def _str_field(data: dict[str, Any], key: str, default: str = '') -> str:
 def _obj(value: Any) -> dict[str, Any]:
     """Return `value` as a `dict[str, Any]` when it is a mapping, otherwise an empty dict."""
     return cast('dict[str, Any]', value) if isinstance(value, dict) else {}
+
+
+def _int(value: Any) -> int:
+    """Return `value` if it is an int (but not a bool), otherwise `0`."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _map_usage(response: dict[str, Any]) -> RequestUsage | None:
+    """Map a `response.done` `usage` payload to a [`RequestUsage`][pydantic_ai.usage.RequestUsage]."""
+    usage = _obj(response.get('usage'))
+    if not usage:
+        return None
+    inp = _obj(usage.get('input_token_details'))
+    out = _obj(usage.get('output_token_details'))
+    cached = _obj(inp.get('cached_tokens_details'))
+    details: dict[str, int] = {}
+    for key, raw in (
+        ('input_text_tokens', inp.get('text_tokens')),
+        ('input_image_tokens', inp.get('image_tokens')),
+        ('output_text_tokens', out.get('text_tokens')),
+    ):
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            details[key] = raw
+    return RequestUsage(
+        input_tokens=_int(usage.get('input_tokens')),
+        output_tokens=_int(usage.get('output_tokens')),
+        input_audio_tokens=_int(inp.get('audio_tokens')),
+        cache_read_tokens=_int(inp.get('cached_tokens')),
+        cache_audio_read_tokens=_int(cached.get('audio_tokens')),
+        output_audio_tokens=_int(out.get('audio_tokens')),
+        details=details,
+    )
+
+
+def _map_rate_limits(data: dict[str, Any]) -> RateLimits:
+    """Map a `rate_limits.updated` event to a [`RateLimits`][pydantic_ai.realtime.RateLimits]."""
+    entries = data.get('rate_limits')
+    limits: list[RateLimit] = []
+    for entry in cast('list[Any]', entries) if isinstance(entries, list) else []:
+        item = _obj(entry)
+        name = item.get('name')
+        if not isinstance(name, str):
+            continue
+        reset = item.get('reset_seconds')
+        limits.append(
+            RateLimit(
+                name=name,
+                limit=item.get('limit') if isinstance(item.get('limit'), int) else None,
+                remaining=item.get('remaining') if isinstance(item.get('remaining'), int) else None,
+                reset_seconds=float(reset) if isinstance(reset, (int, float)) and not isinstance(reset, bool) else None,
+            )
+        )
+    return RateLimits(limits=limits)
 
 
 def _is_function_call_only(output: Any) -> bool:
@@ -156,11 +215,20 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
     if event_type == 'input_audio_buffer.speech_stopped':
         return SpeechStopped()
 
+    if event_type == 'rate_limits.updated':
+        return _map_rate_limits(data)
+
     if event_type == 'response.done':
         return _map_response_done(data)
 
     if event_type == 'error':
-        return SessionError(message=_error_message(data.get('error')))
+        error = _obj(data.get('error'))
+        return SessionError(
+            message=_error_message(data.get('error')),
+            type=_str_field(error, 'type') or None,
+            code=_str_field(error, 'code') or None,
+            recoverable=True,  # a protocol `error` keeps the session open; a dropped connection does not
+        )
 
     return None
 
@@ -176,8 +244,18 @@ def _error_message(error: Any) -> str:
 class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
-    def __init__(self, ws: ClientConnection) -> None:
+    def __init__(
+        self,
+        ws: ClientConnection,
+        *,
+        dial: Callable[[], Awaitable[ClientConnection]] | None = None,
+        reconnect: ReconnectPolicy | None = None,
+    ) -> None:
         self._ws = ws
+        # `dial` re-establishes a fully configured connection; with a `reconnect` policy it is used to
+        # recover from a dropped WebSocket.
+        self._dial = dial
+        self._reconnect = reconnect
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
         # model is mid-answer) until the active response finishes, so the model still announces it.
@@ -279,33 +357,92 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         await self._ws.send(json.dumps(event))
 
     async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
-        async for raw in self._ws:
-            if not isinstance(raw, str):
-                continue
-            data: dict[str, Any] = json.loads(raw)
-            event_type = data.get('type')
-            if event_type == 'response.created':
-                self._response_active = True
-            elif event_type in _AUDIO_DELTA_TYPES:
-                # Track the speaking item so a later `TruncateOutput` can name it.
-                item_id = data.get('item_id')
-                if isinstance(item_id, str):
-                    self._current_item_id = item_id
-                    content_index = data.get('content_index')
-                    self._current_content_index = content_index if isinstance(content_index, int) else 0
-            elif event_type == 'response.done':
-                self._response_active = False
-                self._current_item_id = None
-                if self._pending_response:
-                    self._pending_response = False
-                    # A cancelled response means the user barged in: a new turn is starting, so don't
-                    # replay the deferred response over it.
-                    if _obj(data.get('response')).get('status') != 'cancelled':
+        while True:
+            try:
+                async for raw in self._ws:
+                    if not isinstance(raw, str):
+                        continue
+                    data: dict[str, Any] = json.loads(raw)
+                    event_type = data.get('type')
+                    if event_type == 'response.created':
                         self._response_active = True
-                        await self._send_event({'type': 'response.create'})
-            event = map_event(data)
-            if event is not None:
-                yield event
+                    elif event_type in _AUDIO_DELTA_TYPES:
+                        # Track the speaking item so a later `TruncateOutput` can name it.
+                        item_id = data.get('item_id')
+                        if isinstance(item_id, str):
+                            self._current_item_id = item_id
+                            content_index = data.get('content_index')
+                            self._current_content_index = content_index if isinstance(content_index, int) else 0
+                    elif event_type == 'response.done':
+                        self._response_active = False
+                        self._current_item_id = None
+                        # Emit usage for every response (including intermediate function-call-only ones)
+                        # so the session accounts for all tokens, then defer a pending response if needed.
+                        usage = _map_usage(_obj(data.get('response')))
+                        if usage is not None:
+                            yield Usage(usage=usage)
+                        if self._pending_response:
+                            self._pending_response = False
+                            # A cancelled response means the user barged in: a new turn is starting, so
+                            # don't replay the deferred response over it.
+                            if _obj(data.get('response')).get('status') != 'cancelled':
+                                self._response_active = True
+                                await self._send_event({'type': 'response.create'})
+                    event = map_event(data)
+                    if event is not None:
+                        yield event
+                return  # the upstream iterator ended without dropping
+            except websockets.ConnectionClosed as e:
+                if self._reconnect is None or self._dial is None:
+                    # No reconnect policy: a dropped connection is fatal. Surface it as a
+                    # non-recoverable error and end the stream cleanly, rather than raising.
+                    yield SessionError(message=f'OpenAI realtime connection closed: {e}', recoverable=False)
+                    return
+                if await self._try_reconnect():
+                    yield Reconnected()
+                    continue
+                yield SessionError(
+                    message=f'OpenAI realtime connection closed; reconnect failed: {e}', recoverable=False
+                )
+                return
+
+    async def _try_reconnect(self) -> bool:
+        """Re-dial with exponential backoff; return whether a new connection was established."""
+        assert self._reconnect is not None and self._dial is not None
+        policy = self._reconnect
+        for attempt in range(policy.max_attempts):
+            delay = min(policy.max_delay, policy.base_delay * (2**attempt))
+            if policy.jitter:
+                delay *= 0.5 + random.random() * 0.5
+            await asyncio.sleep(delay)
+            try:
+                self._ws = await self._dial()
+            except Exception:
+                continue
+            self._response_active = False
+            self._pending_response = False
+            self._current_item_id = None
+            return True
+        return False
+
+
+@dataclass
+class ReconnectPolicy:
+    """How to recover when the realtime WebSocket drops mid-session.
+
+    On a dropped connection the session is re-dialed and its configuration (instructions, tools,
+    voice, ...) re-applied, emitting a [`Reconnected`][pydantic_ai.realtime.Reconnected] event.
+    Server-side conversation state (the audio buffer and prior turns) is **not** restored.
+    """
+
+    max_attempts: int = 3
+    """Number of re-dial attempts before giving up with a non-recoverable `SessionError`."""
+    base_delay: float = 0.5
+    """Base backoff delay in seconds; doubles each attempt up to `max_delay`."""
+    max_delay: float = 30.0
+    """Maximum backoff delay in seconds."""
+    jitter: bool = True
+    """Whether to apply random jitter to each backoff delay to avoid thundering herds."""
 
 
 @dataclass
@@ -405,6 +542,9 @@ class OpenAIRealtimeModel(RealtimeModel):
             microphones. `None` disables it.
         output_modalities: The modalities the model may produce, `('audio',)` (default) or `('text',)`.
         output_speed: Playback speed multiplier for generated audio (0.25–1.5). `None` uses the default.
+        reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.openai.ReconnectPolicy] to transparently
+            recover from a dropped connection. `None` (the default) surfaces a drop as a non-recoverable
+            `SessionError` instead.
     """
 
     model: str = 'gpt-realtime'
@@ -417,6 +557,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     input_noise_reduction: Literal['near_field', 'far_field'] | None = None
     output_modalities: tuple[Literal['audio', 'text'], ...] = ('audio',)
     output_speed: float | None = None
+    reconnect: ReconnectPolicy | None = None
 
     @property
     def model_name(self) -> str:
@@ -468,18 +609,21 @@ class OpenAIRealtimeModel(RealtimeModel):
         api_key = self.api_key or os.environ.get('OPENAI_API_KEY', '')
         url = f'{self.base_url}?model={self.model}'
         headers = {'Authorization': f'Bearer {api_key}'}
+        session_config = self._session_config(instructions, tools, model_settings)
 
-        async with websockets.connect(url, additional_headers=headers) as ws:
-            await _expect_event(ws, 'session.created', timeout=self.handshake_timeout)
+        # `dial` opens and configures a fresh connection; the exit stack closes every connection it
+        # opens (the initial one plus any opened while reconnecting) when `connect()` exits.
+        async with AsyncExitStack() as stack:
 
-            await ws.send(
-                json.dumps(
-                    {'type': 'session.update', 'session': self._session_config(instructions, tools, model_settings)}
-                )
-            )
-            await _expect_event(ws, 'session.updated', timeout=self.handshake_timeout)
+            async def dial() -> ClientConnection:
+                ws = await stack.enter_async_context(websockets.connect(url, additional_headers=headers))
+                await _expect_event(ws, 'session.created', timeout=self.handshake_timeout)
+                await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
+                await _expect_event(ws, 'session.updated', timeout=self.handshake_timeout)
+                return ws
 
-            yield OpenAIRealtimeConnection(ws)
+            ws = await dial()
+            yield OpenAIRealtimeConnection(ws, dial=dial, reconnect=self.reconnect)
 
 
 async def _expect_event(ws: ClientConnection, expected_type: str, *, timeout: float) -> dict[str, Any]:

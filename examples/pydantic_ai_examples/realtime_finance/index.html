@@ -140,16 +140,17 @@
       const micBtn = document.getElementById('mic');
       const sendBtn = document.getElementById('send');
 
-      let pendingUser = null; // placeholder bubble shown the moment the user starts speaking
-      const toolCards = new Map(); // tool_call_id -> { card, body, state }
+      let pendingUser = null;
+      const toolCards = new Map();
 
-      // Auto-follow the latest message only while the user is already near the bottom, so scrolling
-      // up to read earlier tools/widgets in the history isn't yanked back down.
       let stick = true;
       function nearBottom() { return feed.scrollHeight - feed.scrollTop - feed.clientHeight < 140; }
       feed.addEventListener('scroll', () => { stick = nearBottom(); });
       function scroll() { if (stick) requestAnimationFrame(() => { feed.scrollTop = feed.scrollHeight; }); }
-      function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+      function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
+      function txt(tag, cls, text) { const e = el(tag, cls); e.textContent = text; return e; }
+      function add(parent, ...kids) { for (const k of kids) parent.appendChild(k); return parent; }
+      function sparkBox(values) { const d = el('div'); d.innerHTML = sparkline(values); return d; }
 
       function addBubble(text, who) {
         const row = el('div', 'row ' + who);
@@ -170,22 +171,22 @@
         const label = tool === 'run_deep_analysis' ? 'Deep analysis' : 'Analyst';
         const card = el('div', 'card');
         card.dataset.id = id;
-        const head = el('div', 'head');
-        head.innerHTML =
-          `<span class="ic">▤</span><span class="t">${label}</span>` +
-          `<span class="tag ${m}">${m}</span>` +
-          `<span class="state"><span class="spinner"></span> working…</span>`;
+        const state = el('span', 'state');
+        add(state, el('span', 'spinner'), document.createTextNode(' working…'));
+        const head = add(el('div', 'head'), txt('span', 'ic', '▤'), txt('span', 't', label), txt('span', 'tag ' + m, m), state);
         const body = el('div', 'body');
-        card.appendChild(head);
-        card.appendChild(body);
+        add(card, head, body);
         feed.appendChild(card);
-        toolCards.set(id, { card, body, state: head.querySelector('.state') });
+        toolCards.set(id, { card, body, state });
         scroll();
       }
 
       function finishToolCard(id) {
         const c = toolCards.get(id);
-        if (c) c.state.innerHTML = '<span class="check">✓</span> done';
+        if (c) {
+          c.state.textContent = '';
+          add(c.state, txt('span', 'check', '✓'), document.createTextNode(' done'));
+        }
         scroll();
       }
 
@@ -197,69 +198,106 @@
         return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
       }
 
+      function bar(label, value, max, cur) {
+        const fill = el('span', 'fill');
+        fill.style.width = (max ? (value / max) * 100 : 0) + '%';
+        return add(el('div', 'bar-row'), txt('span', 'lab', label), add(el('span', 'track'), fill), txt('span', 'num', money(value, cur)));
+      }
+
+      function total(label, valueText, cls) {
+        return add(el('div', 'total'), txt('span', '', label), txt('span', cls || 'num', valueText));
+      }
+
       function renderWidget(w) {
         const box = el('div', 'w');
-        box.appendChild(el('div', 'w-title', w.title || w.kind));
+        box.appendChild(txt('div', 'w-title', w.title || w.kind));
         const cur = w.currency;
         if (w.kind === 'accounts') {
-          for (const r of w.rows) box.appendChild(el('div', 'kv', `<span class="k">${r.name}<small>${r.kind}</small></span><span class="num">${money(r.balance, cur)}</span>`));
-          box.appendChild(el('div', 'total', `<span>Total</span><span class="num">${money(w.total, cur)}</span>`));
+          for (const r of w.rows) {
+            const k = add(el('span', 'k'), document.createTextNode(r.name), txt('small', '', r.kind));
+            box.appendChild(add(el('div', 'kv'), k, txt('span', 'num', money(r.balance, cur))));
+          }
+          box.appendChild(total('Total', money(w.total, cur)));
         } else if (w.kind === 'spending') {
           const max = Math.max(...w.categories.map((c) => c.amount), 1);
-          for (const c of w.categories) {
-            const row = el('div', 'bar-row');
-            row.innerHTML = `<span class="lab">${c.label}</span><span class="track"><span class="fill" style="width:${(c.amount / max) * 100}%"></span></span><span class="num">${money(c.amount, cur)}</span>`;
-            box.appendChild(row);
-          }
-          box.appendChild(el('div', 'total', `<span>Total spent</span><span class="num">${money(w.total, cur)}</span>`));
+          for (const c of w.categories) box.appendChild(bar(c.label, c.amount, max, cur));
+          box.appendChild(total('Total spent', money(w.total, cur)));
         } else if (w.kind === 'portfolio') {
           const max = Math.max(...w.holdings.map((h) => h.value), 1);
-          for (const h of w.holdings) {
-            const row = el('div', 'bar-row');
-            row.innerHTML = `<span class="lab">${h.symbol}</span><span class="track"><span class="fill" style="width:${(h.value / max) * 100}%"></span></span><span class="num">${money(h.value, cur)}</span>`;
-            box.appendChild(row);
-          }
-          box.appendChild(el('div', 'total', `<span>Total value</span><span class="num">${money(w.total, cur)}</span>`));
+          for (const h of w.holdings) box.appendChild(bar(h.symbol, h.value, max, cur));
+          box.appendChild(total('Total value', money(w.total, cur)));
         } else if (w.kind === 'net_worth') {
-          box.appendChild(el('div', '', sparkline(w.history)));
+          box.appendChild(sparkBox(w.history));
           const cls = w.change >= 0 ? 'pos' : 'neg';
           const sign = w.change >= 0 ? '+' : '';
-          box.appendChild(el('div', 'total', `<span class="num">${money(w.start, cur)} → ${money(w.end, cur)}</span><span class="delta ${cls}">${sign}${money(w.change, cur)}</span>`));
+          box.appendChild(
+            add(
+              el('div', 'total'),
+              txt('span', 'num', money(w.start, cur) + ' → ' + money(w.end, cur)),
+              txt('span', 'delta ' + cls, sign + money(w.change, cur)),
+            ),
+          );
         } else if (w.kind === 'transactions') {
           const t = el('table', 'tx');
           for (const r of w.rows) {
             const cls = r.amount < 0 ? 'neg' : 'pos';
             const sign = r.amount < 0 ? '−' : '+';
-            const tr = el('tr');
-            tr.innerHTML = `<td class="d">${r.date}</td><td>${r.description}</td><td class="a ${cls}">${sign}${money(Math.abs(r.amount), cur)}</td>`;
-            t.appendChild(tr);
+            t.appendChild(
+              add(
+                el('tr'),
+                txt('td', 'd', r.date),
+                txt('td', '', r.description),
+                txt('td', 'a ' + cls, sign + money(Math.abs(r.amount), cur)),
+              ),
+            );
           }
           box.appendChild(t);
         } else if (w.kind === 'subscriptions') {
           const t = el('table', 'tx');
           for (const r of w.rows) {
-            const tr = el('tr');
-            tr.innerHTML = `<td>${r.name}</td><td class="d">${r.cadence}</td><td class="a neg">−${money(r.amount, cur)}</td>`;
-            t.appendChild(tr);
+            t.appendChild(
+              add(el('tr'), txt('td', '', r.name), txt('td', 'd', r.cadence), txt('td', 'a neg', '−' + money(r.amount, cur))),
+            );
           }
           box.appendChild(t);
-          box.appendChild(el('div', 'total', `<span>Per month · per year</span><span class="num">${money(w.monthly_total, cur)} · ${money(w.annual_total, cur)}</span>`));
+          box.appendChild(total('Per month · per year', money(w.monthly_total, cur) + ' · ' + money(w.annual_total, cur)));
         } else if (w.kind === 'budget') {
           for (const r of w.rows) {
-            const row = el('div', 'bud');
-            row.innerHTML = `<span class="cat">${r.category}</span><span class="cur">${money(r.current, cur)}</span><span class="arr">→</span><span class="sug">${money(r.suggested, cur)}</span>`;
-            box.appendChild(row);
+            box.appendChild(
+              add(
+                el('div', 'bud'),
+                txt('span', 'cat', r.category),
+                txt('span', 'cur', money(r.current, cur)),
+                txt('span', 'arr', '→'),
+                txt('span', 'sug', money(r.suggested, cur)),
+              ),
+            );
           }
-          box.appendChild(el('div', 'total', `<span>Potential monthly saving</span><span class="delta pos">${money(w.monthly_savings, cur)}</span>`));
+          box.appendChild(total('Potential monthly saving', money(w.monthly_savings, cur), 'delta pos'));
         } else if (w.kind === 'projection') {
-          box.appendChild(el('div', '', sparkline(w.points.map((p) => p.value))));
-          box.appendChild(el('div', 'total', `<span class="num">${money(w.points[0].value, cur)} → ${money(w.final, cur)}</span><span class="delta pos">in ${w.years} yr</span>`));
-          if (w.note) box.appendChild(el('div', 'd', `<span style="color:var(--muted);font-size:12.5px">${w.note}</span>`));
+          box.appendChild(sparkBox(w.points.map((p) => p.value)));
+          box.appendChild(
+            add(
+              el('div', 'total'),
+              txt('span', 'num', money(w.points[0].value, cur) + ' → ' + money(w.final, cur)),
+              txt('span', 'delta pos', 'in ' + w.years + ' yr'),
+            ),
+          );
+          if (w.note) {
+            const note = txt('div', 'd', w.note);
+            note.style.color = 'var(--muted)';
+            note.style.fontSize = '12.5px';
+            box.appendChild(note);
+          }
         } else if (w.kind === 'insights') {
           for (const it of w.items) {
-            const row = el('div', 'ins');
-            row.innerHTML = `<span class="sev ${it.severity}"></span><span><span class="h">${it.title}</span><div class="d">${it.detail}</div></span>`;
-            box.appendChild(row);
+            const inner = add(el('span'), txt('span', 'h', it.title), txt('div', 'd', it.detail));
+            const ins = add(el('div', 'ins'), el('span', 'sev ' + it.severity), inner);
+            if (it.value != null) {
+              const figure = it.unit === 'currency' ? money(it.value, cur) : it.unit === 'percent' ? Math.round(it.value) + '%' : String(it.value);
+              ins.appendChild(txt('span', 'num', figure));
+            }
+            box.appendChild(ins);
           }
         }
         return box;
@@ -272,7 +310,6 @@
         scroll();
       }
 
-      // ---- audio playback (model PCM16 @ 24kHz) ----
       let playCtx = null, playHead = 0, scheduled = [];
       function ensurePlayback() {
         if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
@@ -290,7 +327,6 @@
       }
       function flushPlayback() { for (const n of scheduled) { try { n.stop(); } catch (e) {} } scheduled = []; if (playCtx) playHead = playCtx.currentTime; }
 
-      // ---- websocket ----
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const sock = new WebSocket(`${proto}://${location.host}/ws`);
       sock.binaryType = 'arraybuffer';
@@ -323,7 +359,6 @@
       sendBtn.onclick = sendText;
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendText(); });
 
-      // ---- mic ----
       let micCtx = null, micStream = null, micNode = null, capturing = false;
       async function startMicRealtime() {
         ensurePlayback();

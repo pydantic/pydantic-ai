@@ -130,6 +130,10 @@ class Insight(BaseModel):
     title: str
     detail: str
     severity: Literal['info', 'good', 'warn'] = 'info'
+    value: float | None = None
+    """Exact headline figure (unrounded), so the supervisor quotes precise numbers; `None` if none."""
+    unit: Literal['currency', 'percent', ''] = ''
+    """How the browser should format `value` for display."""
 
 
 class InsightsWidget(BaseModel):
@@ -278,27 +282,35 @@ def insights_widget(fin: UserFinances) -> InsightsWidget:
         items.append(
             Insight(
                 title='Top spending',
-                detail=f'{top.label.title()} is your largest category at {fin.currency} {top.amount:,.0f}.',
+                detail=f'{top.label.title()} is your largest category.',
+                value=top.amount,
+                unit='currency',
             )
         )
     items.append(
         Insight(
             title='Subscriptions',
-            detail=f'{len(subs.rows)} subscriptions cost {fin.currency} {subs.monthly_total:,.0f}/mo ({fin.currency} {subs.annual_total:,.0f}/yr).',
+            detail=f'{len(subs.rows)} subscriptions billed each month.',
+            value=subs.monthly_total,
+            unit='currency',
             severity='warn',
         )
     )
     items.append(
         Insight(
             title='Savings rate',
-            detail=f'You keep about {rate * 100:.0f}% of income ({fin.currency} {monthly_net:,.0f}/mo).',
+            detail='Share of your income you keep each month.',
+            value=rate * 100,
+            unit='percent',
             severity='good' if rate >= 0.2 else 'warn',
         )
     )
     items.append(
         Insight(
             title='Net worth',
-            detail=f'Up {fin.currency} {nw.change:,.0f} over the tracked period.',
+            detail='Change over the tracked period.',
+            value=nw.change,
+            unit='currency',
             severity='good' if nw.change >= 0 else 'warn',
         )
     )

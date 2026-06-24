@@ -20,6 +20,7 @@ from typing_extensions import TypeAliasType
 
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
+from ..usage import RequestUsage
 
 # Input content types (fed into the connection via `send`).
 
@@ -180,16 +181,61 @@ class SpeechStopped:
 
 
 @dataclass
+class Usage:
+    """Token usage reported by the provider for a completed model response."""
+
+    usage: RequestUsage
+    """Normalized token usage for the response, ready to accumulate into a `RunUsage`."""
+
+
+@dataclass
+class RateLimit:
+    """A single provider rate-limit entry."""
+
+    name: str
+    """Which limit this is, e.g. `requests` or `tokens`."""
+    limit: int | None = None
+    """The maximum allowed value, if reported."""
+    remaining: int | None = None
+    """The remaining value before the limit is reached, if reported."""
+    reset_seconds: float | None = None
+    """Seconds until the limit resets, if reported."""
+
+
+@dataclass
+class RateLimits:
+    """An updated rate-limit snapshot, typically emitted at the start of each response."""
+
+    limits: list[RateLimit]
+    """The reported rate limits."""
+
+
+@dataclass
+class Reconnected:
+    """The connection dropped and was automatically re-established.
+
+    Session configuration (instructions, tools, voice, ...) is restored, but server-side conversation
+    state (the audio buffer and prior turns) is not — treat it as the start of a fresh turn.
+    """
+
+
+@dataclass
 class SessionError:
     """A provider-reported error occurred in the session."""
 
     message: str
     """Human-readable error message."""
+    type: str | None = None
+    """Provider error category, e.g. `invalid_request_error` or `server_error`."""
+    code: str | None = None
+    """Provider error code, if any."""
+    recoverable: bool = True
+    """Whether the session can continue. A protocol `error` is recoverable; a dropped connection is not."""
 
 
 RealtimeEvent = TypeAliasType(
     'RealtimeEvent',
-    'AudioDelta | Transcript | InputTranscript | ToolCall | TurnComplete | SpeechStarted | SpeechStopped | SessionError',
+    'AudioDelta | Transcript | InputTranscript | ToolCall | TurnComplete | SpeechStarted | SpeechStopped | Usage | RateLimits | Reconnected | SessionError',
 )
 """Union of events yielded by [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection]."""
 
@@ -224,7 +270,7 @@ class ToolCallCompleted:
 
 RealtimeSessionEvent = TypeAliasType(
     'RealtimeSessionEvent',
-    'AudioDelta | Transcript | InputTranscript | ToolCallStarted | ToolCallCompleted | TurnComplete | SpeechStarted | SpeechStopped | SessionError',
+    'AudioDelta | Transcript | InputTranscript | ToolCallStarted | ToolCallCompleted | TurnComplete | SpeechStarted | SpeechStopped | Usage | RateLimits | Reconnected | SessionError',
 )
 """Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession]."""
 

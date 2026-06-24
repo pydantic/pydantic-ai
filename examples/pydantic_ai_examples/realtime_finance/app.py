@@ -12,13 +12,18 @@ at the repo root, then:
 
 `FINANCE_SUPERVISOR_MODEL` (default `openai:gpt-4o-mini`), `FINANCE_REALTIME_MODEL` (default
 `gpt-realtime`) and `FINANCE_REALTIME_VOICE` (default `alloy`) can override the defaults.
+
+Set `LOGFIRE_WRITE_TOKEN` to stream traces (the realtime session, tool calls, and token usage) to
+Logfire; without it telemetry is simply off.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import cast
 
 import anyio
 from dotenv import load_dotenv
@@ -47,6 +52,29 @@ REALTIME_MODEL = os.environ.get('FINANCE_REALTIME_MODEL', 'gpt-realtime')
 VOICE = os.environ.get('FINANCE_REALTIME_VOICE', 'alloy')
 _INDEX_PATH = Path(__file__).parent / 'index.html'
 
+
+def _configure_logfire() -> None:
+    """Send traces to Logfire when `LOGFIRE_WRITE_TOKEN` is set.
+
+    `instrument_pydantic_ai()` turns on instrumentation for every agent, so the realtime session
+    shows up in the dashboard as a span tree: the session, each `execute_tool` call (including the
+    delegated supervisor run), and cumulative token usage. No-op when the token is absent.
+    """
+    token = os.environ.get('LOGFIRE_WRITE_TOKEN')
+    if not token:
+        return
+    try:
+        import logfire
+    except ImportError:  # pragma: no cover
+        print(
+            'LOGFIRE_WRITE_TOKEN is set but `logfire` is not installed; skipping telemetry (`pip install logfire`).'
+        )
+        return
+    logfire.configure(token=token, service_name='realtime-finance')
+    logfire.instrument_pydantic_ai()
+
+
+_configure_logfire()
 
 app = FastAPI()
 
@@ -79,7 +107,7 @@ def _json_messages(
     if isinstance(event, ToolCallCompleted):
         messages: list[dict[str, object]] = [
             {'type': 'widget', 'id': event.tool_call_id, 'widget': w.model_dump()}
-            for w in deps.widgets.get(event.tool_call_id, [])
+            for w in deps.widgets.pop(event.tool_call_id, [])
         ]
         messages.append({'type': 'tool_done', 'id': event.tool_call_id})
         return messages
@@ -104,8 +132,11 @@ async def ws(socket: WebSocket) -> None:
         async with anyio.create_task_group() as tg:
 
             async def pump_events() -> None:
+                events = cast(
+                    'AsyncGenerator[RealtimeSessionEvent, None]', session.__aiter__()
+                )
                 try:
-                    async for event in session:
+                    async for event in events:
                         if isinstance(event, AudioDelta):
                             await socket.send_bytes(event.data)
                             continue
@@ -113,6 +144,9 @@ async def ws(socket: WebSocket) -> None:
                             await socket.send_json(message)
                 except Exception:
                     tg.cancel_scope.cancel()
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        await events.aclose()
 
             async def pump_inbound() -> None:
                 try:
@@ -123,8 +157,12 @@ async def ws(socket: WebSocket) -> None:
                         if (chunk := message.get('bytes')) is not None:
                             await session.send_audio(chunk)
                         elif (text := message.get('text')) is not None:
-                            data = json.loads(text)
-                            question = (data.get('question') or '').strip()
+                            try:
+                                question = (
+                                    json.loads(text).get('question') or ''
+                                ).strip()
+                            except (ValueError, AttributeError):
+                                continue
                             if question:
                                 await session.send_text(question)
                     tg.cancel_scope.cancel()

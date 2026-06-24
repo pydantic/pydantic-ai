@@ -18,11 +18,14 @@ from ._base import (
     CreateResponse,
     ImageInput,
     InputTranscript,
+    RateLimit,
+    RateLimits,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
     RealtimeModel,
     RealtimeSessionEvent,
+    Reconnected,
     SessionError,
     SpeechStarted,
     SpeechStopped,
@@ -34,6 +37,7 @@ from ._base import (
     Transcript,
     TruncateOutput,
     TurnComplete,
+    Usage,
 )
 from ._session import RealtimeSession, ToolRunner
 
@@ -46,6 +50,9 @@ __all__ = (
     'CreateResponse',
     'ImageInput',
     'InputTranscript',
+    'RateLimit',
+    'RateLimits',
+    'Reconnected',
     'RealtimeConnection',
     'RealtimeEvent',
     'RealtimeInput',
@@ -64,4 +71,5 @@ __all__ = (
     'Transcript',
     'TruncateOutput',
     'TurnComplete',
+    'Usage',
 )

@@ -19,6 +19,9 @@ from pydantic_ai.realtime import (
     CreateResponse,
     ImageInput,
     InputTranscript,
+    RateLimit,
+    RateLimits,
+    Reconnected,
     SessionError,
     SpeechStarted,
     SpeechStopped,
@@ -28,6 +31,7 @@ from pydantic_ai.realtime import (
     Transcript,
     TruncateOutput,
     TurnComplete,
+    Usage,
     openai as rt_openai,
 )
 from pydantic_ai.realtime.openai import (
@@ -37,6 +41,7 @@ from pydantic_ai.realtime.openai import (
 )
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 
 def test_map_audio_delta() -> None:
@@ -126,11 +131,74 @@ def test_map_error_event_with_message() -> None:
 
 
 def test_map_error_event_without_message_serializes_payload() -> None:
-    assert map_event({'type': 'error', 'error': {'code': 'x'}}) == SessionError(message=json.dumps({'code': 'x'}))
+    assert map_event({'type': 'error', 'error': {'code': 'x'}}) == SessionError(
+        message=json.dumps({'code': 'x'}), code='x'
+    )
 
 
 def test_map_error_event_non_dict_payload() -> None:
     assert map_event({'type': 'error', 'error': 'plain'}) == SessionError(message='plain')
+
+
+def test_map_error_event_with_type_and_code_is_recoverable() -> None:
+    event = map_event({'type': 'error', 'error': {'message': 'bad', 'type': 'invalid_request_error', 'code': 'c1'}})
+    assert event == SessionError(message='bad', type='invalid_request_error', code='c1', recoverable=True)
+
+
+def test_map_rate_limits() -> None:
+    event = map_event(
+        {
+            'type': 'rate_limits.updated',
+            'rate_limits': [
+                {'name': 'requests', 'limit': 100, 'remaining': 99, 'reset_seconds': 1.5},
+                {'name': 'tokens', 'reset_seconds': 2},  # int reset → float; limit/remaining missing → None
+                {'limit': 1},  # no name → skipped
+            ],
+        }
+    )
+    assert event == RateLimits(
+        limits=[
+            RateLimit(name='requests', limit=100, remaining=99, reset_seconds=1.5),
+            RateLimit(name='tokens', limit=None, remaining=None, reset_seconds=2.0),
+        ]
+    )
+
+
+def test_map_rate_limits_non_list() -> None:
+    assert map_event({'type': 'rate_limits.updated'}) == RateLimits(limits=[])
+
+
+def test_map_usage_full_payload() -> None:
+    response = {
+        'usage': {
+            'input_tokens': 100,
+            'output_tokens': 50,
+            'input_token_details': {
+                'audio_tokens': 80,
+                'cached_tokens': 30,
+                'text_tokens': 20,
+                'image_tokens': 5,
+                'cached_tokens_details': {'audio_tokens': 10},
+            },
+            'output_token_details': {'audio_tokens': 40, 'text_tokens': 10},
+        }
+    }
+    usage = rt_openai._map_usage(response)  # pyright: ignore[reportPrivateUsage]
+    assert usage == RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        input_audio_tokens=80,
+        cache_read_tokens=30,
+        cache_audio_read_tokens=10,
+        output_audio_tokens=40,
+        details={'input_text_tokens': 20, 'input_image_tokens': 5, 'output_text_tokens': 10},
+    )
+
+
+def test_map_usage_minimal_and_missing() -> None:
+    assert rt_openai._map_usage({'usage': {'input_tokens': 7}}) == RequestUsage(input_tokens=7)  # pyright: ignore[reportPrivateUsage]
+    assert rt_openai._map_usage({}) is None  # pyright: ignore[reportPrivateUsage]
+    assert rt_openai._map_usage({'usage': 'nope'}) is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_speech_started() -> None:
@@ -462,6 +530,90 @@ async def test_connection_send_cancel_when_idle_does_not_send() -> None:
     await conn.send(CancelResponse())  # no active response → no cancel event
     assert ws.sent == []
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_response_done_emits_usage_then_turn_complete() -> None:
+    done = json.dumps(
+        {
+            'type': 'response.done',
+            'response': {'status': 'completed', 'output': [], 'usage': {'input_tokens': 3, 'output_tokens': 2}},
+        }
+    )
+    ws = FakeWebSocket([done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    events = [e async for e in conn]
+    assert events == [Usage(usage=RequestUsage(input_tokens=3, output_tokens=2)), TurnComplete(interrupted=False)]
+
+
+@pytest.mark.anyio
+async def test_response_done_function_call_only_still_emits_usage() -> None:
+    done = json.dumps(
+        {
+            'type': 'response.done',
+            'response': {'status': 'completed', 'output': [{'type': 'function_call'}], 'usage': {'output_tokens': 5}},
+        }
+    )
+    ws = FakeWebSocket([done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    events = [e async for e in conn]
+    # function-call-only → no TurnComplete, but usage is still surfaced
+    assert events == [Usage(usage=RequestUsage(output_tokens=5))]
+
+
+class DroppingWebSocket(FakeWebSocket):
+    """A websocket whose iteration raises `ConnectionClosed`, simulating a dropped connection."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        raise rt_openai.websockets.ConnectionClosed(None, None)
+        yield  # pragma: no cover  (makes this an async generator)
+
+
+@pytest.mark.anyio
+async def test_connection_closed_yields_fatal_error() -> None:
+    ws = DroppingWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    events = [e async for e in conn]
+    assert len(events) == 1
+    error = events[0]
+    assert isinstance(error, SessionError)
+    assert error.recoverable is False
+
+
+@pytest.mark.anyio
+async def test_reconnects_on_drop_and_resumes() -> None:
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
+    good = FakeWebSocket([transcript])
+
+    async def dial() -> Any:
+        return good
+
+    # The initial connection drops; reconnect re-dials to `good` and resumes streaming.
+    conn = OpenAIRealtimeConnection(
+        DroppingWebSocket([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0),
+    )
+    events = [e async for e in conn]
+    assert events == [Reconnected(), Transcript(text='hi', is_final=True)]
+
+
+@pytest.mark.anyio
+async def test_reconnect_gives_up_after_max_attempts() -> None:
+    async def dial() -> Any:
+        raise RuntimeError('still down')
+
+    conn = OpenAIRealtimeConnection(
+        DroppingWebSocket([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect=rt_openai.ReconnectPolicy(max_attempts=2, base_delay=0.0, jitter=False),
+    )
+    events = [e async for e in conn]
+    assert len(events) == 1
+    error = events[0]
+    assert isinstance(error, SessionError)
+    assert error.recoverable is False
+    assert 'reconnect failed' in error.message
 
 
 def _audio_delta(item_id: str, content_index: int | None = None) -> str:
