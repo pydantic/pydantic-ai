@@ -313,6 +313,34 @@ async def test_instrumented_model_not_recording():
     )
 
 
+async def test_instrumented_model_serializes_messages_with_to_json(capfire: CaptureLogfire):
+    """Message attributes are serialized with `pydantic_core.to_json`, not stdlib `json.dumps`.
+
+    Asserts the raw (unparsed) attribute strings to pin the compact separators and preserved
+    non-ASCII content that distinguish `to_json` from `json.dumps`; a structural `IsJson`
+    comparison would not catch a regression back to the slower stdlib serializer.
+    """
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
+
+    messages: list[ModelMessage] = [
+        ModelRequest(instructions='instrução', parts=[UserPromptPart('cançã')], timestamp=IsDatetime())
+    ]
+    await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    attributes = capfire.exporter.exported_spans_as_dict()[0]['attributes']
+    assert attributes['gen_ai.input.messages'] == snapshot(
+        '[{"role":"user","parts":[{"type":"text","content":"cançã"}]}]'
+    )
+    assert attributes['gen_ai.output.messages'] == snapshot(
+        '[{"role":"assistant","parts":[{"type":"text","content":"text1"},{"type":"tool_call","id":"tool_call_1","name":"tool1","arguments":"args1"},{"type":"tool_call","id":"tool_call_2","name":"tool2","arguments":{"args2":3}},{"type":"text","content":"text2"}]}]'
+    )
+    assert attributes['gen_ai.system_instructions'] == snapshot('[{"type":"text","content":"instrução"}]')
+
+
 def test_instrumentation_settings_rejects_removed_version():
     with pytest.raises(ValueError, match='Instrumentation version must be one of 2, 3, 4, or 5'):
         InstrumentationSettings(version=1)  # pyright: ignore[reportArgumentType]
