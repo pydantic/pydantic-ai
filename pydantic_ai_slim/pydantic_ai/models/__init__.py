@@ -1191,7 +1191,9 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition) -> OutputObjectDefinition:
+def _customize_output_object(
+    transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition
+) -> OutputObjectDefinition:
     schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(
