@@ -6,9 +6,10 @@ Prefer the narrower task-family guides below so the agent loads only the materia
 
 - [AGENTS-CORE.md](./AGENTS-CORE.md) — agent creation, output, deps, specs, models, run methods
 - [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md) — `Thinking`, `WebSearch`, `Hooks`, custom capabilities
+- [ON-DEMAND-CAPABILITIES.md](./ON-DEMAND-CAPABILITIES.md) — progressive disclosure, deferred capabilities, capabilities on demand, `load_capability`
 - [TOOLS-CORE.md](./TOOLS-CORE.md) — `@agent.tool`, `Tool`, toolsets, MCP, common search tools
 - [NATIVE-TOOLS.md](./NATIVE-TOOLS.md) — provider-native tools like `WebSearchTool` and `CodeExecutionTool`
-- [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md) — approval, retries, `ToolReturn`, timeouts, validators, deferred loading
+- [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md) — approval, retries, `ToolReturn`, timeouts, validators, tool-level deferred loading
 - [INPUT-AND-HISTORY.md](./INPUT-AND-HISTORY.md) — multimodal input, message history, history processors
 - [TESTING-AND-DEBUGGING.md](./TESTING-AND-DEBUGGING.md) — `TestModel`, `FunctionModel`, `capture_run_messages`, Logfire
 - [ORCHESTRATION-AND-INTEGRATIONS.md](./ORCHESTRATION-AND-INTEGRATIONS.md) — multi-agent patterns, graphs, A2A, direct API, durable execution, embeddings, evals, third-party tools
@@ -16,6 +17,10 @@ Prefer the narrower task-family guides below so the agent loads only the materia
 ## Add Capabilities to an Agent
 
 Read [Add Capabilities](./CAPABILITIES-AND-HOOKS.md#add-capabilities-to-an-agent).
+
+## Apply Progressive Disclosure
+
+Read [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md).
 
 ## Intercept Agent Lifecycle with Hooks
 
@@ -90,10 +95,9 @@ Read [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-va
 Read only the relevant section in [ORCHESTRATION-AND-INTEGRATIONS.md](./ORCHESTRATION-AND-INTEGRATIONS.md):
 
 - [Direct API](./ORCHESTRATION-AND-INTEGRATIONS.md#call-the-model-without-using-an-agent)
-- [A2A](./ORCHESTRATION-AND-INTEGRATIONS.md#expose-agents-as-http-servers-a2a)
 - [Durable Execution](./ORCHESTRATION-AND-INTEGRATIONS.md#use-durable-execution)
 - [Embeddings](./ORCHESTRATION-AND-INTEGRATIONS.md#use-embeddings-for-rag)
-- [Third-Party Tools](./ORCHESTRATION-AND-INTEGRATIONS.md#use-langchain-or-acidev-tools)
+- [Third-Party Tools](./ORCHESTRATION-AND-INTEGRATIONS.md#use-langchain-tools)
 - [Custom Extensibility](./ORCHESTRATION-AND-INTEGRATIONS.md#build-custom-toolsets-models-or-agents)
 - [Evals](./ORCHESTRATION-AND-INTEGRATIONS.md#systematically-verify-agent-behavior-with-evals)
 

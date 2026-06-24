@@ -6,19 +6,19 @@ import json
 import uuid
 import warnings
 from base64 import b64decode
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
-    cast,
 )
 
 from typing_extensions import assert_never
 
 from ... import ExternalToolset, ToolDefinition
+from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -26,6 +26,7 @@ from ...messages import (
     CompactionPart,
     DocumentUrl,
     FilePart,
+    ForceDownloadMode,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -45,7 +46,11 @@ from ...messages import (
     VideoUrl,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...tools import (
+    AgentDepsT,
+    DeferredToolApprovalResult,
+    DeferredToolResults,
+)
 from ...toolsets import AbstractToolset
 
 try:
@@ -68,6 +73,12 @@ try:
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
     from ._event_stream import AGUIEventStream
+    from ._interrupt import (
+        HAS_INTERRUPTS,
+        ResumeEntry,
+        interrupt_id_to_tool_call_id,
+        resume_entry_to_approval,
+    )
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
         DEFAULT_AG_UI_VERSION,
@@ -78,7 +89,7 @@ try:
         parse_ag_ui_version,
         thinking_encrypted_metadata,
     )
-except ImportError as e:
+except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
@@ -98,14 +109,14 @@ if TYPE_CHECKING:
 else:
     try:
         from ag_ui.core import ReasoningMessage
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ReasoningMessage:
             """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
 
     try:
         from ag_ui.core import AudioInputContent, DocumentInputContent, ImageInputContent, VideoInputContent
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ImageInputContent:
             """Stub for ag-ui-protocol < 0.1.15."""
@@ -203,7 +214,20 @@ def _user_content_to_input(
 
 @dataclass
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
-    """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
+    """UI adapter for the Agent-User Interaction (AG-UI) protocol.
+
+    [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] (inherited from
+    `UIAdapter`, default `False`) gates two behaviors. On the way in, client-submitted
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped during
+    `sanitize_messages` unless it is `True`, since the server resolves them with its own
+    credentials; only set it when the frontend is trusted. On the way out and back in, when
+    `True`, agent-generated files and uploaded files are stored as
+    [activity messages](https://docs.ag-ui.com/concepts/messages) during `dump_messages`
+    and restored during `load_messages`, enabling full round-trip fidelity. When `False`,
+    they are dropped. If your AG-UI frontend uses activities, be aware that
+    `pydantic_ai_*` activity types are reserved for internal round-trip use and should be
+    ignored by frontend activity handlers.
+    """
 
     _: KW_ONLY
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
@@ -226,18 +250,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     of this setting.
     """
 
-    preserve_file_data: bool = False
-    """Whether to preserve agent-generated files and uploaded files in AG-UI message conversion.
-
-    When `True`, agent-generated files and uploaded files are stored as
-    [activity messages](https://docs.ag-ui.com/concepts/activities) during `dump_messages`
-    and restored during `load_messages`, enabling full round-trip fidelity.
-    When `False` (default), they are silently dropped.
-
-    If your AG-UI frontend uses activities, be aware that `pydantic_ai_*` activity types
-    are reserved for internal round-trip use and should be ignored by frontend activity handlers.
-    """
-
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
         """Build an AG-UI run input object from the request body."""
@@ -257,6 +269,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -267,6 +280,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
+            allowed_file_url_force_download=allowed_file_url_force_download,
             **kwargs,
         )
 
@@ -286,18 +300,46 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def state(self) -> dict[str, Any] | None:
         """Frontend state from the AG-UI run input."""
         state = self.run_input.state
-        if state is None:
-            return None
+        if is_str_dict(state) and state:
+            return state
 
-        if isinstance(state, Mapping) and not state:
-            return None
-
-        return cast('dict[str, Any]', state)
+        return None
 
     @cached_property
     def conversation_id(self) -> str | None:
         """Conversation ID from the AG-UI `RunAgentInput.threadId`."""
         return self.run_input.thread_id
+
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Translate AG-UI `RunAgentInput.resume[]` into Pydantic AI `DeferredToolResults`.
+
+        See [docs.ag-ui.com/concepts/interrupts](https://docs.ag-ui.com/concepts/interrupts).
+
+        Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`.
+        The mapping is **deny-by-default**: approval requires an explicit
+        `payload.approved == True`. Any other shape is treated as a denial so a malformed
+        or hostile client cannot accidentally execute a tool that requires human approval.
+
+        - `status == 'cancelled'` → `ToolDenied('Cancelled by user.')`
+        - `payload.approved is True` with `payload.editedArgs` → `ToolApproved(override_args=...)`
+        - `payload.approved is True` without edits → `ToolApproved()`
+        - Anything else (`False`, missing, `null`, non-bool, non-dict payload) →
+          `ToolDenied(payload.get('reason'))` if `reason` is a non-empty string, else
+          `ToolDenied()` (which carries the default `"The tool call was denied."` message).
+
+        Returns `None` when `resume` is missing or empty, or when the installed
+        ag-ui-protocol predates the interrupt lifecycle.
+        """
+        if not HAS_INTERRUPTS:
+            return None
+        resume: list[ResumeEntry] | None = getattr(self.run_input, 'resume', None)
+        if not resume:
+            return None
+        approvals: dict[str, DeferredToolApprovalResult | bool] = {
+            interrupt_id_to_tool_call_id(entry.interrupt_id): resume_entry_to_approval(entry) for entry in resume
+        }
+        return DeferredToolResults(approvals=approvals)
 
     @classmethod
     def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:  # noqa: C901

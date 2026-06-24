@@ -35,7 +35,7 @@ async def summarize(text: str) -> str:
     return f'Summary of: {text}'
 ```
 
-Wire up OTel export (e.g. [`logfire.configure()`](../logfire.md#using-logfire)) elsewhere in your application startup so that the emitted `gen_ai.evaluation.result` events reach your backend.
+Wire up OTel export (e.g. [`logfire.configure()`](../logfire.md#using-logfire)) elsewhere in your application startup so that the emitted `gen_ai.evaluation.result` events reach your backend. When using [Pydantic Logfire](https://pydantic.dev/docs/logfire/evaluate/live-evals/), these events surface in the **Live Evaluations** view, where you can browse results by target, drill into the originating trace, and watch scores over a time window.
 
 Each decorated call emits one `gen_ai.evaluation.result` OTel event per evaluator result, following the [OTel GenAI evaluation semconv](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/#event-gen_aievaluationresult). This mirrors how offline evaluation emits OTel spans via `logfire.span`: if any OTel SDK is configured in the process (via [`logfire.configure()`](../logfire.md#using-logfire), the OTel SDK directly, or a vendor instrumentation), events flow to your backend; if not, emission is a cheap no-op.
 
@@ -231,7 +231,7 @@ config = OnlineEvalConfig(emit_otel_events=False)
 
 #### Evaluator Versioning
 
-Set `evaluator_version` as a class attribute on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to stamp every result it emits with a version string — surfaced as `gen_ai.evaluation.evaluator.version` on emitted events and as `evaluator_version` on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
+Override [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on an [`Evaluator`][pydantic_evals.evaluators.Evaluator] subclass to stamp every result it emits with a version string — surfaced as `gen_ai.evaluation.evaluator.version` on emitted events and as `evaluator_version` on each [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure]. This lets trend lines and dashboards filter out results produced by retired evaluator versions without deleting historical rows — useful when you change an LLM judge's prompt or rework a heuristic in a way that invalidates prior scores:
 
 ```python
 from dataclasses import dataclass
@@ -241,10 +241,11 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
 @dataclass
 class ToneCheck(Evaluator):
-    evaluator_version = 'v2'  # bumped after prompt rewrite
-
     def evaluate(self, ctx: EvaluatorContext) -> str:
         return 'neutral'
+
+    def get_evaluator_version(self) -> str | None:
+        return 'v2'  # bumped after prompt rewrite
 ```
 
 The version applies to all results the evaluator produces (so one evaluator class maps to one version, even when the evaluator returns a mapping of named results).
@@ -989,5 +990,6 @@ The complete API for the `pydantic_evals.online` module is documented in the [AP
 
 - **[Custom Evaluators](evaluators/custom.md)** — Write evaluators for your domain
 - **[Native Evaluators](evaluators/built-in.md)** — Use ready-made evaluators
+- **[Live Evaluations in Logfire](https://pydantic.dev/docs/logfire/evaluate/live-evals/)** — Browse, filter, and trend online evaluation results in the Logfire web UI
 - **[Logfire Integration](how-to/logfire-integration.md)** — Visualize evaluation results in Logfire
 - **[Quick Start](quick-start.md)** — Offline evaluation with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate]

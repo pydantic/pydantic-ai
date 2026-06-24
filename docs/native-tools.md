@@ -90,7 +90,6 @@ making it ideal for queries that require up-to-date data.
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
-| Outlines | ❌ | Not supported |
 
 ### Usage
 
@@ -172,7 +171,10 @@ _(This example is complete, it can be run "as is")_
 
 ## X Search Tool
 
-The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. This tool is exclusive to xAI models. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for more details.
+!!! tip
+    For a model-agnostic approach with a subagent fallback, see the [`XSearch`][pydantic_ai.capabilities.XSearch] [capability](capabilities.md#provider-adaptive-tools).
+
+The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to search X/Twitter for real-time posts and content. Natively supported by xAI models; usable on other models via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with `fallback_model` set. See the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search) for more details.
 
 ### Usage
 
@@ -180,7 +182,7 @@ The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to s
 from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('xai:grok-4-1-fast', capabilities=[NativeTool(XSearchTool())])
+agent = Agent('xai:grok-4.3', capabilities=[NativeTool(XSearchTool())])
 
 result = agent.run_sync('What are people saying about AI on X today?')
 print(result.output)
@@ -200,7 +202,7 @@ from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'xai:grok-4-1-fast',
+    'xai:grok-4.3',
     capabilities=[
         NativeTool(
             XSearchTool(
@@ -227,7 +229,7 @@ _(This example is complete, it can be run "as is")_
     You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 10 handles maximum.
 
 !!! note "Including raw search results"
-    By default, xAI only returns the model's text summary of the search. To get programmatic access to the underlying posts, sources, and metadata, set `include_x_search_output=True` on [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] (analogous to [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] for OpenAI web search). The raw results are then available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] exposed via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. As an alternative, you can enable it globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](agent.md#model-run-settings). See the [xAI docs](models/xai.md#x-search) for the recommended `XSearch` capability-based approach.
+    By default, xAI only returns the model's text summary of the search. To get programmatic access to the underlying posts, sources, and metadata, set `include_output=True` on [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] (analogous to [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] for OpenAI web search). The raw results are then available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] exposed via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. As an alternative, you can enable it globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](agent.md#model-run-settings). See the [xAI docs](models/xai.md#x-search) for the recommended `XSearch` capability-based approach.
 
 ## Code Execution Tool
 
@@ -247,7 +249,6 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
-| Outlines | ❌ | |
 
 ### Usage
 
@@ -508,7 +509,6 @@ allowing it to pull up-to-date information from the web.
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
-| Outlines | ❌ | |
 
 ### Usage
 
@@ -834,7 +834,6 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
-| Outlines | ❌ | Not supported |
 
 ### Usage
 
@@ -914,7 +913,7 @@ asyncio.run(main())
 
 #### xAI
 
-With xAI, `FileSearchTool` maps to the [collections search](https://docs.x.ai/developers/tools/collection-search) tool. Pass collection IDs as `file_store_ids`.
+With xAI, `FileSearchTool` maps to the [collections search](https://docs.x.ai/developers/tools/collections-search) tool. Pass collection IDs as `file_store_ids`.
 
 ```py {title="file_search_xai.py" test="skip"}
 import asyncio
@@ -925,7 +924,7 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        'xai:grok-4-1-fast',
+        'xai:grok-4.3',
         capabilities=[NativeTool(FileSearchTool(file_store_ids=['collection_abc123']))]
     )
 

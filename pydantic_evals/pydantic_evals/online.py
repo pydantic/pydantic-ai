@@ -30,7 +30,7 @@ import asyncio
 import functools
 import inspect
 import threading
-from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -153,7 +153,7 @@ _EVALUATION_DISABLED = _online_internal.EVALUATION_DISABLED
 
 
 @contextmanager
-def disable_evaluation() -> Iterator[None]:
+def disable_evaluation() -> Generator[None]:
     """Context manager to disable all online evaluation in the current context.
 
     When active, decorated functions still execute normally but no evaluators are dispatched.
@@ -199,9 +199,10 @@ class OnlineEvaluator:
     evaluator: Evaluator
     """The evaluator to run.
 
-    To version an evaluator, set `evaluator_version` as a class attribute on the
-    `Evaluator` subclass itself (see `Evaluator` docstring). The framework reads it
-    via `getattr` at dispatch time and propagates it to sinks alongside each result.
+    To version an evaluator, override
+    [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on the
+    `Evaluator` subclass (see `Evaluator` docstring). The framework calls it at dispatch time and
+    propagates the value to sinks alongside each result.
     """
     sample_rate: float | Callable[[SamplingContext], float | bool] | None = None
     """Probability of running this evaluator (0.0–1.0), or a callable returning a float or bool.
@@ -310,8 +311,9 @@ async def run_evaluators(
     all_results: list[EvaluationResult] = []
     all_failures: list[EvaluatorFailure] = []
 
+    results_by_index: dict[int, list[EvaluationResult] | EvaluatorFailure] = {}
+
     async with anyio.create_task_group() as tg:
-        results_by_index: dict[int, list[EvaluationResult] | EvaluatorFailure] = {}
 
         async def _run(idx: int, evaluator: Evaluator) -> None:
             results_by_index[idx] = await run_evaluator(evaluator, context)
@@ -388,7 +390,7 @@ def _open_call_span(
     msg_template: str,
     span_name: str | None,
     recorded_inputs: dict[str, Any] | None,
-) -> Iterator[Any]:
+) -> Generator[Any]:
     """Open the span that represents the decorated function call.
 
     When logfire is installed, uses `logfire.span` so argument and return
@@ -507,8 +509,9 @@ class OnlineEvalConfig:
         `None`, which resolves to the config's `default_sample_rate` at each call — so
         changes to the config after decoration take effect.
 
-        To version an evaluator, set `evaluator_version` on the `Evaluator` subclass
-        itself — the framework reads it at dispatch time and records it on every
+        To version an evaluator, override
+        [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] on the
+        `Evaluator` subclass — the framework calls it at dispatch time and records the value on every
         [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] and
         [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] the evaluator emits:
 
@@ -521,10 +524,11 @@ class OnlineEvalConfig:
 
         @dataclass
         class Tone(Evaluator):
-            evaluator_version = 'v2'
-
             def evaluate(self, ctx: EvaluatorContext) -> str:
                 return 'neutral'
+
+            def get_evaluator_version(self) -> str | None:
+                return 'v2'
 
 
         @evaluate(Tone())

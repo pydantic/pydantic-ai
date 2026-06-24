@@ -710,6 +710,7 @@ class _HookRegistration(Generic[AgentDepsT]):
 # --- The Hooks capability ---
 
 
+@dataclass(init=False)
 class Hooks(AbstractCapability[AgentDepsT]):
     """Register hook functions via decorators or constructor kwargs.
 
@@ -790,7 +791,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
         deferred_tool_calls: HandleDeferredToolCallsHookFunc | None = None,
         # Ordering
         ordering: CapabilityOrdering | None = None,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
     ):
+        self.id = id
+        self.description = description
+        self.defer_loading = defer_loading
         self._ordering = ordering
         self._registry = {}
         # Map constructor kwarg names to internal registry keys (AbstractCapability method names)

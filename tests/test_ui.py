@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
     FinalResultEvent,
+    ForceDownloadMode,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
@@ -38,6 +39,8 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.models.function import (
@@ -69,12 +72,6 @@ from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -606,7 +603,7 @@ async def test_run_stream_output_tool_error():
         raise ValueError('Output validation failed')
 
     agent = Agent(
-        model=FunctionModel(stream_function=stream_function), output_type=bad_output, tool_retries=0, output_retries=0
+        model=FunctionModel(stream_function=stream_function), output_type=bad_output, retries={'tools': 0, 'output': 0}
     )
 
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
@@ -625,61 +622,6 @@ async def test_run_stream_output_tool_error():
             "<output-tool-result name='final_result'>Tool execution was interrupted by an error.</output-tool-result>",
             "<error type='ValueError'>Output validation failed</error>",
             '</request>',
-            '</stream>',
-        ]
-    )
-
-
-async def test_run_stream_output_tool_validation_retry_dedupes_legacy_events():
-    """Validation-failure paths emit dual `Output*` + legacy `Function*` events; the UI layer dedupes by `tool_call_id`."""
-
-    class OutputType(BaseModel):
-        value: str
-
-    call_count = 0
-
-    async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
-    ) -> AsyncIterator[DeltaToolCalls | str]:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # First call: invalid args → validation failure → dual emission (Output* + legacy Function*)
-            yield {0: DeltaToolCall(name='final_result', json_args='{"bad": "x"}', tool_call_id='out_1')}
-        else:
-            # Retry: valid args → success path emits only Output*
-            yield {0: DeltaToolCall(name='final_result', json_args='{"value": "ok"}', tool_call_id='out_2')}
-
-    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=OutputType)
-
-    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
-    adapter = DummyUIAdapter(agent, request)
-    events = [event async for event in adapter.run_stream()]
-
-    # Each output tool call should produce exactly one `<output-tool-result>` and zero `<function-tool-result>` —
-    # the legacy `FunctionToolResultEvent` emitted on the failure path for `out_1` is dedupped at the UI layer.
-    assert events == snapshot(
-        [
-            '<stream>',
-            '<response>',
-            '<tool-call name=\'final_result\'>{"bad": "x"}',
-            "<final-result tool_name='final_result' />",
-            "</tool-call name='final_result'>",
-            '</response>',
-            '<request>',
-            '<output-tool-call name=\'final_result\'>{"bad": "x"}</output-tool-call>',
-            "<output-tool-result name='final_result'>[{'type': 'missing', 'loc': ('value',), 'msg': 'Field required', 'input': {'bad': 'x'}}]</output-tool-result>",
-            '</request>',
-            '<response>',
-            '<tool-call name=\'final_result\'>{"value": "ok"}',
-            "<final-result tool_name='final_result' />",
-            "</tool-call name='final_result'>",
-            '</response>',
-            '<request>',
-            '<output-tool-call name=\'final_result\'>{"value": "ok"}</output-tool-call>',
-            "<output-tool-result name='final_result'>Final result processed.</output-tool-result>",
-            '</request>',
-            "<run-result>value='ok'</run-result>",
             '</stream>',
         ]
     )
@@ -1044,17 +986,26 @@ def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
     assert 'allowed_file_url_schemes' in dispatch_request_parameters
     assert dispatch_request_parameters['allowed_file_url_schemes'].default == frozenset({'http', 'https'})
 
+    assert 'allowed_file_url_force_download' in from_request_parameters
+    assert from_request_parameters['allowed_file_url_force_download'].default == frozenset()
+    assert 'allowed_file_url_force_download' in dispatch_request_parameters
+    assert dispatch_request_parameters['allowed_file_url_force_download'].default == frozenset()
+
 
 def _make_dummy_adapter(
     messages: list[ModelMessage],
     *,
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+    allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
+    preserve_file_data: bool = False,
 ) -> DummyUIAdapter[None, str]:
-    agent: Agent[None, str] = Agent(model=TestModel())
+    agent = Agent(model=TestModel())
     return DummyUIAdapter(
         agent=agent,
         run_input=DummyUIRunInput(messages=messages),
         allowed_file_url_schemes=allowed_file_url_schemes,
+        allowed_file_url_force_download=allowed_file_url_force_download,
+        preserve_file_data=preserve_file_data,
     )
 
 
@@ -1120,6 +1071,392 @@ def test_sanitize_messages_respects_custom_allowed_schemes():
     user_part = sanitized[0].parts[0]
     assert isinstance(user_part, UserPromptPart)
     assert user_part.content == snapshot([ImageUrl(url='s3://bucket/ok.png')])
+
+
+def test_sanitize_messages_resets_force_download_not_in_allowlist():
+    """`FileUrl.force_download` values outside `allowed_file_url_force_download` are reset to `False` with a warning.
+
+    With the default `allowed_file_url_force_download` (`frozenset()`), both `'allow-local'` and `True`
+    are reset, since `'allow-local'` bypasses the SSRF private-IP block and `True` makes the server
+    fetch the file itself — neither is safe to honor from untrusted client input. `False` is always
+    permitted (the safe default the sanitizer resets to) regardless of the allowlist.
+    """
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(url='https://example.com/img.png', force_download='allow-local'),
+                            DocumentUrl(url='https://example.com/doc.pdf', force_download=True),
+                            ImageUrl(url='https://example.com/plain.png'),
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r'force_download.*value\(s\).*allow-local.*reset to `False`') as caught:
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    warning_message = str(caught[0].message)
+    assert 'True' in warning_message
+    assert 'https://example.com/img.png' not in warning_message
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(
+        [
+            ImageUrl(url='https://example.com/img.png', force_download=False),
+            DocumentUrl(url='https://example.com/doc.pdf', force_download=False),
+            ImageUrl(url='https://example.com/plain.png', force_download=False),
+        ]
+    )
+
+
+def test_sanitize_messages_leaves_allowlisted_force_download_alone():
+    """`FileUrl` `force_download` values in `allowed_file_url_force_download` pass through without warnings."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(url='https://example.com/a.png'),
+                            ImageUrl(url='https://example.com/b.png', force_download=True),
+                            ImageUrl(url='https://example.com/c.png', force_download='allow-local'),
+                        ]
+                    )
+                ]
+            )
+        ],
+        allowed_file_url_force_download=frozenset({True, 'allow-local'}),
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(
+        [
+            ImageUrl(url='https://example.com/a.png', force_download=False),
+            ImageUrl(url='https://example.com/b.png', force_download=True),
+            ImageUrl(url='https://example.com/c.png', force_download='allow-local'),
+        ]
+    )
+
+
+def test_sanitize_messages_widened_allowlist_lets_true_through_but_resets_allow_local():
+    """A widened `allowed_file_url_force_download` keeps `True` but still resets `'allow-local'`."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(url='https://example.com/a.png', force_download=True),
+                            ImageUrl(url='https://example.com/b.png', force_download='allow-local'),
+                        ]
+                    )
+                ]
+            )
+        ],
+        allowed_file_url_force_download=frozenset({True}),
+    )
+
+    with pytest.warns(UserWarning, match=r'force_download.*value\(s\).*allow-local'):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(
+        [
+            ImageUrl(url='https://example.com/a.png', force_download=True),
+            ImageUrl(url='https://example.com/b.png', force_download=False),
+        ]
+    )
+
+
+def test_sanitize_messages_strips_disallowed_scheme_before_reset():
+    """A `FileUrl` with both a disallowed scheme and `allow-local` is dropped, not reset."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(url='s3://bucket/key.png', force_download='allow-local'),
+                            ImageUrl(url='https://example.com/img.png', force_download='allow-local'),
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    messages = [str(w.message) for w in caught]
+    assert any("scheme(s) ['s3']" in m for m in messages)
+    assert any('force_download' in m and 'allow-local' in m for m in messages)
+    assert not any('s3://bucket/key.png' in m for m in messages)
+    assert not any('https://example.com/img.png' in m for m in messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot([ImageUrl(url='https://example.com/img.png', force_download=False)])
+
+
+def test_sanitize_messages_resets_force_download_in_tool_return_parts():
+    """`FileUrl`s nested in tool return parts have non-allowlisted `force_download` reset.
+
+    Multimodal tool returns (PR #5255) put `FileUrl` objects inside `ToolReturnPart.content`,
+    including nested in dicts and lists, so the sanitizer walks tool return content too.
+    """
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup',
+                        tool_call_id='call-1',
+                        content=[
+                            'see file',
+                            ImageUrl(url='https://example.com/top.png', force_download='allow-local'),
+                            {'nested': DocumentUrl(url='https://example.com/deep.pdf', force_download=True)},
+                        ],
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        tool_call_id='call-2',
+                        content=ImageUrl(url='https://example.com/native.png', force_download='allow-local'),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r'force_download'):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    tool_return = request.parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(
+        [
+            'see file',
+            ImageUrl(url='https://example.com/top.png', force_download=False),
+            {'nested': DocumentUrl(url='https://example.com/deep.pdf', force_download=False)},
+        ]
+    )
+
+    response = sanitized[1]
+    assert isinstance(response, ModelResponse)
+    native_return = response.parts[0]
+    assert isinstance(native_return, NativeToolReturnPart)
+    assert native_return.content == snapshot(ImageUrl(url='https://example.com/native.png', force_download=False))
+
+
+def test_sanitize_messages_strips_disallowed_schemes_in_tool_return_parts():
+    """`FileUrl`s nested in tool return parts are also checked against `allowed_file_url_schemes`."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup',
+                        tool_call_id='call-1',
+                        content=[
+                            'see file',
+                            ImageUrl(url='s3://bucket/top.png'),
+                            {
+                                'blocked': DocumentUrl(url='gs://bucket/deep.pdf'),
+                                'ok': ImageUrl(url='https://example.com/ok.png'),
+                            },
+                        ],
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        tool_call_id='call-2',
+                        content=ImageUrl(url='s3://bucket/native.png'),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"scheme\(s\).*'gs'.*'s3'"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    tool_return = request.parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(
+        [
+            'see file',
+            {
+                'ok': ImageUrl(url='https://example.com/ok.png'),
+            },
+        ]
+    )
+
+    response = sanitized[1]
+    assert isinstance(response, ModelResponse)
+    native_return = response.parts[0]
+    assert isinstance(native_return, NativeToolReturnPart)
+    assert native_return.content is None
+
+
+def test_sanitize_messages_drops_uploaded_files_by_default():
+    """Client-submitted `UploadedFile`s are dropped with a warning when `preserve_file_data` is off.
+
+    An `UploadedFile`'s `file_id` is a provider-side reference (e.g. an `s3://`/`gs://` URI) fetched
+    by the model provider using the server-side identity, so — like a non-HTTP `FileUrl` — it is only
+    kept from trusted frontends.
+    """
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Look at this:',
+                            UploadedFile(
+                                file_id='s3://my-bucket/payroll.pdf',
+                                provider_name='bedrock',
+                                media_type='application/pdf',
+                            ),
+                            ImageUrl(url='https://example.com/ok.png'),
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(['Look at this:', ImageUrl(url='https://example.com/ok.png')])
+
+
+def test_sanitize_messages_keeps_uploaded_files_when_preserve_file_data():
+    """`UploadedFile`s pass through unchanged when `preserve_file_data=True` (trusted frontend opt-in)."""
+    uploaded_file = UploadedFile(
+        file_id='gs://my-bucket/object.pdf',
+        provider_name='google-cloud',
+        media_type='application/pdf',
+    )
+    adapter = _make_dummy_adapter(
+        [ModelRequest(parts=[UserPromptPart(content=['Look at this:', uploaded_file])])],
+        preserve_file_data=True,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert isinstance(sanitized[0], ModelRequest)
+    user_part = sanitized[0].parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert user_part.content == snapshot(['Look at this:', uploaded_file])
+
+
+def test_sanitize_messages_drops_uploaded_files_in_tool_return_parts():
+    """`UploadedFile`s nested in tool return parts are dropped by default, like nested `FileUrl`s."""
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup',
+                        tool_call_id='call-1',
+                        content=[
+                            'see file',
+                            {
+                                'blocked': UploadedFile(file_id='s3://bucket/secret.pdf', provider_name='bedrock'),
+                                'ok': ImageUrl(url='https://example.com/ok.png'),
+                            },
+                        ],
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        tool_call_id='call-2',
+                        content=UploadedFile(file_id='gs://bucket/native.pdf', provider_name='google-cloud'),
+                    )
+                ]
+            ),
+        ]
+    )
+
+    with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock', 'google-cloud'\]"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    tool_return = request.parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(['see file', {'ok': ImageUrl(url='https://example.com/ok.png')}])
+
+    response = sanitized[1]
+    assert isinstance(response, ModelResponse)
+    native_return = response.parts[0]
+    assert isinstance(native_return, NativeToolReturnPart)
+    assert native_return.content is None
+
+
+def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_preserve_file_data():
+    """`UploadedFile`s nested in tool return parts pass through unchanged when `preserve_file_data=True`."""
+    uploaded_file = UploadedFile(file_id='s3://bucket/secret.pdf', provider_name='bedrock')
+    adapter = _make_dummy_adapter(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='lookup',
+                        tool_call_id='call-1',
+                        content=['see file', {'kept': uploaded_file}],
+                    )
+                ]
+            )
+        ],
+        preserve_file_data=True,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    request = sanitized[0]
+    assert isinstance(request, ModelRequest)
+    tool_return = request.parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(['see file', {'kept': uploaded_file}])
 
 
 def test_sanitize_messages_strips_dangling_tool_calls():
@@ -1239,7 +1576,7 @@ async def test_run_stream_strips_dangling_tool_calls_from_client_history():
         captured.append(list(messages))
         yield 'done'
 
-    agent: Agent[None, str] = Agent(model=FunctionModel(stream_function=stream_function))
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     request = DummyUIRunInput(
         messages=[
@@ -1269,7 +1606,7 @@ async def test_run_stream_strips_file_urls_with_disallowed_schemes():
         captured.append(list(messages))
         yield 'ok'
 
-    agent: Agent[None, str] = Agent(model=FunctionModel(stream_function=stream_function))
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
 
     request = DummyUIRunInput(
         messages=[

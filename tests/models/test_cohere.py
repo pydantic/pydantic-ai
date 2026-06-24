@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -79,6 +79,7 @@ class MockClientWrapper:
 class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
     index = 0
+    chat_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     _client_wrapper: MockClientWrapper = None  # type: ignore
 
     def __post_init__(self):
@@ -88,7 +89,8 @@ class MockAsyncClientV2:
     def create_mock(cls, completions: MockChatResponse | Sequence[MockChatResponse]) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
-    async def chat(self, *_args: Any, **_kwargs: Any) -> ChatResponse:
+    async def chat(self, *_args: Any, **kwargs: Any) -> ChatResponse:
+        self.chat_kwargs.append(kwargs)
         assert self.completions is not None
         if isinstance(self.completions, Sequence):
             raise_if_exception(self.completions[self.index])
@@ -507,6 +509,16 @@ async def test_request_simple_success_with_vcr(allow_model_requests: None, co_ap
 
 
 @pytest.mark.vcr()
+async def test_request_usage_with_cached_tokens(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    # Long instructions so the prompt crosses Cohere's prompt-cache threshold and the API reports a hit.
+    long_instructions = 'You are a helpful assistant. ' * 400
+    agent = Agent(m, instructions=long_instructions)
+    result = await agent.run('Say hi in one word.')
+    assert result.usage.cache_read_tokens == snapshot(2928)
+
+
+@pytest.mark.vcr()
 async def test_cohere_model_instructions(allow_model_requests: None, co_api_key: str):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
 
@@ -637,6 +649,23 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
             ),
         ]
     )
+
+
+async def test_cohere_model_top_k(allow_model_requests: None):
+    """Verify that top_k from ModelSettings is forwarded as k= to the Cohere API."""
+    c = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='world')],
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello', model_settings={'top_k': 50})
+
+    chat_kwargs = cast(MockAsyncClientV2, mock_client).chat_kwargs[0]
+    assert chat_kwargs['k'] == 50
 
 
 async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
