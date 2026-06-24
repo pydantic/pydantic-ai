@@ -405,7 +405,7 @@ class HangingWebSocket(FakeWebSocket):
     """A websocket whose `recv` never returns, to exercise the handshake timeout."""
 
     async def recv(self) -> Any:
-        await asyncio.Event().wait()  # pragma: no cover
+        await asyncio.Event().wait()
 
 
 @pytest.mark.anyio

@@ -74,7 +74,7 @@ class FakeRealtimeModel(RealtimeModel):
         self.last_model_settings: ModelSettings | None = None
 
     @property
-    def model_name(self) -> str:  # pragma: no cover
+    def model_name(self) -> str:
         return 'fake-realtime'
 
     @asynccontextmanager
@@ -280,7 +280,7 @@ class IdleAfterToolConnection(RealtimeConnection):
 
     async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
         yield self._call
-        await asyncio.Event().wait()  # pragma: no cover
+        await asyncio.Event().wait()
 
 
 async def test_background_completion_delivered_while_upstream_idle() -> None:
@@ -319,6 +319,59 @@ class ExplodingConnection(RealtimeConnection):
 async def test_upstream_error_propagates_to_consumer() -> None:
     session = RealtimeSession(ExplodingConnection(), _noop_runner)
     with pytest.raises(RuntimeError, match='connection dropped'):
+        _ = [e async for e in session]
+
+
+class SendFailsConnection(RealtimeConnection):
+    """Replays events but raises on every send — a connection dropping mid tool call (the only thing
+    sent through it in these tests is the tool's `ToolResult`).
+
+    With `idle=True` it never closes after the events (an idle provider); with `release` set it
+    closes immediately and the tool only runs once released, so the failure lands after upstream end.
+    """
+
+    def __init__(
+        self, events: list[RealtimeEvent], *, idle: bool = False, release: asyncio.Event | None = None
+    ) -> None:
+        self._events = events
+        self._idle = idle
+        self._release = release
+
+    async def send(self, content: RealtimeInput) -> None:
+        raise RuntimeError('connection lost')
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+        for event in self._events:
+            yield event
+        if self._release is not None:
+            self._release.set()
+        if self._idle:
+            await asyncio.Event().wait()
+
+
+async def test_background_tool_failure_propagates_while_idle() -> None:
+    conn = SendFailsConnection([ToolCall(tool_call_id='bg', tool_name='boom', args='{}')], idle=True)
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'ok'
+
+    # The background tool's ToolResult send fails while the provider is idle; without propagation the
+    # consumer would hang waiting for a completion that never arrives.
+    session = RealtimeSession(conn, runner, background_tools={'boom'})
+    with pytest.raises(RuntimeError, match='connection lost'):
+        _ = [e async for e in session]
+
+
+async def test_background_tool_failure_propagates_after_close() -> None:
+    release = asyncio.Event()
+    conn = SendFailsConnection([ToolCall(tool_call_id='bg', tool_name='boom', args='{}')], release=release)
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()  # only runs after upstream has closed → failure surfaces during drain
+        return 'ok'
+
+    session = RealtimeSession(conn, runner, background_tools={'boom'})
+    with pytest.raises(RuntimeError, match='connection lost'):
         _ = [e async for e in session]
 
 

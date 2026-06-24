@@ -39,6 +39,13 @@ ToolRunner = Callable[[str, dict[str, Any], str], Awaitable[str]]
 """Async callable executing a tool given its name, parsed arguments, and call id; returns the string result."""
 
 
+def _as_event(item: object) -> RealtimeSessionEvent:
+    """Unwrap a queue item: re-raise a background tool's exception, otherwise return the event."""
+    if isinstance(item, Exception):
+        raise item
+    return cast('RealtimeSessionEvent', item)
+
+
 def _transcript_message(event: RealtimeSessionEvent) -> dict[str, Any] | None:
     """Map a final transcript event to an OpenTelemetry GenAI message, or `None` for anything else."""
     if isinstance(event, InputTranscript) and event.is_final and event.text:
@@ -235,7 +242,14 @@ class RealtimeSession:
         pump_error: Exception | None = None
 
         async def run_background(call: ToolCall) -> None:
-            result = await self._run_tool(call)
+            try:
+                result = await self._run_tool(call)
+            except Exception as e:
+                # Surface the failure through the queue so the consumer re-raises it, instead of
+                # letting it vanish into the final `gather(..., return_exceptions=True)` and hang the
+                # session on a completion that never arrives.
+                await queue.put(e)
+                return
             await queue.put(ToolCallCompleted(tool_name=call.tool_name, tool_call_id=call.tool_call_id, result=result))
 
         async def pump() -> None:
@@ -272,12 +286,12 @@ class RealtimeSession:
                 item = await queue.get()
                 if item is closed:
                     break
-                yield cast('RealtimeSessionEvent', item)
+                yield _as_event(item)  # re-raises if a background tool failed
             # Upstream is done: wait for any in-flight background tools, then flush their completions.
             if background:
                 await asyncio.gather(*background, return_exceptions=True)
             while not queue.empty():
-                yield cast('RealtimeSessionEvent', queue.get_nowait())
+                yield _as_event(queue.get_nowait())
             if pump_error is not None:
                 raise pump_error
         finally:

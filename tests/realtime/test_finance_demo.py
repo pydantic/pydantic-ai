@@ -72,7 +72,7 @@ class _RoutingConnection(RealtimeConnection):
 
 class _RoutingModel(RealtimeModel):
     @property
-    def model_name(self) -> str:  # pragma: no cover
+    def model_name(self) -> str:
         return 'fake-realtime'
 
     @asynccontextmanager
