@@ -46,6 +46,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
+from .._adapter import narrow_binary_images
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     apply_message_metadata,
@@ -946,7 +947,7 @@ def _validate_tool_output(output: Any) -> Any:
     `BinaryContent` instances with image media types are narrowed to `BinaryImage`.
     """
     validated = tool_return_content_ta.validate_python(_coerce_js_binary_data(output))
-    return _narrow_binary_images(validated)
+    return narrow_binary_images(validated)
 
 
 def _coerce_js_binary_data(value: Any) -> Any:
@@ -993,17 +994,6 @@ def _js_binary_to_bytes(data: Any) -> Any:
         if all(isinstance(v, int) and 0 <= v <= 255 for v in values):
             return bytes(values)
     return data  # pyright: ignore[reportUnknownVariableType]
-
-
-def _narrow_binary_images(value: Any) -> Any:
-    """Walk a validated `ToolReturnContent` value and narrow image `BinaryContent` to `BinaryImage`."""
-    if isinstance(value, BinaryContent):
-        return BinaryContent.narrow_type(value)
-    if isinstance(value, list):
-        return [_narrow_binary_images(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
-    if isinstance(value, dict):
-        return {k: _narrow_binary_images(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
-    return value
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:

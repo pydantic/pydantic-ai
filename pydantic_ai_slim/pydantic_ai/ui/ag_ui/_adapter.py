@@ -46,6 +46,7 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import (
@@ -74,7 +75,7 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from .._adapter import strip_tool_return_files
+    from .._adapter import narrow_binary_images, strip_tool_return_files
     from ._event_stream import AGUIEventStream
     from ._interrupt import (
         HAS_INTERRUPTS,
@@ -201,6 +202,26 @@ def _tool_return_message_content(part: BaseToolReturnPart, *, preserve_file_data
     if not preserve_file_data:
         part = replace(part, content=strip_tool_return_files(part.content, keep_top_level_files=True))
     return part.model_response_str()
+
+
+def _rehydrate_tool_return_content(content: str) -> Any:
+    """Rehydrate a `ToolMessage.content` string into `ToolReturnContent`, restoring multimodal subclasses.
+
+    `ToolMessage.content` is a string on the wire; for structured returns it's our own
+    `model_response_str()` JSON dump. Parsing it back through `tool_return_content_ta` runs the lifted
+    discriminator so multimodal items nested in a mapping or list (`BinaryContent`, `ImageUrl`,
+    `UploadedFile`, ...) come back as their subclasses instead of plain dicts, mirroring the Vercel
+    adapter's `_validate_tool_output`. Image `BinaryContent` is narrowed to `BinaryImage`.
+
+    Used only with `preserve_file_data=True`, where nested file bytes survive the round trip. A non-JSON
+    string (a plain-text return) is left untouched. No JS-binary coercion (unlike Vercel): AG-UI content
+    is always our own base64 dump, never a frontend `Uint8Array`/`Buffer` shape.
+    """
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return content
+    return narrow_binary_images(tool_return_content_ta.validate_python(parsed))
 
 
 def _merge_tool_files(content: Any, files: list[MultiModalContent]) -> Any:
@@ -486,10 +507,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
                     files = pending_tool_files.pop(tool_call_id, [])
 
+                    content: Any = tool_msg.content
+                    if preserve_file_data:
+                        # Rehydrate nested multimodal items (the discriminator runs here, not in a later
+                        # `ModelMessagesTypeAdapter` pass) so `preserve_file_data=True` round-trips files
+                        # at any depth, matching the Vercel adapter. Left untouched on the default secure
+                        # path, where nested files were stripped on dump (`strip_tool_return_files`).
+                        content = _rehydrate_tool_return_content(content)
+
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                         _, provider_name, original_id = tool_call_id.split('|', 2)
-                        content: Any = tool_msg.content
-                        if isinstance(content, str):
+                        if not preserve_file_data and isinstance(content, str):
+                            # Built-in tool content is JSON-serialized on dump; parse it back so downstream
+                            # model code that checks `isinstance(content, dict)` doesn't drop the result.
                             try:
                                 content = json.loads(content)
                             except json.JSONDecodeError:
@@ -506,7 +536,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         builder.add(
                             ToolReturnPart(
                                 tool_name=tool_name,
-                                content=_merge_tool_files(tool_msg.content, files),
+                                content=_merge_tool_files(content, files),
                                 tool_call_id=tool_call_id,
                             )
                         )

@@ -3637,6 +3637,13 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
             ),
             id='document-url',
         ),
+        pytest.param(
+            'dict-with-nested-image',
+            # A file nested in a mapping isn't reachable by `BaseToolReturnPart.files`, so it stays inline
+            # in the JSON content (no sidecar) and is rehydrated on load via `tool_return_content_ta`.
+            snapshot([]),
+            id='dict-with-nested-image',
+        ),
     ],
 )
 def test_dump_load_roundtrip_tool_return_multimodal(
@@ -3657,6 +3664,7 @@ def test_dump_load_roundtrip_tool_return_multimodal(
         'text-then-audio': ['the audio narration says...', tiny_audio],
         'image-and-video': [tiny_image, tiny_video],
         'document-url': DocumentUrl(url='https://example.com/doc.pdf', media_type='application/pdf'),
+        'dict-with-nested-image': {'caption': 'see image', 'attachment': tiny_image},
     }
     content = contents[case_id]
     original: list[ModelMessage] = [
