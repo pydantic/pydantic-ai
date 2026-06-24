@@ -90,7 +90,6 @@ making it ideal for queries that require up-to-date data.
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
-| Outlines | ❌ | Not supported |
 
 ### Usage
 
@@ -183,7 +182,7 @@ The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to s
 from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('xai:grok-4-1-fast', capabilities=[NativeTool(XSearchTool())])
+agent = Agent('xai:grok-4.3', capabilities=[NativeTool(XSearchTool())])
 
 result = agent.run_sync('What are people saying about AI on X today?')
 print(result.output)
@@ -203,7 +202,7 @@ from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'xai:grok-4-1-fast',
+    'xai:grok-4.3',
     capabilities=[
         NativeTool(
             XSearchTool(
@@ -250,7 +249,6 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
-| Outlines | ❌ | |
 
 ### Usage
 
@@ -511,7 +509,6 @@ allowing it to pull up-to-date information from the web.
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
-| Outlines | ❌ | |
 
 ### Usage
 
@@ -837,7 +834,6 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
-| Outlines | ❌ | Not supported |
 
 ### Usage
 
@@ -917,7 +913,7 @@ asyncio.run(main())
 
 #### xAI
 
-With xAI, `FileSearchTool` maps to the [collections search](https://docs.x.ai/developers/tools/collection-search) tool. Pass collection IDs as `file_store_ids`.
+With xAI, `FileSearchTool` maps to the [collections search](https://docs.x.ai/developers/tools/collections-search) tool. Pass collection IDs as `file_store_ids`.
 
 ```py {title="file_search_xai.py" test="skip"}
 import asyncio
@@ -928,7 +924,7 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        'xai:grok-4-1-fast',
+        'xai:grok-4.3',
         capabilities=[NativeTool(FileSearchTool(file_store_ids=['collection_abc123']))]
     )
 
