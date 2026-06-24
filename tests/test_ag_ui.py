@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.metadata
 import inspect
 import json
@@ -3697,6 +3698,55 @@ def test_tool_return_multimodal_dropped_by_default(tiny_image: BinaryImage) -> N
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content='', timestamp=IsDatetime())]
     )
+
+
+def test_tool_return_nested_multimodal_dropped_by_default(tiny_image: BinaryImage) -> None:
+    """Files nested below the top level of a tool return are stripped on dump with the default
+    `preserve_file_data=False`, not just top-level files — no file bytes reach the client at any depth.
+
+    Regression for the nested-file leak: `model_response_str()` only excludes top-level files, so a
+    nested `BinaryContent` was serialized inline into `ToolMessage.content`. See `strip_tool_return_files`.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_file', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    tool_call_id='tc-1',
+                    content={'caption': 'see image', 'attachment': tiny_image},
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=False)
+    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == snapshot([])
+    tool_contents = [m.content for m in ag_ui_msgs if isinstance(m, ToolMessage)]
+    assert tool_contents == snapshot(['{"caption":"see image"}'])
+    assert base64.b64encode(tiny_image.data).decode() not in str(tool_contents)
+
+
+def test_tool_return_file_sidecar_after_tool_message_raises(tiny_image: BinaryImage) -> None:
+    """An out-of-order (or orphan) tool-return file sidecar fails closed rather than silently dropping files.
+
+    Sidecars are consumed by `pending_tool_files.pop`, which only sees sidecars that arrived before the
+    matching `ToolMessage`; a leftover bucket means the files would otherwise be lost without a trace.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_image', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content=tiny_image)]),
+    ]
+    dumped = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    # Move the sidecar `ActivityMessage`(s) after their `ToolMessage` to simulate reordered history.
+    activities = [m for m in dumped if isinstance(m, ActivityMessage)]
+    assert activities  # the top-level file produced a sidecar
+    reordered = [m for m in dumped if not isinstance(m, ActivityMessage)] + activities
+
+    with pytest.raises(ValueError, match='had no matching'):
+        AGUIAdapter.load_messages(reordered, preserve_file_data=True)
 
 
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:

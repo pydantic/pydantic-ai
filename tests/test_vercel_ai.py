@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import inspect
 import json
 import uuid
@@ -4348,6 +4349,38 @@ async def test_adapter_tool_return_multimodal_dropped_by_default(tiny_image: Bin
             ToolReturnPart(tool_name='get_image', tool_call_id='tc-2', content='', timestamp=IsDatetime()),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('case_id', 'expected_output'),
+    [
+        pytest.param('nested-in-dict', snapshot({'caption': 'see image'}), id='nested-in-dict'),
+        pytest.param('nested-in-list-of-dict', snapshot(['result', {}]), id='nested-in-list-of-dict'),
+    ],
+)
+async def test_adapter_tool_return_nested_multimodal_dropped_by_default(
+    case_id: str, expected_output: Any, tiny_image: BinaryImage
+):
+    """Files nested below the top level of a tool return are stripped on dump with the default
+    `preserve_file_data=False`, not just top-level files — no file bytes reach the client at any depth.
+
+    Regression for the nested-file leak: `BaseToolReturnPart.files`/`model_response_str()` only see
+    top-level files, so a nested `BinaryContent` was serialized inline. See `strip_tool_return_files`.
+    """
+    contents: dict[str, ToolReturnContent] = {
+        'nested-in-dict': {'caption': 'see image', 'attachment': tiny_image},
+        'nested-in-list-of-dict': ['result', {'attachment': tiny_image}],
+    }
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_file', tool_call_id='tc-1', args={})]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_file', tool_call_id='tc-1', content=contents[case_id])]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    outputs = [p.output for m in ui_messages for p in m.parts if isinstance(p, ToolOutputAvailablePart)]
+    assert outputs == [expected_output]
+    assert base64.b64encode(tiny_image.data).decode() not in json.dumps(outputs)
 
 
 async def test_adapter_dump_messages_with_tool_metadata_single_chunk():

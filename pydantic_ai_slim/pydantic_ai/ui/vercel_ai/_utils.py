@@ -1,6 +1,7 @@
 """Utilities for handling Pydantic AI and Vercel data streams."""
 
 from collections.abc import Iterable, Iterator
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -14,6 +15,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     tool_return_ta,
 )
+from pydantic_ai.ui._adapter import strip_tool_return_files
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
     DynamicToolApprovalRespondedPart,
@@ -78,7 +80,12 @@ def tool_return_output(part: BaseToolReturnPart, *, preserve_file_data: bool = F
     placeholders, because event-stream formats can't carry multimodal tool output (#3826). That
     dump-vs-stream difference is intentional, not a gap to fix.
     """
-    if not preserve_file_data and part.files:
+    if preserve_file_data:
+        return tool_return_ta.dump_python(part.content, mode='json')
+    # `part.files`/`model_response_str()` only drop top-level files, so strip nested ones too to keep
+    # all file data off the wire with the secure default.
+    part = replace(part, content=strip_tool_return_files(part.content, keep_top_level_files=True))
+    if part.files:
         return part.model_response_str()
     return tool_return_ta.dump_python(part.content, mode='json')
 
