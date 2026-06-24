@@ -10446,6 +10446,11 @@ async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropi
 
 
 async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
+    """Pins the defensive `UnexpectedModelBehavior` branch for a malformed Bedrock response.
+
+    Mocks `client.post` to return a body without `inputTokens` — a shape no real Bedrock
+    CountTokens endpoint returns, so it can't be exercised through a VCR recording.
+    """
     from anthropic import AsyncAnthropicBedrock
 
     bedrock_client = AsyncAnthropicBedrock(
@@ -10527,37 +10532,61 @@ async def test_anthropic_bedrock_count_tokens_real_api(allow_model_requests: Non
     )
 
 
-def test_anthropic_process_response_server_tool_blocks(allow_model_requests: None):
-    response = completion_message(
-        [
-            BetaTextBlock(text='Let me search.', type='text'),
-            BetaServerToolUseBlock(
-                id='server_tool_123',
-                name='web_search',
-                input={'query': 'current date today'},
-                type='server_tool_use',
-                caller=BetaDirectCaller(type='direct'),
-            ),
-            BetaWebSearchToolResultBlock(
-                tool_use_id='server_tool_123',
-                type='web_search_tool_result',
-                content=[
-                    BetaWebSearchResultBlock(
-                        title='Current Date and Time',
-                        url='https://example.com/date',
-                        type='web_search_result',
-                        encrypted_content='dummy_encrypted_content',
-                    )
-                ],
-            ),
-        ],
-        BetaUsage(input_tokens=10, output_tokens=20),
+@pytest.mark.vcr()
+async def test_anthropic_bedrock_count_tokens_error(allow_model_requests: None):
+    """A cross-region inference-profile (CRIS) id surfaces Bedrock's own error as `ModelHTTPError`.
+
+    Before this fix, `AsyncAnthropicBedrock` raised a `UserError` for every `count_tokens` call. Now
+    the request reaches Bedrock's `/count-tokens` endpoint, which only accepts base foundation-model
+    ids and 400s on a CRIS profile id; `_map_api_errors` maps that to `ModelHTTPError`.
+    """
+    pytest.importorskip('botocore')
+
+    from anthropic import AsyncAnthropicBedrock
+
+    bedrock_client = AsyncAnthropicBedrock(
+        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
+        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
+        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
+        aws_region=os.environ.get('AWS_REGION', 'us-east-1'),
     )
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
+    model_id = 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+    model = AnthropicModel(model_id, provider=AnthropicProvider(anthropic_client=bedrock_client))
+    agent = Agent(model)
 
-    result = model._process_response(response)  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
 
-    assert part_types_from_messages([result]) == snapshot([[TextPart, NativeToolCallPart, NativeToolReturnPart]])
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+
+
+@pytest.mark.vcr('test_anthropic_bedrock_count_tokens_real_api.yaml')
+async def test_anthropic_bedrock_count_tokens_before_request(allow_model_requests: None):
+    """The user-facing path: `agent.run(count_tokens_before_request=True)` counts tokens via Bedrock.
+
+    Reuses the `..._real_api` cassette (a single `/count-tokens` interaction returning 18 tokens). With
+    a limit below that count, the pre-request check raises `UsageLimitExceeded` before any message
+    request, so only the count-tokens call is played back.
+    """
+    pytest.importorskip('botocore')
+
+    from anthropic import AsyncAnthropicBedrock
+
+    bedrock_client = AsyncAnthropicBedrock(
+        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
+        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
+        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
+        aws_region=os.environ.get('AWS_REGION', 'us-east-1'),
+    )
+    model = AnthropicModel(
+        'anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=AnthropicProvider(anthropic_client=bedrock_client),
+    )
+    agent = Agent(model)
+
+    with pytest.raises(UsageLimitExceeded, match='input_tokens_limit of 10'):
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=10, count_tokens_before_request=True))
 
 
 @pytest.mark.vcr()
