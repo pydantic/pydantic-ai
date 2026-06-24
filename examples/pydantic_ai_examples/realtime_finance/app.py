@@ -56,7 +56,9 @@ async def index() -> HTMLResponse:
     return HTMLResponse(_INDEX_PATH.read_text())
 
 
-def _json_messages(event: RealtimeSessionEvent, deps: VoiceDeps) -> list[dict[str, object]]:
+def _json_messages(
+    event: RealtimeSessionEvent, deps: VoiceDeps
+) -> list[dict[str, object]]:
     """Translate a session event into JSON messages for the browser (audio is handled separately)."""
     if isinstance(event, SpeechStarted):
         return [{'type': 'speech_started'}]

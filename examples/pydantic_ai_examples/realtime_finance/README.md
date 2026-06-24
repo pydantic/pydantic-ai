@@ -37,9 +37,9 @@ uv run --all-packages uvicorn pydantic_ai_examples.realtime_finance.app:app
 
 Open <http://localhost:8000>, click the mic, and just talk. Try:
 
-- *“How much did I spend last month?”* — sync, one card.
-- *“Run a full review of my finances.”* — async, several cards stream in.
-- *“Can I save \$20k in 2 years?”* — async, projection + budget + insights.
+- *"How much did I spend last month?"* — sync, one card.
+- *"Run a full review of my finances."* — async, several cards stream in.
+- *"Can I save \$20k in 2 years?"* — async, projection + budget + insights.
 
 You can also type. The server prints the resolved models on startup
 (`[finance demo] supervisor: … | realtime: … (voice)`).
