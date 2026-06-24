@@ -19,6 +19,16 @@ class GroqModelProfile(ModelProfile, total=False):
     *output* via `reasoning_format='hidden'` while still reasoning internally.
     """
 
+    groq_send_back_thinking_parts: bool
+    """Whether to re-render non-native ThinkingParts as thinking tags in history. Default: `False`.
+
+    When False (default), ThinkingParts that originated from another provider are silently dropped
+    from the assistant turn rather than being wrapped in `<think>…</think>` tags — which the model
+    would otherwise reproduce verbatim in subsequent turns (reasoning-content leak).
+
+    Set to True only if you deliberately want prior thinking content re-sent to Groq.
+    """
+
 
 def groq_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for a Groq model."""
