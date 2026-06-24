@@ -260,6 +260,60 @@ async def test_background_completion_drained_between_events() -> None:
     assert completed.result == 'quick'
 
 
+class IdleAfterToolConnection(RealtimeConnection):
+    """Yields one ToolCall, then blocks forever — the model goes idle with no further events."""
+
+    def __init__(self, call: ToolCall) -> None:
+        self._call = call
+        self.sent: list[RealtimeInput] = []
+
+    async def send(self, content: RealtimeInput) -> None:
+        self.sent.append(content)
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+        yield self._call
+        await asyncio.Event().wait()  # pragma: no cover
+
+
+async def test_background_completion_delivered_while_upstream_idle() -> None:
+    # The connection goes silent after the tool call; the completion must still surface promptly
+    # rather than waiting for a provider event that never arrives.
+    conn = IdleAfterToolConnection(ToolCall(tool_call_id='bg', tool_name='fast', args='{}'))
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'ready'
+
+    session = RealtimeSession(conn, runner, background_tools={'fast'})
+    agen = cast(AsyncGenerator[Any], session.__aiter__())
+    started = await agen.__anext__()
+    assert isinstance(started, ToolCallStarted)
+    # Without multiplexing this would hang forever waiting on the idle connection.
+    completed = await asyncio.wait_for(agen.__anext__(), timeout=1.0)
+    assert isinstance(completed, ToolCallCompleted)
+    assert completed.result == 'ready'
+    await agen.aclose()
+
+
+class ExplodingConnection(RealtimeConnection):
+    """A connection whose iteration raises after yielding one event."""
+
+    def __init__(self) -> None:
+        self.sent: list[RealtimeInput] = []
+
+    async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
+        self.sent.append(content)
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
+        yield AudioDelta(data=b'\x00')
+        raise RuntimeError('connection dropped')
+
+
+async def test_upstream_error_propagates_to_consumer() -> None:
+    session = RealtimeSession(ExplodingConnection(), _noop_runner)
+    with pytest.raises(RuntimeError, match='connection dropped'):
+        _ = [e async for e in session]
+
+
 async def test_early_break_with_running_background_cancels_task() -> None:
     blocked = asyncio.Event()
     started = asyncio.Event()

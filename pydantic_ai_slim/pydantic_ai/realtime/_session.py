@@ -97,36 +97,58 @@ class RealtimeSession:
         return result
 
     async def __aiter__(self) -> AsyncIterator[RealtimeSessionEvent]:
+        # Both the upstream connection and finished background tools feed a single queue, so a
+        # background completion wakes the consumer immediately instead of waiting for the next
+        # provider event (which may never come while the model is idle).
+        queue: asyncio.Queue[RealtimeSessionEvent | object] = asyncio.Queue()
+        closed = object()  # sentinel: the upstream connection has been fully drained
         background: set[asyncio.Task[None]] = set()
-        completed: list[ToolCallCompleted] = []
+        pump_error: Exception | None = None
 
         async def run_background(call: ToolCall) -> None:
             result = await self._run_tool(call)
-            completed.append(ToolCallCompleted(tool_name=call.tool_name, tool_call_id=call.tool_call_id, result=result))
+            await queue.put(ToolCallCompleted(tool_name=call.tool_name, tool_call_id=call.tool_call_id, result=result))
 
-        try:
-            async for event in self._connection:
-                while completed:
-                    yield completed.pop(0)
-                if isinstance(event, ToolCall):
-                    yield ToolCallStarted(tool_name=event.tool_name, tool_call_id=event.tool_call_id)
-                    if event.tool_name in self._background_tools:
-                        task = asyncio.create_task(run_background(event))
-                        background.add(task)
-                        task.add_done_callback(background.discard)
+        async def pump() -> None:
+            nonlocal pump_error
+            try:
+                async for event in self._connection:
+                    if isinstance(event, ToolCall):
+                        await queue.put(ToolCallStarted(tool_name=event.tool_name, tool_call_id=event.tool_call_id))
+                        if event.tool_name in self._background_tools:
+                            task = asyncio.create_task(run_background(event))
+                            background.add(task)
+                            task.add_done_callback(background.discard)
+                        else:
+                            result = await self._run_tool(event)
+                            await queue.put(
+                                ToolCallCompleted(
+                                    tool_name=event.tool_name, tool_call_id=event.tool_call_id, result=result
+                                )
+                            )
                     else:
-                        result = await self._run_tool(event)
-                        yield ToolCallCompleted(
-                            tool_name=event.tool_name, tool_call_id=event.tool_call_id, result=result
-                        )
-                else:
-                    yield event
+                        await queue.put(event)
+            except Exception as e:
+                pump_error = e
+            finally:
+                await queue.put(closed)
+
+        pump_task = asyncio.create_task(pump())
+        try:
+            while True:
+                item = await queue.get()
+                if item is closed:
+                    break
+                yield cast('RealtimeSessionEvent', item)
+            # Upstream is done: wait for any in-flight background tools, then flush their completions.
             if background:
                 await asyncio.gather(*background, return_exceptions=True)
-            while completed:
-                yield completed.pop(0)
+            while not queue.empty():
+                yield cast('RealtimeSessionEvent', queue.get_nowait())
+            if pump_error is not None:
+                raise pump_error
         finally:
+            pump_task.cancel()
             for task in list(background):
                 task.cancel()
-            if background:
-                await asyncio.gather(*background, return_exceptions=True)
+            await asyncio.gather(pump_task, *background, return_exceptions=True)
