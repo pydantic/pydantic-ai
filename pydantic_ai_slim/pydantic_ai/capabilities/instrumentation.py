@@ -200,7 +200,9 @@ class Instrumentation(AbstractCapability[Any]):
 
         last_instructions = get_instructions(message_history, self._last_model_request_parameters)
         attrs: dict[str, Any] = {
-            'pydantic_ai.all_messages': safe_to_json(settings.messages_to_otel_messages(list(message_history))).decode(),
+            'pydantic_ai.all_messages': safe_to_json(
+                settings.messages_to_otel_messages(list(message_history))
+            ).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }
 
