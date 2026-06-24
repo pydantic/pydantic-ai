@@ -2656,13 +2656,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions = literal or ''
 
         deps = self._get_deps(deps)
-        toolset = self._get_toolset(output_toolset=None)
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
+            agent=self,
+            model=self._get_model(None) if self._model else _RealtimeModelStub(),
+            usage=_usage.RunUsage(),
+            model_settings=model_settings,
+        )
+        toolset = await self._get_toolset(output_toolset=None).for_run(run_context)
         async with toolset:
-            run_context = RunContext[AgentDepsT](
-                deps=deps,
-                model=self._get_model(None) if self._model else _RealtimeModelStub(),
-                usage=_usage.RunUsage(),
-            )
+            toolset = await toolset.for_run_step(run_context)
             tools_map = await toolset.get_tools(run_context)
             tool_defs = [t.tool_def for t in tools_map.values()]
 

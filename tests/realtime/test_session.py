@@ -422,6 +422,31 @@ async def test_agent_realtime_session_tool_exception() -> None:
     assert 'Error' in completed.result and 'nope' in completed.result
 
 
+async def test_agent_realtime_session_resolves_per_run_toolsets() -> None:
+    from pydantic_ai import FunctionToolset
+
+    agent: Agent[str, str] = Agent(deps_type=str)
+
+    @agent.toolset
+    def per_run(ctx: RunContext[str]) -> FunctionToolset[str]:
+        assert ctx.deps == 'alice'  # the factory sees the run deps
+        ts: FunctionToolset[str] = FunctionToolset()
+
+        @ts.tool
+        def whoami(tool_ctx: RunContext[str]) -> str:
+            return f'deps={tool_ctx.deps}'
+
+        return ts
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='whoami', args='{}'), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model, deps='alice') as session:
+        events = [e async for e in session]
+
+    completed = [e for e in events if isinstance(e, ToolCallCompleted)]
+    assert completed and completed[0].result == 'deps=alice'
+
+
 async def test_agent_realtime_session_stub_model_visible_to_tools() -> None:
     agent: Agent[None, str] = Agent()
     seen_name: str | None = None
