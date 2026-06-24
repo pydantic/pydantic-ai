@@ -275,14 +275,19 @@
           }
           box.appendChild(total('Potential monthly saving', money(w.monthly_savings, cur), 'delta pos'));
         } else if (w.kind === 'projection') {
-          box.appendChild(sparkBox(w.points.map((p) => p.value)));
-          box.appendChild(
-            add(
-              el('div', 'total'),
-              txt('span', 'num', money(w.points[0].value, cur) + ' → ' + money(w.final, cur)),
-              txt('span', 'delta pos', 'in ' + w.years + ' yr'),
-            ),
-          );
+          const points = w.points || [];
+          if (points.length === 0) {
+            box.appendChild(txt('div', 'd', 'No projection data available.'));
+          } else {
+            box.appendChild(sparkBox(points.map((p) => p.value)));
+            box.appendChild(
+              add(
+                el('div', 'total'),
+                txt('span', 'num', money(points[0].value, cur) + ' → ' + money(w.final, cur)),
+                txt('span', 'delta pos', 'in ' + w.years + ' yr'),
+              ),
+            );
+          }
           if (w.note) {
             const note = txt('div', 'd', w.note);
             note.style.color = 'var(--muted)';
