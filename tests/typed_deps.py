@@ -54,7 +54,7 @@ async def my_prepare_none(ctx: RunContext, tool_defn: ToolDefinition) -> None:
     pass
 
 
-async def my_prepare_object(ctx: RunContext[object], tool_defn: ToolDefinition) -> None:
+async def my_prepare_object(ctx: RunContext, tool_defn: ToolDefinition) -> None:
     pass
 
 
@@ -63,13 +63,13 @@ async def my_prepare_any(ctx: RunContext[Any], tool_defn: ToolDefinition) -> Non
 
 
 tool_1 = Tool(my_plain_tool)
-assert_type(tool_1, Tool[object])
+assert_type(tool_1, Tool)
 
 tool_2 = Tool(my_plain_tool, prepare=my_prepare_none)
-assert_type(tool_2, Tool[None])  # due to default parameter of RunContext being None and inferring from prepare
+assert_type(tool_2, Tool)  # due to default parameter of RunContext being None and inferring from prepare
 
 tool_3 = Tool(my_plain_tool, prepare=my_prepare_object)
-assert_type(tool_3, Tool[object])
+assert_type(tool_3, Tool)
 
 tool_4 = Tool(my_plain_tool, prepare=my_prepare_any)
 assert_type(tool_4, Tool[Any])

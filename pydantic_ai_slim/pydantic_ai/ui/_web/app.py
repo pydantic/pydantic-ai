@@ -115,7 +115,6 @@ def create_web_app(
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
     html_source: str | Path | None = None,
-    **_deprecated_kwargs: object,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
 
@@ -144,11 +143,6 @@ def create_web_app(
     Returns:
         A configured Starlette application ready to be served
     """
-    from ... import _utils
-
-    native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
-    _utils.validate_empty_kwargs(_deprecated_kwargs)
-
     api_app = create_api_app(
         agent=agent,
         models=models,
