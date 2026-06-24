@@ -99,6 +99,8 @@ cli = [
     "pyperclip>=1.9.0",
     "pyyaml>=6.0.2",
 ]
+# Realtime (bidirectional speech-to-speech streaming sessions)
+realtime = ["websockets>=14.0"]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
 # install the full `fastmcp` package directly alongside `[mcp]`.

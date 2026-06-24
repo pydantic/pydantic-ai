@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atlas — Finance Assistant</title>
+    <style>
+      :root {
+        --bg: #f4f5f7;
+        --surface: #ffffff;
+        --surface-2: #fafbfc;
+        --line: #e5e7eb;
+        --line-2: #eceef1;
+        --ink: #0f172a;
+        --muted: #64748b;
+        --faint: #94a3b8;
+        --accent: #1f3a5f;
+        --accent-soft: #eef2f7;
+        --pos: #15803d;
+        --neg: #b91c1c;
+        --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.05);
+        font-synthesis: none;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-size: 15px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+      .shell { max-width: 820px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; padding: 20px 18px; }
+      .topbar {
+        display: flex; align-items: center; gap: 12px;
+        padding: 14px 18px; background: var(--surface); border: 1px solid var(--line);
+        border-radius: 14px; box-shadow: var(--shadow);
+      }
+      .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -0.01em; }
+      .brand .mark { width: 26px; height: 26px; border-radius: 7px; background: var(--accent); color: #fff;
+        display: grid; place-items: center; font-size: 13px; font-weight: 700; }
+      .brand small { color: var(--faint); font-weight: 500; margin-left: 2px; }
+      .status { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
+      .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+      .status.live .dot { background: var(--pos); box-shadow: 0 0 0 3px rgba(21,128,61,0.15); }
+
+      .feed { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 4px; display: flex; flex-direction: column; gap: 14px; }
+      .feed > * { flex: 0 0 auto; }  /* never let older messages shrink — overflow & scroll instead */
+      .bubble.pending { opacity: 0.6; font-style: italic; }
+      .row { display: flex; }
+      .row.user { justify-content: flex-end; }
+      .bubble { max-width: 78%; padding: 10px 14px; border-radius: 14px; }
+      .row.user .bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 5px; }
+      .row.assistant .bubble { background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 5px; box-shadow: var(--shadow); }
+
+      .card { border: 1px solid var(--line); background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+      .card .head { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--line-2); background: var(--surface-2); }
+      .card .head .ic { width: 22px; height: 22px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-size: 12px; }
+      .card .head .t { font-weight: 600; font-size: 13.5px; }
+      .card .head .tag { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em; }
+      .tag.sync { background: #eef2f7; color: var(--accent); }
+      .tag.async { background: #fff4e5; color: #b45309; }
+      .card .head .state { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+      .spinner { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .check { color: var(--pos); font-weight: 700; }
+      .card .body { padding: 6px 14px 12px; display: flex; flex-direction: column; gap: 14px; }
+
+      .w { padding-top: 8px; }
+      .w-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+      .kv { display: flex; justify-content: space-between; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--line-2); }
+      .kv:last-child { border-bottom: 0; }
+      .kv .k { color: var(--ink); }
+      .kv .k small { color: var(--faint); margin-left: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+      .num { font-variant-numeric: tabular-nums; font-weight: 600; }
+      .total { display: flex; justify-content: space-between; margin-top: 8px; padding-top: 9px; border-top: 1px solid var(--line); font-weight: 700; }
+      .bar-row { display: grid; grid-template-columns: 96px 1fr auto; gap: 10px; align-items: center; padding: 4px 0; }
+      .bar-row .lab { color: var(--muted); font-size: 13px; text-transform: capitalize; }
+      .track { height: 8px; background: var(--accent-soft); border-radius: 999px; overflow: hidden; }
+      .fill { height: 100%; background: var(--accent); border-radius: 999px; }
+      .spark { color: var(--accent); }
+      .delta { font-variant-numeric: tabular-nums; font-weight: 700; }
+      .delta.pos { color: var(--pos); }
+      .delta.neg { color: var(--neg); }
+      table.tx { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+      table.tx td { padding: 6px 0; border-bottom: 1px solid var(--line-2); }
+      table.tx tr:last-child td { border-bottom: 0; }
+      table.tx .d { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      table.tx .a { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+      table.tx .a.neg { color: var(--neg); }
+      table.tx .a.pos { color: var(--pos); }
+      .ins { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line-2); }
+      .ins:last-child { border-bottom: 0; }
+      .ins .sev { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: 0 0 auto; background: var(--faint); }
+      .ins .sev.good { background: var(--pos); } .ins .sev.warn { background: #b45309; }
+      .ins .h { font-weight: 600; font-size: 13.5px; } .ins .d { color: var(--muted); font-size: 13px; }
+      .bud { display: grid; grid-template-columns: 1fr auto 14px auto; gap: 10px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--line-2); }
+      .bud:last-of-type { border-bottom: 0; }
+      .bud .cat { text-transform: capitalize; color: var(--ink); }
+      .bud .cur { color: var(--faint); font-variant-numeric: tabular-nums; text-decoration: line-through; }
+      .bud .arr { color: var(--faint); } .bud .sug { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+      .composer { display: flex; gap: 10px; align-items: center; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+      .composer input { flex: 1; border: 0; outline: none; font-size: 15px; color: var(--ink); background: transparent; padding: 6px 4px; }
+      .composer input::placeholder { color: var(--faint); }
+      .mic { width: 42px; height: 42px; border-radius: 11px; border: 1px solid var(--line); background: var(--surface-2); cursor: pointer; font-size: 17px; display: grid; place-items: center; transition: all .15s; }
+      .mic:hover { background: var(--accent-soft); }
+      .mic.live { background: var(--accent); border-color: var(--accent); color: #fff; animation: pulse 1.3s infinite; }
+      @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(31,58,95,0.35);} 70% { box-shadow: 0 0 0 10px rgba(31,58,95,0);} 100% { box-shadow: 0 0 0 0 rgba(31,58,95,0);} }
+      .send { border: 0; background: var(--accent); color: #fff; font-weight: 600; font-size: 14px; padding: 0 18px; height: 42px; border-radius: 11px; cursor: pointer; }
+      .send:hover { background: #16304f; }
+      .hint { text-align: center; color: var(--faint); font-size: 12.5px; margin: 8px 0 2px; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="topbar">
+        <div class="brand"><span class="mark">A</span>Atlas <small>Finance Assistant</small></div>
+        <div class="status" id="status"><span class="dot"></span><span id="statusText">connecting…</span></div>
+      </div>
+
+      <div class="feed" id="feed"></div>
+
+      <div class="hint" id="hint">Talk or type. Try “how much did I spend?”, “run a full review”, or “can I save $20k in 2 years?”.</div>
+      <div class="composer">
+        <button class="mic" id="mic" title="Talk">🎙</button>
+        <input id="q" type="text" placeholder="Ask about your finances…" autocomplete="off" />
+        <button class="send" id="send">Send</button>
+      </div>
+    </div>
+
+    <script>
+      const feed = document.getElementById('feed');
+      const statusEl = document.getElementById('status');
+      const statusText = document.getElementById('statusText');
+      const input = document.getElementById('q');
+      const micBtn = document.getElementById('mic');
+      const sendBtn = document.getElementById('send');
+
+      let pendingUser = null; // placeholder bubble shown the moment the user starts speaking
+      const toolCards = new Map(); // tool_call_id -> { card, body, state }
+
+      // Auto-follow the latest message only while the user is already near the bottom, so scrolling
+      // up to read earlier tools/widgets in the history isn't yanked back down.
+      let stick = true;
+      function nearBottom() { return feed.scrollHeight - feed.scrollTop - feed.clientHeight < 140; }
+      feed.addEventListener('scroll', () => { stick = nearBottom(); });
+      function scroll() { if (stick) requestAnimationFrame(() => { feed.scrollTop = feed.scrollHeight; }); }
+      function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+
+      function addBubble(text, who) {
+        const row = el('div', 'row ' + who);
+        const b = el('div', 'bubble');
+        b.textContent = text;
+        row.appendChild(b);
+        feed.appendChild(row);
+        scroll();
+        return b;
+      }
+
+      function money(v, cur) {
+        try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur || 'USD' }).format(v); }
+        catch (e) { return (v).toLocaleString() + ' ' + (cur || ''); }
+      }
+
+      function addToolCard(id, tool, m) {
+        const label = tool === 'run_deep_analysis' ? 'Deep analysis' : 'Analyst';
+        const card = el('div', 'card');
+        card.dataset.id = id;
+        const head = el('div', 'head');
+        head.innerHTML =
+          `<span class="ic">▤</span><span class="t">${label}</span>` +
+          `<span class="tag ${m}">${m}</span>` +
+          `<span class="state"><span class="spinner"></span> working…</span>`;
+        const body = el('div', 'body');
+        card.appendChild(head);
+        card.appendChild(body);
+        feed.appendChild(card);
+        toolCards.set(id, { card, body, state: head.querySelector('.state') });
+        scroll();
+      }
+
+      function finishToolCard(id) {
+        const c = toolCards.get(id);
+        if (c) c.state.innerHTML = '<span class="check">✓</span> done';
+        scroll();
+      }
+
+      function sparkline(values) {
+        if (!values.length) return '';
+        const w = 240, h = 44, lo = Math.min(...values), hi = Math.max(...values), span = (hi - lo) || 1;
+        const pts = values.map((v, i) => [(i / (values.length - 1 || 1)) * w, h - ((v - lo) / span) * (h - 8) - 4]);
+        const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+        return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
+      }
+
+      function renderWidget(w) {
+        const box = el('div', 'w');
+        box.appendChild(el('div', 'w-title', w.title || w.kind));
+        const cur = w.currency;
+        if (w.kind === 'accounts') {
+          for (const r of w.rows) box.appendChild(el('div', 'kv', `<span class="k">${r.name}<small>${r.kind}</small></span><span class="num">${money(r.balance, cur)}</span>`));
+          box.appendChild(el('div', 'total', `<span>Total</span><span class="num">${money(w.total, cur)}</span>`));
+        } else if (w.kind === 'spending') {
+          const max = Math.max(...w.categories.map((c) => c.amount), 1);
+          for (const c of w.categories) {
+            const row = el('div', 'bar-row');
+            row.innerHTML = `<span class="lab">${c.label}</span><span class="track"><span class="fill" style="width:${(c.amount / max) * 100}%"></span></span><span class="num">${money(c.amount, cur)}</span>`;
+            box.appendChild(row);
+          }
+          box.appendChild(el('div', 'total', `<span>Total spent</span><span class="num">${money(w.total, cur)}</span>`));
+        } else if (w.kind === 'portfolio') {
+          const max = Math.max(...w.holdings.map((h) => h.value), 1);
+          for (const h of w.holdings) {
+            const row = el('div', 'bar-row');
+            row.innerHTML = `<span class="lab">${h.symbol}</span><span class="track"><span class="fill" style="width:${(h.value / max) * 100}%"></span></span><span class="num">${money(h.value, cur)}</span>`;
+            box.appendChild(row);
+          }
+          box.appendChild(el('div', 'total', `<span>Total value</span><span class="num">${money(w.total, cur)}</span>`));
+        } else if (w.kind === 'net_worth') {
+          box.appendChild(el('div', '', sparkline(w.history)));
+          const cls = w.change >= 0 ? 'pos' : 'neg';
+          const sign = w.change >= 0 ? '+' : '';
+          box.appendChild(el('div', 'total', `<span class="num">${money(w.start, cur)} → ${money(w.end, cur)}</span><span class="delta ${cls}">${sign}${money(w.change, cur)}</span>`));
+        } else if (w.kind === 'transactions') {
+          const t = el('table', 'tx');
+          for (const r of w.rows) {
+            const cls = r.amount < 0 ? 'neg' : 'pos';
+            const sign = r.amount < 0 ? '−' : '+';
+            const tr = el('tr');
+            tr.innerHTML = `<td class="d">${r.date}</td><td>${r.description}</td><td class="a ${cls}">${sign}${money(Math.abs(r.amount), cur)}</td>`;
+            t.appendChild(tr);
+          }
+          box.appendChild(t);
+        } else if (w.kind === 'subscriptions') {
+          const t = el('table', 'tx');
+          for (const r of w.rows) {
+            const tr = el('tr');
+            tr.innerHTML = `<td>${r.name}</td><td class="d">${r.cadence}</td><td class="a neg">−${money(r.amount, cur)}</td>`;
+            t.appendChild(tr);
+          }
+          box.appendChild(t);
+          box.appendChild(el('div', 'total', `<span>Per month · per year</span><span class="num">${money(w.monthly_total, cur)} · ${money(w.annual_total, cur)}</span>`));
+        } else if (w.kind === 'budget') {
+          for (const r of w.rows) {
+            const row = el('div', 'bud');
+            row.innerHTML = `<span class="cat">${r.category}</span><span class="cur">${money(r.current, cur)}</span><span class="arr">→</span><span class="sug">${money(r.suggested, cur)}</span>`;
+            box.appendChild(row);
+          }
+          box.appendChild(el('div', 'total', `<span>Potential monthly saving</span><span class="delta pos">${money(w.monthly_savings, cur)}</span>`));
+        } else if (w.kind === 'projection') {
+          box.appendChild(el('div', '', sparkline(w.points.map((p) => p.value))));
+          box.appendChild(el('div', 'total', `<span class="num">${money(w.points[0].value, cur)} → ${money(w.final, cur)}</span><span class="delta pos">in ${w.years} yr</span>`));
+          if (w.note) box.appendChild(el('div', 'd', `<span style="color:var(--muted);font-size:12.5px">${w.note}</span>`));
+        } else if (w.kind === 'insights') {
+          for (const it of w.items) {
+            const row = el('div', 'ins');
+            row.innerHTML = `<span class="sev ${it.severity}"></span><span><span class="h">${it.title}</span><div class="d">${it.detail}</div></span>`;
+            box.appendChild(row);
+          }
+        }
+        return box;
+      }
+
+      function addWidget(id, w) {
+        const c = toolCards.get(id);
+        const target = c ? c.body : feed;
+        target.appendChild(renderWidget(w));
+        scroll();
+      }
+
+      // ---- audio playback (model PCM16 @ 24kHz) ----
+      let playCtx = null, playHead = 0, scheduled = [];
+      function ensurePlayback() {
+        if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+        if (playCtx.state === 'suspended') playCtx.resume();
+      }
+      function playPCM(ab) {
+        ensurePlayback();
+        const i16 = new Int16Array(ab); if (!i16.length) return;
+        const f32 = new Float32Array(i16.length);
+        for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 0x8000;
+        const buf = playCtx.createBuffer(1, f32.length, 24000); buf.getChannelData(0).set(f32);
+        const node = playCtx.createBufferSource(); node.buffer = buf; node.connect(playCtx.destination);
+        const t = Math.max(playCtx.currentTime, playHead); node.start(t); playHead = t + buf.duration;
+        scheduled.push(node); node.onended = () => { scheduled = scheduled.filter((n) => n !== node); };
+      }
+      function flushPlayback() { for (const n of scheduled) { try { n.stop(); } catch (e) {} } scheduled = []; if (playCtx) playHead = playCtx.currentTime; }
+
+      // ---- websocket ----
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const sock = new WebSocket(`${proto}://${location.host}/ws`);
+      sock.binaryType = 'arraybuffer';
+      sock.onopen = () => { statusText.textContent = 'voice ready'; statusEl.classList.add('live'); };
+      sock.onclose = () => { statusText.textContent = 'disconnected'; statusEl.classList.remove('live'); };
+      sock.onerror = () => { statusText.textContent = 'connection error'; };
+      sock.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) { playPCM(ev.data); return; }
+        const m = JSON.parse(ev.data);
+        switch (m.type) {
+          case 'speech_started':
+            flushPlayback();
+            if (!pendingUser) { pendingUser = addBubble('🎙 …', 'user'); pendingUser.classList.add('pending'); }
+            break;
+          case 'user':
+            if (pendingUser) { pendingUser.textContent = m.text; pendingUser.classList.remove('pending'); pendingUser = null; }
+            else { addBubble(m.text, 'user'); }
+            break;
+          case 'assistant': addBubble(m.text, 'assistant'); break;
+          case 'tool': addToolCard(m.id, m.tool, m.mode); break;
+          case 'widget': addWidget(m.id, m.widget); break;
+          case 'tool_done': finishToolCard(m.id); break;
+        }
+      };
+
+      function sendText() {
+        const q = input.value.trim(); if (!q || sock.readyState !== 1) return;
+        ensurePlayback(); addBubble(q, 'user'); sock.send(JSON.stringify({ question: q })); input.value = '';
+      }
+      sendBtn.onclick = sendText;
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendText(); });
+
+      // ---- mic ----
+      let micCtx = null, micStream = null, micNode = null, capturing = false;
+      async function startMicRealtime() {
+        ensurePlayback();
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+        micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+        const src = micCtx.createMediaStreamSource(micStream);
+        micNode = micCtx.createScriptProcessor(4096, 1, 1);
+        const mute = micCtx.createGain(); mute.gain.value = 0;
+        src.connect(micNode); micNode.connect(mute); mute.connect(micCtx.destination);
+        micNode.onaudioprocess = (e) => {
+          if (sock.readyState !== 1) return;
+          const f32 = e.inputBuffer.getChannelData(0); const i16 = new Int16Array(f32.length);
+          for (let i = 0; i < f32.length; i++) { const s = Math.max(-1, Math.min(1, f32[i])); i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff; }
+          sock.send(i16.buffer);
+        };
+        capturing = true; micBtn.classList.add('live'); statusText.textContent = 'listening…';
+      }
+      function stopMicRealtime() {
+        capturing = false; micBtn.classList.remove('live'); statusText.textContent = 'voice ready';
+        if (micNode) { micNode.disconnect(); micNode.onaudioprocess = null; micNode = null; }
+        if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+        if (micCtx) { micCtx.close(); micCtx = null; }
+      }
+      micBtn.onclick = async () => {
+        if (capturing) { stopMicRealtime(); return; }
+        try { await startMicRealtime(); } catch (err) { statusText.textContent = 'mic error: ' + err.message; }
+      };
+    </script>
+  </body>
+</html>

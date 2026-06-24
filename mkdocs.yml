@@ -54,6 +54,7 @@ nav:
           - input.md
           - thinking.md
           - retries.md
+          - realtime.md
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
@@ -181,6 +182,7 @@ nav:
           - api/output.md
           - api/profiles.md
           - api/providers.md
+          - api/realtime.md
           - api/result.md
           - api/retries.md
           - api/run.md

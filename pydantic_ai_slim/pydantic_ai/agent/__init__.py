@@ -104,6 +104,7 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
+    from ..realtime import RealtimeModel, RealtimeSession
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -168,6 +169,30 @@ def _normalize_agent_retry_overrides(
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
+
+
+class _RealtimeModelStub(models.Model):
+    """Placeholder [`Model`][pydantic_ai.models.Model] used as `RunContext.model` in realtime sessions.
+
+    Realtime sessions don't issue text-model requests, but `RunContext` requires a model, so tools
+    that read `ctx.model` get this stub when the agent has no text model configured.
+    """
+
+    @property
+    def model_name(self) -> str:
+        return 'realtime-session-stub'
+
+    @property
+    def system(self) -> str:
+        return 'realtime'
+
+    async def request(
+        self,
+        messages: list[_messages.ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: models.ModelRequestParameters,
+    ) -> _messages.ModelResponse:
+        raise NotImplementedError('Text model requests are not available in realtime sessions')
 
 
 @dataclasses.dataclass
@@ -2578,6 +2603,86 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema = self._output_schema
 
         return schema
+
+    @asynccontextmanager
+    async def realtime_session(
+        self,
+        model: RealtimeModel,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: str | None = None,
+        background_tools: set[str] | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime speech-to-speech session backed by the agent's tools.
+
+        The session connects to a realtime `model` and automatically executes tool calls using the
+        agent's registered tools, sending the results back to the model.
+
+        Example:
+        ```python {test="skip"}
+        from pydantic_ai import Agent
+        from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+        agent = Agent(instructions='You are a helpful voice assistant.')
+
+        @agent.tool_plain
+        def get_weather(city: str) -> str:
+            return f'Sunny in {city}'
+
+        async def main():
+            rt = OpenAIRealtimeModel('gpt-realtime')
+            async with agent.realtime_session(model=rt) as session:
+                await session.send_audio(b'...')
+                async for event in session:
+                    print(event)
+        ```
+
+        Args:
+            model: The realtime model to connect to.
+            deps: Dependencies passed to tool functions.
+            model_settings: Optional settings forwarded to the realtime model.
+            instructions: Override the session instructions. When omitted, the agent's literal
+                instructions are used. Dynamic instructions (functions registered via
+                `@agent.instructions`) are not evaluated for realtime sessions.
+            background_tools: Names of tools that should run concurrently in the background while the
+                model keeps responding, rather than blocking until they finish. The result is sent
+                back once ready, mirroring firing off a subagent and continuing in the meantime.
+        """
+        from ..realtime import RealtimeSession
+
+        if instructions is None:
+            literal, _funcs = self._get_instructions()
+            instructions = literal or ''
+
+        deps = self._get_deps(deps)
+        toolset = self._get_toolset(output_toolset=None)
+        async with toolset:
+            run_context = RunContext[AgentDepsT](
+                deps=deps,
+                model=self._get_model(None) if self._model else _RealtimeModelStub(),
+                usage=_usage.RunUsage(),
+            )
+            tools_map = await toolset.get_tools(run_context)
+            tool_defs = [t.tool_def for t in tools_map.values()]
+
+            async def tool_runner(name: str, args: dict[str, Any], call_id: str) -> str:
+                tool = tools_map.get(name)
+                if tool is None:
+                    return f'Error: unknown tool {name!r}'
+                ctx = dataclasses.replace(run_context, tool_name=name, tool_call_id=call_id)
+                try:
+                    result = await toolset.call_tool(name, args, ctx, tool)
+                except Exception as e:
+                    return f'Error: {e}'
+                return str(result)
+
+            async with model.connect(
+                instructions=instructions,
+                tools=tool_defs,
+                model_settings=model_settings,
+            ) as connection:
+                yield RealtimeSession(connection, tool_runner, background_tools=background_tools or set())
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.
