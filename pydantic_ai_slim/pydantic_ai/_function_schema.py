@@ -154,15 +154,7 @@ def function_schema(  # noqa: C901
             if takes_ctx and index == 0:
                 # should be the `context` argument, skip
                 continue
-            if name in type_hints:
-                annotation = type_hints[name]
-            else:
-                warnings.warn(
-                    f'Parameter {p.name!r} is missing a type annotation, defaulting to Any',
-                    UserWarning,
-                    stacklevel=2,
-                )
-                annotation = Any
+            annotation = type_hints.get(name, Any)
         else:
             annotation = type_hints[name]
 
