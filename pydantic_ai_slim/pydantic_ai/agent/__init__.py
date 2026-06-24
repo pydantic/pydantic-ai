@@ -2671,10 +2671,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if tool is None:
                     return f'Error: unknown tool {name!r}'
                 ctx = dataclasses.replace(run_context, tool_name=name, tool_call_id=call_id)
-                try:
-                    result = await toolset.call_tool(name, args, ctx, tool)
-                except Exception as e:
-                    return f'Error: {e}'
+                result = await toolset.call_tool(name, args, ctx, tool)
                 return str(result)
 
             async with model.connect(
