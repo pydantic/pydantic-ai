@@ -1,4 +1,4 @@
-# gh-aw-metadata: {"schema_version":"v3","frontmatter_hash":"e7e200699635f873bd09ed5dcee2b005e49984179789c50f5165dcb62963517f","compiler_version":"v0.74.8","strict":true,"agent_id":"claude","agent_model":"${{ vars.GH_AW_MODEL }}"}
+# gh-aw-metadata: {"schema_version":"v3","frontmatter_hash":"8560231ea4da6bfdd8f6de99872bb6ef1e1796c1e6857d37432e9c0370e92d03","compiler_version":"v0.74.8","strict":true,"agent_id":"claude","agent_model":"${{ vars.GH_AW_MODEL }}"}
 # gh-aw-manifest: {"version":1,"secrets":["GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","LOGFIRE_READ_EXTERNAL_VARIABLES","LOGFIRE_TOKEN","LOGFIRE_URL","MINIMAX_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"de0fac2e4500dabe0009e67214ff5f5447ce83dd","version":"v6.0.2"},{"repo":"actions/download-artifact","sha":"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c","version":"v8.0.1"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-node","sha":"48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e","version":"v6.4.0"},{"repo":"actions/setup-python","sha":"a309ff8b426b58ec0e2a45f0f869d46889d02405","version":"v6.2.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"astral-sh/setup-uv","sha":"08807647e7069bb48b6ef5acd8ec9567f424441b","version":"v8.1.0"},{"repo":"github/gh-aw-actions/setup","sha":"efa55847f72aadb03490d955263ff911bf758700","version":"v0.74.8"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.25.49"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.25.49"},{"image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.25.49"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.25.49"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.3.9","digest":"sha256:64828b42a4482f58fab16509d7f8f495a6d97c972a98a68aff20543531ac0388","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.3.9@sha256:64828b42a4482f58fab16509d7f8f495a6d97c972a98a68aff20543531ac0388"},{"image":"ghcr.io/github/github-mcp-server:v1.0.4"},{"image":"node:lts-alpine","digest":"sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f","pinned_image":"node:lts-alpine@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f"}]}
 #    ___                   _   _      
 #   / _ \                 | | (_)     
@@ -26,16 +26,7 @@
 #
 # Resolved workflow manifest:
 #   Imports:
-#     - shared/checkout.md
-#     - shared/engine-minimax.md
-#     - shared/network-vendor-domains.md
 #     - shared/otel-logfire.md
-#     - shared/pre-agent-steps.md
-#     - shared/pre-steps.md
-#     - shared/repo-context.md
-#     - shared/review-context.md
-#     - shared/rigor.md
-#     - shared/tool-hints.md
 #
 # Secrets used:
 #   - GH_AW_GITHUB_MCP_SERVER_TOKEN
@@ -105,10 +96,10 @@ concurrency:
 run-name: "Pydantic AI UI Security Review"
 
 env:
-  OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://logfire-api.pydantic.dev
   OTEL_SERVICE_NAME: gh-aw.pydantic-ai-ui-security-review
   OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
-  GH_AW_OTLP_ENDPOINTS: '[{"url":"${{ vars.LOGFIRE_URL || ''https://logfire-api.pydantic.dev'' }}","headers":"Authorization=${{ secrets.LOGFIRE_TOKEN }}"}]'
+  GH_AW_OTLP_ENDPOINTS: '[{"url":"https://logfire-api.pydantic.dev","headers":"Authorization=${{ secrets.LOGFIRE_TOKEN }}"}]'
 
 jobs:
   activation:
@@ -163,7 +154,7 @@ jobs:
           GH_AW_INFO_EXPERIMENTAL: "false"
           GH_AW_INFO_SUPPORTS_TOOLS_ALLOWLIST: "true"
           GH_AW_INFO_STAGED: "false"
-          GH_AW_INFO_ALLOWED_DOMAINS: '["ai-sdk.dev","ai.azure.com","ai.google.dev","ai.pydantic.dev","amazonaws.com","anthropic.com","api-docs.deepseek.com","api.cerebras.ai","api.cohere.com","api.deepseek.com","api.fireworks.ai","api.groq.com","api.minimax.io","api.mistral.ai","api.openai.com","api.perplexity.ai","api.sambanova.ai","api.studio.nebius.com","api.together.xyz","api.x.ai","aws.amazon.com","boto3.amazonaws.com","cerebras.ai","chrome","cloud.cerebras.ai","cloud.sambanova.ai","cohere.com","console.anthropic.com","console.groq.com","console.mistral.ai","console.x.ai","dashboard.cohere.com","dashscope-intl.aliyuncs.com","dashscope.aliyuncs.com","deepseek.com","defaults","developers.openai.com","docs.ag-ui.com","docs.anthropic.com","docs.aws.amazon.com","docs.perplexity.ai","docs.sambanova.ai","docs.x.ai","endpoints.ai.cloud.ovh.net","fireworks.ai","github","groq.com","hf.co","huggingface.co","inference-docs.cerebras.ai","learn.microsoft.com","logfire-api.pydantic.dev","logfire-api.pydantic.info","logfire-eu.pydantic.dev","logfire-eu.pydantic.info","logfire-us.pydantic.dev","logfire-us.pydantic.info","mistral.ai","models.github.ai","ollama.com","openrouter.ai","ovh.com","platform.claude.com","platform.moonshot.ai","platform.openai.com","pydantic.dev","python","studio.nebius.com","vercel.com","www.alibabacloud.com","www.together.ai","x.ai"]'
+          GH_AW_INFO_ALLOWED_DOMAINS: '["defaults","python","api.minimax.io","ai-sdk.dev","docs.ag-ui.com","logfire-api.pydantic.dev"]'
           GH_AW_INFO_FIREWALL_ENABLED: "true"
           GH_AW_INFO_AWF_VERSION: "v0.25.49"
           GH_AW_INFO_AWMG_VERSION: ""
@@ -224,7 +215,7 @@ jobs:
         id: sanitized
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_AW_ALLOWED_DOMAINS: "*.githubusercontent.com,*.google.com,*.googleapis.com,*.gvt1.com,*.pythonhosted.org,ai-sdk.dev,ai.azure.com,ai.google.dev,ai.pydantic.dev,amazonaws.com,anaconda.org,anthropic.com,api-docs.deepseek.com,api.anthropic.com,api.cerebras.ai,api.cohere.com,api.deepseek.com,api.fireworks.ai,api.github.com,api.groq.com,api.minimax.io,api.mistral.ai,api.openai.com,api.perplexity.ai,api.sambanova.ai,api.snapcraft.io,api.studio.nebius.com,api.together.xyz,api.x.ai,archive.ubuntu.com,aws.amazon.com,azure.archive.ubuntu.com,binstar.org,bootstrap.pypa.io,boto3.amazonaws.com,cdn.playwright.dev,cerebras.ai,cloud.cerebras.ai,cloud.sambanova.ai,codeload.github.com,cohere.com,conda.anaconda.org,conda.binstar.org,console.anthropic.com,console.groq.com,console.mistral.ai,console.x.ai,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,dashboard.cohere.com,dashscope-intl.aliyuncs.com,dashscope.aliyuncs.com,deepseek.com,developers.openai.com,docs.ag-ui.com,docs.anthropic.com,docs.aws.amazon.com,docs.github.com,docs.perplexity.ai,docs.sambanova.ai,docs.x.ai,endpoints.ai.cloud.ovh.net,files.pythonhosted.org,fireworks.ai,ghcr.io,github-cloud.githubusercontent.com,github-cloud.s3.amazonaws.com,github.blog,github.com,github.githubassets.com,groq.com,hf.co,host.docker.internal,huggingface.co,inference-docs.cerebras.ai,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,learn.microsoft.com,lfs.github.com,logfire-api.pydantic.dev,logfire-api.pydantic.info,logfire-eu.pydantic.dev,logfire-eu.pydantic.info,logfire-us.pydantic.dev,logfire-us.pydantic.info,mistral.ai,models.github.ai,objects.githubusercontent.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,ollama.com,openrouter.ai,ovh.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,patch-diff.githubusercontent.com,pip.pypa.io,platform.claude.com,platform.moonshot.ai,platform.openai.com,playwright.download.prss.microsoft.com,ppa.launchpad.net,pydantic.dev,pypi.org,pypi.python.org,raw.githubusercontent.com,registry.npmjs.org,repo.anaconda.com,repo.continuum.io,s.symcb.com,s.symcd.com,security.ubuntu.com,sentry.io,statsig.anthropic.com,studio.nebius.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com,vercel.com,www.alibabacloud.com,www.googleapis.com,www.together.ai,x.ai"
+          GH_AW_ALLOWED_DOMAINS: "*.githubusercontent.com,*.pythonhosted.org,ai-sdk.dev,anaconda.org,anthropic.com,api.anthropic.com,api.github.com,api.minimax.io,api.snapcraft.io,archive.ubuntu.com,azure.archive.ubuntu.com,binstar.org,bootstrap.pypa.io,cdn.playwright.dev,codeload.github.com,conda.anaconda.org,conda.binstar.org,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,docs.ag-ui.com,files.pythonhosted.org,ghcr.io,github-cloud.githubusercontent.com,github-cloud.s3.amazonaws.com,github.com,host.docker.internal,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,lfs.github.com,logfire-api.pydantic.dev,objects.githubusercontent.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,pip.pypa.io,playwright.download.prss.microsoft.com,ppa.launchpad.net,pypi.org,pypi.python.org,raw.githubusercontent.com,registry.npmjs.org,repo.anaconda.com,repo.continuum.io,s.symcb.com,s.symcd.com,security.ubuntu.com,sentry.io,statsig.anthropic.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com,www.googleapis.com"
         with:
           script: |
             const { setupGlobals } = require('${{ runner.temp }}/gh-aw/actions/setup_globals.cjs');
@@ -248,20 +239,20 @@ jobs:
         run: |
           bash "${RUNNER_TEMP}/gh-aw/actions/create_prompt_first.sh"
           {
-          cat << 'GH_AW_PROMPT_7f854171f63d2ded_EOF'
+          cat << 'GH_AW_PROMPT_96525dcb8e4b2795_EOF'
           <system>
-          GH_AW_PROMPT_7f854171f63d2ded_EOF
+          GH_AW_PROMPT_96525dcb8e4b2795_EOF
           cat "${RUNNER_TEMP}/gh-aw/prompts/xpia.md"
           cat "${RUNNER_TEMP}/gh-aw/prompts/temp_folder_prompt.md"
           cat "${RUNNER_TEMP}/gh-aw/prompts/markdown.md"
           cat "${RUNNER_TEMP}/gh-aw/prompts/safe_outputs_prompt.md"
-          cat << 'GH_AW_PROMPT_7f854171f63d2ded_EOF'
+          cat << 'GH_AW_PROMPT_96525dcb8e4b2795_EOF'
           <safe-output-tools>
           Tools: create_pull_request_review_comment(max:30), submit_pull_request_review, missing_tool, missing_data, noop
           </safe-output-tools>
-          GH_AW_PROMPT_7f854171f63d2ded_EOF
+          GH_AW_PROMPT_96525dcb8e4b2795_EOF
           cat "${RUNNER_TEMP}/gh-aw/prompts/mcp_cli_tools_prompt.md"
-          cat << 'GH_AW_PROMPT_7f854171f63d2ded_EOF'
+          cat << 'GH_AW_PROMPT_96525dcb8e4b2795_EOF'
           <github-context>
           The following GitHub context information is available for this workflow:
           {{#if github.actor}}
@@ -293,22 +284,13 @@ jobs:
             - **Note**: If a branch you need is not in the list above and is not listed as an additional fetched ref, it has NOT been checked out. For private repositories you cannot fetch it without proper authentication. If the branch is required and not available, exit with an error and ask the user to add it to the `fetch:` option of the `checkout:` configuration (e.g., `fetch: ["refs/pulls/open/*"]` for all open PR refs, or `fetch: ["main", "feature/my-branch"]` for specific branches).
           </github-context>
           
-          GH_AW_PROMPT_7f854171f63d2ded_EOF
+          GH_AW_PROMPT_96525dcb8e4b2795_EOF
           cat "${RUNNER_TEMP}/gh-aw/prompts/cli_proxy_with_safeoutputs_prompt.md"
-          cat << 'GH_AW_PROMPT_7f854171f63d2ded_EOF'
+          cat << 'GH_AW_PROMPT_96525dcb8e4b2795_EOF'
           </system>
-          {{#runtime-import .github/workflows/shared/network-vendor-domains.md}}
           {{#runtime-import .github/workflows/shared/otel-logfire.md}}
-          {{#runtime-import .github/workflows/shared/tool-hints.md}}
-          {{#runtime-import .github/workflows/shared/repo-context.md}}
-          {{#runtime-import .github/workflows/shared/rigor.md}}
-          {{#runtime-import .github/workflows/shared/review-context.md}}
-          {{#runtime-import .github/workflows/shared/checkout.md}}
-          {{#runtime-import .github/workflows/shared/engine-minimax.md}}
-          {{#runtime-import .github/workflows/shared/pre-steps.md}}
-          {{#runtime-import .github/workflows/shared/pre-agent-steps.md}}
           {{#runtime-import .github/workflows/pydantic-ai-ui-security-review.md}}
-          GH_AW_PROMPT_7f854171f63d2ded_EOF
+          GH_AW_PROMPT_96525dcb8e4b2795_EOF
           } > "$GH_AW_PROMPT"
       - name: Interpolate variables and render templates
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -516,8 +498,6 @@ jobs:
         run: |
           mkdir -p /tmp/gh-aw/bin
           install -m 755 .github/scripts/pydantic-ai-runner-launch.sh /tmp/gh-aw/bin/pydantic-ai-runner-launch
-      - name: Install tools for AWF sandbox (ripgrep)
-        run: bash .github/scripts/install-sandbox-tools.sh
       - name: Pre-warm Pydantic AI gh-aw shim uv environment
         run: bash .github/scripts/prewarm-pydantic-ai-runner.sh
       - env:
@@ -535,9 +515,9 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/gh-aw/safeoutputs"
           mkdir -p /tmp/gh-aw/safeoutputs
           mkdir -p /tmp/gh-aw/mcp-logs/safeoutputs
-          cat > "${RUNNER_TEMP}/gh-aw/safeoutputs/config.json" << 'GH_AW_SAFE_OUTPUTS_CONFIG_7074c1b026043daf_EOF'
+          cat > "${RUNNER_TEMP}/gh-aw/safeoutputs/config.json" << 'GH_AW_SAFE_OUTPUTS_CONFIG_3fbf0d18936c58e4_EOF'
           {"create_pull_request_review_comment":{"max":30,"side":"RIGHT"},"create_report_incomplete_issue":{},"missing_data":{},"missing_tool":{},"noop":{"max":1,"report-as-issue":"true"},"report_incomplete":{},"submit_pull_request_review":{"footer":"none","max":1}}
-          GH_AW_SAFE_OUTPUTS_CONFIG_7074c1b026043daf_EOF
+          GH_AW_SAFE_OUTPUTS_CONFIG_3fbf0d18936c58e4_EOF
       - name: Generate Safe Outputs Tools
         env:
           GH_AW_TOOLS_META_JSON: |
@@ -761,7 +741,7 @@ jobs:
           export MCP_GATEWAY_DOCKER_COMMAND='docker run -i --rm --network host --add-host host.docker.internal:127.0.0.1 --user '"${MCP_GATEWAY_UID}"':'"${MCP_GATEWAY_GID}"' --group-add '"${DOCKER_SOCK_GID}"' -v '"${DOCKER_SOCK_PATH}"':/var/run/docker.sock -e MCP_GATEWAY_PORT -e MCP_GATEWAY_DOMAIN -e MCP_GATEWAY_API_KEY -e MCP_GATEWAY_PAYLOAD_DIR -e MCP_GATEWAY_PAYLOAD_SIZE_THRESHOLD -e DOCKER_HOST=unix:///var/run/docker.sock -e DEBUG -e MCP_GATEWAY_LOG_DIR -e GH_AW_MCP_LOG_DIR -e GH_AW_SAFE_OUTPUTS -e GH_AW_SAFE_OUTPUTS_CONFIG_PATH -e GH_AW_SAFE_OUTPUTS_TOOLS_PATH -e GH_AW_ASSETS_BRANCH -e GH_AW_ASSETS_MAX_SIZE_KB -e GH_AW_ASSETS_ALLOWED_EXTS -e DEFAULT_BRANCH -e GITHUB_MCP_SERVER_TOKEN -e GITHUB_MCP_GUARD_MIN_INTEGRITY -e GITHUB_MCP_GUARD_REPOS -e GITHUB_REPOSITORY -e GITHUB_SERVER_URL -e GITHUB_SHA -e GITHUB_WORKSPACE -e GITHUB_TOKEN -e GITHUB_RUN_ID -e GITHUB_RUN_NUMBER -e GITHUB_RUN_ATTEMPT -e GITHUB_JOB -e GITHUB_ACTION -e GITHUB_EVENT_NAME -e GITHUB_EVENT_PATH -e GITHUB_ACTOR -e GITHUB_ACTOR_ID -e GITHUB_TRIGGERING_ACTOR -e GITHUB_WORKFLOW -e GITHUB_WORKFLOW_REF -e GITHUB_WORKFLOW_SHA -e GITHUB_REF -e GITHUB_REF_NAME -e GITHUB_REF_TYPE -e GITHUB_HEAD_REF -e GITHUB_BASE_REF -e GH_AW_SAFE_OUTPUTS_PORT -e GH_AW_SAFE_OUTPUTS_API_KEY -e GITHUB_AW_OTEL_TRACE_ID -e GITHUB_AW_OTEL_PARENT_SPAN_ID -e OTEL_EXPORTER_OTLP_HEADERS -v /tmp/gh-aw/mcp-payloads:/tmp/gh-aw/mcp-payloads:rw -v /opt:/opt:ro -v /tmp:/tmp:rw -v '"${GITHUB_WORKSPACE}"':'"${GITHUB_WORKSPACE}"':rw ghcr.io/github/gh-aw-mcpg:v0.3.9'
           
           GH_AW_NODE=$(which node 2>/dev/null || command -v node 2>/dev/null || echo node)
-          cat << GH_AW_MCP_CONFIG_162df83ee27779a1_EOF | "$GH_AW_NODE" "${RUNNER_TEMP}/gh-aw/actions/start_mcp_gateway.cjs"
+          cat << GH_AW_MCP_CONFIG_33afeb8479a77042_EOF | "$GH_AW_NODE" "${RUNNER_TEMP}/gh-aw/actions/start_mcp_gateway.cjs"
           {
             "mcpServers": {
               "safeoutputs": {
@@ -791,7 +771,7 @@ jobs:
               }
             }
           }
-          GH_AW_MCP_CONFIG_162df83ee27779a1_EOF
+          GH_AW_MCP_CONFIG_33afeb8479a77042_EOF
       - name: Mount MCP servers as CLIs
         id: mount-mcp-clis
         continue-on-error: true
@@ -902,7 +882,7 @@ jobs:
           printf '%s' "$(date +%s%3N)" > /tmp/gh-aw/agent_cli_start_ms.txt
           touch /tmp/gh-aw/agent-step-summary.md
           (umask 177 && touch /tmp/gh-aw/agent-stdio.log)
-          printf '%s\n' '{"$schema":"https://github.com/github/gh-aw-firewall/releases/download/v0.25.49/awf-config.schema.json","network":{"allowDomains":["*.githubusercontent.com","*.google.com","*.googleapis.com","*.gvt1.com","*.pythonhosted.org","ai-sdk.dev","ai.azure.com","ai.google.dev","ai.pydantic.dev","amazonaws.com","anaconda.org","anthropic.com","api-docs.deepseek.com","api.anthropic.com","api.cerebras.ai","api.cohere.com","api.deepseek.com","api.fireworks.ai","api.github.com","api.groq.com","api.minimax.io","api.mistral.ai","api.openai.com","api.perplexity.ai","api.sambanova.ai","api.snapcraft.io","api.studio.nebius.com","api.together.xyz","api.x.ai","archive.ubuntu.com","aws.amazon.com","azure.archive.ubuntu.com","binstar.org","bootstrap.pypa.io","boto3.amazonaws.com","cdn.playwright.dev","cerebras.ai","cloud.cerebras.ai","cloud.sambanova.ai","codeload.github.com","cohere.com","conda.anaconda.org","conda.binstar.org","console.anthropic.com","console.groq.com","console.mistral.ai","console.x.ai","crl.geotrust.com","crl.globalsign.com","crl.identrust.com","crl.sectigo.com","crl.thawte.com","crl.usertrust.com","crl.verisign.com","crl3.digicert.com","crl4.digicert.com","crls.ssl.com","dashboard.cohere.com","dashscope-intl.aliyuncs.com","dashscope.aliyuncs.com","deepseek.com","developers.openai.com","docs.ag-ui.com","docs.anthropic.com","docs.aws.amazon.com","docs.github.com","docs.perplexity.ai","docs.sambanova.ai","docs.x.ai","endpoints.ai.cloud.ovh.net","files.pythonhosted.org","fireworks.ai","ghcr.io","github-cloud.githubusercontent.com","github-cloud.s3.amazonaws.com","github.blog","github.com","github.githubassets.com","groq.com","hf.co","host.docker.internal","huggingface.co","inference-docs.cerebras.ai","json-schema.org","json.schemastore.org","keyserver.ubuntu.com","learn.microsoft.com","lfs.github.com","logfire-api.pydantic.dev","logfire-api.pydantic.info","logfire-eu.pydantic.dev","logfire-eu.pydantic.info","logfire-us.pydantic.dev","logfire-us.pydantic.info","mistral.ai","models.github.ai","objects.githubusercontent.com","ocsp.digicert.com","ocsp.geotrust.com","ocsp.globalsign.com","ocsp.identrust.com","ocsp.sectigo.com","ocsp.ssl.com","ocsp.thawte.com","ocsp.usertrust.com","ocsp.verisign.com","ollama.com","openrouter.ai","ovh.com","packagecloud.io","packages.cloud.google.com","packages.microsoft.com","patch-diff.githubusercontent.com","pip.pypa.io","platform.claude.com","platform.moonshot.ai","platform.openai.com","playwright.download.prss.microsoft.com","ppa.launchpad.net","pydantic.dev","pypi.org","pypi.python.org","raw.githubusercontent.com","registry.npmjs.org","repo.anaconda.com","repo.continuum.io","s.symcb.com","s.symcd.com","security.ubuntu.com","sentry.io","statsig.anthropic.com","studio.nebius.com","ts-crl.ws.symantec.com","ts-ocsp.ws.symantec.com","vercel.com","www.alibabacloud.com","www.googleapis.com","www.together.ai","x.ai"]},"apiProxy":{"enabled":true,"enableTokenSteering":true,"maxRuns":500,"maxEffectiveTokens":25000000,"targets":{"anthropic":{"host":"api.minimax.io"}},"models":{"agent":["sonnet-6x","gpt-5.4","gpt-5","gemini-pro","haiku","any"],"any":["copilot/*","anthropic/*","openai/*","google/*","gemini/*"],"auto":["large"],"claude":["agent","sonnet-6x","haiku","any"],"codex":["agent","gpt-5-codex","gpt-5","any"],"coding":["copilot/gpt-5*codex*","openai/gpt-5*codex*","gpt-5-codex"],"copilot":["agent","gpt-5.4","sonnet","gpt-5","any"],"deep-research":["copilot/deep-research*","copilot/o3-deep-research*","copilot/o4-mini-deep-research*","google/deep-research*","gemini/deep-research*","openai/o3-deep-research*","openai/o4-mini-deep-research*"],"gemini":["agent","gemini-pro","gemini-flash","any"],"gemini-flash":["copilot/gemini-*flash*","google/gemini-*flash*","gemini/gemini-*flash*"],"gemini-flash-lite":["copilot/gemini-*flash*lite*","google/gemini-*flash*lite*","gemini/gemini-*flash*lite*"],"gemini-pro":["copilot/gemini-*pro*","google/gemini-*pro*","gemini/gemini-*pro*"],"gemma":["copilot/gemma*","google/gemma*","gemini/gemma*"],"gpt-4.1":["copilot/gpt-4.1*","openai/gpt-4.1*"],"gpt-5":["copilot/gpt-5*","openai/gpt-5*"],"gpt-5-codex":["copilot/gpt-5*codex*","openai/gpt-5*codex*"],"gpt-5-mini":["copilot/gpt-5*mini*","openai/gpt-5*mini*"],"gpt-5-nano":["copilot/gpt-5*nano*","openai/gpt-5*nano*"],"gpt-5-pro":["copilot/gpt-5*pro*","openai/gpt-5*pro*"],"haiku":["copilot/*haiku*","anthropic/*haiku*"],"large":["sonnet","gpt-5-pro","gpt-5","gemini-pro"],"mini":["haiku","gpt-5-mini","gpt-5-nano","gemini-flash-lite","copilot/raptor*mini*"],"opus":["copilot/*opus*","anthropic/*opus*"],"reasoning":["copilot/o1*","copilot/o3*","copilot/o4*","openai/o1*","openai/o3*","openai/o4*"],"small":["mini"],"sonnet":["copilot/*sonnet*","anthropic/*sonnet*"],"sonnet-6x":["copilot/*sonnet-4.5*","copilot/*sonnet-4-5*","anthropic/*sonnet-4.5*","anthropic/*sonnet-4-5*","copilot/*sonnet-3.7*","copilot/*sonnet-3-7*","anthropic/*sonnet-3.7*","anthropic/*sonnet-3-7*","copilot/*sonnet-3.5*","copilot/*sonnet-3-5*","anthropic/*sonnet-3.5*","anthropic/*sonnet-3-5*"],"vision":["copilot/gemini-*image*","gemini/gemini-*image*","copilot/gemini-*flash*","gemini/gemini-*flash*"]}},"container":{"imageTag":"0.25.49"}}' > "${RUNNER_TEMP}/gh-aw/awf-config.json"
+          printf '%s\n' '{"$schema":"https://github.com/github/gh-aw-firewall/releases/download/v0.25.49/awf-config.schema.json","network":{"allowDomains":["*.githubusercontent.com","*.pythonhosted.org","ai-sdk.dev","anaconda.org","anthropic.com","api.anthropic.com","api.github.com","api.minimax.io","api.snapcraft.io","archive.ubuntu.com","azure.archive.ubuntu.com","binstar.org","bootstrap.pypa.io","cdn.playwright.dev","codeload.github.com","conda.anaconda.org","conda.binstar.org","crl.geotrust.com","crl.globalsign.com","crl.identrust.com","crl.sectigo.com","crl.thawte.com","crl.usertrust.com","crl.verisign.com","crl3.digicert.com","crl4.digicert.com","crls.ssl.com","docs.ag-ui.com","files.pythonhosted.org","ghcr.io","github-cloud.githubusercontent.com","github-cloud.s3.amazonaws.com","github.com","host.docker.internal","json-schema.org","json.schemastore.org","keyserver.ubuntu.com","lfs.github.com","logfire-api.pydantic.dev","objects.githubusercontent.com","ocsp.digicert.com","ocsp.geotrust.com","ocsp.globalsign.com","ocsp.identrust.com","ocsp.sectigo.com","ocsp.ssl.com","ocsp.thawte.com","ocsp.usertrust.com","ocsp.verisign.com","packagecloud.io","packages.cloud.google.com","packages.microsoft.com","pip.pypa.io","playwright.download.prss.microsoft.com","ppa.launchpad.net","pypi.org","pypi.python.org","raw.githubusercontent.com","registry.npmjs.org","repo.anaconda.com","repo.continuum.io","s.symcb.com","s.symcd.com","security.ubuntu.com","sentry.io","statsig.anthropic.com","ts-crl.ws.symantec.com","ts-ocsp.ws.symantec.com","www.googleapis.com"]},"apiProxy":{"enabled":true,"enableTokenSteering":true,"maxRuns":500,"maxEffectiveTokens":25000000,"targets":{"anthropic":{"host":"api.minimax.io"}},"models":{"agent":["sonnet-6x","gpt-5.4","gpt-5","gemini-pro","haiku","any"],"any":["copilot/*","anthropic/*","openai/*","google/*","gemini/*"],"auto":["large"],"claude":["agent","sonnet-6x","haiku","any"],"codex":["agent","gpt-5-codex","gpt-5","any"],"coding":["copilot/gpt-5*codex*","openai/gpt-5*codex*","gpt-5-codex"],"copilot":["agent","gpt-5.4","sonnet","gpt-5","any"],"deep-research":["copilot/deep-research*","copilot/o3-deep-research*","copilot/o4-mini-deep-research*","google/deep-research*","gemini/deep-research*","openai/o3-deep-research*","openai/o4-mini-deep-research*"],"gemini":["agent","gemini-pro","gemini-flash","any"],"gemini-flash":["copilot/gemini-*flash*","google/gemini-*flash*","gemini/gemini-*flash*"],"gemini-flash-lite":["copilot/gemini-*flash*lite*","google/gemini-*flash*lite*","gemini/gemini-*flash*lite*"],"gemini-pro":["copilot/gemini-*pro*","google/gemini-*pro*","gemini/gemini-*pro*"],"gemma":["copilot/gemma*","google/gemma*","gemini/gemma*"],"gpt-4.1":["copilot/gpt-4.1*","openai/gpt-4.1*"],"gpt-5":["copilot/gpt-5*","openai/gpt-5*"],"gpt-5-codex":["copilot/gpt-5*codex*","openai/gpt-5*codex*"],"gpt-5-mini":["copilot/gpt-5*mini*","openai/gpt-5*mini*"],"gpt-5-nano":["copilot/gpt-5*nano*","openai/gpt-5*nano*"],"gpt-5-pro":["copilot/gpt-5*pro*","openai/gpt-5*pro*"],"haiku":["copilot/*haiku*","anthropic/*haiku*"],"large":["sonnet","gpt-5-pro","gpt-5","gemini-pro"],"mini":["haiku","gpt-5-mini","gpt-5-nano","gemini-flash-lite","copilot/raptor*mini*"],"opus":["copilot/*opus*","anthropic/*opus*"],"reasoning":["copilot/o1*","copilot/o3*","copilot/o4*","openai/o1*","openai/o3*","openai/o4*"],"small":["mini"],"sonnet":["copilot/*sonnet*","anthropic/*sonnet*"],"sonnet-6x":["copilot/*sonnet-4.5*","copilot/*sonnet-4-5*","anthropic/*sonnet-4.5*","anthropic/*sonnet-4-5*","copilot/*sonnet-3.7*","copilot/*sonnet-3-7*","anthropic/*sonnet-3.7*","anthropic/*sonnet-3-7*","copilot/*sonnet-3.5*","copilot/*sonnet-3-5*","anthropic/*sonnet-3.5*","anthropic/*sonnet-3-5*"],"vision":["copilot/gemini-*image*","gemini/gemini-*image*","copilot/gemini-*flash*","gemini/gemini-*flash*"]}},"container":{"imageTag":"0.25.49"}}' > "${RUNNER_TEMP}/gh-aw/awf-config.json"
           cp "${RUNNER_TEMP}/gh-aw/awf-config.json" /tmp/gh-aw/awf-config.json
           GH_AW_DOCKER_HOST_PATH_PREFIX_ARGS=""
           if [[ "${DOCKER_HOST:-}" =~ ^tcp:// ]]; then
@@ -993,7 +973,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GH_AW_SAFE_OUTPUTS: ${{ steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS }}
-          GH_AW_ALLOWED_DOMAINS: "*.githubusercontent.com,*.google.com,*.googleapis.com,*.gvt1.com,*.pythonhosted.org,ai-sdk.dev,ai.azure.com,ai.google.dev,ai.pydantic.dev,amazonaws.com,anaconda.org,anthropic.com,api-docs.deepseek.com,api.anthropic.com,api.cerebras.ai,api.cohere.com,api.deepseek.com,api.fireworks.ai,api.github.com,api.groq.com,api.minimax.io,api.mistral.ai,api.openai.com,api.perplexity.ai,api.sambanova.ai,api.snapcraft.io,api.studio.nebius.com,api.together.xyz,api.x.ai,archive.ubuntu.com,aws.amazon.com,azure.archive.ubuntu.com,binstar.org,bootstrap.pypa.io,boto3.amazonaws.com,cdn.playwright.dev,cerebras.ai,cloud.cerebras.ai,cloud.sambanova.ai,codeload.github.com,cohere.com,conda.anaconda.org,conda.binstar.org,console.anthropic.com,console.groq.com,console.mistral.ai,console.x.ai,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,dashboard.cohere.com,dashscope-intl.aliyuncs.com,dashscope.aliyuncs.com,deepseek.com,developers.openai.com,docs.ag-ui.com,docs.anthropic.com,docs.aws.amazon.com,docs.github.com,docs.perplexity.ai,docs.sambanova.ai,docs.x.ai,endpoints.ai.cloud.ovh.net,files.pythonhosted.org,fireworks.ai,ghcr.io,github-cloud.githubusercontent.com,github-cloud.s3.amazonaws.com,github.blog,github.com,github.githubassets.com,groq.com,hf.co,host.docker.internal,huggingface.co,inference-docs.cerebras.ai,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,learn.microsoft.com,lfs.github.com,logfire-api.pydantic.dev,logfire-api.pydantic.info,logfire-eu.pydantic.dev,logfire-eu.pydantic.info,logfire-us.pydantic.dev,logfire-us.pydantic.info,mistral.ai,models.github.ai,objects.githubusercontent.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,ollama.com,openrouter.ai,ovh.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,patch-diff.githubusercontent.com,pip.pypa.io,platform.claude.com,platform.moonshot.ai,platform.openai.com,playwright.download.prss.microsoft.com,ppa.launchpad.net,pydantic.dev,pypi.org,pypi.python.org,raw.githubusercontent.com,registry.npmjs.org,repo.anaconda.com,repo.continuum.io,s.symcb.com,s.symcd.com,security.ubuntu.com,sentry.io,statsig.anthropic.com,studio.nebius.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com,vercel.com,www.alibabacloud.com,www.googleapis.com,www.together.ai,x.ai"
+          GH_AW_ALLOWED_DOMAINS: "*.githubusercontent.com,*.pythonhosted.org,ai-sdk.dev,anaconda.org,anthropic.com,api.anthropic.com,api.github.com,api.minimax.io,api.snapcraft.io,archive.ubuntu.com,azure.archive.ubuntu.com,binstar.org,bootstrap.pypa.io,cdn.playwright.dev,codeload.github.com,conda.anaconda.org,conda.binstar.org,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,docs.ag-ui.com,files.pythonhosted.org,ghcr.io,github-cloud.githubusercontent.com,github-cloud.s3.amazonaws.com,github.com,host.docker.internal,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,lfs.github.com,logfire-api.pydantic.dev,objects.githubusercontent.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,pip.pypa.io,playwright.download.prss.microsoft.com,ppa.launchpad.net,pypi.org,pypi.python.org,raw.githubusercontent.com,registry.npmjs.org,repo.anaconda.com,repo.continuum.io,s.symcb.com,s.symcd.com,security.ubuntu.com,sentry.io,statsig.anthropic.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com,www.googleapis.com"
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_API_URL: ${{ github.api_url }}
         with:
@@ -1598,7 +1578,7 @@ jobs:
         env:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
           GH_AW_COMMENT_ID: ${{ needs.activation.outputs.comment_id }}
-          GH_AW_ALLOWED_DOMAINS: "*.githubusercontent.com,*.google.com,*.googleapis.com,*.gvt1.com,*.pythonhosted.org,ai-sdk.dev,ai.azure.com,ai.google.dev,ai.pydantic.dev,amazonaws.com,anaconda.org,anthropic.com,api-docs.deepseek.com,api.anthropic.com,api.cerebras.ai,api.cohere.com,api.deepseek.com,api.fireworks.ai,api.github.com,api.groq.com,api.minimax.io,api.mistral.ai,api.openai.com,api.perplexity.ai,api.sambanova.ai,api.snapcraft.io,api.studio.nebius.com,api.together.xyz,api.x.ai,archive.ubuntu.com,aws.amazon.com,azure.archive.ubuntu.com,binstar.org,bootstrap.pypa.io,boto3.amazonaws.com,cdn.playwright.dev,cerebras.ai,cloud.cerebras.ai,cloud.sambanova.ai,codeload.github.com,cohere.com,conda.anaconda.org,conda.binstar.org,console.anthropic.com,console.groq.com,console.mistral.ai,console.x.ai,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,dashboard.cohere.com,dashscope-intl.aliyuncs.com,dashscope.aliyuncs.com,deepseek.com,developers.openai.com,docs.ag-ui.com,docs.anthropic.com,docs.aws.amazon.com,docs.github.com,docs.perplexity.ai,docs.sambanova.ai,docs.x.ai,endpoints.ai.cloud.ovh.net,files.pythonhosted.org,fireworks.ai,ghcr.io,github-cloud.githubusercontent.com,github-cloud.s3.amazonaws.com,github.blog,github.com,github.githubassets.com,groq.com,hf.co,host.docker.internal,huggingface.co,inference-docs.cerebras.ai,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,learn.microsoft.com,lfs.github.com,logfire-api.pydantic.dev,logfire-api.pydantic.info,logfire-eu.pydantic.dev,logfire-eu.pydantic.info,logfire-us.pydantic.dev,logfire-us.pydantic.info,mistral.ai,models.github.ai,objects.githubusercontent.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,ollama.com,openrouter.ai,ovh.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,patch-diff.githubusercontent.com,pip.pypa.io,platform.claude.com,platform.moonshot.ai,platform.openai.com,playwright.download.prss.microsoft.com,ppa.launchpad.net,pydantic.dev,pypi.org,pypi.python.org,raw.githubusercontent.com,registry.npmjs.org,repo.anaconda.com,repo.continuum.io,s.symcb.com,s.symcd.com,security.ubuntu.com,sentry.io,statsig.anthropic.com,studio.nebius.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com,vercel.com,www.alibabacloud.com,www.googleapis.com,www.together.ai,x.ai"
+          GH_AW_ALLOWED_DOMAINS: "*.githubusercontent.com,*.pythonhosted.org,ai-sdk.dev,anaconda.org,anthropic.com,api.anthropic.com,api.github.com,api.minimax.io,api.snapcraft.io,archive.ubuntu.com,azure.archive.ubuntu.com,binstar.org,bootstrap.pypa.io,cdn.playwright.dev,codeload.github.com,conda.anaconda.org,conda.binstar.org,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,docs.ag-ui.com,files.pythonhosted.org,ghcr.io,github-cloud.githubusercontent.com,github-cloud.s3.amazonaws.com,github.com,host.docker.internal,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,lfs.github.com,logfire-api.pydantic.dev,objects.githubusercontent.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,pip.pypa.io,playwright.download.prss.microsoft.com,ppa.launchpad.net,pypi.org,pypi.python.org,raw.githubusercontent.com,registry.npmjs.org,repo.anaconda.com,repo.continuum.io,s.symcb.com,s.symcd.com,security.ubuntu.com,sentry.io,statsig.anthropic.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com,www.googleapis.com"
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_API_URL: ${{ github.api_url }}
           GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"create_pull_request_review_comment\":{\"max\":30,\"side\":\"RIGHT\"},\"create_report_incomplete_issue\":{},\"missing_data\":{},\"missing_tool\":{},\"noop\":{\"max\":1,\"report-as-issue\":\"true\"},\"report_incomplete\":{},\"submit_pull_request_review\":{\"footer\":\"none\",\"max\":1}}"

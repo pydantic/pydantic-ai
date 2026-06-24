@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
-from pydantic import Json, TypeAdapter, ValidationError
+from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import SchemaValidator
 from typing_extensions import Self, TypedDict, TypeVar
 
@@ -1061,14 +1061,12 @@ class _UnionValidatedOutput:
     data: Any
 
 
-@dataclass
-class UnionOutputResult:
+class UnionOutputResult(BaseModel):
     kind: str
     data: ObjectJsonSchema
 
 
-@dataclass
-class UnionOutputModel:
+class UnionOutputModel(BaseModel):
     result: UnionOutputResult
 
 
@@ -1085,8 +1083,6 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         description: str | None = None,
         strict: bool | None = None,
     ):
-        self._union_processor = ObjectOutputProcessor(output=UnionOutputModel)
-
         json_schemas: list[ObjectJsonSchema] = []
         self._processors = {}
         for output in outputs:
@@ -1109,6 +1105,17 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 json_schema['description'] = object_def.description
 
             json_schemas.append(json_schema)
+
+        # Constrain `kind` to the registered discriminator keys so an unknown value fails as a
+        # regular `ValidationError` (mirroring the `const` discriminator we advertise to the
+        # provider) instead of slipping through to the `_processors` lookup in `validate()`.
+        constrained_result = create_model(
+            UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(Literal[tuple(self._processors)], ...)
+        )
+        union_model = create_model(
+            UnionOutputModel.__name__, __base__=UnionOutputModel, result=(constrained_result, ...)
+        )
+        self._union_processor = ObjectOutputProcessor(output=union_model)
 
         json_schemas, all_defs = _utils.merge_json_schema_defs(json_schemas)
 
@@ -1179,7 +1186,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         kind: str = result.kind
         inner_data: dict[str, Any] = result.data
 
-        # Pydantic validation ensures kind is always valid, so KeyError can't happen.
+        # `_union_processor` validates `kind` against the registered keys, so the lookup is safe.
         inner = self._processors[kind]
         inner_validated = inner.validate(inner_data, allow_partial=allow_partial, validation_context=validation_context)
         # Unwrap to semantic here so the wrapper's `data` is always what hooks / callers
@@ -1431,12 +1438,14 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            sequential = False
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
                 tool_max_retries = output.max_retries
+                sequential = output.sequential
 
                 output = output.output  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
 
@@ -1473,6 +1482,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict=object_def.strict,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
                 kind='output',
+                sequential=sequential,
             )
             processors[name] = processor
             tool_defs.append(tool_def)

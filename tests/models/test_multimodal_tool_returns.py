@@ -74,9 +74,6 @@ with try_import() as xai_available:
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
 ]
 
 ProviderName = Literal[
@@ -603,7 +600,7 @@ async def test_multimodal_tool_return_matrix(
     else:
         content = URL_FACTORIES[(file_type, content_source)]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_file() -> Any:
@@ -653,7 +650,7 @@ async def test_mixed_content_ordering(
     image_support = SUPPORT_MATRIX[(provider, 'image')]
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_mixed_content() -> list[Any]:
@@ -708,7 +705,7 @@ async def test_model_sees_multiple_images(
     kiwi_image = image_content
     url_image = URL_FACTORIES[('image', 'url')]()
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_images() -> list[Any]:
@@ -755,7 +752,7 @@ async def test_vendor_metadata_detail(
         vendor_metadata={'detail': 'high'},
     )
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_images_with_metadata() -> list[Any]:
@@ -785,7 +782,7 @@ async def test_text_plain_document_anthropic(
     text_content = assets_path.joinpath('dummy.txt').read_bytes()
     document = BinaryContent(data=text_content, media_type='text/plain')
 
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_text_document() -> BinaryContent:
@@ -806,7 +803,7 @@ async def test_non_pdf_document_url_error(
 ):
     """Test that Mistral raises NotImplementedError for non-PDF DocumentUrl in tool returns."""
     model = MistralModel('mistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
-    agent: Agent[None, str] = Agent(model)
+    agent = Agent(model)
 
     @agent.tool_plain
     def get_file() -> DocumentUrl:
@@ -916,6 +913,12 @@ UPLOADED_FILE_ERROR_CASES: list[UploadedFileErrorCase] = [
         uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google-cloud'),
         match=r'UploadedFile for GoogleModel \(Google Cloud\) must use a GCS URI',
     ),
+    UploadedFileErrorCase(
+        id='openai_responses_wrong_provider',
+        provider='openai_responses',
+        uploaded_file=UploadedFile(file_id='file-abc123', provider_name='google'),
+        match="provider_name='google'.*cannot be used with OpenAIResponsesModel",
+    ),
 ]
 
 
@@ -955,6 +958,10 @@ async def test_uploaded_file_validation_error_in_tool_return(
                 type(m_google), 'system', new_callable=lambda: property(lambda self: 'google-vertex')
             ):
                 await m_google._map_messages(messages, params)  # pyright: ignore[reportPrivateUsage]
+    elif provider == 'openai_responses':
+        m_openai = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key='test-key'))
+        with pytest.raises(UserError, match=case.match):
+            await m_openai._map_messages(messages, {}, params)  # pyright: ignore[reportPrivateUsage]
     else:
         assert_never(provider)  # pyright: ignore[reportArgumentType]
 

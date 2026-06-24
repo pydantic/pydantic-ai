@@ -35,6 +35,7 @@
 
 <!-- rule:0 -->
 - Use `isinstance()` for type checking, not `hasattr()`, `getattr()`, `type(obj).__name__`, or discriminator field checks like `part_kind` — Enables proper type narrowing for static analysis and prevents fragile string-based comparisons that break during refactoring
+- Don't use `getattr()`/`setattr()` with a non-literal field name to read or copy fields of our own statically-known types (dataclasses, `BaseModel`s, message/part classes), e.g. looping over `fields()` and copying by name — use explicit attribute access (`merged.foo = merged.foo or other.foo`) — Reflecting over known fields by name defeats Pyright's field-existence and type checks and breaks silently on rename; this does not apply to `getattr(obj, 'name', default)` for genuinely optional or duck-typed attributes whose shape isn't statically known
 <!-- rule:142 -->
 - Use `Literal` types instead of plain `str` for fixed string value sets in parameters, fields, and return types — Makes valid values explicit in type signatures, enabling static type checkers to catch invalid strings at compile time and improving IDE autocomplete
 <!-- rule:809 -->
