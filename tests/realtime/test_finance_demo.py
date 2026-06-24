@@ -7,6 +7,7 @@ import itertools
 import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 import pytest
 from pydantic_ai_examples.realtime_finance.data import DEFAULT_USER_ID, get_user_finances
@@ -27,7 +28,6 @@ from pydantic_ai_examples.realtime_finance.widgets import (
 
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime import (
-    AudioInput,
     RealtimeConnection,
     RealtimeEvent,
     RealtimeInput,
@@ -60,11 +60,10 @@ class _RoutingConnection(RealtimeConnection):
                     args=json.dumps({'question': content.text}),
                 )
             )
-        elif isinstance(content, ToolResult):
-            await self._events.put(Transcript(text=content.output, is_final=True))
+        else:
+            tool_result = cast(ToolResult, content)
+            await self._events.put(Transcript(text=tool_result.output, is_final=True))
             await self._events.put(TurnComplete())
-        elif isinstance(content, AudioInput):
-            return
 
     async def __aiter__(self) -> AsyncIterator[RealtimeEvent]:
         while True:
@@ -166,9 +165,12 @@ async def test_voice_front_bubbles_widgets_through_mock() -> None:
     deps = VoiceDeps(supervisor=create_finance_supervisor(TestModel()))
     async with voice.realtime_session(model=_RoutingModel(), deps=deps, background_tools=BACKGROUND_TOOLS) as session:
         await session.send_text('how much did I spend last month?')
-        async for event in session:
+        agen = cast(AsyncGenerator[Any], session.__aiter__())
+        while True:
+            event = await agen.__anext__()
             if isinstance(event, TurnComplete):
                 break
+        await agen.aclose()
 
     # The analyst delegation ran and surfaced typed widgets keyed by the tool call id.
     assert deps.widgets

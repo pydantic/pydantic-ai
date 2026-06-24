@@ -262,24 +262,21 @@ async def test_background_completion_drained_between_events() -> None:
 
 async def test_early_break_with_running_background_cancels_task() -> None:
     blocked = asyncio.Event()
-    conn = FakeRealtimeConnection(
-        [ToolCall(tool_call_id='bg', tool_name='hang', args='{}'), AudioDelta(data=b'\x01'), AudioDelta(data=b'\x02')]
-    )
+    started = asyncio.Event()
+    # AwaitBetweenConnection yields control between events, so the background task actually starts.
+    conn = AwaitBetweenConnection([ToolCall(tool_call_id='bg', tool_name='hang', args='{}'), AudioDelta(data=b'\x01')])
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        started.set()
         await blocked.wait()
         return 'never'  # pragma: no cover
 
     session = RealtimeSession(conn, runner, background_tools={'hang'})
     agen = cast(AsyncGenerator[Any], session.__aiter__())
-    seen: list[str] = []
-    async for event in agen:
-        seen.append(type(event).__name__)
-        if isinstance(event, AudioDelta):
-            break
-    await agen.aclose()
-
-    assert seen == ['ToolCallStarted', 'AudioDelta']
+    assert isinstance(await agen.__anext__(), ToolCallStarted)
+    assert isinstance(await agen.__anext__(), AudioDelta)
+    assert started.is_set()  # the background tool is running by now
+    await agen.aclose()  # cancels the still-running background task
 
 
 async def test_send_helpers_forward_to_connection() -> None:
@@ -294,9 +291,9 @@ async def test_send_helpers_forward_to_connection() -> None:
 async def test_early_break_cancels_pump() -> None:
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x00'), AudioDelta(data=b'\x01'), AudioDelta(data=b'\x02')])
     session = RealtimeSession(conn, _noop_runner)
-    async for event in session:
-        assert isinstance(event, AudioDelta)
-        break
+    agen = cast(AsyncGenerator[Any], session.__aiter__())
+    assert isinstance(await agen.__anext__(), AudioDelta)
+    await agen.aclose()  # exits the pump early without draining the rest
 
 
 async def test_agent_realtime_session_wires_tools_and_instructions() -> None:
