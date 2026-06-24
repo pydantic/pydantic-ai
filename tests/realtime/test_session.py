@@ -13,6 +13,10 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
+    CreateResponse,
     InputTranscript,
     RealtimeConnection,
     RealtimeEvent,
@@ -26,6 +30,7 @@ from pydantic_ai.realtime import (
     ToolCallStarted,
     ToolResult,
     Transcript,
+    TruncateOutput,
     TurnComplete,
 )
 from pydantic_ai.settings import ModelSettings
@@ -340,6 +345,37 @@ async def test_send_helpers_forward_to_connection() -> None:
     await session.send_text('hello')
     await session.send(AudioInput(data=b'\x03'))
     assert conn.sent == [AudioInput(data=b'\x01\x02'), TextInput(text='hello'), AudioInput(data=b'\x03')]
+
+
+async def test_manual_turn_control_helpers_forward_to_connection() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    await session.commit_audio()
+    await session.create_response()
+    await session.clear_audio()
+    assert conn.sent == [CommitAudio(), CreateResponse(), ClearAudio()]
+
+
+async def test_truncate_output_helper_forwards_to_connection() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    await session.truncate_output(640)
+    assert conn.sent == [TruncateOutput(audio_end_ms=640)]
+
+
+async def test_interrupt_truncates_before_cancel() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    await session.interrupt(audio_end_ms=800)
+    # Truncate must precede cancel: cancel triggers response.done, which clears the tracked item.
+    assert conn.sent == [TruncateOutput(audio_end_ms=800), CancelResponse()]
+
+
+async def test_interrupt_without_audio_end_ms_only_cancels() -> None:
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner)
+    await session.interrupt()
+    assert conn.sent == [CancelResponse()]
 
 
 async def test_early_break_cancels_pump() -> None:

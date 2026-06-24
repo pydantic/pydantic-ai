@@ -13,6 +13,10 @@ import pytest
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
+    CreateResponse,
     ImageInput,
     InputTranscript,
     SessionError,
@@ -21,6 +25,7 @@ from pydantic_ai.realtime import (
     ToolCall,
     ToolResult,
     Transcript,
+    TruncateOutput,
     TurnComplete,
     openai as rt_openai,
 )
@@ -29,7 +34,7 @@ from pydantic_ai.realtime.openai import (
     OpenAIRealtimeModel,
     map_event,
 )
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
 
@@ -49,6 +54,11 @@ def test_map_transcript_delta_and_done() -> None:
         assert map_event({'type': event_type, 'delta': 'hel'}) == Transcript(text='hel', is_final=False)
     for event_type in ('response.output_audio_transcript.done', 'response.audio_transcript.done'):
         assert map_event({'type': event_type, 'transcript': 'hello'}) == Transcript(text='hello', is_final=True)
+
+
+def test_map_text_output_delta_and_done() -> None:
+    assert map_event({'type': 'response.output_text.delta', 'delta': 'hel'}) == Transcript(text='hel', is_final=False)
+    assert map_event({'type': 'response.output_text.done', 'text': 'hello'}) == Transcript(text='hello', is_final=True)
 
 
 def test_map_transcript_missing_field_defaults_to_empty() -> None:
@@ -201,11 +211,95 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
     assert session['instructions'] == 'Be nice'
     assert session['output_modalities'] == ['audio']
     assert session['audio']['input']['format'] == {'type': 'audio/pcm', 'rate': 24000}
-    assert session['audio']['input']['turn_detection'] == {'type': 'server_vad'}
+    assert session['audio']['input']['turn_detection'] == {
+        'type': 'server_vad',
+        'create_response': True,
+        'interrupt_response': True,
+    }
     assert session['audio']['input']['transcription'] == {'model': 'whisper-1'}
     assert session['audio']['output']['voice'] == 'alloy'
     assert session['tools'][0]['name'] == 'get_weather'
     assert session['tools'][0]['type'] == 'function'
+
+
+def test_session_config_server_vad_params() -> None:
+    model = OpenAIRealtimeModel(
+        turn_detection=rt_openai.ServerVAD(
+            threshold=0.7,
+            prefix_padding_ms=200,
+            silence_duration_ms=400,
+            create_response=False,
+            interrupt_response=False,
+            idle_timeout_ms=5000,
+        ),
+    )
+    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert config['audio']['input']['turn_detection'] == {
+        'type': 'server_vad',
+        'create_response': False,
+        'interrupt_response': False,
+        'threshold': 0.7,
+        'prefix_padding_ms': 200,
+        'silence_duration_ms': 400,
+        'idle_timeout_ms': 5000,
+    }
+
+
+def test_session_config_semantic_vad() -> None:
+    model = OpenAIRealtimeModel(turn_detection=rt_openai.SemanticVAD(eagerness='high'))
+    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert config['audio']['input']['turn_detection'] == {
+        'type': 'semantic_vad',
+        'eagerness': 'high',
+        'create_response': True,
+        'interrupt_response': True,
+    }
+
+
+def test_session_config_manual_turn_detection_is_null() -> None:
+    model = OpenAIRealtimeModel(turn_detection=None)
+    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert config['audio']['input']['turn_detection'] is None
+
+
+def test_session_config_noise_reduction_and_speed_and_modalities() -> None:
+    model = OpenAIRealtimeModel(
+        input_noise_reduction='near_field',
+        output_speed=1.25,
+        output_modalities=('text',),
+    )
+    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert config['audio']['input']['noise_reduction'] == {'type': 'near_field'}
+    assert config['audio']['output']['speed'] == 1.25
+    assert config['output_modalities'] == ['text']
+
+
+def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
+    model = OpenAIRealtimeModel()
+    settings = ModelSettings(parallel_tool_calls=True, tool_choice='required', temperature=0.5)
+    config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    assert config['parallel_tool_calls'] is True
+    assert config['tool_choice'] == 'required'
+    assert 'temperature' not in config  # GA realtime has no temperature field
+
+
+def test_session_config_tool_choice_single_function() -> None:
+    model = OpenAIRealtimeModel()
+    config = model._session_config('hi', None, ModelSettings(tool_choice=['get_weather']))  # pyright: ignore[reportPrivateUsage]
+    assert config['tool_choice'] == {'type': 'function', 'name': 'get_weather'}
+
+
+def test_session_config_tool_choice_multi_tool_dropped() -> None:
+    model = OpenAIRealtimeModel()
+    config = model._session_config('hi', None, ModelSettings(tool_choice=['a', 'b']))  # pyright: ignore[reportPrivateUsage]
+    assert 'tool_choice' not in config  # realtime can't express a multi-tool restriction
+
+
+def test_session_config_tool_choice_tool_or_output_dropped() -> None:
+    model = OpenAIRealtimeModel()
+    settings = ModelSettings(tool_choice=ToolOrOutput(function_tools=['a']))
+    config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    assert 'tool_choice' not in config  # ToolOrOutput restriction isn't expressible in realtime
 
 
 @pytest.mark.anyio
@@ -305,6 +399,97 @@ async def test_connection_send_unsupported_raises() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     with pytest.raises(NotImplementedError, match='ImageInput'):
         await conn.send(ImageInput(data=b'\x00'))
+
+
+@pytest.mark.anyio
+async def test_connection_send_commit_and_clear_audio() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(CommitAudio())
+    await conn.send(ClearAudio())
+    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit'}
+    assert json.loads(ws.sent[1]) == {'type': 'input_audio_buffer.clear'}
+
+
+@pytest.mark.anyio
+async def test_connection_send_create_response() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(CreateResponse())
+    assert json.loads(ws.sent[0]) == {'type': 'response.create'}
+
+
+@pytest.mark.anyio
+async def test_connection_send_cancel_when_response_active() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())
+    assert json.loads(ws.sent[0]) == {'type': 'response.cancel'}
+    assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+    assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_connection_send_cancel_when_idle_does_not_send() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(CancelResponse())  # no active response → no cancel event
+    assert ws.sent == []
+    assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+
+
+def _audio_delta(item_id: str, content_index: int | None = None) -> str:
+    data: dict[str, Any] = {
+        'type': 'response.output_audio.delta',
+        'item_id': item_id,
+        'delta': base64.b64encode(b'\x01').decode('ascii'),
+    }
+    if content_index is not None:
+        data['content_index'] = content_index
+    return json.dumps(data)
+
+
+@pytest.mark.anyio
+async def test_truncate_uses_item_tracked_from_audio_delta() -> None:
+    ws = FakeWebSocket([_audio_delta('item_7', content_index=2)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]  # consume the delta → captures the current output item
+    await conn.send(TruncateOutput(audio_end_ms=1200))
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_7',
+        'content_index': 2,
+        'audio_end_ms': 1200,
+    }
+
+
+@pytest.mark.anyio
+async def test_truncate_defaults_content_index_when_absent() -> None:
+    ws = FakeWebSocket([_audio_delta('item_x')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=10))
+    assert json.loads(ws.sent[0])['content_index'] == 0
+
+
+@pytest.mark.anyio
+async def test_truncate_without_current_item_is_noop() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(TruncateOutput(audio_end_ms=500))
+    assert ws.sent == []
+
+
+@pytest.mark.anyio
+async def test_response_done_resets_tracked_item() -> None:
+    done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    ws = FakeWebSocket([_audio_delta('item_9'), done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]  # delta sets the item, response.done clears it
+    await conn.send(TruncateOutput(audio_end_ms=500))
+    assert ws.sent == []
 
 
 class PushWebSocket:

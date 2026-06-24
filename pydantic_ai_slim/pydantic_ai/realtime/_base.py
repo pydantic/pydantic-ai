@@ -67,7 +67,47 @@ class ToolResult:
     """The tool's output, rendered as a string."""
 
 
-RealtimeInput = TypeAliasType('RealtimeInput', 'AudioInput | ImageInput | TextInput | ToolResult')
+@dataclass
+class CommitAudio:
+    """Commit the buffered input audio as a user turn (manual turn-taking / push-to-talk).
+
+    Only needed when automatic voice activity detection is disabled; with server-side VAD the
+    provider commits audio and triggers a response automatically.
+    """
+
+
+@dataclass
+class ClearAudio:
+    """Discard any buffered, uncommitted input audio."""
+
+
+@dataclass
+class CreateResponse:
+    """Ask the model to generate a response now (manual turn-taking, after `CommitAudio`)."""
+
+
+@dataclass
+class CancelResponse:
+    """Cancel the model's in-progress response (maps to the provider's response-cancel)."""
+
+
+@dataclass
+class TruncateOutput:
+    """Truncate the model's current audio output at `audio_end_ms`.
+
+    After a barge-in the user only heard part of the model's audio. Truncating tells the provider how
+    much was actually played, so its stored transcript matches and the conversation context stays
+    consistent. The provider resolves which output item to truncate from its own state.
+    """
+
+    audio_end_ms: int
+    """Milliseconds of the current output audio that were actually played before the interruption."""
+
+
+RealtimeInput = TypeAliasType(
+    'RealtimeInput',
+    'AudioInput | ImageInput | TextInput | ToolResult | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput',
+)
 """Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.RealtimeConnection.send]."""
 
 

@@ -10,6 +10,10 @@ import pydantic_core
 
 from ._base import (
     AudioInput,
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
+    CreateResponse,
     RealtimeConnection,
     RealtimeInput,
     RealtimeSessionEvent,
@@ -18,6 +22,7 @@ from ._base import (
     ToolCallCompleted,
     ToolCallStarted,
     ToolResult,
+    TruncateOutput,
 )
 
 ToolRunner = Callable[[str, dict[str, Any], str], Awaitable[str]]
@@ -82,6 +87,39 @@ class RealtimeSession:
     async def send_text(self, text: str) -> None:
         """Send a complete text turn to the model."""
         await self._connection.send(TextInput(text=text))
+
+    async def commit_audio(self) -> None:
+        """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
+        await self._connection.send(CommitAudio())
+
+    async def clear_audio(self) -> None:
+        """Discard buffered, uncommitted input audio."""
+        await self._connection.send(ClearAudio())
+
+    async def create_response(self) -> None:
+        """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
+        await self._connection.send(CreateResponse())
+
+    async def truncate_output(self, audio_end_ms: int) -> None:
+        """Truncate the model's current audio output at `audio_end_ms` (see `TruncateOutput`)."""
+        await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
+
+    async def interrupt(self, *, audio_end_ms: int | None = None) -> None:
+        """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
+
+        This is server-side only — it stops generation and (when `audio_end_ms` is given) syncs the
+        provider's transcript to what was actually heard. Flushing locally buffered playback is the
+        caller's responsibility.
+
+        Args:
+            audio_end_ms: Milliseconds of the current output audio that were actually played. When
+                given, the output item is truncated to this point before the response is cancelled.
+        """
+        # Truncate before cancelling: cancellation triggers `response.done`, which clears the tracked
+        # output item, so a truncate sent afterwards could no-op.
+        if audio_end_ms is not None:
+            await self._connection.send(TruncateOutput(audio_end_ms=audio_end_ms))
+        await self._connection.send(CancelResponse())
 
     async def _run_tool(self, call: ToolCall) -> str:
         args, error = _parse_tool_args(call.args)

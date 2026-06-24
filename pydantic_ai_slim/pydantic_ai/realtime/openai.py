@@ -18,7 +18,7 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 try:
     import websockets
@@ -29,11 +29,15 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `realtime` optional group - `pip install "pydantic-ai-slim[realtime]"`'
     ) from _import_error
 
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ToolChoice
 from ..tools import ToolDefinition
 from ._base import (
     AudioDelta,
     AudioInput,
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
+    CreateResponse,
     InputTranscript,
     RealtimeConnection,
     RealtimeEvent,
@@ -45,6 +49,7 @@ from ._base import (
     ToolCall,
     ToolResult,
     Transcript,
+    TruncateOutput,
     TurnComplete,
 )
 
@@ -124,6 +129,12 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
     if event_type in _AUDIO_TRANSCRIPT_DONE_TYPES:
         return Transcript(text=_str_field(data, 'transcript'), is_final=True)
 
+    if event_type == 'response.output_text.delta':
+        return Transcript(text=_str_field(data, 'delta'), is_final=False)
+
+    if event_type == 'response.output_text.done':
+        return Transcript(text=_str_field(data, 'text'), is_final=True)
+
     if event_type in _INPUT_TRANSCRIPT_DONE_TYPES:
         return InputTranscript(text=_str_field(data, 'transcript'), is_final=True)
 
@@ -164,11 +175,17 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # model is mid-answer) until the active response finishes, so the model still announces it.
         self._response_active = False
         self._pending_response = False
+        # The current output audio item, tracked from output-audio deltas so a `TruncateOutput` can
+        # name it. These are mutated by `__aiter__` and read by `send` from a separate task; under a
+        # single cooperative event loop the plain reads/writes are safe and eventually consistent.
+        self._current_item_id: str | None = None
+        self._current_content_index = 0
 
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the OpenAI Realtime API.
 
-        Accepts `AudioInput` (PCM16, 24kHz, mono), `TextInput`, and `ToolResult`.
+        Accepts `AudioInput` (PCM16, 24kHz, mono), `TextInput`, `ToolResult`, and the control verbs
+        `CommitAudio`, `ClearAudio`, `CreateResponse`, and `CancelResponse`.
         """
         if isinstance(content, AudioInput):
             await self._send_event(
@@ -201,6 +218,30 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 }
             )
             await self._request_response()
+        elif isinstance(content, CommitAudio):
+            await self._send_event({'type': 'input_audio_buffer.commit'})
+        elif isinstance(content, ClearAudio):
+            await self._send_event({'type': 'input_audio_buffer.clear'})
+        elif isinstance(content, CreateResponse):
+            await self._request_response()
+        elif isinstance(content, CancelResponse):
+            # Only cancel when a response is actually active: with server VAD the provider may have
+            # already cancelled on the user's barge-in, and a redundant cancel raises a session error.
+            if self._response_active:
+                await self._send_event({'type': 'response.cancel'})
+            self._response_active = False
+            self._pending_response = False
+        elif isinstance(content, TruncateOutput):
+            # No current output item (e.g. the model wasn't speaking) → nothing to truncate.
+            if self._current_item_id is not None:
+                await self._send_event(
+                    {
+                        'type': 'conversation.item.truncate',
+                        'item_id': self._current_item_id,
+                        'content_index': self._current_content_index,
+                        'audio_end_ms': content.audio_end_ms,
+                    }
+                )
         else:
             raise NotImplementedError(f'OpenAI Realtime does not support {type(content).__name__} input')
 
@@ -223,8 +264,16 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             event_type = data.get('type')
             if event_type == 'response.created':
                 self._response_active = True
+            elif event_type in _AUDIO_DELTA_TYPES:
+                # Track the speaking item so a later `TruncateOutput` can name it.
+                item_id = data.get('item_id')
+                if isinstance(item_id, str):
+                    self._current_item_id = item_id
+                    content_index = data.get('content_index')
+                    self._current_content_index = content_index if isinstance(content_index, int) else 0
             elif event_type == 'response.done':
                 self._response_active = False
+                self._current_item_id = None
                 if self._pending_response:
                     self._pending_response = False
                     # A cancelled response means the user barged in: a new turn is starting, so don't
@@ -235,6 +284,83 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             event = map_event(data)
             if event is not None:
                 yield event
+
+
+@dataclass
+class ServerVAD:
+    """Server-side voice activity detection — the default turn-taking mode.
+
+    The server detects when the user starts and stops speaking and (by default) commits the audio
+    and triggers a response automatically. Unset fields fall back to the provider defaults.
+    """
+
+    threshold: float | None = None
+    """Activation threshold (0.0–1.0). Higher requires louder audio; better in noisy environments."""
+    prefix_padding_ms: int | None = None
+    """Audio to include before detected speech, in milliseconds."""
+    silence_duration_ms: int | None = None
+    """Silence required to detect the end of speech, in milliseconds."""
+    create_response: bool = True
+    """Whether to automatically generate a response when the user stops speaking."""
+    interrupt_response: bool = True
+    """Whether to automatically interrupt an in-progress response when the user starts speaking."""
+    idle_timeout_ms: int | None = None
+    """If set, auto-trigger a response after this much idle time with no detected speech."""
+
+
+@dataclass
+class SemanticVAD:
+    """Model-based semantic turn detection — uses a model to decide when the user is done speaking."""
+
+    eagerness: Literal['low', 'medium', 'high', 'auto'] = 'auto'
+    """How eagerly the model responds. `low` waits longer for the user; `high` responds sooner."""
+    create_response: bool = True
+    """Whether to automatically generate a response when a turn ends."""
+    interrupt_response: bool = True
+    """Whether to automatically interrupt an in-progress response when the user starts speaking."""
+
+
+def _turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dict[str, Any] | None:
+    """Build the OpenAI `turn_detection` payload, or `None` to disable VAD (manual turn-taking)."""
+    if turn_detection is None:
+        return None
+    if isinstance(turn_detection, ServerVAD):
+        config: dict[str, Any] = {
+            'type': 'server_vad',
+            'create_response': turn_detection.create_response,
+            'interrupt_response': turn_detection.interrupt_response,
+        }
+        if turn_detection.threshold is not None:
+            config['threshold'] = turn_detection.threshold
+        if turn_detection.prefix_padding_ms is not None:
+            config['prefix_padding_ms'] = turn_detection.prefix_padding_ms
+        if turn_detection.silence_duration_ms is not None:
+            config['silence_duration_ms'] = turn_detection.silence_duration_ms
+        if turn_detection.idle_timeout_ms is not None:
+            config['idle_timeout_ms'] = turn_detection.idle_timeout_ms
+        return config
+    return {
+        'type': 'semantic_vad',
+        'eagerness': turn_detection.eagerness,
+        'create_response': turn_detection.create_response,
+        'interrupt_response': turn_detection.interrupt_response,
+    }
+
+
+def _tool_choice_config(tool_choice: ToolChoice) -> str | dict[str, Any] | None:
+    """Map a pydantic-ai `tool_choice` to the OpenAI realtime `tool_choice` field.
+
+    Realtime can't express a multi-tool restriction, so a multi-element allow-list or a
+    `ToolOrOutput` is dropped (the model's default applies). A single-element allow-list forces
+    that one function.
+    """
+    if tool_choice is None:
+        return None
+    if isinstance(tool_choice, str):  # 'auto' | 'required' | 'none'
+        return tool_choice
+    if isinstance(tool_choice, list) and len(tool_choice) == 1:
+        return {'type': 'function', 'name': tool_choice[0]}
+    return None  # multi-tool restriction / ToolOrOutput: not expressible in realtime
 
 
 @dataclass
@@ -249,6 +375,14 @@ class OpenAIRealtimeModel(RealtimeModel):
         input_audio_transcription_model: Model used to transcribe the user's audio input.
         handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
             before failing, so `connect()` doesn't hang if the server never responds.
+        turn_detection: How the server decides when the user's turn ends. A [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]
+            (the default) or [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] configures automatic
+            detection; `None` disables it for manual turn-taking (push-to-talk), where you drive the turn
+            with `commit_audio()` + `create_response()`.
+        input_noise_reduction: Noise reduction tuned for `near_field` (headset) or `far_field` (laptop/conference)
+            microphones. `None` disables it.
+        output_modalities: The modalities the model may produce, `('audio',)` (default) or `('text',)`.
+        output_speed: Playback speed multiplier for generated audio (0.25–1.5). `None` uses the default.
     """
 
     model: str = 'gpt-realtime'
@@ -257,6 +391,10 @@ class OpenAIRealtimeModel(RealtimeModel):
     voice: str | None = None
     input_audio_transcription_model: str = 'whisper-1'
     handshake_timeout: float = 30.0
+    turn_detection: ServerVAD | SemanticVAD | None = field(default_factory=ServerVAD)
+    input_noise_reduction: Literal['near_field', 'far_field'] | None = None
+    output_modalities: tuple[Literal['audio', 'text'], ...] = ('audio',)
+    output_speed: float | None = None
 
     @property
     def model_name(self) -> str:
@@ -265,25 +403,36 @@ class OpenAIRealtimeModel(RealtimeModel):
     def _session_config(
         self, instructions: str, tools: list[ToolDefinition] | None, model_settings: ModelSettings | None
     ) -> dict[str, Any]:
+        # `turn_detection` is always set: a dict enables VAD, `None` (explicit null) disables it.
         audio_input: dict[str, Any] = {
             'format': {'type': 'audio/pcm', 'rate': 24000},
-            'turn_detection': {'type': 'server_vad'},
+            'turn_detection': _turn_detection_config(self.turn_detection),
         }
         if self.input_audio_transcription_model:
             audio_input['transcription'] = {'model': self.input_audio_transcription_model}
+        if self.input_noise_reduction is not None:
+            audio_input['noise_reduction'] = {'type': self.input_noise_reduction}
         audio_output: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
         if self.voice:
             audio_output['voice'] = self.voice
+        if self.output_speed is not None:
+            audio_output['speed'] = self.output_speed
         config: dict[str, Any] = {
             'type': 'realtime',
             'instructions': instructions,
-            'output_modalities': ['audio'],
+            'output_modalities': list(self.output_modalities),
             'audio': {'input': audio_input, 'output': audio_output},
         }
         if tools:
             config['tools'] = [_tool_def_to_openai(t) for t in tools]
-        if model_settings and (max_tokens := model_settings.get('max_tokens')) is not None:
-            config['max_output_tokens'] = max_tokens
+        if model_settings:
+            # Note: GA realtime sessions have no `temperature` field, so it is intentionally not forwarded.
+            if (max_tokens := model_settings.get('max_tokens')) is not None:
+                config['max_output_tokens'] = max_tokens
+            if (parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
+                config['parallel_tool_calls'] = parallel_tool_calls
+            if (tool_choice := _tool_choice_config(model_settings.get('tool_choice'))) is not None:
+                config['tool_choice'] = tool_choice
         return config
 
     @asynccontextmanager
