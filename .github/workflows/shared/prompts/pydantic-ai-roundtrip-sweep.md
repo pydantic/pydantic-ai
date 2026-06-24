@@ -70,8 +70,9 @@ mcp__github__search_pull_requests repo:pydantic/pydantic-ai is:pr is:open <faili
 
 If a matching open issue or PR exists, call `mcp__safeoutputs__noop`
 immediately instead of filing. If a PR looks related but you cannot confirm it
-covers this exact gap, still file but add a **`Possibly addressed by #<N>`**
-line near the top of the issue body linking that PR.
+covers this exact gap, still file but fill in the optional **`Possibly
+addressed by #<N>`** row at the top of the body template (see Issue Format),
+linking that PR.
 
 ## Sandbox notes
 
@@ -87,8 +88,10 @@ concrete, minimal, failing round-trip reproduction with observed output.
 
 **Title:** `<boundary>: <what is lost> on round-trip`
 
-**Body:**
+**Body:** (include the first row only for an uncertain PR match; omit it otherwise)
 
+> **Possibly addressed by #<N>** — [link the related open PR]
+>
 > ## Impact
 > [Who is affected; e.g. resumed runs, Temporal workflows, AG-UI clients]
 >
