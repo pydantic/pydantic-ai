@@ -4356,6 +4356,7 @@ async def test_adapter_tool_return_multimodal_dropped_by_default(tiny_image: Bin
     [
         pytest.param('nested-in-dict', snapshot({'caption': 'see image'}), id='nested-in-dict'),
         pytest.param('nested-in-list-of-dict', snapshot(['result', {}]), id='nested-in-list-of-dict'),
+        pytest.param('nested-in-list-in-dict', snapshot({'gallery': ['caption']}), id='nested-in-list-in-dict'),
     ],
 )
 async def test_adapter_tool_return_nested_multimodal_dropped_by_default(
@@ -4370,6 +4371,7 @@ async def test_adapter_tool_return_nested_multimodal_dropped_by_default(
     contents: dict[str, ToolReturnContent] = {
         'nested-in-dict': {'caption': 'see image', 'attachment': tiny_image},
         'nested-in-list-of-dict': ['result', {'attachment': tiny_image}],
+        'nested-in-list-in-dict': {'gallery': [tiny_image, 'caption']},
     }
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Call tool')]),
