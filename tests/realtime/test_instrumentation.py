@@ -4,12 +4,9 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.realtime import (
@@ -24,6 +21,9 @@ from pydantic_ai.realtime import (
     Usage,
 )
 from pydantic_ai.usage import RequestUsage
+
+if TYPE_CHECKING:
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 pytestmark = pytest.mark.anyio
 
@@ -43,6 +43,11 @@ class _Connection(RealtimeConnection):
 
 
 def _settings(*, include_content: bool = True) -> tuple[InstrumentationSettings, InMemorySpanExporter]:
+    pytest.importorskip('opentelemetry.sdk')  # only installed via the optional `logfire` extra
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
