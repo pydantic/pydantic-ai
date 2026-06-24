@@ -126,7 +126,7 @@ async def search_docs(query: str) -> ToolReturn:
 
 ### Multimodal tool returns
 
-Tool returns containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], and the other [multimodal content types](../input.md) — are preserved across the [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] / [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] round-trip when you opt in with `preserve_file_data=True`. The Vercel data-stream tool `output` field carries structured content directly, so files are serialized inline in the output and rehydrated on load.
+Tool returns containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], and the other [multimodal content types](../input.md#image-audio-video-document-input) — are preserved across the [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] / [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] round-trip when you opt in with `preserve_file_data=True`. The Vercel data-stream tool `output` field carries structured content directly, so files are serialized inline in the output and rehydrated on load.
 
 With the default `preserve_file_data=False`, file content in tool returns is dropped on `dump_messages` (any text is kept), mirroring the AG-UI adapter and how client-uploaded files ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) are handled. Non-HTTP file URL schemes are dropped on load regardless, per the [Trust model](#trust-model) below.
 

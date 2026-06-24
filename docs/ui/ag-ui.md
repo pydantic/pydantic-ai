@@ -375,7 +375,7 @@ uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 
 ### Multimodal tool returns
 
-When you persist and replay conversation history with [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] and [`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages], tool returns containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], and the other [multimodal content types](../input.md) — are preserved across the round-trip when you opt in with `preserve_file_data=True`.
+When you persist and replay conversation history with [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] and [`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages], tool returns containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], and the other [multimodal content types](../input.md#image-audio-video-document-input) — are preserved across the round-trip when you opt in with `preserve_file_data=True`.
 
 AG-UI's `ToolMessage.content` is text-only, so the file payloads can't ride on the tool message itself. Instead they're carried in a reserved sidecar [activity message](https://docs.ag-ui.com/concepts/activities) (`activity_type='pydantic_ai_tool_return_file'`) paired to the tool return by tool call ID, and merged back into the tool return as `[text, *files]` on reload. Activity types prefixed with `pydantic_ai_` are reserved for this round-trip and should be ignored by your frontend's activity handlers.
 
