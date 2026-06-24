@@ -5814,6 +5814,9 @@ dependencies = [
 logfire = [
     { name = "logfire" },
 ]
+pytest = [
+    { name = "pytest" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -5822,10 +5825,11 @@ requires-dist = [
     { name = "logfire-api", specifier = ">=3.14.1" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
+    { name = "pytest", marker = "extra == 'pytest'", specifier = ">=9.0.3" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich", specifier = ">=13.9.4" },
 ]
-provides-extras = ["logfire"]
+provides-extras = ["logfire", "pytest"]
 
 [[package]]
 name = "pydantic-extra-types"
