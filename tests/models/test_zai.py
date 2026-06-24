@@ -96,6 +96,32 @@ async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str, v
     assert 'reasoning_effort' not in request_body
 
 
+async def test_zai_clear_thinking_without_thinking(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
+    """`zai_clear_thinking` set on its own (no unified `thinking`) reaches the wire as a bare
+    `extra_body.thinking.clear_thinking`, with no `type`.
+
+    `clear_thinking` tunes cross-turn thinking preservation independently of whether the current turn
+    enables thinking, so it is emitted even when `thinking` is left to the model's default. This records
+    a real request to confirm the Z.AI API accepts that standalone shape; the transformation itself is
+    unit-tested in `test_zai_settings_transformation` (VCR matchers aren't sensitive to the request body).
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    settings = ZaiModelSettings(zai_clear_thinking=False)
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content='4'),
+        ]
+    )
+
+    # No `type` key: the bare `clear_thinking` payload is what we're confirming the API accepts.
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert request_body['thinking'] == {'clear_thinking': False}
+
+
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str):
     provider = ZaiProvider(api_key=zai_api_key)
     model = ZaiModel('glm-4.7', provider=provider)
