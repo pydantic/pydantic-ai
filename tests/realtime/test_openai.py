@@ -321,22 +321,24 @@ async def test_tool_result_deferred_until_active_response_done() -> None:
     ws = PushWebSocket()
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     task = asyncio.create_task(_drain(conn))
-    try:
-        ws.push({'type': 'response.created'})  # a response is now generating
-        await _settle()
 
-        await conn.send(ToolResult(tool_call_id='c1', output='done'))
-        await _settle()
-        # the tool output is submitted, but the response is deferred (would collide otherwise)
-        assert 'conversation.item.create' in ws.sent_types()
-        assert 'response.create' not in ws.sent_types()
+    ws.push({'type': 'response.created'})  # a response is now generating
+    await _settle()
 
-        ws.push({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
-        await _settle()
-        # once the active response finishes, the deferred response.create fires
-        assert 'response.create' in ws.sent_types()
-    finally:
-        task.cancel()
+    await conn.send(ToolResult(tool_call_id='c1', output='done'))
+    await _settle()
+    # the tool output is submitted, but the response is deferred (would collide otherwise)
+    assert 'conversation.item.create' in ws.sent_types()
+    assert 'response.create' not in ws.sent_types()
+
+    ws.push({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    await _settle()
+    # once the active response finishes, the deferred response.create fires
+    assert 'response.create' in ws.sent_types()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 @pytest.mark.anyio
