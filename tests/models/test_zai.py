@@ -102,9 +102,10 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
     agent = Agent(model=model, model_settings=ModelSettings(thinking=True))
 
     result: AgentRunResult[str] | None = None
-    async for event in agent.run_stream_events(user_prompt='What is 2 + 2?'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
+    async with agent.run_stream_events(user_prompt='What is 2 + 2?') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
 
     assert result is not None
     assert result.all_messages() == snapshot(
