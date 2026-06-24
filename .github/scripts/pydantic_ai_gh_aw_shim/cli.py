@@ -35,6 +35,7 @@ annotations breaks pydantic-ai's `takes_run_context` detection.
 import argparse
 import asyncio
 import dataclasses
+import faulthandler
 import json
 import logging
 import os
@@ -132,6 +133,11 @@ _LLM_MAX_RETRIES = 4
 RUN_TIMEOUT_SECS = 28 * 60  # 28 min — just under the 30 min gh-aw job cap
 SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
 COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
+
+# `faulthandler` dumps the live thread stacks at `RUN_TIMEOUT_SECS`; `wait_for`
+# is given this much extra grace so the dump captures the *stuck* stack before
+# cancellation unwinds it out of view. See `_run_with_timeout`.
+FAULT_DUMP_GRACE_SECS = 10
 
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
@@ -377,9 +383,14 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
         )
         summary = str(r.output or '').strip() or '(empty summary)'
     except Exception as exc:
+        # Well-handled fallback: the run continues on the trimmed history, so the
+        # stack is kept available (`exc_info`) without escalating the log level.
+        # A bare `TimeoutError` stringifies to '' — fall back to the type name so
+        # the emitted `error` is never empty.
         ctx.usage.incr(sub_usage)
-        logger.warning('compaction summarisation failed (%r); falling back', exc)
-        emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': str(exc)})
+        detail = f'{type(exc).__name__}: {exc}' if str(exc) else type(exc).__name__
+        logger.warning('compaction summarisation failed (%s); falling back', detail, exc_info=True)
+        emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': detail})
         return [prior_synthetic, *tail] if prior_synthetic else tail
     ctx.usage.incr(sub_usage)
     # If the summariser produces output larger than the middle it's replacing,
@@ -587,11 +598,16 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[None]]:
         return []
     try:
         loaded = load_mcp_toolsets(path)
+    # `repr` is sufficient diagnostically here (a `ValidationError` already
+    # enumerates the bad fields, `FileNotFoundError` names the path), so no
+    # traceback — but returning `[]` drops the *entire* GitHub/safeoutputs tool
+    # surface, a drastic behaviour change, so log it at `error` to make a run
+    # that silently lost its tools obvious in the artifact.
     except FileNotFoundError as exc:
-        logger.warning('MCP config %r missing: %r — running without external tools', path, exc)
+        logger.error('MCP config %r missing (%r) — agent will run with NO external tools', path, exc)
         return []
     except (ValidationError, ValueError) as exc:
-        logger.warning('MCP config %r is malformed: %r — running without external tools', path, exc)
+        logger.error('MCP config %r is malformed (%r) — agent will run with NO external tools', path, exc)
         return []
 
     servers: list[AbstractToolset[None]] = []
@@ -781,8 +797,18 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
             sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=SUBAGENT_REQUEST_LIMIT), usage=sub_usage),
             timeout=SUBAGENT_TIMEOUT_SECS,
         )
-    except Exception as exc:
+    except asyncio.TimeoutError:
+        # A bare `TimeoutError` stringifies to '' — without an explicit message
+        # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
+        logger.error('sub-agent timed out after %.0f min: %s', SUBAGENT_TIMEOUT_SECS / 60, description[:120])
+        return f'error: sub-agent timed out after {SUBAGENT_TIMEOUT_SECS // 60}min'
+    except Exception as exc:
+        # The parent agent reacts to the returned string, but a sub-agent can hit
+        # the same nested `ExceptionGroup`/`McpError` as the main run — log the
+        # full stack so the failure isn't reduced to a one-line repr in the logs.
+        ctx.usage.incr(sub_usage)
+        logger.exception('sub-agent failed: %s', description[:120])
         return f'error: sub-agent failed: {exc}'
     ctx.usage.incr(sub_usage)
     logger.info('Task done: +%d sub-requests (run total now %d)', sub_usage.requests, ctx.usage.requests)
@@ -798,13 +824,22 @@ async def _run_with_timeout(
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
+    # Arm a faulthandler dump a few seconds *before* `wait_for` cancels the run.
+    # A `TimeoutError` carries no useful traceback — `wait_for` raises it only
+    # after cancelling and unwinding the inner coroutine, so the actually-stuck
+    # frame (a wedged streaming read, an MCP `call_tool` that never returns) is
+    # already gone by the time we reach the `except`. Dumping the live thread
+    # stacks at `RUN_TIMEOUT_SECS`, while the coroutine is still blocked, lands
+    # the hang location in `agent-stdio.log`. `exit=False` keeps the process
+    # alive so we still emit a clean result line.
+    faulthandler.dump_traceback_later(RUN_TIMEOUT_SECS, exit=False)
     try:
         return await asyncio.wait_for(
             run(prompt, model, label, claude_code_toolset, mcp_servers, session_id),
-            timeout=RUN_TIMEOUT_SECS,
+            timeout=RUN_TIMEOUT_SECS + FAULT_DUMP_GRACE_SECS,
         )
     except asyncio.TimeoutError:
-        logger.error('run timed out after %.0f min', RUN_TIMEOUT_SECS / 60)
+        logger.error('run timed out after %.0f min (see faulthandler stack dump above)', RUN_TIMEOUT_SECS / 60)
         emit_result(
             f'run timed out after {RUN_TIMEOUT_SECS // 60}min',
             usage=None,
@@ -812,6 +847,8 @@ async def _run_with_timeout(
             is_error=True,
         )
         return 1
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
 
 async def run(
@@ -842,7 +879,14 @@ async def run(
         async with agent:
             result = await agent.run(RUN_TRIGGER, usage_limits=limits)
     except Exception as exc:
-        logger.warning('agent run failed: %r', exc)
+        # `%r` on an `ExceptionGroup` (e.g. the MCP `TaskGroup` failures seen in
+        # CI) discards every frame and every nested sub-exception's stack, which
+        # is what made the original incident so hard to root-cause. `exception()`
+        # renders the full traceback — and, on 3.11+, each group leaf's stack —
+        # to stderr, which gh-aw captures into the uploaded `agent-stdio.log`,
+        # so the run is self-explaining without a re-run. The `result` text
+        # stays a one-liner because gh-aw parses it.
+        logger.exception('agent run failed')
         emit_result(
             f'agent run failed: {exc}',
             usage=None,
@@ -894,9 +938,16 @@ def main() -> int:
         rc = asyncio.run(_run_with_timeout(prompt, model, label, claude_code_toolset, mcp_servers, session_id))
         logger.info('done in %.1fs rc=%d', time.time() - started, rc)
         return rc
-    except (Exception, SystemExit) as exc:
+    except SystemExit as exc:
         # `argparse` raises `SystemExit` (not `Exception`) on unknown-flag
-        # rejection; gh-aw still needs a structured result line.
+        # rejection — an expected, clean exit, so a traceback would be noise.
+        # gh-aw still needs a structured result line.
         logger.error('FATAL startup error: %r', exc)
+        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True)
+        return 1
+    except Exception as exc:
+        # A real crash before the agent run (model build, MCP load, …) — dump the
+        # full stack so a blind FATAL doesn't cost another long investigation.
+        logger.exception('FATAL startup error')
         emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True)
         return 1

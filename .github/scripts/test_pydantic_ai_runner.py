@@ -1098,6 +1098,8 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(shim, 'run', _hang)
     monkeypatch.setattr(shim, 'RUN_TIMEOUT_SECS', 0.01)
+    # Keep the faulthandler grace tiny so the test doesn't wait the real 10s.
+    monkeypatch.setattr(shim, 'FAULT_DUMP_GRACE_SECS', 0.05)
     buf = io.StringIO()
     with redirect_stdout(buf):
         rc = asyncio.run(
