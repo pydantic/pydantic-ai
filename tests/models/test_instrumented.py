@@ -320,12 +320,14 @@ async def test_instrumented_model_input_messages_match_whole_history_serializati
 
     Drives growing histories through `model.request` (the real per-request path) and compares the
     emitted span attribute to a fresh whole-history `to_json`, so the fragment-reuse optimization is
-    proven not to change the output a backend sees.
+    proven not to change the output a backend sees. The empty `ModelRequest` maps to no OTel message
+    and must be dropped from the array (rather than emitted as an empty fragment).
     """
     settings = InstrumentationSettings()
     model = InstrumentedModel(MyModel(), settings)
     history: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('sys'), UserPromptPart('hello')]),
+        ModelRequest(parts=[]),
         ModelResponse(parts=[ToolCallPart('tool', {'a': 1}, 'call_1')]),
         ModelRequest(parts=[ToolReturnPart('tool', 'result', 'call_1')]),
         ModelResponse(parts=[TextPart('done')]),
