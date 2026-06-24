@@ -18,6 +18,7 @@ from pydantic_ai._instrumentation import (
     TOKEN_HISTOGRAM_BOUNDARIES,
     get_instructions,
     open_model_request_span,
+    safe_to_json,
 )
 
 from .. import _otel_messages
@@ -189,8 +190,8 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': to_json(self.messages_to_otel_messages(input_messages)).decode(),
-            'gen_ai.output.messages': to_json([output_message]).decode(),
+            'gen_ai.input.messages': safe_to_json(self.messages_to_otel_messages(input_messages)).decode(),
+            'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
             'logfire.json_schema': to_json(
                 {
@@ -209,7 +210,7 @@ class InstrumentationSettings:
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:
             return {
-                'gen_ai.system_instructions': to_json(
+                'gen_ai.system_instructions': safe_to_json(
                     [_otel_messages.TextPart(type='text', content=instructions)]
                 ).decode(),
             }
