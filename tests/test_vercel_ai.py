@@ -1482,6 +1482,32 @@ async def test_run_stream_text_and_thinking():
     )
 
 
+async def test_run_stream_native_excludes_first_turn_frontend_request_from_new_messages():
+    agent = Agent(model=TestModel(custom_output_text='hi'), system_prompt='You are helpful.')
+    request = SubmitMessage(
+        id='foo',
+        messages=[
+            UIMessage(
+                id='bar',
+                role='user',
+                parts=[TextUIPart(text='Hello')],
+            ),
+        ],
+    )
+
+    adapter = VercelAIAdapter(agent, request)
+    result: AgentRunResult[Any] | None = None
+    async for event in adapter.run_stream_native():
+        if isinstance(event, AgentRunResultEvent):
+            result = event.result
+
+    assert result is not None
+    assert not any(
+        isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
+        for message in result.new_messages()
+    )
+
+
 async def test_run_stream_thinking_with_signature():
     """Test that thinking parts with signatures include providerMetadata in reasoning-end events."""
 

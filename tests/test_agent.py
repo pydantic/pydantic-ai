@@ -60,7 +60,14 @@ from pydantic_ai._output import (
     TextOutput,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, PrepareOutputTools, PrepareTools, WrapRunHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    NativeTool,
+    PrepareOutputTools,
+    PrepareTools,
+    ProcessHistory,
+    WrapRunHandler,
+)
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -3400,6 +3407,21 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
             ),
         ]
     )
+
+    assert result.new_messages() == result.all_messages()[-1:]
+
+
+def test_run_with_history_ending_on_rebuilt_model_request_excludes_request():
+    def rebuild_trailing_request(messages: list[ModelMessage]) -> list[ModelMessage]:
+        updated = list(messages)
+        assert isinstance(updated[-1], ModelRequest)
+        updated[-1] = replace(updated[-1], metadata={'touched': True})
+        return updated
+
+    agent = Agent(TestModel())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Hello')])]
+
+    result = agent.run_sync(message_history=messages, capabilities=[ProcessHistory(rebuild_trailing_request)])
 
     assert result.new_messages() == result.all_messages()[-1:]
 

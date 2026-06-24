@@ -204,6 +204,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     prompt: str | Sequence[_messages.UserContent] | None
     new_message_index: int
     resumed_request: _messages.ModelRequest | None
+    resumed_request_index: int | None
 
     model: models.Model
     get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
@@ -634,7 +635,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # SkipModelRequest in stream path: yield an empty stream and finish handling
             # new_message_index wasn't updated in _prepare_request, fix it here
             ctx.deps.new_message_index = _first_new_message_index(
-                ctx.state.message_history, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+                ctx.state.message_history,
+                ctx.state.run_id,
+                resumed_request=ctx.deps.resumed_request,
+                resumed_request_index=ctx.deps.resumed_request_index,
             )
             self._did_stream = True
             ctx.state.usage.requests += 1
@@ -819,7 +823,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except exceptions.SkipModelRequest as e:
             # new_message_index wasn't updated in _prepare_request, fix it here
             ctx.deps.new_message_index = _first_new_message_index(
-                ctx.state.message_history, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+                ctx.state.message_history,
+                ctx.state.run_id,
+                resumed_request=ctx.deps.resumed_request,
+                resumed_request_index=ctx.deps.resumed_request_index,
             )
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
@@ -916,6 +923,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
+        if self.is_resuming_without_prompt:
+            ctx.deps.resumed_request = self.request
+            ctx.deps.resumed_request_index = len(ctx.state.message_history) - 1
+
         request_context = ModelRequestContext(
             model=ctx.deps.model,
             messages=ctx.state.message_history[:],
@@ -942,13 +953,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
-        if self.is_resuming_without_prompt:
-            ctx.deps.resumed_request = self.request
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
-            messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+            messages,
+            ctx.state.run_id,
+            resumed_request=ctx.deps.resumed_request,
+            resumed_request_index=ctx.deps.resumed_request_index,
         )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
@@ -1674,6 +1686,7 @@ def _first_new_message_index(
     run_id: str,
     *,
     resumed_request: _messages.ModelRequest | None,
+    resumed_request_index: int | None = None,
 ) -> int:
     """Return the first index that should be included in `new_messages()`."""
     if resumed_request is not None:
@@ -1687,6 +1700,9 @@ def _first_new_message_index(
         for index in range(len(messages) - 1, -1, -1):
             if _is_same_request(messages[index], resumed_request):
                 return index + 1
+        if resumed_request_index is not None and 0 <= resumed_request_index < len(messages):
+            if isinstance(messages[resumed_request_index], _messages.ModelRequest):
+                return resumed_request_index + 1
     return _first_run_id_index(messages, run_id)
 
 
