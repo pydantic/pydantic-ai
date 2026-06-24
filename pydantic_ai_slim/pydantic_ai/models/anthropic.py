@@ -2651,9 +2651,9 @@ def _finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> 
 def _map_tool_search_tool_result_block(
     item: BetaToolSearchToolResultBlock, provider_name: str
 ) -> NativeToolSearchReturnPart:
-    """Map a tool-search result block into a typed :class:`NativeToolSearchReturnPart`.
+    """Map a tool-search result block into a typed [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart].
 
-    Writes a cross-provider :class:`ToolSearchReturnContent` to `content` (no
+    Writes a cross-provider [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent] to `content` (no
     provider-shape smuggling) and stashes the Anthropic-specific error fields on
     `provider_details` so we can faithfully reconstruct the original block on replay.
     """
