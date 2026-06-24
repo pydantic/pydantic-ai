@@ -227,8 +227,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 self._response_active = False
                 if self._pending_response:
                     self._pending_response = False
-                    self._response_active = True
-                    await self._send_event({'type': 'response.create'})
+                    # A cancelled response means the user barged in: a new turn is starting, so don't
+                    # replay the deferred response over it.
+                    if _obj(data.get('response')).get('status') != 'cancelled':
+                        self._response_active = True
+                        await self._send_event({'type': 'response.create'})
             event = map_event(data)
             if event is not None:
                 yield event

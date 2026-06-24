@@ -359,6 +359,29 @@ async def test_tool_result_deferred_until_active_response_done() -> None:
 
 
 @pytest.mark.anyio
+async def test_deferred_response_dropped_when_active_response_cancelled() -> None:
+    ws = PushWebSocket()
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    task = asyncio.create_task(_drain(conn))
+
+    ws.push({'type': 'response.created'})  # a response is now generating
+    await _settle()
+
+    await conn.send(ToolResult(tool_call_id='c1', output='done'))
+    await _settle()
+    assert 'response.create' not in ws.sent_types()
+
+    # The user barges in: the active response is cancelled, so the deferred response must not replay.
+    ws.push({'type': 'response.done', 'response': {'status': 'cancelled', 'output': []}})
+    await _settle()
+    assert 'response.create' not in ws.sent_types()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.anyio
 async def test_tool_result_triggers_response_when_idle() -> None:
     ws = PushWebSocket()
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
