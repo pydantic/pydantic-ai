@@ -38,6 +38,7 @@ with try_import() as openai_import_successful:
 
 pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
+    pytest.mark.xdist_group(name='ui_web'),
 ]
 
 
