@@ -112,6 +112,8 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.xai import XaiProvider
 
+    from .xai_proto_cassettes import get_recorded_request_messages
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
@@ -512,6 +514,123 @@ async def test_xai_text_part_groups_with_following_tool_calls_in_history(allow_m
                         'function': {'name': 'tool_b', 'arguments': '{}'},
                     },
                 ],
+            }
+        ]
+    )
+
+
+async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: None, xai_provider: XaiProvider):
+    """End-to-end proof for #5329: the real xAI API accepts grouped reasoning + tool-call history.
+
+    Turn 1 on a reasoning model (with `xai_include_encrypted_content=True`) returns a `ThinkingPart`
+    carrying an encrypted signature AND a `ToolCallPart` in the same response. After the tool runs,
+    turn 2 sends that history back: `_append_tool_call` packs the encrypted reasoning and the tool
+    call onto ONE assistant message, and xAI accepts it and continues the run. The mock grouping
+    tests pin the exact mapped request shape; this proves the grouped shape round-trips against the
+    live API — the orphaned-reasoning split #5329 reports would make turn 2 fail.
+    """
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_encrypted_content=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return 'It is sunny and 25°C.'
+
+    result = await agent.run('What is the weather in London? Use the get_weather tool, then answer.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in London? Use the get_weather tool, then answer.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                        signature='GJCe9vsHibcXXnMEJBO8niRUm+Ck1qzNQdoR39nAGJEOnQxqWkHqbqmXrDQxjnjtDRlSWzZZQlwMn/buNigQ2UI7y/4clsu/RtOJS74m0vXR83X+uDrZ5mtD+TR22Kg2z24oHGiC5TTPp2Kso6bNii192qqAyqo96/S1rsW7mACuC0SiiGlodJJ0+mNhkmchVfh4KqkIeXGpwhwpLgaVEAWGoxuUARTvWN4mkBV+ady0zIvc/L6BnNzYWTBf7swgCUPCoOQjim1K6HbbmGWrHBN3VPDt0OBAu2Iud+sUZjQ6qrXR6tQEPyqNkW/e+7eDwBYFLf2H4iy075uxyLRXEYfjUchvelN8UArVhWWsqj5OAQWiI+BIfxUG5RzxQbFaGXP0i2DODhOewSE+UmSpx8rn07crY/faMo/huR6sPKNviPLzvs3cB8nPUWSc/8+e6/I/s4bTp6ucZjRkDU9DoQQVSnehc/Wus4af5B2OZbDD3cSU9KgiVCOEk9pPG2uaWiYlMuRJ4kxJdoVo02FYuZzA6EzzshWU+MxGaFNIo6UrRuoty17dALyPBdFe9nes3Abp5WNXNGTaTayJCyFUVXAfTgByRfZw0kxJMmJpgS3860tWCOVTKqNhFm/eiUZuLNAZA+zbEj6SOzLldFQ8NeA1cEzLG6OqL29Trsro157V/6lrC60',
+                        provider_name='xai',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"London"}',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=221, cache_read_tokens=128, output_tokens=11, details={'reasoning_tokens': 111}
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='It is sunny and 25°C.',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The tool returned: "It is sunny and 25°C."\n',
+                        signature='2E7rMf5LocXcKv4G20Oigq9xtL11f/ardvNfOMoTwyWC3KogBeXOiNLAsae4N4V2HAhclkF01utl0vVSY8Ad0hkezMP8+pPKoO2hA6JJh5ZwnbWd25uLDtaoMm3JAmMb6fCZqkwAf33uzxc/lnSQ5Msxd3JY4CwghvFZEzU/a022M+0gWFyZjzJmJWUk5zD39hrHfZZr9xd3G1RxM3KoGN6ZXCA2+YL1oL1htcSBkUafo2XSkF6WN7vMpOqPSD0JI2zaAdJ3BzByVdJDTr27gi9E',
+                        provider_name='xai',
+                    ),
+                    TextPart(content='It is sunny and 25°C in London.'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=358, cache_read_tokens=192, output_tokens=10, details={'reasoning_tokens': 47}
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # The grouped single assistant message that xAI accepted on the second request.
+    requests = get_recorded_request_messages(xai_provider.client)
+    assert len(requests) == 2
+    assistant_msgs = [msg for msg in requests[1] if msg.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'get_weather', 'arguments': '{"city":"London"}'},
+                    }
+                ],
+                'reasoning_content': 'The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                'encrypted_content': 'GJCe9vsHibcXXnMEJBO8niRUm+Ck1qzNQdoR39nAGJEOnQxqWkHqbqmXrDQxjnjtDRlSWzZZQlwMn/buNigQ2UI7y/4clsu/RtOJS74m0vXR83X+uDrZ5mtD+TR22Kg2z24oHGiC5TTPp2Kso6bNii192qqAyqo96/S1rsW7mACuC0SiiGlodJJ0+mNhkmchVfh4KqkIeXGpwhwpLgaVEAWGoxuUARTvWN4mkBV+ady0zIvc/L6BnNzYWTBf7swgCUPCoOQjim1K6HbbmGWrHBN3VPDt0OBAu2Iud+sUZjQ6qrXR6tQEPyqNkW/e+7eDwBYFLf2H4iy075uxyLRXEYfjUchvelN8UArVhWWsqj5OAQWiI+BIfxUG5RzxQbFaGXP0i2DODhOewSE+UmSpx8rn07crY/faMo/huR6sPKNviPLzvs3cB8nPUWSc/8+e6/I/s4bTp6ucZjRkDU9DoQQVSnehc/Wus4af5B2OZbDD3cSU9KgiVCOEk9pPG2uaWiYlMuRJ4kxJdoVo02FYuZzA6EzzshWU+MxGaFNIo6UrRuoty17dALyPBdFe9nes3Abp5WNXNGTaTayJCyFUVXAfTgByRfZw0kxJMmJpgS3860tWCOVTKqNhFm/eiUZuLNAZA+zbEj6SOzLldFQ8NeA1cEzLG6OqL29Trsro157V/6lrC60',
             }
         ]
     )
