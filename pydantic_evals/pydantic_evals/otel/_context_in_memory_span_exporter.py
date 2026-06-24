@@ -36,7 +36,7 @@ _EXPORTER_CONTEXT_ID = ContextVar['str | None']('_EXPORTER_CONTEXT_ID', default=
 
 # Note: It may be a good idea to upstream this whole file to `logfire`
 @contextmanager
-def context_subtree() -> typing.Iterator[SpanTree | SpanTreeRecordingError]:
+def context_subtree() -> typing.Generator[SpanTree | SpanTreeRecordingError]:
     """Context manager that yields a `SpanTree` containing all spans collected during the context.
 
     The tree will be empty until the context is exited.
@@ -53,7 +53,7 @@ def context_subtree() -> typing.Iterator[SpanTree | SpanTreeRecordingError]:
 
 
 @contextmanager
-def _context_subtree_spans() -> typing.Iterator[list[ReadableSpan] | SpanTreeRecordingError]:
+def _context_subtree_spans() -> typing.Generator[list[ReadableSpan] | SpanTreeRecordingError]:
     """Context manager that yields a list of spans that are collected during the context.
 
     The list will be empty until the context is exited.
@@ -73,7 +73,7 @@ def _context_subtree_spans() -> typing.Iterator[list[ReadableSpan] | SpanTreeRec
 
 
 @contextmanager
-def _set_exporter_context_id(context_id: str | None = None) -> typing.Iterator[str]:
+def _set_exporter_context_id(context_id: str | None = None) -> typing.Generator[str]:
     context_id = context_id or str(uuid.uuid4())
     token = _EXPORTER_CONTEXT_ID.set(context_id)
     try:
@@ -155,13 +155,11 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
                 f' For more information, refer to the documentation at https://ai.pydantic.dev/evals/#opentelemetry-integration.'
             )
         else:
-            # In this case, the user is using some kind of custom OpenTelemetry TracerProvider. It may or may not
-            # be easy to handle this better, but given it's hard to know, we just raise an error telling the user
-            # to notify us if they want help.
-            raise TypeError(
-                'Expected `tracer_provider` to have an `add_span_processor` method;'
-                f' got an instance of {type(tracer_provider)}.'
-                f' For help resolving this, please create an issue at https://github.com/pydantic/pydantic-ai/issues.'
+            # Custom TracerProvider (e.g. ddtrace) without add_span_processor - degrade gracefully.
+            return SpanTreeRecordingError(
+                f'The current TracerProvider ({type(tracer_provider).__qualname__}) does not support'
+                f' `add_span_processor`, so span tree recording is not available.'
+                f' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
             )
 
     exporter = _ContextInMemorySpanExporter()

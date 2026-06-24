@@ -1,0 +1,144 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '301'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Write a Python function that calculates the factorial of a number. Think step by step.
+        role: user
+      instructions: You are a helpful coding assistant.
+      model: gpt-5.2
+      reasoning:
+        effort: high
+        summary: auto
+      stream: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '4009'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '4628'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765995744
+      error: null
+      id: resp_0b028a7a2aca8d68006942f4e05a848193a3052f1530ea1deb
+      incomplete_details: null
+      instructions: You are a helpful coding assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.2-2025-12-11
+      object: response
+      output:
+      - encrypted_content: gAAAAABpQvTkJZft62qJKaLhBDFWROAOkMdI5z2GwcO3X4M8u9DV4b2YnhzOr054JFdfSEtg-GgjcXENIgMHDIhxQ8IZjlc01OYTRFd3h9iKGEFQcC8XJRH_2PZ2iZRDxlXZyUGS_u4RjhKfNCXNKXby_-XkXLeKr7Rjd0bprM9vTP053rWeRF-1MByoUkDMOMzdQQl_207g7TYJg-eRKFrHSfqYurzkTybkjsCC0T-ySBxhojm48Yfw6gMM_2WJk_gyehpKh0i5yjYro933hCCADWL1c_4Jn7YFlHfU3BmtaU3BnuuGiImZ_XZdMaEfbpSksTJBdifQ6zVBBH6XRp6n3xsoouw40ROmhwMnarWudp3CC9gwV-VgzGtNxmOtIhWzyn3Op0ZH-K0fekNwiADVsNQ_zg0xCFyhiD_j9cQ22B7k4pelnbcX9MEBziltu81feLJ99jHMwV5pxtxGNdofJgu48DIx4z4Yd8VC3scC4fZU-5OVNl00Cch0z2L5IBKFlITrwt8NcMG5SqkzenP6TtVKWL0zHoGr5nK5cNq0o6Stahgo9nKVai8Vf9XAqF2r2T-yhst9fkxQaQq3F2a0X1bcxbHm4zUC7X9sOmjTEVIer4wHfpBBEiN637Pea6ya5JjdOvOxmsHe6ogvrf7qe2vPAaAiuIrcufJbarTJ5psGfLKTlfQAds6HKy3B_POSGoELhYJDDoVsw-xOCmzaS8-De2ZazALlfYVSGli9eDPB3JQnoREn71ngCJO0cEcBuNeHMeWsbL5KlrC0tFiSTYSYZVsZDm_b6phmNzBu-k-WCAH25iJotkhV_EK9nAVg9PVFdBKCfracx4t8yrYEpDO4FNUedfX080FzcaHM1gJ49wJrnFkzpTCnEZQwjZQWR_H7cP_7R7I2qxMEMF62pCwOSqMJa6oQqrsSAXSHaEWjgoKhv3YaZsj2mD0J62ZJfYX9O_ldrXfJ09ruUaAS-je6yDu4dY2lIvmV4ODN9JcvYQO1I804pQTFUM6T8epkelm-5uotALZTIZuaodnVUdeMD0QWvip1405IZKKkWP80amgJk-2l-bdbJ-DO08qNapBUqtR5NBN86ooCFp3j6460BeSyLXkg4ECJ_NYI2PYCQcMv1WfpHiih6sCppqFVu21Ke1F77mqZF_EEKvOc3PWB0Uw0U5bDrxjfSTxdxZJxfw97_PEcm3BLo7ANp9b9IFY_MfqK5LmTgKn5OHiHdces_zR5QA==
+        id: rs_0b028a7a2aca8d68006942f4e0d380819398dfa502c33bce7b
+        summary:
+        - text: |-
+            **Generating factorial function**
+
+            I need to respond with a Python function for calculating the factorial. The user wants me to think step-by-step, but I need to keep my reasoning brief. I'll provide a brief explanation of how the function works and include some input validation. I could choose either an iterative or recursive approach. I'll keep the details high-level, showing only the essential steps before presenting the final code to the user.
+          type: summary_text
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            ```python
+            def factorial(n: int) -> int:
+                """
+                Return n! (the factorial of n).
+
+                Steps:
+                1) Validate that n is a non-negative integer.
+                2) Start with result = 1.
+                3) Multiply result by each integer from 2 up to n.
+                4) Return result.
+                """
+                if not isinstance(n, int):
+                    raise TypeError("n must be an integer")
+                if n < 0:
+                    raise ValueError("n must be non-negative")
+
+                result = 1
+                for k in range(2, n + 1):
+                    result *= k
+                return result
+            ```
+
+            Example:
+            ```python
+            print(factorial(5))  # 120
+            ```
+          type: output_text
+        id: msg_0b028a7a2aca8d68006942f4e484e08193afa69324a01f6707
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: high
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 34
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 226
+        output_tokens_details:
+          reasoning_tokens: 59
+        total_tokens: 260
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

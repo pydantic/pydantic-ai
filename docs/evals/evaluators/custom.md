@@ -89,6 +89,7 @@ class ContainsKeyword(Evaluator):
 
 # Usage
 dataset = Dataset(
+    name='keyword_check',
     cases=[Case(name='test', inputs='This is important')],
     evaluators=[
         ContainsKeyword(keyword='important', case_sensitive=False),
@@ -147,6 +148,9 @@ class LengthScore(Evaluator):
             score = max(0.0, 1.0 - (diff - self.tolerance) / self.ideal_length)
             return score
 ```
+
+!!! note "Scores must be finite"
+    Numeric scores have to be finite. An evaluator that returns `NaN` or `±inf` — as a scalar, inside an [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason], or as a value in a returned dict — produces an [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] for that case instead of a score, so a non-comparable value is surfaced as a failed evaluator rather than silently recorded.
 
 ### String Labels
 
@@ -802,5 +806,6 @@ class APIEvaluator(Evaluator):
 
 ## Next Steps
 
+- **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses (confusion matrices, PR curves, custom tables)
 - **[Span-Based Evaluation](span-based.md)** - Using OpenTelemetry spans
 - **[Examples](../examples/simple-validation.md)** - Practical examples

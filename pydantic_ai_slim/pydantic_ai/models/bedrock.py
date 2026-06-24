@@ -2,23 +2,37 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+import warnings
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import cached_property
 from itertools import count
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from urllib.parse import parse_qs, urlparse
 
-import anyio
 import anyio.to_thread
+from pydantic_core import to_json
 from typing_extensions import ParamSpec, assert_never
+
+try:
+    from botocore.client import BaseClient
+    from botocore.exceptions import BotoCoreError, ClientError
+    from botocore.model import StructureShape
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `boto3` to use the Bedrock model, '
+        'you can use the `bedrock` optional group — `pip install "pydantic-ai-slim[bedrock]"`'
+    ) from _import_error
 
 from pydantic_ai import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
+    CachePoint,
+    CompactionPart,
     DocumentUrl,
+    FilePart,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -27,31 +41,49 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
     _utils,
     usage,
 )
+from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.messages import is_multi_modal_content
+from pydantic_ai.models import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    download_item,
+)
+from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
+from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
+from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
+from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.providers.bedrock import BedrockModelProfile
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
+from pydantic_ai.settings import ModelSettings, ThinkingLevel, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
-    from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
-    from mypy_boto3_bedrock_runtime.literals import StopReasonType
+    from mypy_boto3_bedrock_runtime.literals import (
+        StopReasonType,
+    )
     from mypy_boto3_bedrock_runtime.type_defs import (
+        CachePointBlockTypeDef,
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
         ConverseRequestTypeDef,
@@ -59,27 +91,69 @@ if TYPE_CHECKING:
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
         ConverseStreamResponseTypeDef,
-        DocumentBlockTypeDef,
+        ConverseTokensRequestTypeDef,
+        CountTokensRequestTypeDef,
+        DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
-        ImageBlockTypeDef,
         InferenceConfigurationTypeDef,
+        JsonSchemaDefinitionTypeDef,
         MessageUnionTypeDef,
+        OutputConfigTypeDef,
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ReasoningContentBlockOutputTypeDef,
+        S3LocationTypeDef,
+        ServiceTierTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
+        ToolResultBlockOutputTypeDef,
+        ToolResultContentBlockOutputTypeDef,
         ToolSpecificationTypeDef,
         ToolTypeDef,
-        VideoBlockTypeDef,
+        ToolUseBlockOutputTypeDef,
     )
+
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Generator[None]:
+    try:
+        yield
+    except ClientError as e:
+        status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+        if isinstance(status_code, int):
+            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=e.response) from e
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+
+
+_SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
+_SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
+_SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+
+
+def _make_image_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+    if format not in _SUPPORTED_IMAGE_FORMATS:
+        raise UserError(f'Unsupported image format: {format}')
+    return {'image': {'format': format, 'source': source}}
+
+
+def _make_video_block(format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+    if format not in _SUPPORTED_VIDEO_FORMATS:
+        raise UserError(f'Unsupported video format: {format}')
+    return {'video': {'format': format, 'source': source}}
+
+
+def _make_document_block(name: str, format: str, source: DocumentSourceTypeDef) -> ContentBlockUnionTypeDef:
+    if format not in _SUPPORTED_DOCUMENT_FORMATS:
+        raise UserError(f'Unsupported document format: {format}')
+    return {'document': {'name': name, 'format': format, 'source': source}}
 
 
 LatestBedrockModelNames = Literal[
     'amazon.titan-tg1-large',
     'amazon.titan-text-lite-v1',
     'amazon.titan-text-express-v1',
+    'us.amazon.nova-2-lite-v1:0',
     'us.amazon.nova-pro-v1:0',
     'us.amazon.nova-lite-v1:0',
     'us.amazon.nova-micro-v1:0',
@@ -102,8 +176,19 @@ LatestBedrockModelNames = Literal[
     'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
     'anthropic.claude-opus-4-20250514-v1:0',
     'us.anthropic.claude-opus-4-20250514-v1:0',
+    'global.anthropic.claude-opus-4-5-20251101-v1:0',
     'anthropic.claude-sonnet-4-20250514-v1:0',
     'us.anthropic.claude-sonnet-4-20250514-v1:0',
+    'eu.anthropic.claude-sonnet-4-20250514-v1:0',
+    'anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
+    'anthropic.claude-sonnet-4-6',
+    'us.anthropic.claude-sonnet-4-6',
+    'eu.anthropic.claude-sonnet-4-6',
+    'anthropic.claude-haiku-4-5-20251001-v1:0',
+    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
     'cohere.command-text-v14',
     'cohere.command-r-v1:0',
     'cohere.command-r-plus-v1:0',
@@ -134,7 +219,6 @@ Since Bedrock supports a variety of date-stamped models, we explicitly list the 
 See [the Bedrock docs](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for a full list.
 """
 
-
 P = ParamSpec('P')
 T = typing.TypeVar('T')
 
@@ -143,9 +227,76 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'end_turn': 'stop',
     'guardrail_intervened': 'content_filter',
     'max_tokens': 'length',
+    'model_context_window_exceeded': 'length',
     'stop_sequence': 'stop',
+    'malformed_model_output': 'error',
+    'malformed_tool_use': 'error',
     'tool_use': 'tool_call',
 }
+
+
+def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
+    """Parse an S3 URL into a Bedrock DocumentSourceTypeDef."""
+    parsed = urlparse(url)
+    s3_location: S3LocationTypeDef = {'uri': f'{parsed.scheme}://{parsed.netloc}{parsed.path}'}
+    if bucket_owner := parse_qs(parsed.query).get('bucketOwner', [None])[0]:
+        s3_location['bucketOwner'] = bucket_owner
+    return {'s3Location': s3_location}
+
+
+def _insert_cache_point_before_trailing_documents(
+    content: list[Any],
+    cache_point: ContentBlockUnionTypeDef,
+    *,
+    raise_if_cannot_insert: bool = False,
+) -> bool:
+    """Insert a cache point before trailing document/video content.
+
+    AWS rejects cache points that directly follow documents and videos (but not images).
+    This function finds the start of the trailing contiguous group of documents/videos
+    and inserts a cache point before it.
+
+    Args:
+        content: The content list to modify in place.
+        cache_point: The cache point block to insert.
+        raise_if_cannot_insert: If True, raises UserError when cache point cannot be inserted
+            (e.g., when the message contains only documents/videos). If False, silently skips.
+
+    Returns:
+        True if a cache point was inserted, False otherwise.
+
+    Raises:
+        UserError: If raise_if_cannot_insert is True and the cache point cannot be placed.
+    """
+    multimodal_keys = ['document', 'video']
+    # Find where the trailing contiguous group of documents/videos starts
+    trailing_start: int | None = None
+    for i in range(len(content) - 1, -1, -1):
+        if any(key in content[i] for key in multimodal_keys):
+            trailing_start = i
+        else:
+            break
+
+    if trailing_start is not None and trailing_start > 0:
+        # Skip if there's already a cache point at the insertion position
+        prev_block = content[trailing_start - 1]
+        if isinstance(prev_block, dict) and 'cachePoint' in prev_block:
+            return False
+        content.insert(trailing_start, cache_point)
+        return True
+    elif trailing_start is None:
+        # No trailing document/video content, append cache point at the end
+        content.append(cache_point)
+        return True
+    else:
+        # trailing_start == 0, can't insert at start
+        if raise_if_cannot_insert:
+            raise UserError(
+                'CachePoint cannot be placed when the user message contains only a document or video, '
+                'due to Bedrock API restrictions. '
+                'Add text content before or after your document or video to enable caching.'
+            )
+        return False  # pragma: no cover
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -193,15 +344,66 @@ class BedrockModelSettings(ModelSettings, total=False):
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html>.
     """
 
+    bedrock_cache_tool_definitions: bool | Literal['5m', '1h']
+    """Whether to add a cache point after the last tool definition.
+
+    When enabled, the last tool in the `tools` array will include a `cachePoint`, allowing Bedrock to cache tool
+    definitions and reduce costs for compatible models.
+
+    Set to `True` or `'5m'` for a 5-minute TTL (the default), or `'1h'` for a 1-hour TTL.
+    See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
+
+    bedrock_cache_instructions: bool | Literal['5m', '1h']
+    """Whether to add a cache point after the system prompt blocks.
+
+    When enabled, an extra `cachePoint` is appended to the system prompt so Bedrock can cache system instructions.
+
+    Set to `True` or `'5m'` for a 5-minute TTL (the default), or `'1h'` for a 1-hour TTL.
+    See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
+
+    bedrock_cache_messages: bool | Literal['5m', '1h']
+    """Convenience setting to enable caching for the last user message.
+
+    When enabled, this automatically adds a cache point to the last content block
+    in the final user message, which is useful for caching conversation history
+    or context in multi-turn conversations.
+
+    Set to `True` or `'5m'` for a 5-minute TTL (the default), or `'1h'` for a 1-hour TTL.
+
+    Note: Uses 1 of Bedrock's 4 available cache points per request. Any additional CachePoint
+    markers in messages will be automatically limited to respect the 4-cache-point maximum.
+    See https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    """
+
+    bedrock_service_tier: ServiceTierTypeDef
+    """Setting for optimizing performance and cost.
+
+    Accepts `{'type': 'default' | 'flex' | 'priority' | 'reserved'}`. Takes precedence over the
+    top-level [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier], and is the only
+    way to request `'reserved'` (which requires a pre-purchased capacity reservation).
+
+    See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/service-tiers-inference.html>.
+    """
+
+    bedrock_inference_profile: str
+    """An [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) ARN to use as the `modelId` in API requests.
+
+    When set, this value is used as the `modelId` in `converse` and `converse_stream` API calls instead of the
+    base `model_name`. This allows you to pass the base model name (e.g. `'anthropic.claude-sonnet-4-5-20250929-v1:0'`)
+    as `model_name` for detecting model capabilities and token counting, while routing requests through an inference profile
+    for cost tracking or cross-region inference.
+    """
+
 
 @dataclass(init=False)
-class BedrockConverseModel(Model):
+class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
-
-    client: BedrockRuntimeClient
 
     _model_name: BedrockModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
+    _client: BaseClient | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -224,13 +426,31 @@ class BedrockConverseModel(Model):
             settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
+        self._client = None
 
         if isinstance(provider, str):
             provider = infer_provider('gateway/bedrock' if provider == 'gateway' else provider)
         self._provider = provider
-        self.client = cast('BedrockRuntimeClient', provider.client)
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
+
+    @property
+    def client(self) -> BedrockRuntimeClient:
+        """The boto3 client used to make requests to the Bedrock Converse API.
+
+        Defaults to the client from the [`Provider`][pydantic_ai.providers.Provider]. It can be reassigned, e.g. to
+        rotate short-lived credentials in a long-running service, but prefer assigning to
+        [`BedrockProvider.client`][pydantic_ai.providers.bedrock.BedrockProvider.client] so all models sharing the
+        provider pick up the new client. Once you've assigned a client here, you're responsible for keeping it valid;
+        the provider's client is no longer consulted.
+        """
+        return cast('BedrockRuntimeClient', self._client or self._provider.client)
+
+    @client.setter
+    def client(self, client: BedrockRuntimeClient) -> None:
+        # Kept for backward compatibility (this used to be a plain attribute); `BedrockProvider.client` is the cleaner
+        # place to swap the client, as it's shared by all models using the provider.
+        self._client = client
 
     @property
     def base_url(self) -> str:
@@ -246,17 +466,101 @@ class BedrockConverseModel(Model):
         """The model provider."""
         return self._provider.name
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    @cached_property
+    def profile(self) -> BedrockModelProfile:
+        # The resolved profile dict may also carry cross-class fields (e.g. `anthropic_*` for Anthropic-on-Bedrock
+        # models) — read those with `cast` or `.get()`, since the narrowed type only exposes `bedrock_*` keys.
+        return cast(BedrockModelProfile, super().profile)
 
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """The set of builtin tool types this model can handle."""
+        return frozenset({CodeExecutionTool})
+
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        settings = merge_model_settings(self.settings, model_settings)
+        if model_request_parameters.output_tools and _is_thinking_enabled(settings, model_request_parameters):
+            if model_request_parameters.output_mode == 'auto':
+                output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
+                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
+            elif (
+                model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
+            ):  # pragma: no branch
+                suggested_output_type = (
+                    'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
+                )
+                raise UserError(
+                    f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
+                )
+        if (
+            self.profile.get('supports_json_schema_output', False)
+            and model_request_parameters.output_mode == 'native'
+            and model_request_parameters.output_object is not None
+        ):
+            # Bedrock's structured-output API requires `strict: true` on the output object — see
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+            # so we force it regardless of the caller's setting. Mirrors Anthropic's behavior.
+            model_request_parameters = replace(
+                model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
+            )
+        # Pass unmerged model_settings; base class does its own merge
+        return super().prepare_request(model_settings, model_request_parameters)
+
+    @property
+    def _botocore_supports_strict_tool_param(self) -> bool:
+        """Whether the installed `botocore` knows the `strict` field on `toolSpec`.
+
+        `botocore` validates request params against its own bundled service model, so a
+        `botocore` older than the one that introduced strict tool calls rejects `strict`
+        with a `ParamValidationError` regardless of what the Bedrock model itself supports.
+        This notably happens on AWS Lambda, where the runtime's bundled `botocore` can
+        shadow a newer one provided via a layer.
+        """
+        tool_spec_shape = self.client.meta.service_model.shape_for('ToolSpecification')
+        return isinstance(tool_spec_shape, StructureShape) and 'strict' in tool_spec_shape.members
+
+    def _map_tool_definition(self, f: ToolDefinition) -> ToolTypeDef:
         tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
 
+        if f.strict and self.profile.get('bedrock_supports_strict_tool_definition', False):
+            if self._botocore_supports_strict_tool_param:
+                tool_spec['strict'] = f.strict
+            else:
+                warnings.warn(
+                    'The installed `botocore` is too old to send `strict` tool definitions to Bedrock, '
+                    'so the request is sent without `strict`. Upgrade `boto3`/`botocore` to enable strict '
+                    "tool calls; on AWS Lambda, the runtime's bundled `botocore` may be shadowing a newer "
+                    'one from your layer.',
+                    UserWarning,
+                )
+
         return {'toolSpec': tool_spec}
+
+    @staticmethod
+    def _native_output_format(
+        model_request_parameters: ModelRequestParameters,
+    ) -> OutputConfigTypeDef | None:
+        """Build the `outputConfig` block for native structured output.
+
+        See [Bedrock structured output](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html).
+        """
+        if model_request_parameters.output_mode != 'native' or model_request_parameters.output_object is None:
+            return None
+        output_object = model_request_parameters.output_object
+
+        json_schema_config: JsonSchemaDefinitionTypeDef = {
+            'name': output_object.name or DEFAULT_OUTPUT_TOOL_NAME,
+            'schema': to_json(output_object.json_schema).decode(),
+        }
+        if output_object.description:
+            json_schema_config['description'] = output_object.description
+
+        return {'textFormat': {'type': 'json_schema', 'structure': {'jsonSchema': json_schema_config}}}
 
     async def request(
         self,
@@ -273,6 +577,43 @@ class BedrockConverseModel(Model):
         model_response = await self._process_response(response)
         return model_response
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.RequestUsage:
+        """Count the number of tokens, works with limited models.
+
+        Check the actual supported models on <https://docs.aws.amazon.com/bedrock/latest/userguide/count-tokens.html>
+        """
+        model_settings, model_request_parameters = self.prepare_request(model_settings, model_request_parameters)
+        settings = cast(BedrockModelSettings, model_settings or {})
+        system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
+        converse: ConverseTokensRequestTypeDef = {
+            'messages': bedrock_messages,
+            'system': system_prompt,
+        }
+        # No native-tool strip is needed here (unlike Anthropic's count_tokens, which must drop server tools):
+        # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
+        # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
+        tool_config = self._map_tool_config(model_request_parameters, settings)
+        if tool_config:
+            converse['toolConfig'] = tool_config
+        tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
+        self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        if additional_model_requests_fields := self._build_additional_model_request_fields(
+            settings, model_request_parameters
+        ):
+            converse['additionalModelRequestFields'] = additional_model_requests_fields
+        params: CountTokensRequestTypeDef = {
+            'modelId': remove_bedrock_geo_prefix(self.model_name),
+            'input': {'converse': converse},
+        }
+        with _map_api_errors(self.model_name):
+            response = await anyio.to_thread.run_sync(functools.partial(self.client.count_tokens, **params))
+        return usage.RequestUsage(input_tokens=response['inputTokens'])
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -280,7 +621,7 @@ class BedrockConverseModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -292,6 +633,7 @@ class BedrockConverseModel(Model):
             _model_name=self.model_name,
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
+            _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
 
@@ -321,16 +663,45 @@ class BedrockConverseModel(Model):
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
-                    items.append(
-                        ToolCallPart(
-                            tool_name=tool_use['name'],
-                            args=tool_use['input'],
-                            tool_call_id=tool_use['toolUseId'],
-                        ),
-                    )
+                    if tool_use.get('type') == 'server_tool_use':
+                        if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
+                            call_part = NativeToolCallPart(
+                                provider_name=self.system,
+                                tool_name=CodeExecutionTool.kind,
+                                args=tool_use['input'],
+                                tool_call_id=tool_use['toolUseId'],
+                            )
+                            call_part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
+                            items.append(call_part)
+                    else:
+                        items.append(
+                            ToolCallPart(
+                                tool_name=tool_use['name'],
+                                args=tool_use['input'],
+                                tool_call_id=tool_use['toolUseId'],
+                            ),
+                        )
+                elif tool_result := item.get('toolResult'):
+                    if tool_result.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                        items.append(
+                            NativeToolReturnPart(
+                                provider_name=self.system,
+                                tool_name=CodeExecutionTool.kind,
+                                content=tool_result['content'][0].get('json') if tool_result['content'] else None,
+                                tool_call_id=tool_result.get('toolUseId'),
+                                provider_details={'status': tool_result['status']} if 'status' in tool_result else {},
+                            )
+                        )
+
+        input_tokens = response['usage']['inputTokens']
+        output_tokens = response['usage']['outputTokens']
+        cache_read_tokens = response['usage'].get('cacheReadInputTokens', 0)
+        cache_write_tokens = response['usage'].get('cacheWriteInputTokens', 0)
         u = usage.RequestUsage(
-            input_tokens=response['usage']['inputTokens'],
-            output_tokens=response['usage']['outputTokens'],
+            input_tokens=input_tokens + cache_write_tokens + cache_read_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
@@ -343,9 +714,71 @@ class BedrockConverseModel(Model):
             model_name=self.model_name,
             provider_response_id=response_id,
             provider_name=self._provider.name,
+            provider_url=self.base_url,
             finish_reason=finish_reason,
             provider_details=provider_details,
         )
+
+    def _build_additional_model_request_fields(
+        self,
+        model_settings: BedrockModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> dict[str, Any] | None:
+        """Build `additionalModelRequestFields` from user-supplied fields plus unified `top_k` and `thinking`."""
+        existing = dict(model_settings.get('bedrock_additional_model_requests_fields') or {})
+        profile = self.profile
+
+        # Bedrock's `inferenceConfig` has no `topK`, so unified `top_k` rides in the model-specific
+        # `additionalModelRequestFields` (shape varies per family). A user-supplied key wins.
+        if (top_k := model_settings.get('top_k')) is not None:
+            if profile.get('bedrock_top_k_variant', None) == 'anthropic' and 'top_k' not in existing:
+                existing['top_k'] = top_k
+            elif profile.get('bedrock_top_k_variant', None) == 'nova':
+                # Nova nests `topK` under `inferenceConfig`, so check that specific key (not the parent)
+                # and merge into a fresh dict to preserve any other user-supplied `inferenceConfig` fields
+                # without mutating the user's settings in place. A user-supplied `topK` wins.
+                inference_config: Mapping[str, Any] = existing.get('inferenceConfig') or {}
+                if isinstance(inference_config, dict) and 'topK' not in inference_config:
+                    existing['inferenceConfig'] = {**inference_config, 'topK': top_k}
+
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            return existing or None
+
+        variant = profile.get('bedrock_thinking_variant', None)
+
+        if variant == 'anthropic' and 'thinking' not in existing:
+            if profile.get('bedrock_supports_adaptive_thinking', False):
+                if thinking is not False:
+                    existing['thinking'] = {'type': 'adaptive'}
+                    # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
+                    if (
+                        profile.get('bedrock_supports_effort', False)
+                        and isinstance(thinking, str)
+                        and 'output_config' not in existing
+                    ):
+                        existing['output_config'] = {'effort': resolve_anthropic_effort(thinking, supports_xhigh=False)}
+            elif thinking is False:
+                existing['thinking'] = {'type': 'disabled'}
+            else:
+                existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+        elif variant == 'openai' and 'reasoning_effort' not in existing:
+            if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
+                existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+        elif variant == 'qwen' and 'reasoning_config' not in existing:
+            if thinking is not False:
+                # Qwen only supports low/high; map others to closest
+                level_map: dict[ThinkingLevel, str] = {
+                    True: 'high',
+                    'minimal': 'low',
+                    'low': 'low',
+                    'medium': 'high',
+                    'high': 'high',
+                    'xhigh': 'high',
+                }
+                existing['reasoning_config'] = level_map[thinking]
+
+        return existing or None
 
     @overload
     async def _messages_create(
@@ -374,22 +807,26 @@ class BedrockConverseModel(Model):
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
-        system_prompt, bedrock_messages = await self._map_messages(messages)
-        inference_config = self._map_inference_config(model_settings)
+        settings = model_settings or BedrockModelSettings()
+        system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
+        inference_config = self._map_inference_config(settings)
 
         params: ConverseRequestTypeDef = {
-            'modelId': self.model_name,
+            'modelId': settings.get('bedrock_inference_profile') or self.model_name,
             'messages': bedrock_messages,
             'system': system_prompt,
             'inferenceConfig': inference_config,
         }
 
-        tool_config = self._map_tool_config(model_request_parameters)
+        tool_config = self._map_tool_config(model_request_parameters, settings)
         if tool_config:
             params['toolConfig'] = tool_config
 
-        if model_request_parameters.builtin_tools:
-            raise UserError('Bedrock does not support built-in tools')
+        tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
+        self._limit_cache_points(system_prompt, bedrock_messages, tools)
+
+        if output_config := self._native_output_format(model_request_parameters):
+            params['outputConfig'] = output_config
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
@@ -403,15 +840,25 @@ class BedrockConverseModel(Model):
                 'bedrock_additional_model_response_fields_paths', None
             ):
                 params['additionalModelResponseFieldPaths'] = additional_model_response_fields_paths
-            if additional_model_requests_fields := model_settings.get('bedrock_additional_model_requests_fields', None):
-                params['additionalModelRequestFields'] = additional_model_requests_fields
             if prompt_variables := model_settings.get('bedrock_prompt_variables', None):
                 params['promptVariables'] = prompt_variables
+            if service_tier := model_settings.get('bedrock_service_tier'):
+                params['serviceTier'] = service_tier
+            elif (unified_tier := model_settings.get('service_tier')) and unified_tier != 'auto':
+                params['serviceTier'] = {'type': unified_tier}
 
-        if stream:
-            model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
-        else:
-            model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
+        if additional_model_requests_fields := self._build_additional_model_request_fields(
+            settings, model_request_parameters
+        ):
+            params['additionalModelRequestFields'] = additional_model_requests_fields
+
+        with _map_api_errors(self.model_name):
+            if stream:
+                model_response = await anyio.to_thread.run_sync(
+                    functools.partial(self.client.converse_stream, **params)
+                )
+            else:
+                model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
         return model_response
 
     @staticmethod
@@ -432,64 +879,158 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    def _map_tool_config(self, model_request_parameters: ModelRequestParameters) -> ToolConfigurationTypeDef | None:
-        tools = self._get_tools(model_request_parameters)
+    def _map_tool_config(
+        self,
+        model_request_parameters: ModelRequestParameters,
+        model_settings: BedrockModelSettings | None,
+    ) -> ToolConfigurationTypeDef | None:
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        profile = self.profile
+        supports = _support_tool_forcing(
+            self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
+        )
+
+        tool_choice: ToolChoiceTypeDef
+        if resolved_tool_choice == 'auto':
+            tool_choice = {'auto': {}}
+        elif resolved_tool_choice == 'required':
+            tool_choice = {'any': {}} if supports else {'auto': {}}
+        elif resolved_tool_choice == 'none':
+            # Bedrock doesn't support a native 'none' mode, so we don't send tools
+            # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html
+            return None
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                if supports:
+                    tool_choice = {'tool': {'name': next(iter(tool_names))}}
+                else:
+                    # Breaks caching, but native `toolChoice.tool` is unavailable here (unsupported profile or thinking enabled)
+                    tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                    tool_choice = {'auto': {}}
+            else:
+                # Breaks caching, but Bedrock's toolChoice only supports a single tool name
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = {'auto': {}} if tool_choice_mode == 'auto' or not supports else {'any': {}}
+        else:
+            assert_never(resolved_tool_choice)
+
+        tools: list[ToolTypeDef] = [self._map_tool_definition(t) for t in tool_defs.values()]
+        for tool in model_request_parameters.native_tools:
+            if tool.kind == CodeExecutionTool.kind:
+                tools.append({'systemTool': {'name': 'nova_code_interpreter'}})
+            else:
+                raise NotImplementedError(
+                    f"Native tool '{tool.kind}' is not supported yet. If it should be, please file an issue."
+                )
+
         if not tools:
             return None
 
-        tool_choice: ToolChoiceTypeDef
-        if not model_request_parameters.allow_text_output:
-            tool_choice = {'any': {}}
-        else:
-            tool_choice = {'auto': {}}
+        if cache_tool_definitions := (model_settings or {}).get('bedrock_cache_tool_definitions'):
+            if profile.get('bedrock_supports_tool_caching', False):
+                tools.append(cast('ToolTypeDef', self._get_cache_point(cache_tool_definitions)))
 
         tool_config: ToolConfigurationTypeDef = {'tools': tools}
-        if tool_choice and BedrockModelProfile.from_profile(self.profile).bedrock_supports_tool_choice:
+        if tool_choice and profile.get('bedrock_supports_tool_choice', False):
             tool_config['toolChoice'] = tool_choice
 
         return tool_config
 
     async def _map_messages(  # noqa: C901
-        self, messages: list[ModelMessage]
+        self,
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        model_settings: BedrockModelSettings | None,
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
         """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
 
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
-        profile = BedrockModelProfile.from_profile(self.profile)
+        settings = model_settings or BedrockModelSettings()
+        profile = self.profile
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart) and part.content:
-                        system_prompt.append({'text': part.content})
+                    if isinstance(part, SystemPromptPart):
+                        if part.content:  # pragma: no branch
+                            system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        bedrock_messages.extend(await self._map_user_prompt(part, document_count))
+                        bedrock_messages.extend(
+                            await self._map_user_prompt(
+                                part,
+                                document_count,
+                                supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
+                            )
+                        )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
-                        bedrock_messages.append(
-                            {
-                                'role': 'user',
-                                'content': [
-                                    {
-                                        'toolResult': {
-                                            'toolUseId': part.tool_call_id,
-                                            'content': [
-                                                {'text': part.model_response_str()}
-                                                if profile.bedrock_tool_result_format == 'text'
-                                                else {'json': part.model_response_object()}
-                                            ],
-                                            'status': 'success',
-                                        }
-                                    }
-                                ],
-                            }
+                        tool_result_content: list[Any] = []
+                        sibling_content: list[ContentBlockUnionTypeDef] = []
+
+                        content_mode: Literal['str', 'jsonable'] = (
+                            'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
+                        for item in part.content_items(mode=content_mode):
+                            if isinstance(item, UploadedFile):
+                                self._validate_uploaded_file_provider(item)
+                                if not item.file_id.startswith('s3://'):
+                                    raise UserError(
+                                        f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
+                                    )
+                                uf_source = _parse_s3_source(item.file_id)
+                                try:
+                                    uf_format = item.format
+                                except ValueError as e:
+                                    raise UserError(
+                                        f'Unsupported media type for Bedrock UploadedFile: {item.media_type}'
+                                    ) from e
+                                if item.media_type.startswith('image/'):
+                                    tool_result_content.append(_make_image_block(uf_format, uf_source))
+                                elif item.media_type.startswith('video/'):
+                                    tool_result_content.append(_make_video_block(uf_format, uf_source))
+                                elif item.media_type.startswith('audio/'):
+                                    raise UserError('Audio files are not supported for Bedrock UploadedFile')
+                                else:
+                                    tool_result_content.append(
+                                        _make_document_block(f'Document {next(document_count)}', uf_format, uf_source)
+                                    )
+                            elif is_multi_modal_content(item):
+                                if isinstance(item, AudioUrl):
+                                    raise NotImplementedError('AudioUrl is not supported in Bedrock tool returns')
+                                file_block = await self._map_file_to_content_block(item, document_count)  # pyright: ignore[reportArgumentType]
+                                kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
+                                if kind in profile.get(
+                                    'bedrock_supported_media_kinds_in_tool_returns', frozenset({'image'})
+                                ):
+                                    tool_result_content.append(file_block)
+                                else:
+                                    tool_result_content.append({'text': f'See file {item.identifier}.'})
+                                    sibling_content.append({'text': f'This is file {item.identifier}:'})
+                                    sibling_content.append(file_block)
+                            elif isinstance(item, str):
+                                tool_result_content.append({'text': item})
+                            else:
+                                tool_result_content.append({'json': item})
+
+                        user_content: list[ContentBlockUnionTypeDef] = [
+                            {
+                                'toolResult': {
+                                    'toolUseId': part.tool_call_id,
+                                    'content': tool_result_content,
+                                    'status': 'success',
+                                }
+                            }
+                        ]
+                        user_content.extend(sibling_content)
+                        bedrock_messages.append({'role': 'user', 'content': user_content})
                     elif isinstance(part, RetryPromptPart):
-                        # TODO(Marcelo): We need to add a test here.
-                        if part.tool_name is None:  # pragma: no cover
+                        if part.tool_name is None:
                             bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
                         else:
                             assert part.tool_call_id is not None
@@ -507,6 +1048,8 @@ class BedrockConverseModel(Model):
                                     ],
                                 }
                             )
+                    else:
+                        assert_never(part)
             elif isinstance(message, ModelResponse):
                 content: list[ContentBlockOutputTypeDef] = []
                 for item in message.parts:
@@ -516,14 +1059,15 @@ class BedrockConverseModel(Model):
                         if (
                             item.provider_name == self.system
                             and item.signature
-                            and BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts
+                            and profile.get('bedrock_send_back_thinking_parts', False)
                         ):
+                            reasoning_content: ReasoningContentBlockOutputTypeDef
                             if item.id == 'redacted_content':
-                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                reasoning_content = {
                                     'redactedContent': item.signature.encode('utf-8'),
                                 }
                             else:
-                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                reasoning_content = {
                                     'reasoningText': {
                                         'text': item.content,
                                         'signature': item.signature,
@@ -531,14 +1075,40 @@ class BedrockConverseModel(Model):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            start_tag, end_tag = self.profile.thinking_tags
+                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
-                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
-                        pass
+                    elif isinstance(item, NativeToolCallPart):
+                        if item.provider_name == self.system:
+                            if item.tool_name == CodeExecutionTool.kind:
+                                server_tool_use_block_param: ToolUseBlockOutputTypeDef = {
+                                    'toolUseId': _utils.guard_tool_call_id(t=item),
+                                    'name': 'nova_code_interpreter',
+                                    'input': item.args_as_dict(),
+                                    'type': 'server_tool_use',
+                                }
+                                content.append({'toolUse': server_tool_use_block_param})
+                    elif isinstance(item, NativeToolReturnPart):
+                        if item.provider_name == self.system:
+                            if item.tool_name == CodeExecutionTool.kind:
+                                result_content: list[ToolResultContentBlockOutputTypeDef] = [
+                                    {'json': cast(dict[str, Any], item.content)}
+                                ]
+                                tool_result: ToolResultBlockOutputTypeDef = {
+                                    'toolUseId': _utils.guard_tool_call_id(t=item),
+                                    'content': result_content,
+                                    'type': 'nova_code_interpreter_result',
+                                }
+                                if item.provider_details and 'status' in item.provider_details:
+                                    tool_result['status'] = item.provider_details['status']
+                                content.append({'toolResult': tool_result})
+                    elif isinstance(item, CompactionPart | FilePart):
+                        # Compaction and file parts are not sent back to models that don't support them.
+                        pass  # pragma: no cover
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
-                bedrock_messages.append({'role': 'assistant', 'content': content})
+                if content:
+                    bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
                 assert_never(message)
 
@@ -561,78 +1131,255 @@ class BedrockConverseModel(Model):
             processed_messages.append(current_message)
             last_message = cast(dict[str, Any], current_message)
 
-        if instructions := self._get_instructions(messages):
-            system_prompt.insert(0, {'text': instructions})
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            for part in instruction_parts:
+                system_prompt.append({'text': part.content})
+
+        if (
+            system_prompt
+            and (cache_instructions := settings.get('bedrock_cache_instructions'))
+            and profile.get('bedrock_supports_prompt_caching', False)
+        ):
+            cache_point = cast('SystemContentBlockTypeDef', self._get_cache_point(cache_instructions))
+            if instruction_parts and any(p.dynamic for p in instruction_parts):
+                # Insert cache point after the last static instruction (static parts are sorted first)
+                num_pre_instruction_blocks = len(system_prompt) - len(instruction_parts)
+                num_static = sum(1 for p in instruction_parts if not p.dynamic)
+                cache_idx = num_pre_instruction_blocks + num_static
+                if cache_idx > 0:
+                    system_prompt.insert(cache_idx, cache_point)
+            else:
+                # All static or no instruction_parts: cache point at end.
+                system_prompt.append(cache_point)
+
+        if processed_messages and (cache_messages := settings.get('bedrock_cache_messages')):
+            if profile.get('bedrock_supports_prompt_caching', False):
+                last_user_content = self._get_last_user_message_content(processed_messages)
+                if last_user_content is not None:
+                    # Note: `_get_last_user_message_content` ensures content doesn't already end with a `cachePoint`.
+                    _insert_cache_point_before_trailing_documents(
+                        last_user_content, self._get_cache_point(cache_messages)
+                    )
+
+        # Bedrock requires conversations to start with a user message.
+        # This can happen when there are no messages at all (only system prompt/instructions),
+        # or when message_history starts with an assistant response (e.g. from a previous
+        # system-prompt-only run). Prepend a synthetic user message in either case.
+        # Note: Anthropic models on Bedrock reject whitespace-only text, so we use a period.
+        if not processed_messages or processed_messages[0]['role'] != 'user':
+            processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
 
         return system_prompt, processed_messages
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:
+    def _get_last_user_message_content(messages: list[MessageUnionTypeDef]) -> list[Any] | None:
+        """Get the content list from the last user message that can receive a cache point.
+
+        Returns the content list if:
+        - A user message exists
+        - It has a non-empty content list
+        - The last content block doesn't already have a cache point
+
+        Returns None otherwise.
+        """
+        user_messages = [msg for msg in messages if msg.get('role') == 'user']
+        if not user_messages:
+            return None
+
+        content = user_messages[-1].get('content')  # Last user message
+        if not content or not isinstance(content, list) or len(content) == 0:
+            return None
+
+        last_block = content[-1]
+        if not isinstance(last_block, dict):
+            return None
+        if 'cachePoint' in last_block:  # Skip if already has a cache point
+            return None
+        return content
+
+    @staticmethod
+    async def _map_file_to_content_block(
+        file: ImageUrl | DocumentUrl | VideoUrl | BinaryContent,
+        document_count: Iterator[int],
+    ) -> ContentBlockUnionTypeDef:
+        """Map a multimodal file directly to a Bedrock content block."""
+        source: DocumentSourceTypeDef
+
+        if isinstance(file, BinaryContent):
+            source = {'bytes': file.data}
+            if file.is_image:
+                return _make_image_block(file.format, source)
+            elif file.is_document:
+                return _make_document_block(f'Document {next(document_count)}', file.format, source)
+            elif file.is_video:
+                return _make_video_block(file.format, source)
+            else:
+                raise NotImplementedError(f'Unsupported binary content type for Bedrock: {file.media_type}')
+        else:
+            if file.url.startswith('s3://'):
+                source = _parse_s3_source(file.url)
+            else:
+                downloaded = await download_item(file, data_format='bytes', type_format='extension')
+                source = {'bytes': downloaded['data']}
+
+            try:
+                format = file.format
+            except (KeyError, ValueError):
+                format = file.media_type.split('/', 1)[1]
+
+            if isinstance(file, ImageUrl):
+                return _make_image_block(format, source)
+            elif isinstance(file, DocumentUrl):
+                return _make_document_block(f'Document {next(document_count)}', format, source)
+            else:
+                return _make_video_block(format, source)
+
+    async def _map_user_prompt(  # noqa: C901
+        self,
+        part: UserPromptPart,
+        document_count: Iterator[int],
+        *,
+        supports_prompt_caching: bool,
+    ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
             content.append({'text': part.content})
         else:
             for item in part.content:
-                if isinstance(item, str):
-                    content.append({'text': item})
-                elif isinstance(item, BinaryContent):
-                    format = item.format
-                    if item.is_document:
-                        name = f'Document {next(document_count)}'
-                        assert format in ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
-                        content.append({'document': {'name': name, 'format': format, 'source': {'bytes': item.data}}})
-                    elif item.is_image:
-                        assert format in ('jpeg', 'png', 'gif', 'webp')
-                        content.append({'image': {'format': format, 'source': {'bytes': item.data}}})
-                    elif item.is_video:
-                        assert format in ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
-                        content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append({'text': text})
+                elif isinstance(item, (BinaryContent, ImageUrl, DocumentUrl, VideoUrl)):
+                    content.append(await BedrockConverseModel._map_file_to_content_block(item, document_count))
+                elif isinstance(item, AudioUrl):
+                    raise NotImplementedError('AudioUrl is not supported in Bedrock user prompts')
+                elif isinstance(item, UploadedFile):
+                    self._validate_uploaded_file_provider(item)
+                    if not item.file_id.startswith('s3://'):
+                        raise UserError(
+                            f'UploadedFile for Bedrock must use an S3 URL (s3://bucket/key), got: {item.file_id}'
+                        )
+                    source: DocumentSourceTypeDef = _parse_s3_source(item.file_id)
+
+                    try:
+                        format = item.format
+                    except ValueError as e:
+                        raise UserError(f'Unsupported media type for Bedrock UploadedFile: {item.media_type}') from e
+
+                    if item.media_type.startswith('image/'):
+                        content.append(_make_image_block(format, source))
+                    elif item.media_type.startswith('video/'):
+                        content.append(_make_video_block(format, source))
+                    elif item.media_type.startswith('audio/'):
+                        raise UserError('Audio files are not supported for Bedrock UploadedFile')
                     else:
-                        raise NotImplementedError('Binary content is not supported yet.')
-                elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
-                    downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
-                    format = downloaded_item['data_type']
-                    if item.kind == 'image-url':
-                        format = item.media_type.split('/')[1]
-                        assert format in ('jpeg', 'png', 'gif', 'webp'), f'Unsupported image format: {format}'
-                        image: ImageBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
-                        content.append({'image': image})
-
-                    elif item.kind == 'document-url':
-                        name = f'Document {next(document_count)}'
-                        document: DocumentBlockTypeDef = {
-                            'name': name,
-                            'format': item.format,
-                            'source': {'bytes': downloaded_item['data']},
-                        }
-                        content.append({'document': document})
-
-                    elif item.kind == 'video-url':  # pragma: no branch
-                        format = item.media_type.split('/')[1]
-                        assert format in (
-                            'mkv',
-                            'mov',
-                            'mp4',
-                            'webm',
-                            'flv',
-                            'mpeg',
-                            'mpg',
-                            'wmv',
-                            'three_gp',
-                        ), f'Unsupported video format: {format}'
-                        video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
-                        content.append({'video': video})
-                elif isinstance(item, AudioUrl):  # pragma: no cover
-                    raise NotImplementedError('Audio is not supported yet.')
+                        content.append(_make_document_block(f'Document {next(document_count)}', format, source))
+                elif isinstance(item, CachePoint):
+                    if not supports_prompt_caching:
+                        # Silently skip CachePoint for models that don't support prompt caching
+                        continue
+                    if not content or 'cachePoint' in content[-1]:
+                        raise UserError(
+                            'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
+                            'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
+                        )
+                    _insert_cache_point_before_trailing_documents(
+                        content,
+                        BedrockConverseModel._get_cache_point(item.ttl),
+                        raise_if_cannot_insert=True,
+                    )
                 else:
                     assert_never(item)
+        # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Message.html
+        # "If you include a ContentBlock with a document field, you must also include a ContentBlock with a text field."
+        has_document = any('document' in block for block in content)
+        has_text = any('text' in block for block in content)
+        if has_document and not has_text:
+            content.insert(0, {'text': 'See attached document(s).'})
         return [{'role': 'user', 'content': content}]
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
         return {
-            'toolUse': {'toolUseId': _utils.guard_tool_call_id(t=t), 'name': t.tool_name, 'input': t.args_as_dict()}
+            'toolUse': {
+                'toolUseId': _utils.guard_tool_call_id(t=t),
+                'name': _utils.sanitize_tool_name(t.tool_name),
+                'input': t.args_as_dict(),
+            }
         }
+
+    @staticmethod
+    def _get_cache_point(cache_setting: bool | Literal['5m', '1h']) -> ContentBlockUnionTypeDef:
+        cache_point: CachePointBlockTypeDef = {'type': 'default'}
+        if isinstance(cache_setting, str):
+            cache_point['ttl'] = cache_setting
+        return cast('ContentBlockUnionTypeDef', {'cachePoint': cache_point})
+
+    @staticmethod
+    def _limit_cache_points(
+        system_prompt: list[SystemContentBlockTypeDef],
+        bedrock_messages: list[MessageUnionTypeDef],
+        tools: list[ToolTypeDef],
+    ) -> None:
+        """Limit the number of cache points in the request to Bedrock's maximum.
+
+        Bedrock enforces a maximum of 4 cache points per request. This method ensures
+        compliance by counting existing cache points and removing excess ones from messages.
+
+        Strategy:
+        1. Count cache points in system_prompt
+        2. Count cache points in tools
+        3. Raise UserError if system + tools already exceed MAX_CACHE_POINTS
+        4. Calculate remaining budget for message cache points
+        5. Traverse messages from newest to oldest, keeping the most recent cache points
+           within the remaining budget
+        6. Remove excess cache points from older messages to stay within limit
+
+        Cache point priority (always preserved):
+        - System prompt cache points
+        - Tool definition cache points
+        - Message cache points (newest first, oldest removed if needed)
+
+        Raises:
+            UserError: If system_prompt and tools combined already exceed MAX_CACHE_POINTS (4).
+                      This indicates a configuration error that cannot be auto-fixed.
+        """
+        MAX_CACHE_POINTS = 4
+
+        # Count existing cache points in system prompt
+        used_cache_points = sum(1 for block in system_prompt if 'cachePoint' in block)
+
+        # Count existing cache points in tools
+        for tool in tools:
+            if 'cachePoint' in tool:
+                used_cache_points += 1
+
+        # Calculate remaining cache points budget for messages
+        remaining_budget = MAX_CACHE_POINTS - used_cache_points
+        if remaining_budget < 0:  # pragma: no cover
+            raise UserError(
+                f'Too many cache points for Bedrock request. '
+                f'System prompt and tool definitions already use {used_cache_points} cache points, '
+                f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
+            )
+
+        # Remove excess cache points from messages (newest to oldest)
+        for message in reversed(bedrock_messages):
+            content = message.get('content')
+            if not content or not isinstance(content, list):  # pragma: no cover
+                continue
+
+            # Build a new content list, keeping only cache points within budget
+            new_content: list[Any] = []
+            for block in reversed(content):  # Process newest first
+                is_cache_point = isinstance(block, dict) and 'cachePoint' in block
+                if is_cache_point:
+                    if remaining_budget > 0:
+                        remaining_budget -= 1
+                        new_content.append(block)
+                else:
+                    new_content.append(block)
+            message['content'] = list(reversed(new_content))  # Restore original order
 
 
 @dataclass
@@ -642,81 +1389,137 @@ class BedrockStreamedResponse(StreamedResponse):
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
+    _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
 
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return (BotoCoreError, ClientError)
+
+    async def close_stream(self) -> None:
+        await anyio.to_thread.run_sync(self._event_stream.close)
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
+        with _map_api_errors(self._model_name):
+            if self._provider_response_id is not None:
+                self.provider_response_id = self._provider_response_id
 
-        This method should be implemented by subclasses to translate the vendor-specific stream of events into
-        pydantic_ai-format events.
-        """
-        if self._provider_response_id is not None:  # pragma: no cover
-            self.provider_response_id = self._provider_response_id
+            chunk: ConverseStreamOutputTypeDef
+            tool_ids: dict[int, str] = {}
 
-        chunk: ConverseStreamOutputTypeDef
-        tool_id: str | None = None
-        async for chunk in _AsyncIteratorWrapper(self._event_stream):
-            match chunk:
-                case {'messageStart': _}:
-                    continue
-                case {'messageStop': message_stop}:
-                    raw_finish_reason = message_stop['stopReason']
-                    self.provider_details = {'finish_reason': raw_finish_reason}
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-                case {'metadata': metadata}:
-                    if 'usage' in metadata:  # pragma: no branch
-                        self._usage += self._map_usage(metadata)
-                case {'contentBlockStart': content_block_start}:
-                    index = content_block_start['contentBlockIndex']
-                    start = content_block_start['start']
-                    if 'toolUse' in start:  # pragma: no branch
-                        tool_use_start = start['toolUse']
-                        tool_id = tool_use_start['toolUseId']
-                        tool_name = tool_use_start['name']
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=index,
-                            tool_name=tool_name,
-                            args=None,
-                            tool_call_id=tool_id,
-                        )
-                        if maybe_event:  # pragma: no branch
-                            yield maybe_event
-                case {'contentBlockDelta': content_block_delta}:
-                    index = content_block_delta['contentBlockIndex']
-                    delta = content_block_delta['delta']
-                    if 'reasoningContent' in delta:
-                        if redacted_content := delta['reasoningContent'].get('redactedContent'):
-                            yield self._parts_manager.handle_thinking_delta(
+            # Bedrock has deltas for built-in tool returns, which aren't supported by parts manager.
+            # We accumulate the deltas here and yield the complete return part once the content block ends
+            builtin_tool_returns: dict[int, NativeToolReturnPart] = {}
+
+            async for chunk in _AsyncIteratorWrapper(self._event_stream):
+                match chunk:
+                    case {'messageStart': _}:
+                        continue
+                    case {'messageStop': message_stop}:
+                        raw_finish_reason = message_stop['stopReason']
+                        self.provider_details = {'finish_reason': raw_finish_reason}
+                        self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    case {'metadata': metadata}:
+                        if 'usage' in metadata:  # pragma: no branch
+                            self._usage += self._map_usage(metadata)
+                    case {'contentBlockStart': content_block_start}:
+                        index = content_block_start['contentBlockIndex']
+                        start = content_block_start['start']
+                        if 'toolUse' in start:
+                            tool_use_start = start['toolUse']
+                            tool_id = tool_use_start['toolUseId']
+                            tool_ids[index] = tool_id
+                            tool_name = tool_use_start['name']
+                            if tool_use_start.get('type') == 'server_tool_use':
+                                if tool_name == 'nova_code_interpreter':  # pragma: no branch
+                                    part = NativeToolCallPart(
+                                        tool_name=CodeExecutionTool.kind,
+                                        tool_call_id=tool_id,
+                                        provider_name=self.provider_name,
+                                    )
+                                    part.otel_metadata = {'code_arg_name': 'snippet', 'code_arg_language': 'python'}
+                                    yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
+                            elif maybe_event := self._parts_manager.handle_tool_call_delta(
                                 vendor_part_id=index,
-                                id='redacted_content',
-                                signature=redacted_content.decode('utf-8'),
-                                provider_name=self.provider_name,
-                            )
-                        else:
-                            signature = delta['reasoningContent'].get('signature')
-                            yield self._parts_manager.handle_thinking_delta(
+                                tool_name=tool_name,
+                                args=None,
+                                tool_call_id=tool_id,
+                            ):  # pragma: no branch
+                                yield maybe_event
+                        elif 'toolResult' in start:  # pragma: no branch
+                            tool_result_start = start['toolResult']
+                            tool_id = tool_result_start['toolUseId']
+
+                            if tool_result_start.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                                return_part = NativeToolReturnPart(
+                                    provider_name=self.provider_name,
+                                    tool_name=CodeExecutionTool.kind,
+                                    content=None,
+                                    tool_call_id=tool_id,
+                                    provider_details={'status': tool_result_start['status']}
+                                    if 'status' in tool_result_start
+                                    else {},
+                                )
+                                builtin_tool_returns[index] = return_part
+                                # Don't yield anything yet - we wait for content block end
+
+                    case {'contentBlockDelta': content_block_delta}:
+                        index = content_block_delta['contentBlockIndex']
+                        delta = content_block_delta['delta']
+                        if 'reasoningContent' in delta:
+                            if redacted_content := delta['reasoningContent'].get('redactedContent'):
+                                for event in self._parts_manager.handle_thinking_delta(
+                                    vendor_part_id=index,
+                                    id='redacted_content',
+                                    signature=redacted_content.decode('utf-8'),
+                                    provider_name=self.provider_name,
+                                ):
+                                    yield event
+                            else:
+                                signature = delta['reasoningContent'].get('signature')
+                                for event in self._parts_manager.handle_thinking_delta(
+                                    vendor_part_id=index,
+                                    content=delta['reasoningContent'].get('text'),
+                                    signature=signature,
+                                    provider_name=self.provider_name if signature else None,
+                                ):
+                                    yield event
+                        if text := delta.get('text'):
+                            for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
+                                yield event
+                        if 'toolUse' in delta:
+                            tool_use = delta['toolUse']
+                            maybe_event = self._parts_manager.handle_tool_call_delta(
                                 vendor_part_id=index,
-                                content=delta['reasoningContent'].get('text'),
-                                signature=signature,
-                                provider_name=self.provider_name if signature else None,
+                                tool_name=tool_use.get('name'),
+                                args=tool_use.get('input'),
+                                tool_call_id=tool_ids[index],
                             )
-                    if text := delta.get('text'):
-                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=text)
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
-                    if 'toolUse' in delta:
-                        tool_use = delta['toolUse']
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=index,
-                            tool_name=tool_use.get('name'),
-                            args=tool_use.get('input'),
-                            tool_call_id=tool_id,
-                        )
-                        if maybe_event:  # pragma: no branch
-                            yield maybe_event
-                case _:
-                    pass  # pyright wants match statements to be exhaustive
+                            if maybe_event:  # pragma: no branch
+                                yield maybe_event
+                        if 'toolResult' in delta:  # pragma: no branch
+                            if (
+                                return_part := builtin_tool_returns.get(index)
+                            ) and return_part.tool_name == CodeExecutionTool.kind:  # pragma: no branch
+                                # For now, only process `contentBlockDelta.toolResult` for Code Exe tool.
+
+                                if tr_content := delta['toolResult']:  # pragma: no branch
+                                    # Goal here is to convert to object form.
+                                    # This assumes the first item is the relevant one.
+                                    return_part.content = tr_content[0].get('json')
+
+                                # Don't yield anything yet - we wait for content block end
+
+                    case {'contentBlockStop': content_block_stop}:
+                        index = content_block_stop['contentBlockIndex']
+                        if return_part := builtin_tool_returns.get(index):
+                            # Emit the complete built-in tool return only once when the block closes.
+                            yield self._parts_manager.handle_part(vendor_part_id=index, part=return_part)
+                        tool_ids.pop(index, None)
+                        builtin_tool_returns.pop(index, None)
+
+                    case _:  # pragma: no cover
+                        pass  # pyright wants match statements to be exhaustive
 
     @property
     def model_name(self) -> str:
@@ -729,13 +1532,24 @@ class BedrockStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_url(self) -> str:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    @property
     def timestamp(self) -> datetime:
         return self._timestamp
 
     def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
+        input_tokens = metadata['usage']['inputTokens']
+        output_tokens = metadata['usage']['outputTokens']
+        cache_read_tokens = metadata['usage'].get('cacheReadInputTokens', 0)
+        cache_write_tokens = metadata['usage'].get('cacheWriteInputTokens', 0)
         return usage.RequestUsage(
-            input_tokens=metadata['usage']['inputTokens'],
-            output_tokens=metadata['usage']['outputTokens'],
+            input_tokens=input_tokens + cache_write_tokens + cache_read_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
 
 
@@ -756,3 +1570,53 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise StopAsyncIteration
             else:
                 raise e  # pragma: lax no cover
+
+
+def _is_thinking_enabled(
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters | None = None,
+) -> bool:
+    if model_request_parameters is not None and model_request_parameters.thinking:
+        return True
+    if model_settings:
+        if model_settings.get('thinking'):
+            return True
+        if (
+            (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
+            and (thinking := additional_fields.get('thinking'))
+            and thinking.get('type') in ('enabled', 'adaptive')
+        ):
+            return True
+    return False
+
+
+def _support_tool_forcing(
+    model_name: str,
+    profile: BedrockModelProfile,
+    model_settings: BedrockModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+    effective_tool_choice: ResolvedToolChoice,
+) -> bool:
+    """Check if model supports tool forcing, raising UserError if explicitly requested but unsupported.
+
+    Also checks for thinking mode compatibility - Bedrock/Anthropic don't support tool forcing with thinking enabled.
+    """
+    if not profile.get('bedrock_supports_tool_choice', False):
+        explicit_choice = (model_settings or {}).get('tool_choice')
+        if explicit_choice == 'required' or isinstance(explicit_choice, list):
+            raise UserError(
+                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
+                f'This model does not support forcing tool use.'
+            )
+        return False
+
+    if _is_thinking_enabled(model_settings, model_request_parameters):
+        explicit_choice = (model_settings or {}).get('tool_choice')
+        if explicit_choice == 'required' or isinstance(explicit_choice, list):
+            raise UserError(
+                "Bedrock does not support forcing specific tools with thinking mode. Disable thinking or use `tool_choice='auto'`."
+            )
+        if effective_tool_choice == 'required' or isinstance(effective_tool_choice, tuple):
+            return False
+
+    return True

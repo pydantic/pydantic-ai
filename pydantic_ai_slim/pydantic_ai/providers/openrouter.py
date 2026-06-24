@@ -7,8 +7,10 @@ import httpx
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -31,6 +33,85 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+class OpenRouterModelProfile(OpenAIModelProfile, total=False):
+    """Profile for models used with OpenRouterModel.
+
+    ALL FIELDS MUST BE `openrouter_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    openrouter_supports_cache_control: bool
+    """Whether the downstream provider supports explicit `cache_control` breakpoints via OpenRouter."""
+    openrouter_supports_cache_ttl: bool
+    """Whether the downstream provider supports TTL in `cache_control`."""
+    openrouter_supports_tool_cache: bool
+    """Whether the downstream provider supports `cache_control` on tool definitions."""
+    openrouter_supports_dynamic_instruction_cache: bool
+    """Whether instruction cache boundaries can exclude later dynamic instruction blocks."""
+    openrouter_max_cache_points: int | None
+    """Maximum number of `cache_control` breakpoints the downstream provider allows per request.
+
+    Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
+    from messages (newest kept first). `None` means no limit."""
+
+
+class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
+    """Legacy Google JSON schema transformer for OpenRouter compatibility.
+
+    OpenRouter's compatibility layer doesn't fully support modern JSON Schema features
+    like $defs/$ref and anyOf for nullable types. This transformer restores v1.19.0
+    behavior by inlining definitions and simplifying nullable unions.
+
+    See: https://github.com/pydantic/pydantic-ai/issues/3617
+    """
+
+    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+        super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
+
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        # Remove properties not supported by Gemini
+        schema.pop('$schema', None)
+        schema.pop('title', None)
+        schema.pop('discriminator', None)
+        schema.pop('examples', None)
+        schema.pop('exclusiveMaximum', None)
+        schema.pop('exclusiveMinimum', None)
+
+        if (const := schema.pop('const', None)) is not None:
+            schema['enum'] = [const]
+
+        # Convert enums to string type (legacy Gemini requirement)
+        if enum := schema.get('enum'):
+            schema['type'] = 'string'
+            schema['enum'] = [str(val) for val in enum]
+
+        # Convert oneOf to anyOf for discriminated unions
+        if 'oneOf' in schema and 'type' not in schema:
+            schema['anyOf'] = schema.pop('oneOf')
+
+        # Handle string format -> description
+        type_ = schema.get('type')
+        if type_ == 'string' and (fmt := schema.pop('format', None)):
+            description = schema.get('description')
+            if description:
+                schema['description'] = f'{description} (format: {fmt})'
+            else:
+                schema['description'] = f'Format: {fmt}'
+
+        return schema
+
+
+def _openrouter_google_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Google model accessed via OpenRouter.
+
+    Uses the legacy transformer to maintain compatibility with OpenRouter's
+    translation layer, which doesn't fully support modern JSON Schema features.
+    """
+    profile = google_model_profile(model_name)
+    if profile is None:  # pragma: no cover
+        return None
+    return merge_profile(profile, ModelProfile(json_schema_transformer=_OpenRouterGoogleJsonSchemaTransformer))
+
+
 class OpenRouterProvider(Provider[AsyncOpenAI]):
     """Provider for OpenRouter API."""
 
@@ -46,9 +127,10 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
-            'google': google_model_profile,
+            'google': _openrouter_google_model_profile,
             'openai': openai_model_profile,
             'anthropic': anthropic_model_profile,
             'mistralai': mistral_model_profile,
@@ -63,48 +145,117 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        provider, model_name = model_name.split('/', 1)
+        # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
+        # alias marker before using the provider prefix for profile selection.
+        provider, model_name = model_name.removeprefix('~').split('/', 1)
         if provider in provider_to_profile:
             model_name, *_ = model_name.split(':', 1)  # drop tags
+            if provider == 'anthropic':
+                model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
 
-        # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        # Cache capability flags are set on the gateway layer based on the downstream provider.
+        # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
+        # coincide with `supports_anthropic_cache` today: they model independent OpenRouter cache
+        # capabilities that merely happen to line up on the current Anthropic-only provider set, so a
+        # future non-Anthropic downstream can enable any of them independently without re-coupling them.
+        supports_cache_control = provider in ('anthropic', 'google')
+        supports_anthropic_cache = provider == 'anthropic'
+
+        # Three-layer merge:
+        # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
+        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
+        # 2. Upstream profile — model-specific traits from the lab's profile function.
+        # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
+        #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
+        #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
+        #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
+        #    accepts the older `max_tokens` field, so `openai_chat_supports_max_completion_tokens=False`.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            OpenRouterModelProfile(
+                openai_chat_send_back_thinking_parts='field',
+                openai_chat_thinking_field='reasoning',
+                openai_chat_supports_file_urls=True,
+                openai_chat_supports_web_search=True,
+                openai_chat_supports_max_completion_tokens=False,
+                supports_thinking=True,
+                openrouter_supports_cache_control=supports_cache_control,
+                openrouter_supports_cache_ttl=supports_anthropic_cache,
+                openrouter_supports_tool_cache=supports_anthropic_cache,
+                openrouter_supports_dynamic_instruction_cache=supports_anthropic_cache,
+                openrouter_max_cache_points=4 if supports_anthropic_cache else None,
+            ),
+        )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
-
-    @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
-
-    @overload
-    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
-
-    @overload
-    def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        app_url: str | None = None,
+        app_title: str | None = None,
+        openai_client: None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
+        app_url: str | None = None,
+        app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        """Configure the provider with either an API key or prebuilt client.
+
+        Args:
+            api_key: OpenRouter API key. Falls back to `OPENROUTER_API_KEY`
+                when omitted and required unless `openai_client` is provided.
+            app_url: Optional url for app attribution. Falls back to
+                `OPENROUTER_APP_URL` when omitted.
+            app_title: Optional title for app attribution. Falls back to
+                `OPENROUTER_APP_TITLE` when omitted.
+            openai_client: Existing `AsyncOpenAI` client to reuse instead of
+                creating one internally.
+            http_client: Custom `httpx.AsyncClient` to pass into the
+                `AsyncOpenAI` constructor when building a client.
+
+        Raises:
+            UserError: If no API key is available and no `openai_client` is
+                provided.
+        """
         api_key = api_key or os.getenv('OPENROUTER_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `OPENROUTER_API_KEY` environment variable or pass it via `OpenRouterProvider(api_key=...)`'
-                'to use the OpenRouter provider.'
+                ' to use the OpenRouter provider.'
             )
+
+        attribution_headers: dict[str, str] = {}
+        if http_referer := app_url or os.getenv('OPENROUTER_APP_URL'):
+            attribution_headers['HTTP-Referer'] = http_referer
+        if x_title := app_title or os.getenv('OPENROUTER_APP_TITLE'):
+            attribution_headers['X-Title'] = x_title
 
         if openai_client is not None:
             self._client = openai_client
         elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
+            )
         else:
-            http_client = cached_async_http_client(provider='openrouter')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+            http_client = create_async_http_client()
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_http_client
+            self._client = AsyncOpenAI(
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
+            )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

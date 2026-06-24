@@ -6,10 +6,14 @@ from textwrap import dedent
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
 from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
 from pydantic_ai import Agent
-from pydantic_ai.ui.ag_ui.app import AGUIApp
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 StepStatus = Literal['pending', 'completed']
 
@@ -27,7 +31,9 @@ class Step(BaseModel):
 class Plan(BaseModel):
     """Represents a plan with multiple steps."""
 
-    steps: list[Step] = Field(default_factory=list, description='The steps in the plan')
+    steps: list[Step] = Field(
+        default_factory=list[Step], description='The steps in the plan'
+    )
 
 
 class JSONPatchOp(BaseModel):
@@ -117,4 +123,8 @@ async def update_plan_step(
     )
 
 
-app = AGUIApp(agent)
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])

@@ -7,24 +7,27 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import json
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, Literal, TypeVar, overload
+from types import TracebackType
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import TypeAliasType, TypedDict
+from typing_extensions import Self, TypeAliasType, TypedDict
+from typing_inspection.introspection import get_literal_values
 
-from .. import _utils
+from .. import _deferred_capabilities, _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition
+from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool
+from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -33,295 +36,163 @@ from ..messages import (
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    UploadedFile,
+    UserPromptPart,
     VideoUrl,
 )
-from ..output import OutputMode
-from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-from ..providers import infer_provider
-from ..settings import ModelSettings, merge_model_settings
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..native_tools._tool_search import ToolSearchTool
+from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
+from ..profiles import DEFAULT_PROFILE, DEFAULT_PROMPTED_OUTPUT_TEMPLATE, ModelProfile, ModelProfileSpec, merge_profile
+from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._known_model_names import KnownModelName as KnownModelName
 
-KnownModelName = TypeAliasType(
-    'KnownModelName',
+DEFAULT_HTTP_TIMEOUT: int = 600
+"""Default HTTP timeout in seconds for API requests.
+
+This matches the default timeout used by OpenAI's Python client.
+See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
+"""
+
+
+@cache
+def known_model_names() -> tuple[str, ...]:
+    """Return every model name known to [`KnownModelName`][pydantic_ai.models.KnownModelName].
+
+    This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
+    the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
+    not part of the public API and would break if the alias were ever recomposed.
+    """
+    return tuple(get_literal_values(KnownModelName.__value__, unpack_type_aliases='eager'))
+
+
+OpenAIChatCompatibleProvider = TypeAliasType(
+    'OpenAIChatCompatibleProvider',
     Literal[
-        'anthropic:claude-3-5-haiku-20241022',
-        'anthropic:claude-3-5-haiku-latest',
-        'anthropic:claude-3-5-sonnet-20240620',
-        'anthropic:claude-3-5-sonnet-20241022',
-        'anthropic:claude-3-5-sonnet-latest',
-        'anthropic:claude-haiku-4-5',
-        'anthropic:claude-haiku-4-5-20251001',
-        'anthropic:claude-3-7-sonnet-20250219',
-        'anthropic:claude-3-7-sonnet-latest',
-        'anthropic:claude-3-haiku-20240307',
-        'anthropic:claude-3-opus-20240229',
-        'anthropic:claude-3-opus-latest',
-        'anthropic:claude-4-opus-20250514',
-        'anthropic:claude-4-sonnet-20250514',
-        'anthropic:claude-opus-4-0',
-        'anthropic:claude-opus-4-1-20250805',
-        'anthropic:claude-opus-4-20250514',
-        'anthropic:claude-sonnet-4-0',
-        'anthropic:claude-sonnet-4-20250514',
-        'anthropic:claude-sonnet-4-5',
-        'anthropic:claude-sonnet-4-5-20250929',
-        'bedrock:amazon.titan-tg1-large',
-        'bedrock:amazon.titan-text-lite-v1',
-        'bedrock:amazon.titan-text-express-v1',
-        'bedrock:us.amazon.nova-pro-v1:0',
-        'bedrock:us.amazon.nova-lite-v1:0',
-        'bedrock:us.amazon.nova-micro-v1:0',
-        'bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
-        'bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-        'bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
-        'bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
-        'bedrock:anthropic.claude-instant-v1',
-        'bedrock:anthropic.claude-v2:1',
-        'bedrock:anthropic.claude-v2',
-        'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
-        'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
-        'bedrock:anthropic.claude-3-haiku-20240307-v1:0',
-        'bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
-        'bedrock:anthropic.claude-3-opus-20240229-v1:0',
-        'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
-        'bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
-        'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-        'bedrock:anthropic.claude-opus-4-20250514-v1:0',
-        'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
-        'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
-        'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
-        'bedrock:cohere.command-text-v14',
-        'bedrock:cohere.command-r-v1:0',
-        'bedrock:cohere.command-r-plus-v1:0',
-        'bedrock:cohere.command-light-text-v14',
-        'bedrock:meta.llama3-8b-instruct-v1:0',
-        'bedrock:meta.llama3-70b-instruct-v1:0',
-        'bedrock:meta.llama3-1-8b-instruct-v1:0',
-        'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
-        'bedrock:meta.llama3-1-70b-instruct-v1:0',
-        'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
-        'bedrock:meta.llama3-1-405b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-1b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-3b-instruct-v1:0',
-        'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
-        'bedrock:mistral.mistral-7b-instruct-v0:2',
-        'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
-        'bedrock:mistral.mistral-large-2402-v1:0',
-        'bedrock:mistral.mistral-large-2407-v1:0',
-        'cerebras:gpt-oss-120b',
-        'cerebras:llama3.1-8b',
-        'cerebras:llama-3.3-70b',
-        'cerebras:llama-4-scout-17b-16e-instruct',
-        'cerebras:llama-4-maverick-17b-128e-instruct',
-        'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:qwen-3-32b',
-        'cerebras:qwen-3-coder-480b',
-        'cerebras:qwen-3-235b-a22b-thinking-2507',
-        'cohere:c4ai-aya-expanse-32b',
-        'cohere:c4ai-aya-expanse-8b',
-        'cohere:command-nightly',
-        'cohere:command-r-08-2024',
-        'cohere:command-r-plus-08-2024',
-        'cohere:command-r7b-12-2024',
-        'deepseek:deepseek-chat',
-        'deepseek:deepseek-reasoner',
-        'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.0-flash-lite',
-        'google-gla:gemini-2.5-flash',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
-        'google-gla:gemini-flash-latest',
-        'google-gla:gemini-2.5-flash-lite',
-        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-flash-lite-latest',
-        'google-gla:gemini-2.5-pro',
-        'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.0-flash-lite',
-        'google-vertex:gemini-2.5-flash',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
-        'google-vertex:gemini-flash-latest',
-        'google-vertex:gemini-2.5-flash-lite',
-        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-flash-lite-latest',
-        'google-vertex:gemini-2.5-pro',
-        'grok:grok-4',
-        'grok:grok-4-0709',
-        'grok:grok-3',
-        'grok:grok-3-mini',
-        'grok:grok-3-fast',
-        'grok:grok-3-mini-fast',
-        'grok:grok-2-vision-1212',
-        'grok:grok-2-image-1212',
-        'groq:distil-whisper-large-v3-en',
-        'groq:gemma2-9b-it',
-        'groq:llama-3.3-70b-versatile',
-        'groq:llama-3.1-8b-instant',
-        'groq:llama-guard-3-8b',
-        'groq:llama3-70b-8192',
-        'groq:llama3-8b-8192',
-        'groq:moonshotai/kimi-k2-instruct',
-        'groq:whisper-large-v3',
-        'groq:whisper-large-v3-turbo',
-        'groq:playai-tts',
-        'groq:playai-tts-arabic',
-        'groq:qwen-qwq-32b',
-        'groq:mistral-saba-24b',
-        'groq:qwen-2.5-coder-32b',
-        'groq:qwen-2.5-32b',
-        'groq:deepseek-r1-distill-qwen-32b',
-        'groq:deepseek-r1-distill-llama-70b',
-        'groq:llama-3.3-70b-specdec',
-        'groq:llama-3.2-1b-preview',
-        'groq:llama-3.2-3b-preview',
-        'groq:llama-3.2-11b-vision-preview',
-        'groq:llama-3.2-90b-vision-preview',
-        'heroku:claude-3-5-haiku',
-        'heroku:claude-3-5-sonnet-latest',
-        'heroku:claude-3-7-sonnet',
-        'heroku:claude-4-sonnet',
-        'heroku:claude-3-haiku',
-        'heroku:gpt-oss-120b',
-        'heroku:nova-lite',
-        'heroku:nova-pro',
-        'huggingface:Qwen/QwQ-32B',
-        'huggingface:Qwen/Qwen2.5-72B-Instruct',
-        'huggingface:Qwen/Qwen3-235B-A22B',
-        'huggingface:Qwen/Qwen3-32B',
-        'huggingface:deepseek-ai/DeepSeek-R1',
-        'huggingface:meta-llama/Llama-3.3-70B-Instruct',
-        'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
-        'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
-        'mistral:codestral-latest',
-        'mistral:mistral-large-latest',
-        'mistral:mistral-moderation-latest',
-        'mistral:mistral-small-latest',
-        'moonshotai:moonshot-v1-8k',
-        'moonshotai:moonshot-v1-32k',
-        'moonshotai:moonshot-v1-128k',
-        'moonshotai:moonshot-v1-8k-vision-preview',
-        'moonshotai:moonshot-v1-32k-vision-preview',
-        'moonshotai:moonshot-v1-128k-vision-preview',
-        'moonshotai:kimi-latest',
-        'moonshotai:kimi-thinking-preview',
-        'moonshotai:kimi-k2-0711-preview',
-        'openai:chatgpt-4o-latest',
-        'openai:codex-mini-latest',
-        'openai:gpt-3.5-turbo',
-        'openai:gpt-3.5-turbo-0125',
-        'openai:gpt-3.5-turbo-0301',
-        'openai:gpt-3.5-turbo-0613',
-        'openai:gpt-3.5-turbo-1106',
-        'openai:gpt-3.5-turbo-16k',
-        'openai:gpt-3.5-turbo-16k-0613',
-        'openai:gpt-4',
-        'openai:gpt-4-0125-preview',
-        'openai:gpt-4-0314',
-        'openai:gpt-4-0613',
-        'openai:gpt-4-1106-preview',
-        'openai:gpt-4-32k',
-        'openai:gpt-4-32k-0314',
-        'openai:gpt-4-32k-0613',
-        'openai:gpt-4-turbo',
-        'openai:gpt-4-turbo-2024-04-09',
-        'openai:gpt-4-turbo-preview',
-        'openai:gpt-4-vision-preview',
-        'openai:gpt-4.1',
-        'openai:gpt-4.1-2025-04-14',
-        'openai:gpt-4.1-mini',
-        'openai:gpt-4.1-mini-2025-04-14',
-        'openai:gpt-4.1-nano',
-        'openai:gpt-4.1-nano-2025-04-14',
-        'openai:gpt-4o',
-        'openai:gpt-4o-2024-05-13',
-        'openai:gpt-4o-2024-08-06',
-        'openai:gpt-4o-2024-11-20',
-        'openai:gpt-4o-audio-preview',
-        'openai:gpt-4o-audio-preview-2024-10-01',
-        'openai:gpt-4o-audio-preview-2024-12-17',
-        'openai:gpt-4o-audio-preview-2025-06-03',
-        'openai:gpt-4o-mini',
-        'openai:gpt-4o-mini-2024-07-18',
-        'openai:gpt-4o-mini-audio-preview',
-        'openai:gpt-4o-mini-audio-preview-2024-12-17',
-        'openai:gpt-4o-mini-search-preview',
-        'openai:gpt-4o-mini-search-preview-2025-03-11',
-        'openai:gpt-4o-search-preview',
-        'openai:gpt-4o-search-preview-2025-03-11',
-        'openai:gpt-5',
-        'openai:gpt-5-2025-08-07',
-        'openai:o1',
-        'openai:gpt-5-chat-latest',
-        'openai:o1-2024-12-17',
-        'openai:gpt-5-mini',
-        'openai:o1-mini',
-        'openai:gpt-5-mini-2025-08-07',
-        'openai:o1-mini-2024-09-12',
-        'openai:gpt-5-nano',
-        'openai:o1-preview',
-        'openai:gpt-5-nano-2025-08-07',
-        'openai:o1-preview-2024-09-12',
-        'openai:o1-pro',
-        'openai:o1-pro-2025-03-19',
-        'openai:o3',
-        'openai:o3-2025-04-16',
-        'openai:o3-deep-research',
-        'openai:o3-deep-research-2025-06-26',
-        'openai:o3-mini',
-        'openai:o3-mini-2025-01-31',
-        'openai:o4-mini',
-        'openai:o4-mini-2025-04-16',
-        'openai:o4-mini-deep-research',
-        'openai:o4-mini-deep-research-2025-06-26',
-        'openai:o3-pro',
-        'openai:o3-pro-2025-06-10',
-        'openai:computer-use-preview',
-        'openai:computer-use-preview-2025-03-11',
-        'test',
+        'alibaba',
+        'azure',
+        'cerebras',
+        'deepseek',
+        'fireworks',
+        'github',
+        'heroku',
+        'litellm',
+        'moonshotai',
+        'nebius',
+        'ollama',
+        'openrouter',
+        'ovhcloud',
+        'sambanova',
+        'together',
+        'vercel',
     ],
 )
-"""Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
-
-`KnownModelName` is provided as a concise way to specify a model.
-"""
+OpenAIResponsesCompatibleProvider = TypeAliasType(
+    'OpenAIResponsesCompatibleProvider',
+    Literal[
+        'azure',
+        'deepseek',
+        'fireworks',
+        'nebius',
+        'openrouter',
+        'ovhcloud',
+        'sambanova',
+        'together',
+    ],
+)
 
 
 @dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
-    function_tools: list[ToolDefinition] = field(default_factory=list)
-    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
+    function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
+    native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
-    output_tools: list[ToolDefinition] = field(default_factory=list)
+    output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
+    prompted_output_template: str | Literal[False] | None = None
     allow_text_output: bool = True
     allow_image_output: bool = False
+
+    instruction_parts: list[InstructionPart] | None = None
+    """Structured instruction parts with metadata about their origin (static vs dynamic).
+
+    Static instructions (`dynamic=False`) come from literal strings passed to `Agent(instructions=...)`.
+    Dynamic instructions (`dynamic=True`) come from `@agent.instructions` functions, `TemplateStr`,
+    or toolset `get_instructions()` methods.
+
+    Models that support granular caching (e.g. Anthropic, Bedrock) use this to place cache
+    boundaries at the static/dynamic instruction boundary.
+    """
+
+    thinking: ThinkingLevel | None = None
+    """Resolved thinking/reasoning configuration for this request.
+
+    `None` means the model should use its default behavior. Set by the base
+    `Model.prepare_request()` from the unified `thinking` field in `ModelSettings`,
+    after checking that the model's profile supports thinking.
+    """
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
+    @cached_property
+    def prompted_output_instructions(self) -> str | None:
+        if self.prompted_output_template and self.output_object:
+            return StructuredTextOutputSchema.build_instructions(self.prompted_output_template, self.output_object)
+        return None
+
+    def with_default_output_mode(self, output_mode: StructuredOutputMode) -> ModelRequestParameters:
+        """Set the default output mode if the current mode is 'auto', atomically updating allow_text_output.
+
+        No-op if the current output_mode is not 'auto'. This ensures the two fields stay in sync —
+        output_mode='tool' implies allow_text_output=False, while 'native' and 'prompted' imply
+        allow_text_output=True.
+        """
+        if self.output_mode != 'auto':
+            return self
+        return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-class Model(ABC):
+@dataclass(kw_only=True)
+class ModelRequestContext:
+    """Context for model request hooks.
+
+    Wrapping these parameters in a dataclass instead of a tuple makes the signature
+    future-proof: new fields can be added without breaking existing implementations.
+    """
+
+    model: Model
+    messages: list[ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: ModelRequestParameters
+
+
+class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
+    _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
     _settings: ModelSettings | None = None
 
@@ -341,6 +212,27 @@ class Model(ABC):
         self._profile = profile
 
     @property
+    def provider(self) -> Provider[InterfaceClient] | None:
+        """The provider for this model, if any."""
+        return getattr(self, '_provider', None)
+
+    async def __aenter__(self) -> Self:
+        """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
+        if self.provider is not None:
+            await self.provider.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        """Exit the model context, closing the provider's HTTP client if it owns one."""
+        if self.provider is not None:
+            await self.provider.__aexit__(exc_type, exc_val, exc_tb)
+
+    @property
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
         return self._settings
@@ -352,7 +244,10 @@ class Model(ABC):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        """Make a request to the model."""
+        """Make a request to the model.
+
+        This is ultimately called by `pydantic_ai._agent_graph.ModelRequestNode._make_request(...)`.
+        """
         raise NotImplementedError()
 
     async def count_tokens(
@@ -365,6 +260,20 @@ class Model(ABC):
         # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
         raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
 
+    async def compact_messages(
+        self,
+        request_context: ModelRequestContext,
+        *,
+        instructions: str | None = None,
+    ) -> ModelResponse:
+        """Compact messages to reduce conversation context size.
+
+        This method is optional and only supported by specific providers
+        (e.g. OpenAI Responses API). Providers that support compaction
+        override this method with their implementation.
+        """
+        raise NotImplementedError(f'Message compaction is not supported by {self.__class__.__name__}')
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -372,7 +281,7 @@ class Model(ABC):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
         # This method is not required, but you need to implement it if you want to support streamed responses
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')
@@ -387,7 +296,7 @@ class Model(ABC):
         In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
         for vendor/model-specific reasons.
         """
-        if transformer := self.profile.json_schema_transformer:
+        if transformer := self.profile.get('json_schema_transformer'):
             model_request_parameters = replace(
                 model_request_parameters,
                 function_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.function_tools],
@@ -408,23 +317,191 @@ class Model(ABC):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         """Prepare request inputs before they are passed to the provider.
 
-        This merges the given ``model_settings`` with the model's own ``settings`` attribute and ensures
-        ``customize_request_parameters`` is applied to the resolved
+        This merges the given `model_settings` with the model's own `settings` attribute and ensures
+        `customize_request_parameters` is applied to the resolved
         [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]. Subclasses can override this method if
         they need to customize the preparation flow further, but most implementations should simply call
-        ``self.prepare_request(...)`` at the start of their ``request`` (and related) methods.
+        `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
         model_settings = merge_model_settings(self.settings, model_settings)
 
-        if builtin_tools := model_request_parameters.builtin_tools:
-            # Deduplicate builtin tools
-            model_request_parameters = replace(
-                model_request_parameters,
-                builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
+        params = self.customize_request_parameters(model_request_parameters)
+        params = _prepare_return_schemas(params, self.profile)
+
+        # Resolve unified thinking setting and strip from model_settings
+        if model_settings and 'thinking' in model_settings:
+            thinking_value = model_settings['thinking']
+            supports_thinking = self.profile.get('supports_thinking', False)
+            thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
+            if supports_thinking or thinking_always_enabled:
+                if not (thinking_value is False and thinking_always_enabled):
+                    params = replace(params, thinking=thinking_value)
+            stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
+
+        if native_tools := params.native_tools:
+            # Deduplicate native tools
+            params = replace(
+                params,
+                native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
-        model_request_parameters = self.customize_request_parameters(model_request_parameters)
-        return model_settings, model_request_parameters
+        params = params.with_default_output_mode(self.profile.get('default_structured_output_mode', 'tool'))
+
+        # Reset irrelevant fields
+        if params.output_tools and params.output_mode != 'tool':
+            params = replace(params, output_tools=[])
+        if params.output_object and params.output_mode not in ('native', 'prompted'):
+            params = replace(params, output_object=None)
+        if params.prompted_output_template and params.output_mode not in ('prompted', 'native'):
+            params = replace(params, prompted_output_template=None)  # pragma: no cover
+
+        # Set default prompted output template
+        if (
+            params.output_mode == 'prompted'
+            or (
+                params.output_mode == 'native'
+                and self.profile.get('native_output_requires_schema_in_instructions', False)
+            )
+        ) and params.prompted_output_template is None:
+            params = replace(
+                params,
+                prompted_output_template=self.profile.get('prompted_output_template', DEFAULT_PROMPTED_OUTPUT_TEMPLATE),
+            )
+
+        # Append prompted_output_instructions to instruction_parts so models that use structured
+        # instruction parts (for per-part system messages or cache placement) also get them.
+        # Done here (after customize_request_parameters) so it uses the final resolved template.
+        if output_instr := params.prompted_output_instructions:
+            parts = [*(params.instruction_parts or []), InstructionPart(content=output_instr)]
+            params = replace(params, instruction_parts=InstructionPart.sorted(parts))
+
+        # Check if output mode is supported
+        if params.output_mode == 'native' and not self.profile.get('supports_json_schema_output', False):
+            raise UserError('Native structured output is not supported by this model.')
+        if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
+            raise UserError('Tool output is not supported by this model.')
+        if params.allow_image_output and not self.profile.get('supports_image_output', False):
+            raise UserError('Image output is not supported by this model.')
+
+        # Check native tools and handle fallback swap
+        if params.native_tools or any(t.unless_native or t.with_native for t in params.function_tools):
+            params = self._resolve_native_tool_swap(params)
+
+        return model_settings, params
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Pre-process the message history before it's handed to the adapter's message-prep step.
+
+        Currently translates any typed `NativeToolSearch*Part` instances carried over from a
+        prior native turn (e.g. Anthropic / OpenAI Responses) into the local-shape
+        `ToolSearch*Part` instances when the active model's profile doesn't support
+        `ToolSearchTool` — splitting the single `ModelResponse(call+return)` carrying the
+        inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
+        adapter sees a normal function-call exchange against `search_tools`.
+
+        Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
+        the profile's `supports_inline_system_prompts` is `False`.
+
+        Subclasses normally don't need to override this; the framework calls it on the
+        agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
+        sees a homogeneous shape regardless of which provider produced the prior turn.
+        """
+        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+            from .._tool_search import synthesize_local_tool_search_messages
+
+            messages = synthesize_local_tool_search_messages(messages)
+
+        if not self.profile.get('supports_inline_system_prompts', False):
+            messages = _wrap_non_leading_system_prompts(messages)
+
+        return messages
+
+    def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """Swap native tools and function-tool fallbacks/corpus based on profile support.
+
+        Four rules drive the per-tool filter:
+
+        1. `unless_native` matches a supported native tool → drop from wire.
+        2. `with_native` matches a supported native tool → keep on wire; the adapter
+           applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
+           `defer_loading` flag for `ToolSearchTool`).
+        3. `with_native` matches an *unsupported* native tool AND `defer_loading=True`
+           → drop from wire (the corpus member is currently undiscovered, so the model has
+           no way to call it on this provider).
+        4. Otherwise → keep.
+
+        On top of the four-rule filter, two narrower drops apply, kept independent:
+
+        * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
+          optional native tool is silently dropped (no error raised). It does NOT govern the
+          corpus-empty drop below.
+        * The corpus-empty drop is specific to the framework-managed tool-search native tool's
+          corpus-management role: an *optional* `ToolSearchTool` is dropped when its
+          corpus ends up empty after filtering, since sending it with no deferred tools
+          to discover would waste a tool slot. A non-optional `ToolSearchTool` stays —
+          the user asked explicitly. Other native tools don't have a corpus and aren't subject
+          to this drop, so making `optional` a base-class field doesn't accidentally cause
+          e.g. `WebSearchTool(optional=True)` to be dropped here.
+        """
+        supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+
+        supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
+        unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
+
+        supported_ids = {t.unique_id for t in supported_natives}
+        unsupported_ids = {t.unique_id for t in unsupported_natives}
+        optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
+        fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+
+        without_fallback = unsupported_ids - fallback_ids - optional_ids
+        if without_fallback:
+            unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
+            supported_names = [t.__name__ for t in supported_types]
+            raise UserError(
+                f'Native tool(s) {unsupported_names} not supported by this model. '
+                f'Supported: {supported_names}. '
+                f'To use these tools with this model, provide a local fallback via '
+                f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
+                f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+                f'MCP(local=True), ImageGeneration(local=my_func)). '
+                f'Some capabilities require an optional install group for the local fallback '
+                f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+            )
+
+        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(
+            supported_natives, params.function_tools
+        )
+        supported_natives = tool_search_resolution.native_tools
+        tool_search_kept_local = tool_search_resolution.keep_search_tools_local
+
+        function_tools: list[ToolDefinition] = []
+        for t in params.function_tools:
+            # Rule 1: drop local fallback when the native tool is supported — except for
+            # `search_tools` when tool search was kept local for capability visibility,
+            # where the local function tool is the callback the client-executed native
+            # surface dispatches to.
+            if t.unless_native and t.unless_native in supported_ids:
+                if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
+                    continue
+            # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
+            if t.with_native and t.with_native not in supported_ids and t.defer_loading:
+                continue
+            # Rules 2 + 4: keep.
+            function_tools.append(t)
+
+        # Drop optional `ToolSearchTool` whose managed corpus is empty after filtering —
+        # nothing to discover, sending it would waste a tool slot. The `isinstance` check
+        # confines this to ToolSearchTool specifically: other native tools don't carry a corpus,
+        # so making `optional` a base-class field doesn't accidentally drop e.g.
+        # `WebSearchTool(optional=True)` here on absence of dependents.
+        remaining_corpus_ids = {t.with_native for t in function_tools if t.with_native}
+        supported_natives = [
+            t
+            for t in supported_natives
+            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
+        ]
+        return replace(params, native_tools=supported_natives, function_tools=function_tools)
 
     @property
     @abstractmethod
@@ -432,17 +509,91 @@ class Model(ABC):
         """The model name."""
         raise NotImplementedError()
 
+    @property
+    def model_id(self) -> str:
+        """The fully qualified model name in `'provider:model_name'` format."""
+        return f'{self.system}:{self.model_name}'
+
+    @property
+    def label(self) -> str:
+        """Human-friendly display label for the model.
+
+        Handles common patterns:
+        - gpt-5 -> GPT 5
+        - claude-sonnet-4-5 -> Claude Sonnet 4.5
+        - gemini-2.5-pro -> Gemini 2.5 Pro
+        - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
+        """
+        label = self.model_name
+        # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
+        if '/' in label:
+            label = label.split('/')[-1]
+
+        parts = label.split('-')
+        result: list[str] = []
+
+        for i, part in enumerate(parts):
+            if i == 0 and part.lower() == 'gpt':
+                result.append(part.upper())
+            elif part.replace('.', '').isdigit():
+                if result and result[-1].replace('.', '').isdigit():
+                    result[-1] = f'{result[-1]}.{part}'
+                else:
+                    result.append(part)
+            else:
+                result.append(part.capitalize())
+
+        return ' '.join(result)
+
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Return the set of native tool types this model class can handle.
+
+        Subclasses should override this to reflect their actual capabilities.
+        Default is empty set - subclasses must explicitly declare support.
+        """
+        return frozenset()
+
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile."""
-        _profile = self._profile
-        if callable(_profile):
-            _profile = _profile(self.model_name)
+        """The model profile.
 
-        if _profile is None:
-            return DEFAULT_PROFILE
+        Resolution order (later layers override earlier ones):
+          1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
+          2. The provider's `model_profile(model_name)` result — provider-specific defaults
+             for this model.
+          3. The user's `profile=` argument — partial dict merged on top, OR a callable
+             `(default) -> profile` for full control.
 
-        return _profile
+        After resolution we compute the intersection of the profile's `supported_native_tools`
+        and the model class's implemented tools, ensuring `model.profile['supported_native_tools']`
+        is the single source of truth for what's actually usable.
+        """
+        # Step 1+2: provider default merged with base default
+        provider_profile: ModelProfile = {}
+        if (provider := self.provider) is not None:
+            provider_profile = provider.model_profile(self.model_name) or {}
+        resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
+
+        # Step 3: user override
+        user = self._profile
+        if user is None:
+            pass
+        elif callable(user):
+            # New v2 form: (default profile) -> final profile
+            resolved = user(resolved)
+        else:
+            # Partial dict — merge on top
+            resolved = merge_profile(resolved, user)
+
+        # Step 4: native tools intersection — profile's allowed tools & model's implemented tools
+        model_supported = self.__class__.supported_native_tools()
+        profile_supported = resolved.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        effective_tools = profile_supported & model_supported
+        if effective_tools != profile_supported:
+            resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
+
+        return resolved
 
     @property
     @abstractmethod
@@ -461,14 +612,31 @@ class Model(ABC):
         """The base URL for the provider API, if available."""
         return None
 
-    @staticmethod
-    def _get_instructions(messages: list[ModelMessage]) -> str | None:
-        """Get instructions from the first ModelRequest found when iterating messages in reverse.
+    def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
+        """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
+        if item.provider_name != self.system:
+            raise UserError(
+                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '
+                f'Expected `provider_name` to be `{self.system!r}`.'
+            )
 
-        In the case that a "mock" request was generated to include a tool-return part for a result tool,
-        we want to use the instructions from the second-to-most-recent request (which should correspond to the
-        original request that generated the response that resulted in the tool-return part).
+    @staticmethod
+    def _get_instruction_parts(
+        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[InstructionPart] | None:
+        """Get structured instruction parts for the current request.
+
+        Uses `model_request_parameters.instruction_parts` when set (normal agent flow).
+        Falls back to synthesizing from `ModelRequest.instructions` in message history
+        when `instruction_parts` is `None` (e.g. direct `model.request()` calls).
         """
+        if model_request_parameters.instruction_parts is not None:
+            return model_request_parameters.instruction_parts or None
+
+        # Fallback: synthesize from message history for direct model.request() callers.
+        # Mirrors the last-two-requests logic from `pydantic_ai._instrumentation.get_instructions`:
+        # if the most recent request only has tool-return/retry-prompt parts (a "mock" request
+        # for result tools), use the instructions from the second-to-most-recent request.
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -476,31 +644,16 @@ class Model(ABC):
                 if len(last_two_requests) == 2:
                     break
                 if message.instructions is not None:
-                    return message.instructions
+                    return [InstructionPart(content=message.instructions)]
 
-        # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
-        if len(last_two_requests) != 2:
-            return None
-
-        most_recent_request = last_two_requests[0]
-        second_most_recent_request = last_two_requests[1]
-
-        # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt parts,
-        # we use the instructions from the second-to-most-recent request. This is necessary because when handling
-        # result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that ModelRequest will not
-        # have the relevant instructions from the agent.
-
-        # While it's possible that you could have a message history where the most recent request has only tool returns,
-        # I believe there is no way to achieve that would _change_ the instructions without manually crafting the most
-        # recent message. That might make sense in principle for some usage pattern, but it's enough of an edge case
-        # that I think it's not worth worrying about, since you can work around this by inserting another ModelRequest
-        # with no parts at all immediately before the request that has the tool calls (that works because we only look
-        # at the two most recent ModelRequests here).
-
-        # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
-
-        if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
-            return second_most_recent_request.instructions
+        if len(last_two_requests) == 2:
+            most_recent = last_two_requests[0]
+            second = last_two_requests[1]
+            if (
+                all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent.parts)
+                and second.instructions is not None
+            ):
+                return [InstructionPart(content=second.instructions)]
 
         return None
 
@@ -517,11 +670,21 @@ class StreamedResponse(ABC):
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
 
-    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
+    _cancelled: bool = field(default=False, init=False)
+    _finished: bool = field(default=False, init=False)
 
-    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    @cached_property
+    def _parts_manager(self) -> ModelResponsePartsManager:
+        # Built lazily so subclasses don't need to remember `super().__post_init__()`.
+        # `model_request_parameters` is handed in so streamed `ToolCallPart`s auto-promote
+        # to their typed subclasses (via `ToolDefinition.tool_kind`) from the first
+        # `PartStartEvent` — consumers see typed parts throughout the stream rather than
+        # only after a post-stream pass.
+        return ModelResponsePartsManager(model_request_parameters=self.model_request_parameters)
+
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
@@ -584,9 +747,71 @@ class StreamedResponse(ABC):
                 if end_event:
                     yield end_event
 
-            self._event_iterator = iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            async def iterator_with_cancel_guard(
+                iterator: AsyncIterator[ModelResponseStreamEvent],
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
+                # Suppress transport errors caused by `cancel()` tearing down the
+                # connection mid-stream. The try/except has to live inside an
+                # async generator body so it's active at every `await` during
+                # iteration.
+                try:
+                    async for event in iterator:
+                        yield event
+                except self.get_stream_cancel_errors():
+                    if not self.cancelled:
+                        raise
+                else:
+                    # Only natural `StopAsyncIteration` flips `_finished`. Early
+                    # `break` / `aclose()` (raising `GeneratorExit` at the suspended
+                    # `yield`) and any in-flight exception leave `_finished=False`
+                    # so `get()` reports the truncated response as `'incomplete'`
+                    # rather than silently stamping it `'complete'`. The cancel
+                    # branch above explicitly sets `_cancelled` (→ `'interrupted'`).
+                    self._finished = True
+
+            self._event_iterator = iterator_with_cancel_guard(
+                iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
+            )
         return self._event_iterator
 
+    async def cancel(self) -> None:
+        """Cancel the stream, stopping token generation.
+
+        Sets `self._cancelled = True` before delegating to `close_stream()`
+        so the flag is visible to any iterator that observes the transport error
+        raised when the underlying connection is torn down, even if
+        `close_stream()` itself raises.
+        """
+        if self.cancelled:
+            return
+        self._cancelled = True
+        await self.close_stream()
+
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        """Return transport errors caused by `cancel()` tearing down the stream.
+
+        The default covers model classes whose SDKs iterate `httpx` responses
+        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, HuggingFace,
+        and the custom Gemini client), since they let bare `httpx` errors
+        propagate from chunk reads. Model classes that use other transports
+        (for example gRPC or botocore) should override this method.
+        """
+        return (httpx.StreamError, httpx.TransportError)
+
+    async def close_stream(self) -> None:
+        """Close the underlying HTTP/gRPC connection.
+
+        Model classes must override this to stop token generation (and billing)
+        on the remote side. Integrations that cannot support cancellation should
+        leave the default implementation so `cancel()` fails clearly rather than
+        silently reporting successful cancellation while generation continues.
+        """
+        raise NotImplementedError(
+            f'Stream cancellation is not implemented for {type(self).__name__}. '
+            'This model class must override `close_stream()` to support streaming cancellation.'
+        )
+
+    # TODO: We should not have public private methods which need to be overwritten.
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -602,18 +827,26 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        if self._cancelled:
+            state: ModelResponseState = 'interrupted'
+        elif self._finished:
+            state = 'complete'
+        else:
+            state = 'incomplete'
         return ModelResponse(
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
-            usage=self.usage(),
+            usage=self._usage,
             provider_name=self.provider_name,
+            provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
+            state=state,
         )
 
-    # TODO (v2): Make this a property
+    @property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
@@ -632,9 +865,20 @@ class StreamedResponse(ABC):
 
     @property
     @abstractmethod
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         raise NotImplementedError()
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether the stream has been cancelled via `cancel()`."""
+        return self._cancelled
 
 
 ALLOW_MODEL_REQUESTS = True
@@ -662,7 +906,7 @@ def check_allow_model_requests() -> None:
 
 
 @contextmanager
-def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
+def override_allow_model_requests(allow_model_requests: bool) -> Generator[None]:
     """Context manager to temporarily override [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS].
 
     Args:
@@ -677,8 +921,68 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
-    """Infer the model from the name."""
+def parse_model_id(model: str) -> tuple[str | None, str]:
+    """Parse a model id string into its provider and model name components.
+
+    Args:
+        model: A model identifier string in the form `provider:model_name`.
+
+    Returns:
+        A tuple of `(provider_name, model_name)`. If the model string contains no
+        `provider:` prefix, returns `(None, model)` so callers can decide how to
+        handle the unknown provider.
+    """
+    if ':' in model:
+        provider_name, model_name = model.split(':', maxsplit=1)
+        return provider_name, model_name
+
+    return None, model
+
+
+def infer_model_profile(model: str) -> ModelProfile:
+    """Infer the model profile from a model id string without constructing a provider.
+
+    Uses `Provider.model_profile` to look up the profile for the given model.
+    Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
+
+    Note: This returns the raw provider profile **without** intersecting with
+    `Model.supported_native_tools()`, unlike `Model.profile`. This means the returned
+    profile may claim support for native tools that a specific `Model` subclass doesn't
+    implement. This is acceptable for best-effort scenarios (e.g. `TemporalModel` with
+    unregistered model strings) where the actual `Model` class isn't available.
+
+    Args:
+        model: A model identifier string (e.g. `'openai:gpt-5'`, `'anthropic:claude-sonnet-4-5'`).
+
+    Returns:
+        The inferred `ModelProfile`, or `DEFAULT_PROFILE` if the provider is unknown.
+    """
+    provider, model_name = parse_model_id(model)
+    if provider is None:
+        return DEFAULT_PROFILE
+
+    try:
+        provider_class = infer_provider_class(provider)
+    except ValueError:
+        return DEFAULT_PROFILE
+
+    try:
+        return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+    except (ValueError, UserError):
+        return DEFAULT_PROFILE
+
+
+def infer_model(  # noqa: C901
+    model: Model | KnownModelName | str, provider_factory: Callable[[str], Provider[Any]] = infer_provider
+) -> Model:
+    """Infer the model from the name.
+
+    Args:
+        model:
+            Model name to instantiate, in the format of `provider:model`. Use the string "test" to instantiate TestModel.
+        provider_factory:
+            Function that instantiates a provider object. The provider name is passed into the function parameter. Defaults to `provider.infer_provider`.
+    """
     if isinstance(model, Model):
         return model
     elif model == 'test':
@@ -686,69 +990,41 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
 
         return TestModel()
 
-    try:
-        provider_name, model_name = model.split(':', maxsplit=1)
-    except ValueError:
-        provider_name = None
-        model_name = model
-        if model_name.startswith(('gpt', 'o1', 'o3')):
-            provider_name = 'openai'
-        elif model_name.startswith('claude'):
-            provider_name = 'anthropic'
-        elif model_name.startswith('gemini'):
-            provider_name = 'google-gla'
+    provider_name, model_name = parse_model_id(model)
+    if provider_name is None:
+        raise UserError(f'Unknown model: {model}')
 
-        if provider_name is not None:
-            warnings.warn(
-                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider_name}:{model_name}'.",
-                DeprecationWarning,
-            )
-        else:
-            raise UserError(f'Unknown model: {model}')
-
-    if provider_name == 'vertexai':  # pragma: no cover
-        warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
-            DeprecationWarning,
-        )
-        provider_name = 'google-vertex'
-
-    provider = infer_provider(provider_name)
+    provider = provider_factory(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):
-        model_kind = provider_name.removeprefix('gateway/')
-    if model_kind in (
-        'openai',
-        'azure',
-        'deepseek',
-        'cerebras',
-        'fireworks',
-        'github',
-        'grok',
-        'heroku',
-        'moonshotai',
-        'ollama',
-        'openrouter',
-        'together',
-        'vercel',
-        'litellm',
-        'nebius',
-        'ovhcloud',
-    ):
-        model_kind = 'openai-chat'
-    elif model_kind in ('google-gla', 'google-vertex'):
-        model_kind = 'google'
+        from ..providers.gateway import normalize_gateway_provider
 
-    if model_kind == 'openai-chat':
-        from .openai import OpenAIChatModel
+        model_kind = normalize_gateway_provider(model_kind)
 
-        return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind == 'openai-responses':
+    # OpenRouter, Cerebras and Ollama need to be checked before OpenAI,
+    # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
+    if model_kind == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name, provider=provider)
+    elif model_kind == 'cerebras':
+        from .cerebras import CerebrasModel
+
+        return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'ollama':
+        from .ollama import OllamaModel
+
+        return OllamaModel(model_name, provider=provider)
+    elif model_kind in ('openai', 'openai-responses'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind == 'google':
+    elif model_kind in ('openai-chat', *get_args(OpenAIChatCompatibleProvider.__value__)):
+        from .openai import OpenAIChatModel
+
+        return OpenAIChatModel(model_name, provider=provider)
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
@@ -776,37 +1052,23 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         from .huggingface import HuggingFaceModel
 
         return HuggingFaceModel(model_name, provider=provider)
+    elif model_kind == 'xai':
+        from .xai import XaiModel
+
+        return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def cached_async_http_client(*, provider: str | None = None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
-    """Cached HTTPX async client that creates a separate client for each provider.
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
+    """Create an HTTPX async client.
 
-    The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
-    requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
-
-    Each client will get its own transport with its own connection pool. The default pool size is defined by `httpx.DEFAULT_LIMITS`.
-
-    There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
-    described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
-    examples, it's very useful not to.
+    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
+    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    if client.is_closed:
-        # This happens if the context manager is used, so we need to create a new client.
-        # Since there is no API from `functools.cache` to clear the cache for a specific
-        #  key, clear the entire cache here as a workaround.
-        _cached_async_http_client.cache_clear()
-        client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
-    return client
-
-
-@cache
-def _cached_async_http_client(provider: str | None, timeout: int = 600, connect: int = 5) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
@@ -852,6 +1114,14 @@ async def download_item(
 ) -> DownloadedItem[str] | DownloadedItem[bytes]:
     """Download an item by URL and return the content as a bytes object or a (base64-encoded) string.
 
+    This function includes SSRF (Server-Side Request Forgery) protection:
+    - Only http:// and https:// protocols are allowed
+    - Private/internal IP addresses are blocked by default
+    - Cloud metadata endpoints (169.254.169.254) are always blocked
+    - Hostnames are resolved before requests to prevent DNS rebinding
+
+    Set `item.force_download='allow-local'` to allow private IP addresses.
+
     Args:
         item: The item to download.
         data_format: The format to return the content in:
@@ -864,16 +1134,17 @@ async def download_item(
             - `extension`: The media type as an extension.
 
     Raises:
-        UserError: If the URL points to a YouTube video or its protocol is gs://.
+        UserError: If the URL points to a YouTube video.
+        ValueError: If the URL uses an unsupported protocol or targets a private/internal
+            IP address (unless allow-local is set).
     """
-    if item.url.startswith('gs://'):
-        raise UserError('Downloading from protocol "gs://" is not supported.')
-    elif isinstance(item, VideoUrl) and item.is_youtube:
+    if isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
 
-    client = cached_async_http_client()
-    response = await client.get(item.url, follow_redirects=True)
-    response.raise_for_status()
+    from .._ssrf import safe_download
+
+    allow_local = item.force_download == 'allow-local'
+    response = await safe_download(item.url, allow_local=allow_local)
 
     if content_type := response.headers.get('content-type'):
         content_type = content_type.split(';')[0]
@@ -906,24 +1177,121 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
-def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
-    schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition):
+    """Customize the tool definition using the given transformer.
+
+    If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
+    """
+    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
     parameters_json_schema = schema_transformer.walk()
     return replace(
-        t,
+        tool_def,
         parameters_json_schema=parameters_json_schema,
-        strict=schema_transformer.is_strict_compatible if t.strict is None else t.strict,
+        strict=schema_transformer.is_strict_compatible if tool_def.strict is None else tool_def.strict,
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
-    schema_transformer = transformer(o.json_schema, strict=o.strict)
+def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition):
+    schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(
-        o,
+        output_object,
         json_schema=json_schema,
-        strict=schema_transformer.is_strict_compatible if o.strict is None else o.strict,
+        strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+@dataclass
+class _ToolSearchNativeResolution:
+    native_tools: list[AbstractNativeTool]
+    keep_search_tools_local: bool
+
+
+def _resolve_tool_search_native_for_capability_owned_corpus(
+    supported_natives: Sequence[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
+) -> _ToolSearchNativeResolution:
+    """Resolve tool search's native mode when a deferred capability owns a corpus tool.
+
+    Provider-side tool search (Anthropic `bm25`/`regex`, OpenAI server-managed `tool_search`)
+    is a black box: it indexes whatever we send and returns matches. It can't honor "this tool
+    is only visible after its owning capability has been loaded." Our local search loop in
+    `ToolSearchToolset._search_tools` *can* — it filters the corpus by
+    `ctx.available_capability_ids`. So whenever a capability-owned tool sits in the corpus,
+    search must run client-side or hidden tools will leak.
+
+    Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
+    the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
+    OpenAI `execution='client'`) which dispatches into our local `search_tools` callback;
+    (2) the caller keeps `search_tools` in the request parameters — that callback is what
+    the client-executed surface invokes. Adapters may still render that callback as a
+    native client-executed tool-search item rather than as a regular function tool on the
+    provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
+    equivalent, so we raise rather than silently substitute a different algorithm.
+    """
+    capability_owns_corpus = any(
+        t.with_native == ToolSearchTool.kind
+        and (t.metadata or {}).get(_deferred_capabilities.DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
+        for t in function_tools
+    )
+    if not capability_owns_corpus:
+        return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
+
+    resolved_natives: list[AbstractNativeTool] = []
+    keep_search_tools_local = False
+    for t in supported_natives:
+        if not isinstance(t, ToolSearchTool):
+            resolved_natives.append(t)
+            continue
+        if t.strategy not in (None, 'custom'):
+            raise UserError(
+                f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
+                "capabilities. Server-side strategies can't "
+                "honor capability gating and would reveal tools whose owning capability hasn't "
+                'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
+                "deferred capability is present), `strategy='keywords'`, or a custom callable."
+            )
+        keep_search_tools_local = True
+        if t.strategy is None:
+            t = replace(t, strategy='custom')
+        resolved_natives.append(t)
+    return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
+
+
+def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
+    """Resolve return schemas: clear on tools that haven't opted in, inject into descriptions for non-native models.
+
+    For tools with `include_return_schema=True` and a non-empty schema, models that natively support
+    return schemas keep the schema as-is; other models get it injected into the tool description.
+    Tools that haven't opted in have their `return_schema` cleared.
+    """
+    inject = not profile.get('supports_tool_return_schema', False)
+    resolved: list[ToolDefinition] = []
+    changed = False
+    for td in params.function_tools:
+        if not td.include_return_schema and td.return_schema is not None:
+            td = replace(td, return_schema=None)
+            changed = True
+        elif td.include_return_schema and not td.return_schema:
+            warnings.warn(
+                f'Tool {td.name!r} has `include_return_schema` enabled but no meaningful return schema'
+                f' was generated. Set `include_return_schema=False` on this tool to suppress this warning.',
+                UserWarning,
+                stacklevel=1,
+            )
+            td = replace(td, return_schema=None)
+            changed = True
+        elif inject and td.return_schema:
+            parts: list[str] = []
+            if td.description:
+                parts.append(td.description)
+            parts.append('Return schema:')
+            parts.append(json.dumps(td.return_schema, indent=2))
+            td = replace(td, description='\n\n'.join(parts), return_schema=None)
+            changed = True
+        resolved.append(td)
+    if changed:
+        return replace(params, function_tools=resolved)
+    return params
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
@@ -939,3 +1307,35 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
+
+
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Wrap `SystemPromptPart`s outside the first `ModelRequest` as `<system>`-tagged `UserPromptPart`s.
+
+    `SystemPromptPart`s in the first `ModelRequest` aren't transformed; the provider's `_map_messages` hoists them.
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    first_request_idx = next(
+        (i for i, m in enumerate(messages) if isinstance(m, ModelRequest)),
+        None,
+    )
+    if first_request_idx is None:
+        return messages
+
+    new_messages: list[ModelMessage] = list(messages[: first_request_idx + 1])
+    changed = False
+    for msg in messages[first_request_idx + 1 :]:
+        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
+            new_parts = [
+                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
+                if isinstance(part, SystemPromptPart)
+                else part
+                for part in msg.parts
+            ]
+            new_messages.append(replace(msg, parts=new_parts))
+            changed = True
+        else:
+            new_messages.append(msg)
+
+    return new_messages if changed else messages

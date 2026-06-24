@@ -1,0 +1,68 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '141'
+      content-type:
+      - application/json
+      host:
+      - localhost:8787
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+    uri: http://localhost:8787/google-vertex/v1beta1/publishers/google/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '581'
+      content-type:
+      - application/json; charset=UTF-8
+      pydantic-ai-gateway-price-estimate:
+      - 0.0002USD
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin, X-Origin, Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -1.1087236404418945
+        content:
+          parts:
+          - text: The capital of France is **Paris**.
+          role: model
+        finishReason: STOP
+      createTime: '2025-11-11T12:44:24.411107Z'
+      modelVersion: gemini-2.5-flash
+      responseId: qC8TaeOLGZbhtfAPlbGdyAk
+      usageMetadata:
+        candidatesTokenCount: 8
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 8
+        promptTokenCount: 7
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 7
+        pydantic_ai_gateway:
+          cost_estimate: 0.0001546
+        thoughtsTokenCount: 53
+        totalTokenCount: 68
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1

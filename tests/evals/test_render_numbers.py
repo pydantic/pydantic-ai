@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
 import pytest
-from inline_snapshot import snapshot
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:

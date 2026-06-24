@@ -21,7 +21,7 @@ class TimeRangeDeps:
 
 
 time_range_agent = Agent[TimeRangeDeps, TimeRangeResponse](
-    'gpt-5',
+    'gpt-5.2',
     output_type=TimeRangeResponse,  # type: ignore  # we can't yet annotate something as receiving a TypeForm
     deps_type=TimeRangeDeps,
     system_prompt="Convert the user's request into a structured time range.",

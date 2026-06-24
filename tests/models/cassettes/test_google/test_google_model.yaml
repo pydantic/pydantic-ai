@@ -4,11 +4,11 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '169'
+      - '199'
       content-type:
       - application/json
       host:
@@ -19,22 +19,24 @@ interactions:
       - parts:
         - text: Hello!
         role: user
-      generationConfig: {}
+      generationConfig:
+        responseModalities:
+        - TEXT
       systemInstruction:
         parts:
         - text: You are a chatbot.
         role: user
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '687'
+      - '571'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=531
+      - gfet4t7; dur=680
       transfer-encoding:
       - chunked
       vary:
@@ -43,25 +45,22 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0007684422995556484
-        content:
+      - content:
           parts:
-          - text: |
-              Hello there! How can I help you today?
+          - text: Hello! How can I help you today?
           role: model
         finishReason: STOP
-      modelVersion: gemini-1.5-flash
-      responseId: wVpeaPOdAaXTnvgPlIeSoQg
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: bzlXaa_EE_aHqtsPi_zw8Ao
       usageMetadata:
-        candidatesTokenCount: 11
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 11
-        promptTokenCount: 7
+        candidatesTokenCount: 9
+        promptTokenCount: 9
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 7
-        totalTokenCount: 18
+          tokenCount: 9
+        thoughtsTokenCount: 34
+        totalTokenCount: 52
     status:
       code: 200
       message: OK

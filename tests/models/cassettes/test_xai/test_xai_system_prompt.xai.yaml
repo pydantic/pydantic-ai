@@ -1,0 +1,41 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: You are a helpful assistant.
+        role: ROLE_SYSTEM
+      - content:
+        - text: What is the capital of France?
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+    raw: !!binary |
+      CiIKHgocWW91IGFyZSBhIGhlbHBmdWwgYXNzaXN0YW50LhADCiQKIAoeV2hhdCBpcyB0aGUgY2Fw
+      aXRhbCBvZiBGcmFuY2U/EAESGWdyb2stNC1mYXN0LW5vbi1yZWFzb25pbmc=
+  response_sample:
+    json:
+      id: 201b80ef-612f-dfdc-4a55-926fe478a065
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: Paris is the capital of France. It's the largest city in the country
+            and a major global center for art, fashion, and culture.
+          role: ROLE_ASSISTANT
+      created: '2026-01-16T17:04:40.968245817Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 27
+        prompt_tokens: 181
+        total_tokens: 208
+        prompt_text_tokens: 181
+        cached_prompt_text_tokens: 180
+      settings:
+        parallel_tool_calls: true
+    raw: !!binary |
+      CiQyMDFiODBlZi02MTJmLWRmZGMtNGE1NS05MjZmZTQ3OGEwNjUShgEIAxqBAQp9UGFyaXMgaXMg
+      dGhlIGNhcGl0YWwgb2YgRnJhbmNlLiBJdCdzIHRoZSBsYXJnZXN0IGNpdHkgaW4gdGhlIGNvdW50
+      cnkgYW5kIGEgbWFqb3IgZ2xvYmFsIGNlbnRlciBmb3IgYXJ0LCBmYXNoaW9uLCBhbmQgY3VsdHVy
+      ZS4QAioMCKjfqcsGELmE2c0DMhlncm9rLTQtZmFzdC1ub24tcmVhc29uaW5nOg1mcF80NjE2ZTc2
+      NDEzShIIGxC1ARjQASC1ATi0AVi47Q1aAhAB

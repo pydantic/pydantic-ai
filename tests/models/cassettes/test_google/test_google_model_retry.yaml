@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '473'
+      - '548'
       content-type:
       - application/json
       host:
@@ -20,6 +20,8 @@ interactions:
         - text: What is the capital of France?
         role: user
       generationConfig:
+        responseModalities:
+        - TEXT
         temperature: 0.0
       systemInstruction:
         parts:
@@ -29,25 +31,26 @@ interactions:
       - functionDeclarations:
         - description: Get the capital of a country.
           name: get_capital
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               country:
                 description: The country name.
-                type: STRING
+                type: string
             required:
             - country
-            type: OBJECT
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '683'
+      - '1488'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=6424
+      - gfet4t7; dur=2250
       transfer-encoding:
       - chunked
       vary:
@@ -62,19 +65,21 @@ interactions:
               args:
                 country: France
               name: get_capital
+            thoughtSignature: CpYEAXLI2nxHJhy3F4oMijlAus2CPUEnTw16KkDpmU77MgVhg6piCF3GycCmKbjhGXQ8mBK5lSpsqwI7DapurrH+NcQiuUJYF1CpS438/kC6pw0JsXszEoBQyJN7zTXqfLgiNOzO5sBwQU1fc5cBUiMzzAxHOyltJwZcYOqFXMPQ0c2AaNvHO4nOOFwRrJuwGVfpfP1BnpuiDUz5c5roIwkC8sykcxva7lOniPdd5Soy0juNxCK4BAXTq/TgHPxB6yEUBGaAYaR9JId6EaWV1/gDa+eSpvLI8P4TQiFWa4UUK/89/TmMEQlRsmbGHcuxU+6GGLI0szs5h2dq8yM8Dy5R/DyB9xXPwUl4c9A+m64LEk6aludQE2X/LKb7y1pfL2f6wjH89DY4F4Y0934R21eYeb9MZMuB+IYaEYIvk7Fhdx5VolnNYPoqoLpCxwHVucmEBruS9m7Li6VO7zZdDVgikbWKxZyixLIfy4LKthacCJERSAJl4aAAllotfzZopY+dUkujmlny/UyPotpJXH+3K6L2Ge3uFOmNShPNN3oSMBf2K3DBit6OE5FA4JMyi7PnzlhiSmPLVOFZEWvINXbHim4Bh7QpIyGnIiT5n/8lSIrcNbf/vD/ZqDqivM/gjyS/ayZqW7tzNW5J1xDkiJpEUK1aokoG+GeaKXZ+AsR6xPXj6hYqpYRhtCsY49KhVme/JJp6XMrN
           role: model
+        finishMessage: Model generated function call(s).
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: ylpeaP3yFtyokdUPiOXJwQg
+      modelVersion: gemini-2.5-pro
+      responseId: g5YoaezOBeyrqtsPwYqL2Q8
       usageMetadata:
         candidatesTokenCount: 15
         promptTokenCount: 57
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 57
-        thoughtsTokenCount: 155
-        totalTokenCount: 227
+        thoughtsTokenCount: 124
+        totalTokenCount: 196
     status:
       code: 200
       message: OK
@@ -87,7 +92,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '845'
+      - '1682'
       content-type:
       - application/json
       host:
@@ -102,20 +107,23 @@ interactions:
         - functionCall:
             args:
               country: France
-            id: pyd_ai_c9686c312aec46fca301d52554e47726
+            id: pyd_ai_1f2bdea4ea804905a3f05dfe5b96a7fb
             name: get_capital
+          thoughtSignature: CpYEAXLI2nxHJhy3F4oMijlAus2CPUEnTw16KkDpmU77MgVhg6piCF3GycCmKbjhGXQ8mBK5lSpsqwI7DapurrH-NcQiuUJYF1CpS438_kC6pw0JsXszEoBQyJN7zTXqfLgiNOzO5sBwQU1fc5cBUiMzzAxHOyltJwZcYOqFXMPQ0c2AaNvHO4nOOFwRrJuwGVfpfP1BnpuiDUz5c5roIwkC8sykcxva7lOniPdd5Soy0juNxCK4BAXTq_TgHPxB6yEUBGaAYaR9JId6EaWV1_gDa-eSpvLI8P4TQiFWa4UUK_89_TmMEQlRsmbGHcuxU-6GGLI0szs5h2dq8yM8Dy5R_DyB9xXPwUl4c9A-m64LEk6aludQE2X_LKb7y1pfL2f6wjH89DY4F4Y0934R21eYeb9MZMuB-IYaEYIvk7Fhdx5VolnNYPoqoLpCxwHVucmEBruS9m7Li6VO7zZdDVgikbWKxZyixLIfy4LKthacCJERSAJl4aAAllotfzZopY-dUkujmlny_UyPotpJXH-3K6L2Ge3uFOmNShPNN3oSMBf2K3DBit6OE5FA4JMyi7PnzlhiSmPLVOFZEWvINXbHim4Bh7QpIyGnIiT5n_8lSIrcNbf_vD_ZqDqivM_gjyS_ayZqW7tzNW5J1xDkiJpEUK1aokoG-GeaKXZ-AsR6xPXj6hYqpYRhtCsY49KhVme_JJp6XMrN
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_c9686c312aec46fca301d52554e47726
+            id: pyd_ai_1f2bdea4ea804905a3f05dfe5b96a7fb
             name: get_capital
             response:
-              call_error: |-
-                The country is not supported.
+              error: |-
+                The country is not supported. Use "La France" instead.
 
                 Fix the errors and try again.
         role: user
       generationConfig:
+        responseModalities:
+        - TEXT
         temperature: 0.0
       systemInstruction:
         parts:
@@ -125,25 +133,26 @@ interactions:
       - functionDeclarations:
         - description: Get the capital of a country.
           name: get_capital
-          parameters:
+          parameters_json_schema:
+            additionalProperties: false
             properties:
               country:
                 description: The country name.
-                type: STRING
+                type: string
             required:
             - country
-            type: OBJECT
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '647'
+      - '1933'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3889
+      - gfet4t7; dur=4567
       transfer-encoding:
       - chunked
       vary:
@@ -154,20 +163,138 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: I am sorry, I cannot fulfill this request. The country "France" is not supported by my system.
+          - functionCall:
+              args:
+                country: La France
+              name: get_capital
+            thoughtSignature: Ct8GAXLI2nz7mNfYmvoMGtxbp6sB05S83E1PgFbBidrtXSNPmssR19LsxIgLyCeT2CLOe1EiWP9Vw6M4hVSB8yaWgKruIK7GBaUt44ElKq+1tPlYToIrEmM+Y+YATGnWU9BeX8+RTpPzE2j0dEkAxfe+15IrZxBj7RTydL6FL3wpRgeMn3urrBXIDY/JfXlRakk8UKMhrwh4hC6jDEaeRGQUrrXChZ0yqj2MH3uEKsVBTiQi1HIs082MMRPSWE7RWoHCY7zWe3xrGRkiOyIZ/irYsMlMjLyUkqPrmQITg02oRWDsvE1E0Hf3saKxV/KKFjYExsaZpvms8z2Zqmy/vYsSU50PRPjJADOcbooiuUNFNAzf+yGgO2cRyZbZRORzf/nOAGlUJKBfCEnqkwprLr/VfNyBK5VmlPjj8+oPcVH7rCkbH5jLG0PrjB9jpiyYzr7YHUjWYHxLBAlCXMEt/iBc6lMviMJ9GckFGzIOPCzi/PVF/l7kcubCV01mfskGbJAy1UQ2khZW+uCeIc1eWr7+0sC7+mdnfHqpSCZJCom0KQiE/CHKSbn6ROS5dCYHwSYjmxyR1ja4LxssSDKafJUHjE1GlnlQy03bb/QoI+MDCIdRS+y0FwXt2TPgo8nuqIlhzx1NaDtA8431G9UPxCgs6fkRf1/QBo6TvI9VMT/mYhMb0+91ZwEIyA1YlKYErO2MSZwlbgZtMyWYGpLJ9NOBh6+6Ww9oYtNinL9gEhcDXJStJWSiJXGOWUEc6nUG7n8waM1Iqgg/pBx3VxDqrN5Wcnyu0uamQEo63xUeB/YAmOAuuhuPBhcfW3/oqTUaApDtCFMsCoJE3tf//RhW3J1b0IWOvN9/kgsKDpMX+GK5F5+b0JSsz2kdUo9u7he14C8fyLDx1fswFzIwpSmNdqs23RZUfqB9yajh83wWK7UdPxOcX+Mq7TlocixYZf8B4hARE1ORwkmzvL1XUtCLHJWN4KvrkahYS2+El3po/K/+dnmFyYDnusyjpsLnkV7uPBvqBlkP0cg0TT6afeuPffxBM68yI4k+iCFVLxwQCYG68BCRT96rBDyCt4rpECd1PUYFmQWhGbdS4norEcXbwcBNj79LbXak4KI9vbxR0wzgsuShBc78V51cMQU720slB+U=
+          role: model
+        finishMessage: Model generated function call(s).
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-pro
+      responseId: h5YoaYnYK5q5mtkP6u3JoAs
+      usageMetadata:
+        candidatesTokenCount: 16
+        promptTokenCount: 109
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 109
+        thoughtsTokenCount: 199
+        totalTokenCount: 324
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '3182'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What is the capital of France?
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              country: France
+            id: pyd_ai_1f2bdea4ea804905a3f05dfe5b96a7fb
+            name: get_capital
+          thoughtSignature: CpYEAXLI2nxHJhy3F4oMijlAus2CPUEnTw16KkDpmU77MgVhg6piCF3GycCmKbjhGXQ8mBK5lSpsqwI7DapurrH-NcQiuUJYF1CpS438_kC6pw0JsXszEoBQyJN7zTXqfLgiNOzO5sBwQU1fc5cBUiMzzAxHOyltJwZcYOqFXMPQ0c2AaNvHO4nOOFwRrJuwGVfpfP1BnpuiDUz5c5roIwkC8sykcxva7lOniPdd5Soy0juNxCK4BAXTq_TgHPxB6yEUBGaAYaR9JId6EaWV1_gDa-eSpvLI8P4TQiFWa4UUK_89_TmMEQlRsmbGHcuxU-6GGLI0szs5h2dq8yM8Dy5R_DyB9xXPwUl4c9A-m64LEk6aludQE2X_LKb7y1pfL2f6wjH89DY4F4Y0934R21eYeb9MZMuB-IYaEYIvk7Fhdx5VolnNYPoqoLpCxwHVucmEBruS9m7Li6VO7zZdDVgikbWKxZyixLIfy4LKthacCJERSAJl4aAAllotfzZopY-dUkujmlny_UyPotpJXH-3K6L2Ge3uFOmNShPNN3oSMBf2K3DBit6OE5FA4JMyi7PnzlhiSmPLVOFZEWvINXbHim4Bh7QpIyGnIiT5n_8lSIrcNbf_vD_ZqDqivM_gjyS_ayZqW7tzNW5J1xDkiJpEUK1aokoG-GeaKXZ-AsR6xPXj6hYqpYRhtCsY49KhVme_JJp6XMrN
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_1f2bdea4ea804905a3f05dfe5b96a7fb
+            name: get_capital
+            response:
+              error: |-
+                The country is not supported. Use "La France" instead.
+
+                Fix the errors and try again.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              country: La France
+            id: pyd_ai_9f63eafb0eac47419f4f6c19975e924b
+            name: get_capital
+          thoughtSignature: Ct8GAXLI2nz7mNfYmvoMGtxbp6sB05S83E1PgFbBidrtXSNPmssR19LsxIgLyCeT2CLOe1EiWP9Vw6M4hVSB8yaWgKruIK7GBaUt44ElKq-1tPlYToIrEmM-Y-YATGnWU9BeX8-RTpPzE2j0dEkAxfe-15IrZxBj7RTydL6FL3wpRgeMn3urrBXIDY_JfXlRakk8UKMhrwh4hC6jDEaeRGQUrrXChZ0yqj2MH3uEKsVBTiQi1HIs082MMRPSWE7RWoHCY7zWe3xrGRkiOyIZ_irYsMlMjLyUkqPrmQITg02oRWDsvE1E0Hf3saKxV_KKFjYExsaZpvms8z2Zqmy_vYsSU50PRPjJADOcbooiuUNFNAzf-yGgO2cRyZbZRORzf_nOAGlUJKBfCEnqkwprLr_VfNyBK5VmlPjj8-oPcVH7rCkbH5jLG0PrjB9jpiyYzr7YHUjWYHxLBAlCXMEt_iBc6lMviMJ9GckFGzIOPCzi_PVF_l7kcubCV01mfskGbJAy1UQ2khZW-uCeIc1eWr7-0sC7-mdnfHqpSCZJCom0KQiE_CHKSbn6ROS5dCYHwSYjmxyR1ja4LxssSDKafJUHjE1GlnlQy03bb_QoI-MDCIdRS-y0FwXt2TPgo8nuqIlhzx1NaDtA8431G9UPxCgs6fkRf1_QBo6TvI9VMT_mYhMb0-91ZwEIyA1YlKYErO2MSZwlbgZtMyWYGpLJ9NOBh6-6Ww9oYtNinL9gEhcDXJStJWSiJXGOWUEc6nUG7n8waM1Iqgg_pBx3VxDqrN5Wcnyu0uamQEo63xUeB_YAmOAuuhuPBhcfW3_oqTUaApDtCFMsCoJE3tf__RhW3J1b0IWOvN9_kgsKDpMX-GK5F5-b0JSsz2kdUo9u7he14C8fyLDx1fswFzIwpSmNdqs23RZUfqB9yajh83wWK7UdPxOcX-Mq7TlocixYZf8B4hARE1ORwkmzvL1XUtCLHJWN4KvrkahYS2-El3po_K_-dnmFyYDnusyjpsLnkV7uPBvqBlkP0cg0TT6afeuPffxBM68yI4k-iCFVLxwQCYG68BCRT96rBDyCt4rpECd1PUYFmQWhGbdS4norEcXbwcBNj79LbXak4KI9vbxR0wzgsuShBc78V51cMQU720slB-U=
+        role: model
+      - parts:
+        - functionResponse:
+            id: pyd_ai_9f63eafb0eac47419f4f6c19975e924b
+            name: get_capital
+            response:
+              return_value: Paris
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+        temperature: 0.0
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Get the capital of a country.
+          name: get_capital
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              country:
+                description: The country name.
+                type: string
+            required:
+            - country
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1147'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2362
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: Paris
+            thoughtSignature: CqQDAXLI2nzVwq8xStOWq3HumdAIrENdeO52sOtNadWTEdAHverlPYNZqz8VJMonMgBngg4V2UthuMF+iKik+Qf767C1DVvs5eIWfo08jLWzJq3lDcbB2fBSEw8lyW4hGumG+uCB6mWuE3+d6x8K+dOl8Rti9Upf/nAeSuebMiOfJYa8ztl++BJTA6E+/+gtaxfStKl6IJau4Pn+Ik4V4F8iMsxlhJzlE4H3DgXL5QU0mXRq3QkdHTOvZkURLKDd4qVy0LxVbneh2P1WaT6PFjkNNAOMeKNYGB1m3kgzOPCmoZHhFfxtN1u6g7qhLHh20UNQKcdNIdc5JhKdg+VLhVj71wN+FyGRdMM3lNsBXBgYA0CjZ1PWDuC08yzFV37BQq7GGA9oI6d5V/9W60tHPDQQ3W9+z8V2SWM5FhELa0yhkpmd4IH7CBvZxEx4lwRZ/Va37gb+Co90Q9G3SWza2noMRJUkr4z8yaUDPZY7uzSyUsLidp+9SMp8Eke/pQC2VhV/uPUrlV1NKPpdAgj/mLffxRiyQV3ShzTcYDj2VTkEcFvJ2Wpj
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: zlpeaKvDEdK2nsEPq97emQ0
+      modelVersion: gemini-2.5-pro
+      responseId: ipYoaaGNB9qVmtkP_vrsuQs
       usageMetadata:
-        candidatesTokenCount: 22
-        promptTokenCount: 104
+        candidatesTokenCount: 1
+        promptTokenCount: 142
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 104
-        thoughtsTokenCount: 178
-        totalTokenCount: 304
+          tokenCount: 142
+        thoughtsTokenCount: 97
+        totalTokenCount: 240
     status:
       code: 200
       message: OK

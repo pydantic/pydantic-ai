@@ -7,12 +7,11 @@ from typing import Annotated, Any
 
 from genai_prices.data_snapshot import get_snapshot
 from pydantic import AliasChoices, BeforeValidator, Field
-from typing_extensions import deprecated, overload
 
 from . import _utils
 from .exceptions import UsageLimitExceeded
 
-__all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
+__all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
 
 
 @dataclass(repr=False, kw_only=True)
@@ -47,18 +46,16 @@ class UsageBase:
         dict[str, int],
         # `details` can not be `None` any longer, but we still want to support deserializing model responses stored in a DB before this was changed
         BeforeValidator(lambda d: d or {}),
-    ] = dataclasses.field(default_factory=dict)
+    ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
-    @property
-    @deprecated('`request_tokens` is deprecated, use `input_tokens` instead')
-    def request_tokens(self) -> int:
-        return self.input_tokens
-
-    @property
-    @deprecated('`response_tokens` is deprecated, use `output_tokens` instead')
-    def response_tokens(self) -> int:
-        return self.output_tokens
+    def __copy__(self) -> UsageBase:
+        """Shallow copy that also copies mutable fields like `details`."""
+        cls = type(self)
+        new = cls.__new__(cls)
+        new.__dict__.update(self.__dict__)
+        new.details = self.details.copy()
+        return new
 
     @property
     def total_tokens(self) -> int:
@@ -75,8 +72,12 @@ class UsageBase:
 
         details = self.details.copy()
         if self.cache_write_tokens:
+            result['gen_ai.usage.cache_creation.input_tokens'] = self.cache_write_tokens
+            # For backwards compat
             details['cache_write_tokens'] = self.cache_write_tokens
         if self.cache_read_tokens:
+            result['gen_ai.usage.cache_read.input_tokens'] = self.cache_read_tokens
+            # For backwards compat
             details['cache_read_tokens'] = self.cache_read_tokens
         if self.input_audio_tokens:
             details['input_audio_tokens'] = self.input_audio_tokens
@@ -197,7 +198,7 @@ class RunUsage(UsageBase):
     output_tokens: int = 0
     """Total number of output/completion tokens."""
 
-    details: dict[str, int] = dataclasses.field(default_factory=dict)
+    details: dict[str, int] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
     def incr(self, incr_usage: RunUsage | RequestUsage) -> None:
@@ -234,15 +235,12 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.input_audio_tokens += incr_usage.input_audio_tokens
     slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
     slf.output_tokens += incr_usage.output_tokens
+    slf.output_audio_tokens += incr_usage.output_audio_tokens
 
     for key, value in incr_usage.details.items():
-        slf.details[key] = slf.details.get(key, 0) + value
-
-
-@dataclass(repr=False, kw_only=True)
-@deprecated('`Usage` is deprecated, use `RunUsage` instead')
-class Usage(RunUsage):
-    """Deprecated alias for `RunUsage`."""
+        # Note: value can be None at runtime from model responses despite the type annotation
+        if isinstance(value, (int, float)):
+            slf.details[key] = slf.details.get(key, 0) + value
 
 
 @dataclass(repr=False, kw_only=True)
@@ -267,77 +265,18 @@ class UsageLimits:
     """The maximum number of tokens allowed in requests and responses combined."""
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `request_tokens_limit` ahead of time. This may incur additional overhead
-    (from calling the model's `count_tokens` API before making the actual request) and is disabled by default."""
+    to enforce `input_tokens_limit` ahead of time.
 
-    @property
-    @deprecated('`request_tokens_limit` is deprecated, use `input_tokens_limit` instead')
-    def request_tokens_limit(self) -> int | None:
-        return self.input_tokens_limit
+    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request)
+    and is disabled by default.
 
-    @property
-    @deprecated('`response_tokens_limit` is deprecated, use `output_tokens_limit` instead')
-    def response_tokens_limit(self) -> int | None:
-        return self.output_tokens_limit
+    Supported by:
 
-    @overload
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit
-        self.output_tokens_limit = output_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    @overload
-    @deprecated(
-        'Use `input_tokens_limit` instead of `request_tokens_limit` and `output_tokens_limit` and `total_tokens_limit`'
-    )
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = request_tokens_limit
-        self.output_tokens_limit = response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        tool_calls_limit: int | None = None,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-        # deprecated:
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-    ):
-        self.request_limit = request_limit
-        self.tool_calls_limit = tool_calls_limit
-        self.input_tokens_limit = input_tokens_limit or request_tokens_limit
-        self.output_tokens_limit = output_tokens_limit or response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
+    - Anthropic
+    - Google
+    - Bedrock Converse
+    - OpenAI Responses
+    """
 
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.

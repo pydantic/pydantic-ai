@@ -10,7 +10,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from concurrent.futures.thread import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -40,7 +40,7 @@ from pydantic_ai import (
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-agent = Agent('openai:gpt-5')
+agent = Agent('openai:gpt-5.2')
 THIS_DIR = Path(__file__).parent
 
 
@@ -130,7 +130,7 @@ async def post_chat(
             async for text in result.stream_output(debounce_by=0.01):
                 # text here is a `str` and the frontend wants
                 # JSON encoded ModelResponse, so we create one
-                m = ModelResponse(parts=[TextPart(text)], timestamp=result.timestamp())
+                m = ModelResponse(parts=[TextPart(text)], timestamp=result.timestamp)
                 yield json.dumps(to_chat_message(m)).encode('utf-8') + b'\n'
 
         # add new messages (e.g. the user prompt and the agent response in this case) to the database
@@ -159,9 +159,9 @@ class Database:
     @asynccontextmanager
     async def connect(
         cls, file: Path = THIS_DIR / '.chat_app_messages.sqlite'
-    ) -> AsyncIterator[Database]:
+    ) -> AsyncGenerator[Database]:
         with logfire.span('connect to DB'):
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             executor = ThreadPoolExecutor(max_workers=1)
             con = await loop.run_in_executor(executor, cls._connect, file)
             slf = cls(con, loop, executor)

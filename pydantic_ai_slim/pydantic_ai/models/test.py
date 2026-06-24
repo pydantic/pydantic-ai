@@ -2,12 +2,13 @@ from __future__ import annotations as _annotations
 
 import re
 import string
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
+import httpx
 import pydantic_core
 from typing_extensions import assert_never
 
@@ -15,23 +16,26 @@ from .. import _utils
 from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
+    CompactionPart,
     FilePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
 )
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..native_tools._tool_search import ToolSearchTool
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import ObjectJsonSchema, ToolDefinition
 from ..usage import RequestUsage
 from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
@@ -95,6 +99,7 @@ class TestModel(Model):
         custom_output_text: str | None = None,
         custom_output_args: Any | None = None,
         seed: int = 0,
+        model_name: str = 'test',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -104,7 +109,7 @@ class TestModel(Model):
         self.custom_output_args = custom_output_args
         self.seed = seed
         self.last_model_request_parameters = None
-        self._model_name = 'test'
+        self._model_name = model_name
         self._system = 'test'
         super().__init__(settings=settings, profile=profile)
 
@@ -130,7 +135,7 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -147,6 +152,10 @@ class TestModel(Model):
         )
 
     @property
+    def provider(self) -> None:
+        return None
+
+    @property
     def model_name(self) -> str:
         """The model name."""
         return self._model_name
@@ -155,6 +164,16 @@ class TestModel(Model):
     def system(self) -> str:
         """The model provider."""
         return self._system
+
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """TestModel supports all native tools for testing flexibility.
+
+        `ToolSearchTool` is excluded because TestModel can't emulate provider-native
+        tool search. Auto-injected `ToolSearch` capabilities work transparently thanks
+        to the local `search_tools` fallback.
+        """
+        return SUPPORTED_NATIVE_TOOLS - {ToolSearchTool}
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
@@ -197,7 +216,7 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        if model_request_parameters.builtin_tools:
+        if model_request_parameters.native_tools:
             raise UserError('TestModel does not support built-in tools')
 
         tool_calls = self._get_tool_calls(model_request_parameters)
@@ -297,6 +316,7 @@ class TestStreamedResponse(StreamedResponse):
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
     _provider_name: str
+    _provider_url: str | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -313,19 +333,27 @@ class TestStreamedResponse(StreamedResponse):
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=''):
+                    yield event
                 for word in words:
+                    # Simulate the transport error that real providers raise
+                    # when the HTTP connection is closed mid-stream by cancel().
+                    if self._cancelled:
+                        raise httpx.StreamClosed()
                     self._usage += _get_string_usage(word)
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
+                        yield event
             elif isinstance(part, ToolCallPart):
+                # `ToolCallPart` subclasses (e.g. `ToolSearchCallPart`) narrow `args` to a
+                # `TypedDict`, which is structurally a `dict[str, Any]` but pyright keeps
+                # the narrower union here.
                 yield self._parts_manager.handle_tool_call_part(
-                    vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
+                    vendor_part_id=i,
+                    tool_name=part.tool_name,
+                    args=cast('str | dict[str, Any] | None', part.args),
+                    tool_call_id=part.tool_call_id,
                 )
-            elif isinstance(part, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+            elif isinstance(part, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                 # NOTE: These parts are not generated by TestModel, but we need to handle them for type checking
                 assert False, f'Unexpected part type in TestModel: {type(part).__name__}'
             elif isinstance(part, ThinkingPart):  # pragma: no cover
@@ -334,6 +362,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, FilePart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate FilePart on TestModel.
                 assert False, "This should be unreachable — we don't generate FilePart on TestModel."
+            elif isinstance(part, CompactionPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
+                assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."
             else:
                 assert_never(part)
 
@@ -346,6 +377,15 @@ class TestStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_url(self) -> str | None:
+        """Get the provider base URL."""
+        return self._provider_url
+
+    async def close_stream(self) -> None:
+        # TestModel has no underlying connection to close.
+        pass
 
     @property
     def timestamp(self) -> datetime:
@@ -362,7 +402,7 @@ class _JsonSchemaTestData:
     This tries to generate the minimal viable data for the schema.
     """
 
-    def __init__(self, schema: _utils.ObjectJsonSchema, seed: int = 0):
+    def __init__(self, schema: ObjectJsonSchema, seed: int = 0):
         self.schema = schema
         self.defs = schema.get('$defs', {})
         self.seed = seed

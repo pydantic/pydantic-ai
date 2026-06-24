@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '213'
+      - '224'
       content-type:
       - application/json
       host:
@@ -32,7 +32,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2197'
+      - '2174'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -41,47 +43,48 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - signature: ErUBCkYIBhgCIkB9AyHADyBknnHL4dh+Yj3rg3javltU/bz1MLHKCQTEVZwvjis+DKTOFSYqZU0F2xasSofECVAmYmgtRf87AL52EgyXRs8lh+1HtZ0V+wAaDBo0eAabII+t1pdHzyIweFpD2l4j1eeUwN8UQOW+bxcN3mwu144OdOoUxmEKeOcU97wv+VF2pCsm07qcvucSKh1P/rZzWuYm7vxdnD4EVFHdBeewghoO0Ngc1MTNsxgC
-        thinking: |-
-          This is a straightforward question about a common everyday task - crossing the street safely. I should provide clear, helpful instructions that emphasize safety.
-
-          The basic steps for crossing a street safely include:
-          1. Find a designated crossing area if possible (crosswalk, pedestrian crossing)
-          2. Look both ways before crossing
-          3. Make eye contact with drivers if possible
-          4. Follow traffic signals if present
-          5. Cross quickly but don't run
-          6. Continue to be aware of traffic while crossing
-
-          I'll provide this information in a clear, helpful way, emphasizing safety without being condescending.
+      - signature: Eq8CCkYICxgCKkDdadQOXMzNBqjrNVAKWsgUfg49NpPg026zBGxIIGwEHVCq0JTW/P9fKHjZdjgO8Dyx03YDw6hN0w1HucifXFggEgzoVS5Gogi9nvJSOA8aDDYuCAX4nGGkeHQLayIw+MWbf/TYU4AqT1X89p4S7fe7LOO+B8o24yCHQ8cFK9QK9p5WMj2Y4oBFBfC9uL8ZKpYBDjoKceyqFJA56ewVH73lNY5szTvm52+CVXMZJCb8x0B1bf9LIOsFUoJD6F4gZBdKfMqJgFCcKFR6iZh09pwa0E8lHvEnUeF1A0AJ6z0j8gQd5NxgipxWrF9908qJbMSkVDdg1dT/3Rr0nbGguAYTYdoV4MrVxyk29dSkkjyAAZBMI3p+HOwiaT6GmYq4qVE3kWnSoiEJGAE=
+        thinking: This is a straightforward question about pedestrian safety. I should provide clear, practical advice about
+          crossing the street safely.
         type: thinking
       - text: |-
-          # How to Cross the Street Safely
+          Here's how to cross the street safely:
 
-          1. **Find the right spot**
-             - Use crosswalks, pedestrian crossings, or intersections when available
-             - If there's a traffic light, cross at the corner
+          ## Basic Steps
 
-          2. **Wait for the right time**
-             - At traffic lights, wait for the "WALK" signal or green light
-             - At crosswalks without signals, wait for a gap in traffic
+          1. **Find a safe crossing point**
+             - Use crosswalks, intersections, or pedestrian signals when available
+             - Avoid crossing between parked cars or on curves
 
-          3. **Look carefully**
-             - Look left, then right, then left again (reverse in countries with left-side driving)
-             - Make eye contact with drivers to ensure they see you
+          2. **Stop at the curb/edge**
+             - Don't step into the street yet
 
-          4. **Cross with caution**
-             - Walk at a steady pace - don't run
-             - Continue watching for traffic as you cross
-             - Stay within the crosswalk if there is one
+          3. **Look all directions**
+             - Look left, then right, then left again
+             - Keep looking while you cross
 
-          5. **Stay alert**
-             - Put away distractions like phones
-             - Remove headphones or keep volume low to hear traffic
+          4. **Listen for traffic**
+             - Remove headphones or lower volume
+             - Listen for engines, horns, or sirens
 
-          Would you like me to explain any of these steps in more detail?
+          5. **Wait for a safe gap**
+             - Make sure cars have stopped or are far enough away
+             - Make eye contact with drivers if possible
+
+          6. **Cross steadily**
+             - Walk, don't run (unless necessary)
+             - Stay alert and keep watching for cars
+             - Stay in the crosswalk if there is one
+
+          ## At Traffic Signals
+          - Press the pedestrian button if there is one
+          - Wait for the "WALK" signal
+          - Still look both ways even with a walk signal
+          - Don't start crossing on a flashing "DON'T WALK"
+
+          **Key point**: Always assume drivers may not see you, so stay alert and make safe choices.
         type: text
-      id: msg_01BnZvs3naGorn93wjjCDwbd
+      id: msg_01TGA8SWcHTTn5674cmicbnJ
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -93,8 +96,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 42
-        output_tokens: 363
+        inference_geo: not_available
+        input_tokens: 43
+        output_tokens: 321
         service_tier: standard
     status:
       code: 200
@@ -104,11 +108,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '2195'
+      - '2131'
       content-type:
       - application/json
       host:
@@ -122,45 +126,46 @@ interactions:
           type: text
         role: user
       - content:
-        - signature: ErUBCkYIBhgCIkB9AyHADyBknnHL4dh+Yj3rg3javltU/bz1MLHKCQTEVZwvjis+DKTOFSYqZU0F2xasSofECVAmYmgtRf87AL52EgyXRs8lh+1HtZ0V+wAaDBo0eAabII+t1pdHzyIweFpD2l4j1eeUwN8UQOW+bxcN3mwu144OdOoUxmEKeOcU97wv+VF2pCsm07qcvucSKh1P/rZzWuYm7vxdnD4EVFHdBeewghoO0Ngc1MTNsxgC
-          thinking: |-
-            This is a straightforward question about a common everyday task - crossing the street safely. I should provide clear, helpful instructions that emphasize safety.
-
-            The basic steps for crossing a street safely include:
-            1. Find a designated crossing area if possible (crosswalk, pedestrian crossing)
-            2. Look both ways before crossing
-            3. Make eye contact with drivers if possible
-            4. Follow traffic signals if present
-            5. Cross quickly but don't run
-            6. Continue to be aware of traffic while crossing
-
-            I'll provide this information in a clear, helpful way, emphasizing safety without being condescending.
+        - signature: Eq8CCkYICxgCKkDdadQOXMzNBqjrNVAKWsgUfg49NpPg026zBGxIIGwEHVCq0JTW/P9fKHjZdjgO8Dyx03YDw6hN0w1HucifXFggEgzoVS5Gogi9nvJSOA8aDDYuCAX4nGGkeHQLayIw+MWbf/TYU4AqT1X89p4S7fe7LOO+B8o24yCHQ8cFK9QK9p5WMj2Y4oBFBfC9uL8ZKpYBDjoKceyqFJA56ewVH73lNY5szTvm52+CVXMZJCb8x0B1bf9LIOsFUoJD6F4gZBdKfMqJgFCcKFR6iZh09pwa0E8lHvEnUeF1A0AJ6z0j8gQd5NxgipxWrF9908qJbMSkVDdg1dT/3Rr0nbGguAYTYdoV4MrVxyk29dSkkjyAAZBMI3p+HOwiaT6GmYq4qVE3kWnSoiEJGAE=
+          thinking: This is a straightforward question about pedestrian safety. I should provide clear, practical advice about
+            crossing the street safely.
           type: thinking
         - text: |-
-            # How to Cross the Street Safely
+            Here's how to cross the street safely:
 
-            1. **Find the right spot**
-               - Use crosswalks, pedestrian crossings, or intersections when available
-               - If there's a traffic light, cross at the corner
+            ## Basic Steps
 
-            2. **Wait for the right time**
-               - At traffic lights, wait for the "WALK" signal or green light
-               - At crosswalks without signals, wait for a gap in traffic
+            1. **Find a safe crossing point**
+               - Use crosswalks, intersections, or pedestrian signals when available
+               - Avoid crossing between parked cars or on curves
 
-            3. **Look carefully**
-               - Look left, then right, then left again (reverse in countries with left-side driving)
-               - Make eye contact with drivers to ensure they see you
+            2. **Stop at the curb/edge**
+               - Don't step into the street yet
 
-            4. **Cross with caution**
-               - Walk at a steady pace - don't run
-               - Continue watching for traffic as you cross
-               - Stay within the crosswalk if there is one
+            3. **Look all directions**
+               - Look left, then right, then left again
+               - Keep looking while you cross
 
-            5. **Stay alert**
-               - Put away distractions like phones
-               - Remove headphones or keep volume low to hear traffic
+            4. **Listen for traffic**
+               - Remove headphones or lower volume
+               - Listen for engines, horns, or sirens
 
-            Would you like me to explain any of these steps in more detail?
+            5. **Wait for a safe gap**
+               - Make sure cars have stopped or are far enough away
+               - Make eye contact with drivers if possible
+
+            6. **Cross steadily**
+               - Walk, don't run (unless necessary)
+               - Stay alert and keep watching for cars
+               - Stay in the crosswalk if there is one
+
+            ## At Traffic Signals
+            - Press the pedestrian button if there is one
+            - Wait for the "WALK" signal
+            - Still look both ways even with a walk signal
+            - Don't start crossing on a flashing "DON'T WALK"
+
+            **Key point**: Always assume drivers may not see you, so stay alert and make safe choices.
           type: text
         role: assistant
       - content:
@@ -178,7 +183,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2676'
+      - '4093'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       strict-transport-security:
@@ -187,54 +194,70 @@ interactions:
       - chunked
     parsed_body:
       content:
-      - signature: ErUBCkYIBhgCIkDvSvKCs5ePyYmR6zFw5i+jF7KEmortSIleqDa4gfa3pbuBclQt0TPdacouhdXFHdVSqR4qOAAAOpN7RQEUz2o6Egy9MPee6H8U4SW/G2QaDP/9ysoEvk+yNyVYZSIw+/+5wuRyc3oajwV3w0EdL9CIAXXd5thQH7DwAe3HTFvoJuF4oZ4fU+Kh6LRqxnEaKh3SSRqAH4UH/sD86duzg0jox4J/NH4C9iILVesEERgC
+      - signature: EvgHCkYICxgCKkBWep44ZkS8HkPkKt2q7OJir9S1aK8TFXpFjWz4yEEVk+2r0FCXIRwuIJBfrLI+kTWKzAFtjxpM+G+S8Btnle6sEgwSq3W1+WbBYHYolVYaDCbom89zf38EbOe8jCIwKz0NLPNu1XU3I3nREDwVSSBCe/u2C+Ryon6gXHWSWlM7r6M2jMVUNynufqiO9m+jKt8GDH5qCKJRfydyyKcS1muFqazBmHs8L3sUsHzj7s2XkvP+2yA789klS3DrrYj4H1kYbRWpmGlTxkpPAuXUr8u1U02sNS0zqh5HiIEu2LZesOj5l1jw68VXcVBPsYEdkSvarScNKzmDBOiw0vTV9EkoxZ/p/ZvoP4PUYSzFc1oJRPaLDCn7KW/aAsZBbsS55YDwHBXvjrDFFtcd2V04JuavcKi0EwomwCy95e0NAaOrA9aAFizZoG30V9KSiz0XUQ3+8ByxKILXk1qvtaV2HJgYahAuRcOpEoty4+Dqx96KsA4ifPaU0+MRwoVUwGUm+mK75ViBIAQdRFblkHbPHYHpK+P9SjdIb00h6PUH59pPyNFQOMJyav7c6dy2efTmiTdzejLHXjUzVvG2LaDnq7cFM2MpqvxlIxDULVG+N13xOTStjLJ9Siwq/zMPKTZYhbYYYC6INlMxwmvM0xz3ofsZbUVOAHv2Ti9jixmB38wyKaFiS7GkQvaK9r9AYl7b632bnsjexiHMe+HMAwfOiA9d2bfhGYCwnt59uNCPgXRihLqaeemq84tiHjSpXrYAieAHtiwEhh0Zz5/ztFgn9pDko5ZmfUvXW9kcZ/8nthmDJSD0z933gw5gITW5u+4S4ozqkGtQ4lGgHNzXLpAEs1A6lsqh2jC2iAskj4Mc/oihJbmAFT0UQ0uopcExyImY6maqKub7xYUseRiNjd1Y7hq7eLDlrMiOR8DDoUoTEIz1imI+KetpLXJoSorecGkYivZajx9ZY+L/R4VcA6olgJsjSpztEvlNextE8sAcAnwBK5l8+yBxWBflFf96wOcvbxE3xtEfR5+ISy6+A6kcxPkpj/31B0VM9y3EqMcDqKmMCF6r7MpwRzXxkHofWCG49N4SQKDJrRJSMldy/qGvd5TIVDghEK+8AoVhWZXqXl6y9z5NG72fOlXLdh3me1jtqMSBX3q0gxmljqzqii/r4F6Qmmmwl2szfryxwgUWAAPS6yDEWbDyUhQSmc24Q+uHrXhKIPKuDQljCsI2by2pyC8UV4RsEfvNLk0zs5CPR3+1kewb8TVB6S+IpmJHJnBZImkI2vt2IUgvnJb/5D+aezG2mA8O+4qjsnHsbT8Njk92tOI1wxOFSAO19SOEa+DD2bsYAQ==
         thinking: |-
-          The person is asking me to draw an analogy between crossing a street and crossing a river. I'll structure my response similarly to my street-crossing guidelines, but adapt it for river crossing, which has different safety considerations and methods.
+          This is an interesting analogy question. The person is asking me to apply the safety principles and general approach from crossing a street to crossing a river. Let me think about the parallel elements:
 
-          For crossing a river, I should include:
-          1. Finding the right spot (bridges, shallow areas, ferry points)
-          2. Assessing safety (current speed, depth, obstacles)
-          3. Choosing the appropriate method (walking across shallow areas, using bridges, boats, etc.)
-          4. Safety precautions (life vests, ropes, etc.)
-          5. The actual crossing technique
-          6. What to do in emergencies
+          Street crossing principles:
+          - Find safe crossing point
+          - Assess conditions
+          - Look for hazards
+          - Use designated crossings when available
+          - Wait for safe conditions
+          - Cross carefully while staying alert
 
-          I'll keep the format similar to my street-crossing response for consistency.
+          River crossing would involve similar safety thinking:
+          - Find safe crossing point (bridge, ford, ferry, shallow area)
+          - Assess conditions (water depth, current, weather)
+          - Look for hazards (rocks, debris, cold water, strong current)
+          - Use established crossings when available
+          - Wait for safe conditions (water levels, weather)
+          - Cross carefully while staying alert
+
+          I should provide practical advice for different methods of crossing a river.
         type: thinking
       - text: |-
-          # How to Cross a River Safely
+          # How to Cross a River (Using the Street-Crossing Analogy)
 
-          1. **Find the right spot**
-             - Use bridges, ferries, or designated crossing points when available
-             - Look for narrow or shallow sections if no infrastructure exists
-             - Avoid areas with fast currents, whitewater, or dangerous debris
+          ## Find a Safe Crossing Point
+          **Like using crosswalks**, look for:
+          - **Bridges** (the safest "crosswalk")
+          - **Ferries or boats** (designated crossing)
+          - **Fords** - marked shallow crossing points
+          - **Stepping stones** in shallow areas
 
-          2. **Assess the conditions**
-             - Check water depth and speed of current
-             - Look for hazards like submerged objects or slippery rocks
-             - Consider weather conditions that might affect water levels
+          ## Stop and Assess Conditions
+          **Like stopping at the curb**, evaluate:
+          - Water depth and current speed
+          - Weather conditions
+          - Water temperature
+          - Your swimming ability and fitness
+          - Distance to the other side
 
-          3. **Choose the appropriate method**
-             - Bridge or ferry: The safest options
-             - Wade across: Only in shallow, calm water with stable footing
-             - Swim: Only if you're a strong swimmer and conditions are safe
-             - Boat/raft: For wider or deeper crossings
+          ## Look for Hazards
+          **Like looking both ways for cars**, check for:
+          - Strong currents or rapids
+          - Hidden rocks or drop-offs
+          - Debris in the water
+          - Slippery banks
+          - Cold water (hypothermia risk)
 
-          4. **Prepare properly**
-             - Wear appropriate footwear for wading
-             - Use life jackets/flotation devices when swimming or boating
-             - Secure belongings in waterproof containers
-             - Consider using a walking stick for balance when wading
+          ## Wait for Safe Conditions
+          **Like waiting for traffic to clear**:
+          - Don't cross during floods or after heavy rain
+          - Avoid crossing in bad weather
+          - Consider water levels (seasonal changes)
 
-          5. **Cross with caution**
-             - Face upstream when wading to brace against current
-             - Move diagonally downstream if swimming
-             - Stay alert for changing conditions
-             - Use the buddy system when possible
+          ## Cross Carefully
+          **Like walking across steadily**:
+          - Use bridges when available (safest option)
+          - If wading: use a stick for balance, face upstream, shuffle sideways
+          - Never cross alone if conditions are uncertain
+          - Wear a life jacket if available
 
-          Is there a specific river crossing scenario you're curious about?
+          **Key point**: Just as you wouldn't jaywalk across a highway, **don't attempt to cross dangerous rivers**. When in doubt, find a bridge or don't cross.
         type: text
-      id: msg_019Z9a1qnqUCxd7Fj6PuuetE
+      id: msg_016Vg1RgKdfLjsCLybGjd8Xo
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
@@ -246,8 +269,9 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 291
-        output_tokens: 471
+        inference_geo: not_available
+        input_tokens: 354
+        output_tokens: 525
         service_tier: standard
     status:
       code: 200

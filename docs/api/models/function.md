@@ -14,7 +14,7 @@ from pydantic_ai import Agent
 from pydantic_ai import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel, AgentInfo
 
-my_agent = Agent('openai:gpt-5')
+my_agent = Agent('openai:gpt-5.2')
 
 
 async def model_function(
@@ -29,14 +29,24 @@ async def model_function(
                     content='Testing my agent...',
                     timestamp=datetime.datetime(...),
                 )
-            ]
+            ],
+            timestamp=datetime.datetime(...),
+            run_id='...',
+            conversation_id='...',
         )
     ]
     """
     print(info)
     """
     AgentInfo(
-        function_tools=[], allow_text_output=True, output_tools=[], model_settings=None
+        function_tools=[],
+        allow_text_output=True,
+        output_tools=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[], native_tools=[], output_tools=[]
+        ),
+        instructions=None,
     )
     """
     return ModelResponse(parts=[TextPart('hello world')])

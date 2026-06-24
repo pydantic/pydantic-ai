@@ -1,0 +1,356 @@
+"""Tests for Anthropic JSON schema transformer.
+
+The AnthropicJsonSchemaTransformer handles schema transformation based on the strict parameter:
+- strict=True: Calls Anthropic's transform_schema() which adds additionalProperties
+  and moves unsupported constraints to descriptions
+- strict=False/None: Does not call transform_schema()
+
+In all cases, title and $schema fields are removed by the base transformer.
+
+The is_strict_compatible flag is set based on the strict parameter:
+- strict=True → is_strict_compatible=True
+- strict=False/None → is_strict_compatible=False
+
+See: https://docs.claude.com/en/docs/build-with-claude/structured-outputs
+"""
+
+from __future__ import annotations as _annotations
+
+import warnings
+from typing import Annotated, Any
+
+import pytest
+from pydantic import BaseModel, Field
+
+from .._inline_snapshot import snapshot
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.profiles.anthropic import anthropic_model_profile
+    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
+]
+
+
+# =============================================================================
+# Transformer Tests - strict=True (transformation enabled)
+# =============================================================================
+
+
+def test_strict_true_simple_schema():
+    """With strict=True, simple schemas are transformed (additionalProperties added, title removed)."""
+
+    class Person(BaseModel):
+        name: str
+        age: int
+
+    transformer = AnthropicJsonSchemaTransformer(Person.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+            'additionalProperties': False,
+            'required': ['name', 'age'],
+        }
+    )
+
+
+def test_strict_true_schema_with_constraints():
+    """With strict=True, schemas with constraints are transformed (constraints moved to description)."""
+
+    class User(BaseModel):
+        username: Annotated[str, Field(min_length=3)]
+        email: Annotated[str, Field(pattern=r'^[\w\.-]+@[\w\.-]+\.\w+$')]
+
+    original_schema = User.model_json_schema()
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=True)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is True
+    assert original_schema == snapshot(
+        {
+            'properties': {
+                'username': {'minLength': 3, 'title': 'Username', 'type': 'string'},
+                'email': {'pattern': '^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$', 'title': 'Email', 'type': 'string'},
+            },
+            'required': ['username', 'email'],
+            'title': 'User',
+            'type': 'object',
+        }
+    )
+    # Anthropic's transform_schema() moves unsupported constraints to description
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'username': {'type': 'string', 'description': '{minLength: 3}'},
+                'email': {'type': 'string', 'description': '{pattern: ^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$}'},
+            },
+            'additionalProperties': False,
+            'required': ['username', 'email'],
+        }
+    )
+
+
+def test_strict_true_nested_model():
+    """With strict=True, nested models are transformed."""
+
+    class Address(BaseModel):
+        street: str
+        city: str
+
+    class Person(BaseModel):
+        name: str
+        address: Address
+
+    transformer = AnthropicJsonSchemaTransformer(Person.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is True
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Address': {
+                    'type': 'object',
+                    'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                    'additionalProperties': False,
+                    'required': ['street', 'city'],
+                }
+            },
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'address': {'$ref': '#/$defs/Address'}},
+            'additionalProperties': False,
+            'required': ['name', 'address'],
+        }
+    )
+
+
+# =============================================================================
+# Transformer Tests - strict=False (transformation disabled)
+# =============================================================================
+
+
+def test_strict_false_preserves_schema():
+    """With strict=False, schemas are not transformed (only title/$schema removed)."""
+
+    class User(BaseModel):
+        username: Annotated[str, Field(min_length=3)]
+        age: int
+
+    original_schema = User.model_json_schema()
+    transformer = AnthropicJsonSchemaTransformer(original_schema, strict=False)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is False
+    # Constraints preserved, title removed
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'username': {'minLength': 3, 'type': 'string'},
+                'age': {'type': 'integer'},
+            },
+            'required': ['username', 'age'],
+        }
+    )
+
+
+# =============================================================================
+# Transformer Tests - strict=None (transformation disabled, default case)
+# =============================================================================
+
+
+def test_strict_none_preserves_schema():
+    """With strict=None (default), schemas are not transformed (only title/$schema removed)."""
+
+    class User(BaseModel):
+        username: Annotated[str, Field(min_length=3)]
+        age: int
+
+    transformer = AnthropicJsonSchemaTransformer(User.model_json_schema(), strict=None)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is False
+    # Constraints preserved, title removed
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'username': {'minLength': 3, 'type': 'string'},
+                'age': {'type': 'integer'},
+            },
+            'required': ['username', 'age'],
+        }
+    )
+
+
+def test_strict_none_simple_schema():
+    """With strict=None, simple schemas are not transformed (only title/$schema removed)."""
+
+    class Person(BaseModel):
+        name: str
+        age: int
+
+    transformer = AnthropicJsonSchemaTransformer(Person.model_json_schema(), strict=None)
+    transformed = transformer.walk()
+
+    assert transformer.is_strict_compatible is False
+    # No additionalProperties added, title removed
+    assert transformed == snapshot(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+            'required': ['name', 'age'],
+        }
+    )
+
+
+# =============================================================================
+# Transformer Tests - dict field warnings
+# =============================================================================
+
+
+def test_strict_true_warns_on_dict_fields():
+    """With strict=True, dict fields (additionalProperties with schema) emit a warning."""
+    schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_strict_false_no_warning_on_dict_fields():
+    """With strict=False, dict fields do not emit a warning."""
+    schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        AnthropicJsonSchemaTransformer(schema, strict=False).walk()
+
+
+def test_strict_none_no_warning_on_dict_fields():
+    """With strict=None (the default), dict fields do not emit a warning."""
+    schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        AnthropicJsonSchemaTransformer(schema, strict=None).walk()
+
+
+def test_strict_true_warns_on_basemodel_with_dict_field():
+    """With strict=True, a BaseModel containing a dict field emits a warning."""
+
+    class ModelWithDict(BaseModel):
+        name: str
+        metadata: dict[str, str]
+
+    schema = ModelWithDict.model_json_schema()
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_strict_true_warns_on_any_dict_field():
+    """With strict=True, dict[str, Any] fields (additionalProperties: true) emit a warning."""
+    schema = {'type': 'object', 'additionalProperties': True}
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_strict_true_warns_on_basemodel_with_any_dict_field():
+    """With strict=True, a BaseModel containing a dict[str, Any] field emits a warning."""
+
+    class ModelWithAnyDict(BaseModel):
+        name: str
+        metadata: dict[str, Any]
+
+    schema = ModelWithAnyDict.model_json_schema()
+    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+        AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+
+
+# =============================================================================
+# Model Profile Tests
+# =============================================================================
+
+
+def test_model_profile_supported_model():
+    """Models that support structured outputs have supports_json_schema_output=True."""
+    profile = anthropic_model_profile('claude-sonnet-4-5')
+    assert profile is not None
+    assert profile.get('supports_json_schema_output', False) is True
+
+
+def test_model_profile_unsupported_model():
+    """Models that don't support structured outputs have supports_json_schema_output=False."""
+    profile = anthropic_model_profile('claude-sonnet-4-0')
+    assert profile is not None
+    assert profile.get('supports_json_schema_output', False) is False
+
+
+def test_model_profile_opus():
+    """Opus 4.1 supports structured outputs."""
+    profile = anthropic_model_profile('claude-opus-4-1')
+    assert profile is not None
+    assert profile.get('supports_json_schema_output', False) is True
+
+
+def test_model_profile_fable_5():
+    """Claude Fable 5 mirrors the Opus 4.8 capability set, minus fast speed and forced tool choice.
+
+    Capabilities verified live against the Anthropic API: it rejects sampling settings and
+    budget-based thinking, accepts adaptive thinking + `xhigh` effort + task budgets + json-schema
+    output, but rejects `anthropic_speed='fast'` and a forced `tool_choice` outright.
+    """
+    profile = anthropic_model_profile('claude-fable-5')
+    assert profile is not None
+
+    # Shared with the Opus 4.7 / 4.8 family
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
+
+    # Fable-5-specific divergences from the Opus mirror
+    assert profile.get('anthropic_supports_fast_speed') is False
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
+
+
+def test_model_profile_mythos_rejects_forced_tool_choice():
+    """Claude Mythos Preview rejects a forced `tool_choice` outright, like Fable 5.
+
+    Per the Anthropic docs, requests with `tool_choice: {'type': 'any'}` or `{'type': 'tool'}`
+    return a 400 on this model, so `anthropic_supports_forced_tool_choice` must be False.
+    """
+    profile = anthropic_model_profile('claude-mythos-preview')
+    assert profile is not None
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
+
+
+def test_model_profile_mythos_5():
+    """Claude Mythos 5 is the safety-classifier-free twin of Claude Fable 5 and carries the same
+    capability profile (Anthropic: 'Mythos 5 shares the same capabilities without the safety classifiers').
+
+    Every capability is documented for Mythos 5 by name except the forced-`tool_choice` rejection,
+    which is inferred from it being both the successor to Mythos Preview and Fable 5's twin.
+    """
+    profile = anthropic_model_profile('claude-mythos-5')
+    assert profile is not None
+
+    # Identical to the Fable 5 / Opus 4.8 capability set
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
+
+    # Shared divergences from the Opus mirror (same as Fable 5)
+    assert profile.get('anthropic_supports_fast_speed') is False
+    assert profile.get('anthropic_supports_forced_tool_choice') is False

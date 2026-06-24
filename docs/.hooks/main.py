@@ -16,10 +16,12 @@ DOCS_ROOT = Path(__file__).parent.parent
 
 def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) -> str:
     """Called on each file after it is read and before it is converted to HTML."""
-    markdown = inject_snippets(markdown, (DOCS_ROOT / page.file.src_uri).parent)
+    relative_path = DOCS_ROOT / page.file.src_uri
+    markdown = inject_snippets(markdown, relative_path.parent)
     markdown = replace_uv_python_run(markdown)
     markdown = render_examples(markdown)
     markdown = render_video(markdown)
+    markdown = create_gateway_toggle(markdown, relative_path)
     return markdown
 
 
@@ -39,10 +41,11 @@ def on_env(env: Environment, config: Config, files: Files) -> Environment:
 
 def on_post_build(config: Config) -> None:
     """Inject extra CSS into mermaid styles to avoid titles being the same color as the background in dark mode."""
+    assert bundle_path is not None
     if bundle_path.exists():
-        content = bundle_path.read_text()
+        content = bundle_path.read_text(encoding='utf-8')
         content, _ = re.subn(r'}(\.statediagram)', '}.statediagramTitleText{fill:#888}\1', content, count=1)
-        bundle_path.write_text(content)
+        bundle_path.write_text(content, encoding='utf-8')
 
 
 def replace_uv_python_run(markdown: str) -> str:
@@ -85,7 +88,7 @@ def render_examples(markdown: str) -> str:
 
 def sub_example(m: re.Match[str]) -> str:
     example_path = EXAMPLES_DIR / m.group(1)
-    content = example_path.read_text().strip()
+    content = example_path.read_text(encoding='utf-8').strip()
     # remove leading docstring which duplicates what's in the docs page
     content = re.sub(r'^""".*?"""', '', content, count=1, flags=re.S).strip()
 
@@ -115,3 +118,133 @@ def sub_cf_video(m: re.Match[str]) -> str:
   ></iframe>
 </div>
 """
+
+
+def create_gateway_toggle(markdown: str, relative_path: Path) -> str:
+    """Transform Python code blocks with Agent() calls to show both Pydantic AI and Gateway versions."""
+    # Pattern matches Python code blocks with or without attributes, and optional annotation definitions after.
+    # Captures leading indentation (group 1) to support code blocks nested inside admonitions or other contexts.
+    # The closing fence must match the same indentation via backreference \1.
+    # Annotation definitions are numbered list items like "1. Some text" that follow the code block.
+    return re.sub(
+        r'^( *)```py(?:thon)?(?: *\{?([^}\n]*)\}?)?\n(.*?)\n\1```(\n\n(?:[ \t]*\d+\.[^\n]+\n)+\n)?',
+        lambda m: transform_gateway_code_block(m, relative_path),
+        markdown,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+
+
+# Mapping of user-facing provider prefixes in docs to the form shown in the Gateway tab.
+# 1-to-1 identity: the toggle shows `Agent('openai:')` ↔ `Agent('gateway/openai:')`.
+# Wire-value translation (e.g. `openai` -> `openai-responses` on the Gateway URL) is the
+# runtime's concern and lives in `providers/gateway.py::_GATEWAY_ROUTE_REMAP`.
+GATEWAY_MODEL_MAP = {
+    'anthropic': 'anthropic',
+    'openai': 'openai',
+    'openai-responses': 'openai-responses',
+    'openai-chat': 'openai-chat',
+    'bedrock': 'bedrock',
+    'google': 'google',
+    'google-cloud': 'google-cloud',
+    'groq': 'groq',
+}
+# Models that should get gateway transformation
+GATEWAY_MODELS = tuple(GATEWAY_MODEL_MAP.keys())
+
+
+def transform_gateway_code_block(m: re.Match[str], relative_path: Path) -> str:
+    """Transform a single code block to show both versions if it contains Agent() calls."""
+    indent = m.group(1)  # Leading whitespace (e.g. 4 spaces when inside an admonition)
+    attrs = m.group(2) or ''
+    code = m.group(3)
+    annotations = m.group(4) or ''  # Capture annotation definitions if present
+
+    tab_indent = indent + '    '  # Tab content needs 4 more spaces than the surrounding context
+
+    # Simple check: does the code contain both "Agent(" and a quoted string?
+    if 'Agent(' not in code:
+        attrs_str = f' {{{attrs}}}' if attrs else ''
+        return f'{indent}```python{attrs_str}\n{code}\n{indent}```{annotations}'
+
+    # Check if code contains Agent() with a model that should be transformed
+    # Look for Agent(...'model:...' or Agent(..."model:..."
+    agent_pattern = r'Agent\((?:(?!["\']).)*([\"\'])([^"\']+)\1'
+    agent_match = re.search(agent_pattern, code, flags=re.DOTALL)
+
+    if not agent_match:
+        # No Agent() with string literal found
+        attrs_str = f' {{{attrs}}}' if attrs else ''
+        return f'{indent}```python{attrs_str}\n{code}\n{indent}```{annotations}'
+
+    model_string = agent_match.group(2)
+    # Check if model starts with one of the gateway-supported models
+    should_transform = any(model_string.startswith(f'{model}:') for model in GATEWAY_MODELS)
+
+    if not should_transform:
+        # Model doesn't match gateway models, return original
+        attrs_str = f' {{{attrs}}}' if attrs else ''
+        return f'{indent}```python{attrs_str}\n{code}\n{indent}```{annotations}'
+
+    # Transform the code for gateway version
+    def replace_agent_model(match: re.Match[str]) -> str:
+        """Replace model string with gateway/ prefix if it's a supported provider."""
+        full_match = match.group(0)
+        quote = match.group(1)
+        model = match.group(2)
+
+        for provider, gateway_provider in GATEWAY_MODEL_MAP.items():
+            if model.startswith(f'{provider}:'):
+                new_model = model.replace(f'{provider}:', f'gateway/{gateway_provider}:', 1)
+                return full_match.replace(f'{quote}{model}{quote}', f'{quote}{new_model}{quote}', 1)
+
+        return full_match
+
+    # This pattern finds: "Agent(" followed by anything (lazy), then the first quoted string
+    gateway_code = re.sub(
+        agent_pattern,
+        replace_agent_model,
+        code,
+        flags=re.DOTALL,
+    )
+
+    # Build attributes string
+    docs_path = DOCS_ROOT / 'gateway'
+
+    relative_path_to_gateway = docs_path.relative_to(relative_path, walk_up=True)
+    link = f"<a href='{relative_path_to_gateway}' style='float: right;'>Learn about Gateway</a>"
+    attrs_str = f' {{{attrs}}}' if attrs else ''
+
+    if 'title="' in attrs:
+        gateway_attrs = attrs.replace('title="', f'title="{link} ', 1)
+    else:
+        gateway_attrs = attrs + f' title="{link}"'
+    gateway_attrs_str = f' {{{gateway_attrs}}}'
+
+    # Indent code lines for the tab content (add 4 spaces on top of any existing indent).
+    # Code lines already carry the outer `indent` prefix from the source, so adding 4 more
+    # spaces brings them to the correct `tab_indent` level inside the generated tab block.
+    code_lines = code.split('\n')
+    indented_code = '\n'.join('    ' + line for line in code_lines)
+
+    gateway_code_lines = gateway_code.split('\n')
+    indented_gateway_code = '\n'.join('    ' + line for line in gateway_code_lines)
+
+    # Indent annotation definitions if present (need to be inside tabs for Material to work).
+    # Annotation lines already carry the outer `indent` prefix, so adding 4 more spaces is correct.
+    indented_annotations = ''
+    if annotations:
+        annotation_lines = annotations.strip().split('\n')
+        indented_annotations = '\n\n' + '\n'.join('    ' + line for line in annotation_lines) + '\n\n'
+
+    return f"""\
+{indent}=== "With Pydantic AI Gateway"
+
+{tab_indent}```python{gateway_attrs_str}
+{indented_gateway_code}
+{tab_indent}```{indented_annotations}
+
+{indent}=== "Directly to Provider API"
+
+{tab_indent}```python{attrs_str}
+{indented_code}
+{tab_indent}```{indented_annotations}"""

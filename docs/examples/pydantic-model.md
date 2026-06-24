@@ -18,10 +18,10 @@ This examples uses `openai:gpt-5` by default, but it works well with other model
 with Gemini using:
 
 ```bash
-PYDANTIC_AI_MODEL=gemini-2.5-pro python/uv-run -m pydantic_ai_examples.pydantic_model
+PYDANTIC_AI_MODEL=gemini-3-pro-preview python/uv-run -m pydantic_ai_examples.pydantic_model
 ```
 
-(or `PYDANTIC_AI_MODEL=gemini-2.5-flash ...`)
+(or `PYDANTIC_AI_MODEL=gemini-3-flash-preview ...`)
 
 ## Example Code
 

@@ -1,0 +1,32 @@
+interactions:
+- request:
+    headers:
+      content-type:
+      - application/json
+    method: post
+    parsed_body:
+      encoding_format: base64
+      input:
+      - Hello, world!
+      input_type: query
+      model: nonexistent
+      output_dimension: null
+      output_dtype: null
+      truncation: false
+    uri: https://api.voyageai.com/v1/embeddings
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '333'
+      content-type:
+      - application/json
+    parsed_body:
+      detail: Model nonexistent is not supported. Supported models are ['g2-20250421-0156pm-voyage-2-series-preloading', 'voyage-large-2-instruct',
+        'voyage-law-2', 'voyage-code-2', 'voyage-02', 'voyage-2', 'voyage-01', 'voyage-lite-01', 'voyage-lite-01-instruct',
+        'voyage-lite-02-instruct', 'voyage-multilingual-2', 'voyage-large-2'].
+    status:
+      code: 400
+      message: Bad Request
+version: 1

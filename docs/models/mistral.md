@@ -58,7 +58,7 @@ agent = Agent(model)
 ...
 ```
 
-You can also customize the provider with a custom `httpx.AsyncHTTPClient`:
+You can also customize the provider with a custom `httpx.AsyncClient`:
 
 ```python
 from httpx import AsyncClient

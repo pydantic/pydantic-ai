@@ -4,16 +4,20 @@ import re
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
+_JsonSchemaNode: TypeAlias = JsonSchema | bool
 
 
 @dataclass(init=False)
 class JsonSchemaTransformer(ABC):
     """Walks a JSON schema, applying transformations to it at each level.
+
+    The transformer is called during a model's prepare_request() step to build the JSON schema
+    before it is sent to the model provider.
 
     Note: We may eventually want to rework tools to build the JSON schema from the type directly, using a subclass of
     pydantic.json_schema.GenerateJsonSchema, rather than making use of this machinery.
@@ -30,12 +34,19 @@ class JsonSchemaTransformer(ABC):
         self.schema = schema
 
         self.strict = strict
-        self.is_strict_compatible = True  # Can be set to False by subclasses to set `strict` on `ToolDefinition` when set not set by user explicitly
+        """The `strict` parameter forces the conversion of the original JSON schema (`self.schema`) of a `ToolDefinition` or `OutputObjectDefinition` to a format supported by the model provider.
 
+        The "strict mode" offered by model providers ensures that the model's output adheres closely to the defined schema. However, not all model providers offer it, and their support for various schema features may differ. For example, a model provider's required schema may not support certain validation constraints like `minLength` or `pattern`.
+        """
+        self.is_strict_compatible = True
+        """Whether the schema is compatible with strict mode.
+
+        This value is used to set `ToolDefinition.strict` or `OutputObjectDefinition.strict` when their values are `None`.
+        """
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
-        self.defs: dict[str, JsonSchema] = self.schema.get('$defs', {})
+        self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
 
@@ -50,6 +61,7 @@ class JsonSchemaTransformer(ABC):
         # First, handle everything but $defs:
         schema.pop('$defs', None)
         handled = self._handle(schema)
+        assert not isinstance(handled, bool)
 
         if not self.prefer_inlined_defs and self.defs:
             handled['$defs'] = {k: self._handle(v) for k, v in self.defs.items()}
@@ -72,7 +84,10 @@ class JsonSchemaTransformer(ABC):
 
         return handled
 
-    def _handle(self, schema: JsonSchema) -> JsonSchema:
+    def _handle(self, schema: _JsonSchemaNode) -> _JsonSchemaNode:
+        if isinstance(schema, bool):
+            return schema
+
         nested_refs = 0
         if self.prefer_inlined_defs:
             while ref := schema.get('$ref'):
@@ -146,13 +161,13 @@ class JsonSchemaTransformer(ABC):
 
         handled = [self._handle(member) for member in members]
 
-        # convert nullable unions to nullable types
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
-
         if len(handled) == 1:
             # In this case, no need to retain the union
-            return handled[0] | schema
+            if isinstance(handled[0], dict):
+                return handled[0] | schema
+            # Non-dict schema node (e.g. boolean): fall through to wrap in union key
 
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
         schema = schema.copy()
@@ -160,19 +175,20 @@ class JsonSchemaTransformer(ABC):
         return schema
 
     @staticmethod
-    def _simplify_nullable_union(cases: list[JsonSchema]) -> list[JsonSchema]:
-        # TODO: Should we move this to relevant subclasses? Or is it worth keeping here to make reuse easier?
+    def _simplify_nullable_union(cases: list[_JsonSchemaNode]) -> list[_JsonSchemaNode]:
         if len(cases) == 2 and {'type': 'null'} in cases:
             # Find the non-null schema
             non_null_schema = next(
                 (item for item in cases if item != {'type': 'null'}),
                 None,
             )
-            if non_null_schema:
+            if isinstance(non_null_schema, dict):
                 # Create a new schema based on the non-null part, mark as nullable
                 new_schema = deepcopy(non_null_schema)
                 new_schema['nullable'] = True
                 return [new_schema]
+            if non_null_schema is not None:
+                return cases
             else:  # pragma: no cover
                 # they are both null, so just return one of them
                 return [cases[0]]

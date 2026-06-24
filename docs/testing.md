@@ -25,6 +25,12 @@ The simplest and fastest way to exercise most of your application code is using 
     The resulting data won't look pretty or relevant, but it should pass Pydantic's validation in most cases.
     If you want something more sophisticated, use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] and write your own data generation logic.
 
+!!! note "Testing agents with native tools"
+    [`TestModel`][pydantic_ai.models.test.TestModel] cannot emulate provider-executed [native tools](native-tools.md).
+    If your production agent is configured with native tools via `capabilities`, override them in tests with
+    `agent.override(model=TestModel(), native_tools=[])` unless the test is specifically checking that native
+    tools are passed to the model.
+
 Let's write unit tests for the following application code:
 
 ```python {title="weather_app.py"}
@@ -37,9 +43,9 @@ from fake_database import DatabaseConn  # (1)!
 from weather_service import WeatherService  # (2)!
 
 weather_agent = Agent(
-    'openai:gpt-5',
+    'openai:gpt-5.2',
     deps_type=WeatherService,
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -90,7 +96,6 @@ from pydantic_ai import models, capture_run_messages, RequestUsage
 from pydantic_ai.models.test import TestModel
 from pydantic_ai import (
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -119,15 +124,15 @@ async def test_forecast():
     assert messages == [  # (6)!
         ModelRequest(
             parts=[
-                SystemPromptPart(
-                    content='Providing a weather forecast at the locations the user provides.',
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
                 UserPromptPart(
                     content='What will the weather be like in London on 2024-11-28?',
                     timestamp=IsNow(tz=timezone.utc),  # (7)!
                 ),
-            ]
+            ],
+            instructions='Providing a weather forecast at the locations the user provides.',
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -141,11 +146,13 @@ async def test_forecast():
                 )
             ],
             usage=RequestUsage(
-                input_tokens=71,
+                input_tokens=60,
                 output_tokens=7,
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
         ),
         ModelRequest(
             parts=[
@@ -156,6 +163,10 @@ async def test_forecast():
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ],
+            instructions='Providing a weather forecast at the locations the user provides.',
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
         ),
         ModelResponse(
             parts=[
@@ -164,11 +175,13 @@ async def test_forecast():
                 )
             ],
             usage=RequestUsage(
-                input_tokens=77,
+                input_tokens=66,
                 output_tokens=16,
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
         ),
     ]
 ```
