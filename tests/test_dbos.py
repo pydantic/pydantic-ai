@@ -301,7 +301,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
         """Normalize non-deterministic tool_call_ids in JSON event spans."""
         import json
 
-        for child in sorted(span.children, key=lambda c: c.content):
+        for child in sorted(span.children, key=lambda c: (c.content, id(c))):
             if child.content.startswith('{'):
                 try:
                     data = json.loads(child.content)
