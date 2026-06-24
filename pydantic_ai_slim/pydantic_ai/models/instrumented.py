@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import itertools
-import json
 import warnings
+import weakref
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -12,6 +12,7 @@ from genai_prices.types import PriceCalculation
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
+from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -65,6 +66,13 @@ class InstrumentationSettings:
     include_content: bool = True
     version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
+
+    # Cache of each input message's serialized OTel JSON fragment, keyed by `id(message)`.
+    # History grows by appending settled messages, so reusing fragments keeps the per-request
+    # serialization cost proportional to the new messages instead of the whole history.
+    # Entries are evicted via `weakref.finalize` when their message is garbage collected, so the
+    # cache can't outlive the run's history or be poisoned by `id()` reuse.
+    _message_json_cache: dict[int, bytes] = field(repr=False, compare=False, init=False)
 
     def __init__(
         self,
@@ -130,6 +138,7 @@ class InstrumentationSettings:
             )
         self.version = version
         self.use_aggregated_usage_attribute_names = use_aggregated_usage_attribute_names
+        self._message_json_cache = {}
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -174,6 +183,28 @@ class InstrumentationSettings:
                 result.append(otel_message)
         return result
 
+    def _input_messages_json(self, input_messages: list[ModelMessage]) -> bytes:
+        """Serialize the input message history to a JSON array, reusing cached per-message fragments.
+
+        Each message's fragment is the comma-joined JSON of its OTel `ChatMessage`s without the
+        enclosing brackets, so fragments can be concatenated into the final array. Caching keeps
+        the per-request cost proportional to new messages rather than the entire (growing) history.
+        """
+        cache = self._message_json_cache
+        fragments: list[bytes] = []
+        for message in input_messages:
+            key = id(message)
+            fragment = cache.get(key)
+            if fragment is None:
+                otel_messages = self.messages_to_otel_messages([message])
+                # Strip the outer `[` and `]` so fragments concatenate into a single array.
+                fragment = to_json(otel_messages)[1:-1]
+                cache[key] = fragment
+                weakref.finalize(message, cache.pop, key, None)
+            if fragment:
+                fragments.append(fragment)
+        return b'[' + b','.join(fragments) + b']'
+
     def handle_messages(
         self,
         input_messages: list[ModelMessage],
@@ -189,10 +220,10 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
-            'gen_ai.output.messages': json.dumps([output_message]),
+            'gen_ai.input.messages': self._input_messages_json(input_messages).decode(),
+            'gen_ai.output.messages': to_json([output_message]).decode(),
             **system_instructions_attributes,
-            'logfire.json_schema': json.dumps(
+            'logfire.json_schema': to_json(
                 {
                     'type': 'object',
                     'properties': {
@@ -202,14 +233,16 @@ class InstrumentationSettings:
                         'model_request_parameters': {'type': 'object'},
                     },
                 }
-            ),
+            ).decode(),
         }
         span.set_attributes(attributes)
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:
             return {
-                'gen_ai.system_instructions': json.dumps([_otel_messages.TextPart(type='text', content=instructions)]),
+                'gen_ai.system_instructions': to_json(
+                    [_otel_messages.TextPart(type='text', content=instructions)]
+                ).decode(),
             }
         return {}
 

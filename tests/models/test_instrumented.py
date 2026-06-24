@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -7,6 +8,7 @@ from typing import Literal
 
 import pytest
 from opentelemetry.trace import NoOpTracerProvider
+from pydantic_core import to_json
 
 from pydantic_ai import (
     AudioUrl,
@@ -311,6 +313,78 @@ async def test_instrumented_model_not_recording():
             output_object=None,
         ),
     )
+
+
+async def test_instrumented_model_serializes_messages_with_to_json(capfire: CaptureLogfire):
+    """Message attributes are serialized with `pydantic_core.to_json`, not stdlib `json.dumps`.
+
+    Asserts the raw (unparsed) attribute strings to pin the compact separators and preserved
+    non-ASCII content that distinguish `to_json` from `json.dumps`; a structural `IsJson`
+    comparison would not catch a regression back to the slower stdlib serializer.
+    """
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
+
+    messages: list[ModelMessage] = [
+        ModelRequest(instructions='instrução', parts=[UserPromptPart('cançã')], timestamp=IsDatetime())
+    ]
+    await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    attributes = capfire.exporter.exported_spans_as_dict()[0]['attributes']
+    assert attributes['gen_ai.input.messages'] == snapshot(
+        '[{"role":"user","parts":[{"type":"text","content":"cançã"}]}]'
+    )
+    assert attributes['gen_ai.output.messages'] == snapshot(
+        '[{"role":"assistant","parts":[{"type":"text","content":"text1"},{"type":"tool_call","id":"tool_call_1","name":"tool1","arguments":"args1"},{"type":"tool_call","id":"tool_call_2","name":"tool2","arguments":{"args2":3}},{"type":"text","content":"text2"}]}]'
+    )
+    assert attributes['gen_ai.system_instructions'] == snapshot('[{"type":"text","content":"instrução"}]')
+
+
+async def test_instrumented_model_input_messages_match_whole_history_serialization(capfire: CaptureLogfire):
+    """The cached `gen_ai.input.messages` attribute is byte-identical to serializing the whole history.
+
+    Drives growing histories through `model.request` (the real per-request path) and compares the
+    emitted span attribute to a fresh whole-history `to_json`, so the fragment-reuse optimization is
+    proven not to change the output a backend sees.
+    """
+    settings = InstrumentationSettings()
+    model = InstrumentedModel(MyModel(), settings)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('sys'), UserPromptPart('hello')]),
+        ModelResponse(parts=[ToolCallPart('tool', {'a': 1}, 'call_1')]),
+        ModelRequest(parts=[ToolReturnPart('tool', 'result', 'call_1')]),
+        ModelResponse(parts=[TextPart('done')]),
+    ]
+    for length in range(1, len(history) + 1):
+        prefix = history[:length]
+        await model.request(prefix, model_settings=None, model_request_parameters=ModelRequestParameters())
+        attributes = capfire.exporter.exported_spans_as_dict()[-1]['attributes']
+        assert attributes['gen_ai.input.messages'] == to_json(settings.messages_to_otel_messages(prefix)).decode()
+
+
+def test_input_messages_json_caches_per_message_and_evicts_on_gc():
+    """Fragments are cached per message and the cache empties once the history is garbage collected.
+
+    Reaches into the private cache because eviction-on-GC has no public observable surface; the
+    serialized output equivalence is covered through the public span attribute by the test above.
+    """
+    settings = InstrumentationSettings()
+    cache = settings._message_json_cache  # pyright: ignore[reportPrivateUsage]
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(f'm{i}')]) for i in range(3)]
+
+    settings._input_messages_json(history)  # pyright: ignore[reportPrivateUsage]
+    assert len(cache) == 3
+
+    history.append(ModelResponse(parts=[TextPart('reply')]))
+    settings._input_messages_json(history)  # pyright: ignore[reportPrivateUsage]
+    assert len(cache) == 4
+
+    del history
+    gc.collect()
+    assert len(cache) == 0
 
 
 def test_instrumentation_settings_rejects_removed_version():
