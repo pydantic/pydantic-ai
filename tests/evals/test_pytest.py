@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,15 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'),
 ]
 
+def _module_exists(name: str) -> bool:
+    try:
+        return find_spec(name) is not None
+    except ModuleNotFoundError:
+        return False
+
+
 _INLINE_PYTEST_TIMEOUT = 120
+_OTEL_SDK_INSTALLED = _module_exists('opentelemetry.sdk.trace')
 
 
 def test_assert_evaluation_passes_sync_returns_report() -> None:
@@ -289,6 +298,9 @@ def test_terminal_summary_supports_logfire_without_eval_urls(tmp_path: Path) -> 
 
 
 def test_eval_mark_configures_otel_provider_without_logfire(tmp_path: Path) -> None:
+    if not _OTEL_SDK_INSTALLED:
+        pytest.skip('opentelemetry-sdk is not installed')
+
     result = _run_inline_pytest(
         tmp_path,
         """
