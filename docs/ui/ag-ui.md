@@ -7,9 +7,6 @@ team that standardises how frontend applications communicate with AI agents, wit
 !!! note
     The AG-UI integration was originally built by the team at [Rocket Science](https://www.rocketscience.gg/) and contributed in collaboration with the Pydantic AI and CopilotKit teams. Thanks Rocket Science!
 
-!!! warning "On 1.x and migrating to 2.0?"
-    [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui], [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp], and the `pydantic_ai.ag_ui` shim module are deprecated in 1.x and will be removed in 2.0. Skip to [Migrating from deprecated APIs](#migrating-from-deprecated-apis) at the bottom for before/after examples.
-
 ## Installation
 
 The only dependencies are:
@@ -242,6 +239,59 @@ uvicorn ag_ui_state:app --host 0.0.0.0 --port 9000
 AG-UI frontend tools are seamlessly provided to the Pydantic AI agent, enabling rich
 user experiences with frontend user interfaces.
 
+### Tool approval (interrupts)
+
+Tools declared with `requires_approval=True` map onto AG-UI's [interrupt-aware run lifecycle](https://docs.ag-ui.com/concepts/interrupts). When the model proposes such a call, the run pauses and the adapter ends the SSE stream with a `RUN_FINISHED` event whose `outcome.type` is `"interrupt"` and whose `outcome.interrupts[]` describes each pending approval. The client renders an approval UI from that list and POSTs the next `RunAgentInput` with a `resume[]` array of `ResumeEntry` items addressing each interrupt.
+
+The mapping the adapter applies (matching the AG-UI Python SDK field names):
+
+| AG-UI direction         | Pydantic AI source / sink                                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `Interrupt.reason`      | Always `"tool_call"` for `requires_approval=True` tools                                                         |
+| `Interrupt.tool_call_id`| The `ToolCallPart.tool_call_id` of the proposed call                                                            |
+| `Interrupt.id`          | `f"int-{tool_call_id}"` (round-trips back to `tool_call_id` on resume)                                          |
+| `Interrupt.metadata`    | `DeferredToolRequests.metadata.get(tool_call_id)`                                                               |
+| `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`                                                |
+| `payload.approved=True` | [`ToolApproved`][pydantic_ai.tools.ToolApproved]                                                                |
+| `payload.editedArgs`    | [`ToolApproved.override_args`][pydantic_ai.tools.ToolApproved.override_args] (fully replaces the proposed args) |
+| `payload.approved=False`| [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message=payload.reason`                                      |
+| `status="cancelled"`    | [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message="Cancelled by user."` regardless of payload          |
+
+The agent must include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in its `output_type` so the run can pause cleanly instead of erroring on the proposed call:
+
+```python {title="ag_ui_tool_approval.py"}
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
+from pydantic_ai import Agent
+from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    """Delete a file. Pauses on a `RUN_FINISHED` interrupt outcome until the user approves."""
+    return f'deleted {path}'
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
+```
+
+On the resumed turn the agent re-executes the tool against the **original** `tool_call_id`, so only a `TOOL_CALL_RESULT` event is emitted for that id — no fresh `TOOL_CALL_START`. This preserves the audit trail the AG-UI spec requires.
+
+See [Deferred tools and human-in-the-loop tool approval](../deferred-tools.md) for the underlying Pydantic AI primitive that also works outside AG-UI.
+
+!!! note "Version requirement"
+    Interrupts require `ag-ui-protocol >= 0.1.19` ([PR #1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569)). On older installs the adapter silently falls back to emitting a bare `RUN_FINISHED` event without an outcome, and `resume[]` is ignored even if a client sends it.
+
 ### Events
 
 Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by returning a
@@ -375,95 +425,3 @@ For more examples see
 [`pydantic_ai_examples.ag_ui`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/ag_ui),
 which includes a server for use with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo).
-
-## Migrating from deprecated APIs
-
-[`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui], [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp], and the `pydantic_ai.ag_ui` shim module are deprecated in 1.x and will be removed in 2.0. Each maps directly to [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] composition shown in [Usage](#usage). The migrations below also work in 1.x today.
-
-### `pydantic_ai.ag_ui` → `pydantic_ai.ui.ag_ui` + `pydantic_ai.ui`
-
-The shim module re-exports symbols that live in two different locations in 2.0:
-
-- [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] is in [`pydantic_ai.ui.ag_ui`][pydantic_ai.ui.ag_ui].
-- [`SSE_CONTENT_TYPE`][pydantic_ai.ui.SSE_CONTENT_TYPE], [`StateDeps`][pydantic_ai.ui.StateDeps], [`StateHandler`][pydantic_ai.ui.StateHandler], and [`OnCompleteFunc`][pydantic_ai.ui.OnCompleteFunc] are in [`pydantic_ai.ui`][pydantic_ai.ui].
-- The `handle_ag_ui_request` and `run_ag_ui` helpers are removed in 2.0 — call [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] or compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly as shown in [Usage](#usage).
-
-=== "Before (deprecated)"
-
-    ```python {title="ag_ui_shim_before.py" test="skip" noqa="F401 I001"}
-    from pydantic_ai.ag_ui import AGUIAdapter, SSE_CONTENT_TYPE, StateDeps
-    ```
-
-=== "After"
-
-    ```python {title="ag_ui_shim_after.py" noqa="F401 I001"}
-    from pydantic_ai.ui import SSE_CONTENT_TYPE, StateDeps
-    from pydantic_ai.ui.ag_ui import AGUIAdapter
-    ```
-
-### `Agent.to_ag_ui()` → `AGUIAdapter.dispatch_request`
-
-Mount a Starlette/FastAPI route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] (same shape as [Handle a Starlette request](#handle-a-starlette-request)):
-
-=== "Before (deprecated)"
-
-    ```python {title="agent_to_ag_ui_before.py" test="skip"}
-    from pydantic_ai import Agent
-
-    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-    app = agent.to_ag_ui()
-    ```
-
-=== "After"
-
-    ```python {title="agent_to_ag_ui_after.py"}
-    from fastapi import FastAPI
-    from starlette.requests import Request
-    from starlette.responses import Response
-
-    from pydantic_ai import Agent
-    from pydantic_ai.ui.ag_ui import AGUIAdapter
-
-    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-
-    app = FastAPI()
-
-    @app.post('/')
-    async def run_agent(request: Request) -> Response:
-        return await AGUIAdapter.dispatch_request(request, agent=agent)
-    ```
-
-### `AGUIApp` → `Starlette` + `AGUIAdapter.dispatch_request`
-
-Build the ASGI app directly with a [`Starlette`](https://www.starlette.io/applications/) route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
-
-=== "Before (deprecated)"
-
-    ```python {title="agui_app_before.py" test="skip"}
-    from pydantic_ai import Agent
-    from pydantic_ai.ui.ag_ui.app import AGUIApp
-
-    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-    app = AGUIApp(agent)
-    ```
-
-=== "After"
-
-    ```python {title="agui_app_after.py"}
-    from starlette.applications import Starlette
-    from starlette.requests import Request
-    from starlette.responses import Response
-    from starlette.routing import Route
-
-    from pydantic_ai import Agent
-    from pydantic_ai.ui.ag_ui import AGUIAdapter
-
-    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-
-
-    async def run_agent(request: Request) -> Response:
-        return await AGUIAdapter.dispatch_request(request, agent=agent)
-
-
-    app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
-    ```

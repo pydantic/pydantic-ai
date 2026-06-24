@@ -5,15 +5,13 @@ from __future__ import annotations as _annotations
 import pytest
 
 from pydantic_ai import Agent, ModelResponse
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.profiles.grok import GrokModelProfile
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from ...conftest import try_import
-from ..mock_xai import MockXai, create_response, get_mock_chat_create_kwargs
+from ..mock_xai import MockXai, create_response, get_grok_text_chunk, get_mock_chat_create_kwargs
 
 with try_import() as imports_successful:
-    from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
 
@@ -87,6 +85,25 @@ async def test_xai_grok_43_unified_thinking_reasoning_effort(
         assert kwargs['reasoning_effort'] == expected_reasoning_effort
 
 
+async def test_xai_grok_43_streaming_thinking_false_emits_reasoning_effort_none(allow_model_requests: None) -> None:
+    """`thinking=False` disables reasoning on the streaming path, not just non-streaming.
+
+    Request building is shared between `request` and `request_stream` (`_create_chat`), so the streaming
+    call must carry the same `reasoning_effort='none'` disable signal that the non-streaming path asserts in
+    `test_xai_grok_43_unified_thinking_reasoning_effort`. Grok 4.3 supports `'none'`, so disable is honored.
+    """
+    stream = [get_grok_text_chunk('hello ', ''), get_grok_text_chunk('world', 'stop')]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel('grok-4.3', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(thinking=False))
+
+    async with agent.run_stream('Hello') as result:
+        output = await result.get_output()
+
+    assert output == 'hello world'
+    assert get_mock_chat_create_kwargs(mock_client)[0]['reasoning_effort'] == 'none'
+
+
 async def test_xai_grok_43_explicit_reasoning_effort_takes_precedence(allow_model_requests: None) -> None:
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
@@ -147,13 +164,3 @@ async def test_xai_unified_thinking_omits_reasoning_effort(
 
     assert result.output == 'ok'
     assert 'reasoning_effort' not in get_mock_chat_create_kwargs(mock_client)[0]
-
-
-def test_xai_effort_map_deprecated():
-    """`XAI_EFFORT_MAP` stays importable but deprecated; the mapping is now profile-derived."""
-    with pytest.warns(PydanticAIDeprecationWarning, match=r'`XAI_EFFORT_MAP` is deprecated'):
-        mapping = xai_module.XAI_EFFORT_MAP
-    assert mapping[True] == 'high'
-
-    with pytest.raises(AttributeError, match=r'has no attribute'):
-        xai_module.DefinitelyDoesNotExist

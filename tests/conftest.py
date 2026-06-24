@@ -21,6 +21,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
+from vcr.record_mode import RecordMode
 
 import pydantic_ai.models
 from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
@@ -56,7 +57,6 @@ __all__ = (
     'IsInstance',
     'IsList',
     'TestEnv',
-    'ClientWithHandler',
     'try_import',
     'SNAPSHOT_BYTES_COLLAPSE_THRESHOLD',
     'strip_logfire_metrics',
@@ -75,6 +75,9 @@ os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 if TYPE_CHECKING:
     from typing import TypeVar
+
+    from pluggy import Result
+    from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
@@ -316,26 +319,6 @@ def allow_model_requests():
         yield
 
 
-@pytest.fixture
-async def client_with_handler() -> AsyncIterator[ClientWithHandler]:
-    client: httpx.AsyncClient | None = None
-
-    def create_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.AsyncClient:
-        nonlocal client
-        assert client is None, 'client_with_handler can only be called once'
-        client = httpx.AsyncClient(mounts={'all://': httpx.MockTransport(handler)})
-        return client
-
-    try:
-        yield create_client
-    finally:
-        if client:  # pragma: no branch
-            await client.aclose()
-
-
-ClientWithHandler: TypeAlias = Callable[[Callable[[httpx.Request], httpx.Response]], httpx.AsyncClient]
-
-
 # pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false
 @pytest.fixture
 def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[str], Any]:
@@ -413,12 +396,20 @@ def no_instrumentation_by_default():
 
 try:
     import logfire
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
     logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
+
+    _httpx_instrumentor = HTTPXClientInstrumentor()
 
     @pytest.fixture(autouse=True)
     def fresh_logfire():
         logfire.shutdown(flush=False)
+        # `test_examples.py` runs doc snippets that call the process-global `logfire.instrument_httpx()`,
+        # which patches httpx via OTel and is never torn down. Reset it so it can't leak request spans
+        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `test_temporal` snapshots).
+        if _httpx_instrumentor._is_instrumented_by_opentelemetry:  # pyright: ignore[reportPrivateUsage]
+            _httpx_instrumentor.uninstrument()
 
 except ImportError:
     pass
@@ -452,11 +443,13 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     vcr.register_matcher('method', method_matcher)
     vcr.register_matcher('path', path_matcher)
 
-    def scrub_aws_account_id(request: vcr_request.Request) -> vcr_request.Request:
+    def scrub_request(request: vcr_request.Request) -> vcr_request.Request | None:
+        if request.host == 'oauth2.googleapis.com' and request.path == '/token':
+            return None
         request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
         return request
 
-    vcr.before_record_request = scrub_aws_account_id
+    vcr.before_record_request = scrub_request
 
     # Normalize Bedrock hostnames to ignore region differences
     # e.g., bedrock-runtime.us-east-1.amazonaws.com == bedrock-runtime.us-east-2.amazonaws.com
@@ -488,6 +481,20 @@ def pytest_addoption(parser: Any) -> None:
         default=False,
         help='Run live gateway smoke tests that make real paid model requests.',
     )
+    parser.addoption(
+        '--strict-vcr-cassette-usage',
+        action='store_true',
+        help='Fail when a loaded VCR cassette has no interactions played, not only when playback leaves a stale tail.',
+    )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, Result[pytest.TestReport], None]:
+    outcome = yield
+    report = outcome.get_result()
+    setattr(item, f'rep_{report.when}', report)
 
 
 @pytest.fixture(autouse=True)
@@ -515,6 +522,34 @@ def vcr_config():
         'filter_headers': ['authorization', 'x-api-key', 'cookie'],
         'decode_compressed_response': True,
     }
+
+
+def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
+    if vcr.play_count == 0 and not strict_usage:
+        return
+
+    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
+    if unused_indexes:
+        pytest.fail(
+            f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
+            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
+        )
+
+
+@pytest.fixture(autouse=True)
+def fail_partially_used_vcr_cassettes(request: pytest.FixtureRequest, vcr: Cassette | None) -> Iterator[None]:
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    if vcr is None or vcr.record_mode != RecordMode.NONE or vcr.all_played:
+        return
+
+    strict_usage = bool(request.config.getoption('--strict-vcr-cassette-usage'))
+    check_vcr_cassette_usage(vcr, strict_usage)
 
 
 _HttpClientCache: TypeAlias = 'dict[tuple[int, int], httpx.AsyncClient]'
@@ -886,7 +921,6 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
     mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
-    mocker.patch('pydantic_ai.providers.google_vertex.google.auth.default', return_value=return_value)
 
 
 @pytest.fixture()
@@ -948,11 +982,6 @@ def model(
             from pydantic_ai.providers.cohere import CohereProvider
 
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
-        elif request.param == 'gemini':
-            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
-
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider
@@ -970,39 +999,10 @@ def model(
                 'Qwen/Qwen2.5-72B-Instruct',
                 provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
             )
-        elif request.param == 'outlines':
-            import warnings
-
-            from outlines.models.transformers import from_transformers
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-
-            from pydantic_ai._warnings import PydanticAIDeprecationWarning
-            from pydantic_ai.models.outlines import OutlinesModel  # pyright: ignore[reportDeprecated]
-
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-                return OutlinesModel(  # pyright: ignore[reportDeprecated]
-                    from_transformers(
-                        AutoModelForCausalLM.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                        AutoTokenizer.from_pretrained('hf-internal-testing/tiny-random-gpt2'),
-                    )
-                )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:
         pytest.skip(f'{request.param} is not installed')
-
-
-@pytest.fixture
-def mock_snapshot_id(mocker: MockerFixture):
-    i = 0
-
-    def generate_snapshot_id(node_id: str) -> str:
-        nonlocal i
-        i += 1
-        return f'{node_id}:{i}'
-
-    return mocker.patch('pydantic_graph.basenode.generate_snapshot_id', side_effect=generate_snapshot_id)
 
 
 @pytest.fixture
