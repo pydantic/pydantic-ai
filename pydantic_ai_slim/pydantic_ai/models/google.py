@@ -715,10 +715,18 @@ class GoogleModel(Model[Client]):
         # parts for WebSearchTool, WebFetchTool, FileSearchTool. Pre-Gemini-3 models reject the field
         # ('Tool call context circulation is not enabled'); CodeExecutionTool uses its own
         # `executable_code`/`code_execution_result` parts; ImageGenerationTool runs through `image_config`.
+        # Gemini 3 also requires the flag when CodeExecutionTool and function tools are combined — without
+        # it the API returns "Please enable tool_config.include_server_side_tool_invocations to use
+        # Built-in tools with Function calling" (HTTP 400).
         emits_tool_call_invocations = any(
             isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool)) for t in model_request_parameters.native_tools
         )
-        if emits_tool_call_invocations and self.profile.get('google_supports_server_side_tool_invocations', False):
+        code_exec_with_functions = bool(tool_defs) and any(
+            isinstance(t, CodeExecutionTool) for t in model_request_parameters.native_tools
+        )
+        if (emits_tool_call_invocations or code_exec_with_functions) and self.profile.get(
+            'google_supports_server_side_tool_invocations', False
+        ):
             tool_config['include_server_side_tool_invocations'] = True
 
         tools: list[ToolDict] = [
