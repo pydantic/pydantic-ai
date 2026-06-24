@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import uuid
+import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -118,12 +119,6 @@ pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -2732,7 +2727,7 @@ async def test_tool_approval_request_emission():
             )
         }
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -2827,7 +2822,7 @@ async def test_sdk_version_5_does_not_emit_approval_chunks():
             )
         }
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -3222,7 +3217,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
     ) -> AsyncIterator[DeltaToolCalls | str]:
         yield 'File deleted successfully.'
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -3419,7 +3414,7 @@ async def test_dispatch_request_with_tool_approval():
             )
         }
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -5664,6 +5659,117 @@ async def test_adapter_load_messages_uploaded_file():
             )
         ]
     )
+
+
+async def test_adapter_drops_uploaded_file_from_provider_metadata():
+    """`load_messages` builds an `UploadedFile` from client `providerMetadata`, but the sanitizer drops it by default.
+
+    `sanitize_messages` runs on the messages produced from client run input before they reach the agent,
+    so a `file_id` supplied through `providerMetadata` is only honored when the adapter is configured with
+    `preserve_file_data=True` (a trusted frontend).
+    """
+    ui_messages = [
+        UIMessage(
+            id='msg1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='application/pdf',
+                    url='https://legitimate-looking-cdn.example.com/file.pdf',
+                    provider_metadata={
+                        'pydantic_ai': {'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'}
+                    },
+                ),
+                TextUIPart(text='Quote the document exactly.'),
+            ],
+        )
+    ]
+    run_input = SubmitMessage(trigger='submit-message', id='req_1', messages=ui_messages)
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    # `load_messages` constructs the `UploadedFile` from the client-controlled `providerMetadata`.
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    loaded_part = loaded[0].parts[0]
+    assert isinstance(loaded_part, UserPromptPart)
+    assert any(isinstance(item, UploadedFile) for item in loaded_part.content)
+
+    # The default sanitizer drops it with a warning before it reaches the agent.
+    adapter = VercelAIAdapter(agent=agent, run_input=run_input)
+    with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    sanitized_part = sanitized[0].parts[0]
+    assert isinstance(sanitized_part, UserPromptPart)
+    assert sanitized_part.content == snapshot(['Quote the document exactly.'])
+
+    # With the trusted-frontend opt-in, the `UploadedFile` is preserved.
+    preserve_adapter = VercelAIAdapter(agent=agent, run_input=run_input, preserve_file_data=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        preserved = preserve_adapter.sanitize_messages(preserve_adapter.messages)
+    preserved_part = preserved[0].parts[0]
+    assert isinstance(preserved_part, UserPromptPart)
+    assert any(isinstance(item, UploadedFile) for item in preserved_part.content)
+
+
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+@pytest.mark.parametrize('preserve_file_data', [True, False])
+async def test_from_request_threads_preserve_file_data(preserve_file_data: bool):
+    """`preserve_file_data` passed to the public `from_request` entry point reaches the sanitizer.
+
+    Guards the forwarding through `from_request` (not just setting the dataclass field after
+    construction): when `True`, the client `UploadedFile` parsed from `providerMetadata` survives
+    sanitization; with the default it's dropped with a warning.
+    """
+    run_input = SubmitMessage(
+        trigger='submit-message',
+        id='req_1',
+        messages=[
+            UIMessage(
+                id='msg1',
+                role='user',
+                parts=[
+                    FileUIPart(
+                        media_type='application/pdf',
+                        url='https://legitimate-looking-cdn.example.com/file.pdf',
+                        provider_metadata={
+                            'pydantic_ai': {'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'}
+                        },
+                    ),
+                    TextUIPart(text='Quote the document exactly.'),
+                ],
+            )
+        ],
+    )
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', b'application/json')],
+        },
+        receive=receive,
+    )
+
+    adapter = await VercelAIAdapter.from_request(starlette_request, agent=agent, preserve_file_data=preserve_file_data)
+    assert adapter.preserve_file_data is preserve_file_data
+
+    if preserve_file_data:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            sanitized = adapter.sanitize_messages(adapter.messages)
+        sanitized_part = sanitized[0].parts[0]
+        assert isinstance(sanitized_part, UserPromptPart)
+        assert any(isinstance(item, UploadedFile) for item in sanitized_part.content)
+    else:
+        with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
+            sanitized = adapter.sanitize_messages(adapter.messages)
+        sanitized_part = sanitized[0].parts[0]
+        assert isinstance(sanitized_part, UserPromptPart)
+        assert sanitized_part.content == snapshot(['Quote the document exactly.'])
 
 
 async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
@@ -7951,7 +8057,7 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
     agent = Agent(model=TestModel())
 
     @agent.system_prompt
-    def dynamic_prompt(ctx: RunContext[None]) -> str:
+    def dynamic_prompt(ctx: RunContext) -> str:
         return 'Dynamic system prompt from Vercel'
 
     request = SubmitMessage(
