@@ -1431,6 +1431,79 @@ def test_dynamic_toolset_temporal_activities():
     assert f'{prefix}__get_instructions' not in activity_names
 
 
+# --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
+# The per-run instructions cache is written by `get_tools` and read by `get_instructions` each
+# step; this guards against it serving a stale step-1 value on a later step.
+
+
+def _echo_instructions_after_tool_call(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # First request: call a tool to force a second model-request step.
+    # Second request (carrying the tool return): echo the instructions, which by then must
+    # reflect the current step — proving the cache is repopulated by `get_tools` each step.
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    if any(isinstance(part, ToolReturnPart) for part in request.parts):
+        return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
+    return ModelResponse(parts=[ToolCallPart('noop', {})])
+
+
+multi_step_instructions_agent = Agent(
+    FunctionModel(_echo_instructions_after_tool_call), name='multi_step_instructions_agent'
+)
+
+
+@multi_step_instructions_agent.toolset(id='multi_step_instruction_toolset')
+def multi_step_instruction_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+    # Instructions encode the run step, so a stale step-1 cached value read at step 2 would
+    # surface as the wrong sentinel in the model output.
+    toolset = FunctionToolset[None](instructions=f'INSTRUCTIONS_FOR_STEP_{ctx.run_step}', id='step-instruction-toolset')
+
+    @toolset.tool_plain
+    def noop() -> str:
+        return 'noop'
+
+    return toolset
+
+
+multi_step_instructions_temporal_agent = TemporalAgent(
+    multi_step_instructions_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MultiStepInstructionsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await multi_step_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
+    allow_model_requests: None, client: Client
+):
+    """A dynamic toolset's instructions are refreshed each run step under `TemporalAgent` (issue #5282).
+
+    The toolset encodes the run step in its instructions; the model calls a tool on the first request to
+    force a second step, then echoes the instructions on the second request. The output being the step-2
+    sentinel (not the step-1 one) proves `get_tools` repopulates the per-run instructions cache each step
+    rather than serving a stale step-1 value.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiStepInstructionsAgentWorkflow],
+        plugins=[AgentPlugin(multi_step_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiStepInstructionsAgentWorkflow.run,
+            args=['hello'],
+            id='test_dynamic_toolset_instructions_refresh_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('INSTRUCTIONS_FOR_STEP_2')
+
+
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset with an MCP toolset works with Temporal workflows.
 # Uses MCPServerStreamableHTTP (HTTP-based) rather than subprocess-based MCP servers.
