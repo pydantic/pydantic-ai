@@ -1089,7 +1089,7 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     with redirect_stdout(buf):
         rc = asyncio.run(
             shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
-                'p', cast(_Model[Any], object()), 'lbl', cast(AbstractToolset[None], object()), [], 'sess-test'
+                'p', cast(_Model[Any], object()), 'lbl', cast(AbstractToolset[object], object()), [], 'sess-test'
             )
         )
     assert rc == 1
