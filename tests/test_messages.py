@@ -796,6 +796,46 @@ And then, call the 'hello_world' tool\
     )
 
 
+def test_model_request_with_native_tool_return_part_round_trips():
+    """Regression: a ModelRequest carrying a NativeToolReturnPart must round-trip.
+
+    The ModelRequestPart union omitted the builtin-tool-return tags that its
+    discriminator can emit, so re-loading any history with a provider-executed
+    (builtin) tool result raised union_tag_invalid, even though ModelResponsePart
+    already handled the symmetric case.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search the web for Python')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Searching the web...'),
+                NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'query': 'Python'},
+                    tool_call_id='c1',
+                    provider_name='openai',
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                NativeToolReturnPart(
+                    tool_name='web_search',
+                    tool_call_id='c1',
+                    content={'results': [{'title': 'Python', 'url': 'python.org'}]},
+                    provider_name='openai',
+                ),
+            ]
+        ),
+    ]
+
+    serialized_json = ModelMessagesTypeAdapter.dump_json(messages)
+    assert ModelMessagesTypeAdapter.validate_json(serialized_json) == messages
+
+    serialized_python = ModelMessagesTypeAdapter.dump_python(messages)
+    assert ModelMessagesTypeAdapter.validate_python(serialized_python) == messages
+
+
 def test_image_url_validation_with_optional_identifier():
     image_url_ta = TypeAdapter(ImageUrl)
     image = image_url_ta.validate_python({'url': 'https://example.com/image.jpg'})
