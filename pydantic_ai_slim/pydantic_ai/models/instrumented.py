@@ -19,6 +19,7 @@ from pydantic_ai._instrumentation import (
     TOKEN_HISTOGRAM_BOUNDARIES,
     get_instructions,
     open_model_request_span,
+    safe_to_json,
 )
 
 from .. import _otel_messages
@@ -67,12 +68,17 @@ class InstrumentationSettings:
     version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
 
-    # Cache of each input message's serialized OTel JSON fragment, keyed by `id(message)`.
-    # History grows by appending settled messages, so reusing fragments keeps the per-request
-    # serialization cost proportional to the new messages instead of the whole history.
-    # Entries are evicted via `weakref.finalize` when their message is garbage collected, so the
-    # cache can't outlive the run's history or be poisoned by `id()` reuse.
-    _message_json_cache: dict[int, bytes] = field(repr=False, compare=False, init=False)
+    # Cache of each input message's serialized OTel JSON fragment, so a growing history's per-request
+    # serialization cost stays proportional to the new messages instead of the whole history.
+    # Keyed by `id(message)` and stored with the validity tags `(id(message.parts), fingerprint)`:
+    # `parts` is reassigned to a new list when a message is mutated in place (e.g. dynamic system
+    # prompt re-evaluation across runs) and `fingerprint` captures the content-affecting settings, so
+    # a stale fragment is detected and re-serialized. Entries are evicted via `weakref.finalize` when
+    # the message is garbage collected, so the cache can't outlive the run's history or be poisoned by
+    # `id()` reuse.
+    _message_json_cache: dict[int, tuple[int, tuple[bool, bool, int], bytes]] = field(
+        repr=False, compare=False, init=False
+    )
 
     def __init__(
         self,
@@ -191,16 +197,21 @@ class InstrumentationSettings:
         the per-request cost proportional to new messages rather than the entire (growing) history.
         """
         cache = self._message_json_cache
+        fingerprint = (self.include_content, self.include_binary_content, self.version)
         fragments: list[bytes] = []
         for message in input_messages:
             key = id(message)
-            fragment = cache.get(key)
-            if fragment is None:
+            parts_id = id(message.parts)
+            cached = cache.get(key)
+            if cached is not None and cached[0] == parts_id and cached[1] == fingerprint:
+                fragment = cached[2]
+            else:
                 otel_messages = self.messages_to_otel_messages([message])
                 # Strip the outer `[` and `]` so fragments concatenate into a single array.
-                fragment = to_json(otel_messages)[1:-1]
-                cache[key] = fragment
-                weakref.finalize(message, cache.pop, key, None)
+                fragment = safe_to_json(otel_messages)[1:-1]
+                if cached is None:
+                    weakref.finalize(message, cache.pop, key, None)
+                cache[key] = (parts_id, fingerprint, fragment)
             if fragment:
                 fragments.append(fragment)
         return b'[' + b','.join(fragments) + b']'
@@ -221,7 +232,7 @@ class InstrumentationSettings:
 
         attributes: dict[str, AttributeValue] = {
             'gen_ai.input.messages': self._input_messages_json(input_messages).decode(),
-            'gen_ai.output.messages': to_json([output_message]).decode(),
+            'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
             'logfire.json_schema': to_json(
                 {
@@ -240,7 +251,7 @@ class InstrumentationSettings:
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:
             return {
-                'gen_ai.system_instructions': to_json(
+                'gen_ai.system_instructions': safe_to_json(
                     [_otel_messages.TextPart(type='text', content=instructions)]
                 ).decode(),
             }

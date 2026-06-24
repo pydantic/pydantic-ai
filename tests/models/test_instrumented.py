@@ -341,6 +341,9 @@ async def test_instrumented_model_serializes_messages_with_to_json(capfire: Capt
         '[{"role":"assistant","parts":[{"type":"text","content":"text1"},{"type":"tool_call","id":"tool_call_1","name":"tool1","arguments":"args1"},{"type":"tool_call","id":"tool_call_2","name":"tool2","arguments":{"args2":3}},{"type":"text","content":"text2"}]}]'
     )
     assert attributes['gen_ai.system_instructions'] == snapshot('[{"type":"text","content":"instrução"}]')
+    assert attributes['logfire.json_schema'] == snapshot(
+        '{"type":"object","properties":{"gen_ai.input.messages":{"type":"array"},"gen_ai.output.messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"model_request_parameters":{"type":"object"}}}'
+    )
 
 
 async def test_instrumented_model_input_messages_match_whole_history_serialization(capfire: CaptureLogfire):
@@ -385,6 +388,61 @@ def test_input_messages_json_caches_per_message_and_evicts_on_gc():
     del history
     gc.collect()
     assert len(cache) == 0
+
+
+def test_input_messages_json_refreshes_when_message_parts_are_replaced():
+    """A reused message whose `parts` list is reassigned (e.g. dynamic system prompt re-evaluation)
+    is re-serialized rather than served stale, without leaving an orphan cache entry."""
+    settings = InstrumentationSettings()
+    cache = settings._message_json_cache  # pyright: ignore[reportPrivateUsage]
+    message = ModelRequest(parts=[SystemPromptPart('old', dynamic_ref='ref')])
+
+    before = settings._input_messages_json([message])  # pyright: ignore[reportPrivateUsage]
+    assert b'old' in before
+
+    message.parts = [SystemPromptPart('new', dynamic_ref='ref')]
+    after = settings._input_messages_json([message])  # pyright: ignore[reportPrivateUsage]
+    assert b'new' in after and b'old' not in after
+    assert len(cache) == 1
+
+
+def test_input_messages_json_refreshes_when_include_content_flips():
+    """Flipping `include_content` on a reused settings instance must not serve cached content."""
+    settings = InstrumentationSettings(include_content=True)
+    message = ModelRequest(parts=[UserPromptPart('secret')])
+
+    with_content = settings._input_messages_json([message])  # pyright: ignore[reportPrivateUsage]
+    assert b'secret' in with_content
+
+    settings.include_content = False
+    without_content = settings._input_messages_json([message])  # pyright: ignore[reportPrivateUsage]
+    assert b'secret' not in without_content
+
+
+async def test_instrumented_model_serializes_lone_surrogates_without_crashing(capfire: CaptureLogfire):
+    """Lone surrogates in message content make `to_json` raise; instrumentation must not crash the run.
+
+    Text decoded with `errors='surrogateescape'` can carry unpaired surrogates. `to_json` rejects
+    them, so `handle_messages` falls back to a serializer that escapes them instead of propagating.
+    """
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
+
+    surrogate = 'before\udce4after'
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(surrogate)], timestamp=IsDatetime())]
+    await model.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+
+    attributes = capfire.exporter.exported_spans_as_dict()[0]['attributes']
+    assert attributes['gen_ai.input.messages'] == snapshot(
+        '[{"role":"user","parts":[{"type":"text","content":"before\\udce4after"}]}]'
+    )
+
+
+def test_safe_to_json_falls_back_on_lone_surrogates():
+    """`safe_to_json` returns `to_json` output normally and escapes lone surrogates on the fallback."""
+    from pydantic_ai._instrumentation import safe_to_json
+
+    assert safe_to_json({'a': [1, 'b']}) == snapshot(b'{"a":[1,"b"]}')
+    assert safe_to_json('x\udce4y') == snapshot(b'"x\\udce4y"')
 
 
 def test_instrumentation_settings_rejects_removed_version():
