@@ -10,9 +10,11 @@ Requires the `websockets` package, available via the `realtime` optional group:
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import base64
 import json
 import os
+import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -242,6 +244,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         base_url: WebSocket base URL. Defaults to `wss://api.openai.com/v1/realtime`.
         voice: Voice for audio output, e.g. `alloy`, `echo`, or `shimmer`.
         input_audio_transcription_model: Model used to transcribe the user's audio input.
+        handshake_timeout: Seconds to wait for each handshake event (`session.created` / `session.updated`)
+            before failing, so `connect()` doesn't hang if the server never responds.
     """
 
     model: str = 'gpt-realtime'
@@ -249,6 +253,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     base_url: str = DEFAULT_REALTIME_URL
     voice: str | None = None
     input_audio_transcription_model: str = 'whisper-1'
+    handshake_timeout: float = 30.0
 
     @property
     def model_name(self) -> str:
@@ -291,26 +296,31 @@ class OpenAIRealtimeModel(RealtimeModel):
         headers = {'Authorization': f'Bearer {api_key}'}
 
         async with websockets.connect(url, additional_headers=headers) as ws:
-            await _expect_event(ws, 'session.created')
+            await _expect_event(ws, 'session.created', timeout=self.handshake_timeout)
 
             await ws.send(
                 json.dumps(
                     {'type': 'session.update', 'session': self._session_config(instructions, tools, model_settings)}
                 )
             )
-            await _expect_event(ws, 'session.updated')
+            await _expect_event(ws, 'session.updated', timeout=self.handshake_timeout)
 
             yield OpenAIRealtimeConnection(ws)
 
 
-async def _expect_event(ws: ClientConnection, expected_type: str) -> dict[str, Any]:
-    """Read events until one of `expected_type` arrives, raising on a server error.
+async def _expect_event(ws: ClientConnection, expected_type: str, *, timeout: float) -> dict[str, Any]:
+    """Read events until one of `expected_type` arrives, raising on a server error or timeout.
 
     Unrelated events received during the handshake (e.g. rate limit notices) are skipped rather than
-    treated as a protocol violation.
+    treated as a protocol violation. `timeout` bounds the total wait so `connect()` fails predictably
+    instead of hanging if the expected event never arrives.
     """
+    deadline = time.monotonic() + timeout
     while True:
-        raw = await ws.recv()
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
+        except asyncio.TimeoutError:
+            raise TimeoutError(f'Timed out waiting for OpenAI realtime {expected_type!r} event') from None
         if not isinstance(raw, str):  # pragma: no cover
             raise TypeError(f'Expected a text message from the WebSocket, got {type(raw).__name__}')
         data: dict[str, Any] = json.loads(raw)

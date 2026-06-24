@@ -229,6 +229,23 @@ async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch)
             pass  # pragma: no cover
 
 
+class HangingWebSocket(FakeWebSocket):
+    """A websocket whose `recv` never returns, to exercise the handshake timeout."""
+
+    async def recv(self) -> Any:
+        await asyncio.Event().wait()  # pragma: no cover
+
+
+@pytest.mark.anyio
+async def test_connect_handshake_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws = HangingWebSocket([])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime', api_key='k', handshake_timeout=0.02)
+    with pytest.raises(TimeoutError, match="'session.created'"):
+        async with model.connect(instructions='x'):
+            pass  # pragma: no cover
+
+
 @pytest.mark.anyio
 async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.MonkeyPatch) -> None:
     audio = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
