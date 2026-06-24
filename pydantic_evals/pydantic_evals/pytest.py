@@ -256,6 +256,7 @@ def _configure_logfire_for_pytest(config: pytest.Config) -> None:
     try:
         import logfire
     except ImportError:
+        _configure_otel_tracer_provider()
         return
 
     logfire.configure(
@@ -263,6 +264,17 @@ def _configure_logfire_for_pytest(config: pytest.Config) -> None:
         service_name='pydantic-evals-pytest',
         environment='test',
     )
+
+
+def _configure_otel_tracer_provider() -> None:
+    try:
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.trace import ProxyTracerProvider, get_tracer_provider, set_tracer_provider
+    except ImportError:
+        return
+
+    if isinstance(get_tracer_provider(), ProxyTracerProvider):
+        set_tracer_provider(TracerProvider())
 
 
 def pytest_pycollect_makeitem(
@@ -363,8 +375,12 @@ def _logfire_evals_url(report: EvaluationReport[Any, Any, Any]) -> str | None:
     except ImportError:
         return None
 
-    eval_url = logfire.url_from_eval(report)
-    if eval_url is None:
+    url_from_eval = getattr(logfire, 'url_from_eval', None)
+    if not callable(url_from_eval):
+        return None
+
+    eval_url = url_from_eval(report)
+    if not isinstance(eval_url, str):
         return None
     marker = '/evals/'
     if marker not in eval_url:

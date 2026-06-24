@@ -194,6 +194,10 @@ logfire.configure(
 Evals appear in Logfire when a Logfire token is available, for example from a local `.logfire` project configuration or
 the `LOGFIRE_TOKEN` environment variable.
 
+If Logfire is not installed, the pytest integration configures an in-process OpenTelemetry tracer provider so
+span-based evaluators such as [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] can still record spans
+locally.
+
 When Logfire provides a URL for the generated evaluation report, the pytest terminal summary includes a visible,
 clickable terminal link for the dataset eval page:
 

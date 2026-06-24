@@ -5815,6 +5815,7 @@ logfire = [
     { name = "logfire" },
 ]
 pytest = [
+    { name = "opentelemetry-sdk" },
     { name = "pytest" },
 ]
 
@@ -5823,6 +5824,7 @@ requires-dist = [
     { name = "anyio", specifier = ">=0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.1" },
     { name = "logfire-api", specifier = ">=3.14.1" },
+    { name = "opentelemetry-sdk", marker = "extra == 'pytest'", specifier = ">=1.28.0" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
     { name = "pytest", marker = "extra == 'pytest'", specifier = ">=9.0.3" },

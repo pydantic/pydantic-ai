@@ -256,6 +256,82 @@ def test_logfire_auto_config_can_be_disabled(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_terminal_summary_supports_logfire_without_eval_urls(tmp_path: Path) -> None:
+    result = _run_inline_pytest(
+        tmp_path,
+        """
+        import sys
+        import types
+
+        import pytest
+
+        from pydantic_evals import Case, Dataset
+        from pydantic_evals.evaluators import EqualsExpected
+
+        sys.modules['logfire'] = types.SimpleNamespace(configure=lambda **kwargs: None)
+
+        dataset = Dataset(
+            name='uppercase',
+            cases=[Case(name='basic', inputs='hello', expected_output='HELLO')],
+            evaluators=[EqualsExpected()],
+        )
+
+
+        @pytest.mark.eval(dataset)
+        async def test_uppercase(text: str) -> str:
+            return text.upper()
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '1 passed' in result.stdout
+    assert 'Logfire dataset' not in result.stdout
+
+
+def test_eval_mark_configures_otel_provider_without_logfire(tmp_path: Path) -> None:
+    result = _run_inline_pytest(
+        tmp_path,
+        """
+        import builtins
+
+        import pytest
+        from opentelemetry import trace
+
+        from pydantic_evals import Case, Dataset
+        from pydantic_evals.evaluators import HasMatchingSpan
+        from pydantic_evals.otel import SpanQuery
+
+        real_import = builtins.__import__
+
+
+        def import_without_logfire(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == 'logfire' or name.startswith('logfire.'):
+                raise ImportError('logfire is not installed')
+            return real_import(name, globals, locals, fromlist, level)
+
+
+        builtins.__import__ = import_without_logfire
+
+        dataset = Dataset(
+            name='spans',
+            cases=[Case(name='basic', inputs='hello')],
+            evaluators=[HasMatchingSpan(SpanQuery(name='task'))],
+        )
+
+
+        @pytest.mark.eval(dataset)
+        def test_span(text: str) -> str:
+            tracer = trace.get_tracer(__name__)
+            with tracer.start_as_current_span('task'):
+                return text.upper()
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '1 passed' in result.stdout
+    assert 'SpanTreeRecordingError' not in result.stdout + result.stderr
+
+
 def test_terminal_summary_prints_logfire_eval_links(tmp_path: Path) -> None:
     result = _run_inline_pytest(
         tmp_path,
