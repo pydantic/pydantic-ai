@@ -3326,7 +3326,8 @@ def test_args_validator_not_configured():
     agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
 
-def test_args_before_validator_can_fix_raw_tool_args():
+@pytest.mark.parametrize('use_async_args_before_validator', [False, True])
+def test_args_before_validator_can_fix_raw_tool_args(use_async_args_before_validator: bool):
     class Command(BaseModel):
         command: Literal['create']
         path: str
@@ -3359,9 +3360,14 @@ def test_args_before_validator_can_fix_raw_tool_args():
         assert isinstance(args['command'], str)
         return {**args, 'command': json.loads(args['command'])}
 
+    async def decode_command_arg_async(ctx: RunContext[object], args: str | dict[str, Any]) -> str | dict[str, Any]:
+        return decode_command_arg(ctx, args)
+
+    args_before_validator = decode_command_arg_async if use_async_args_before_validator else decode_command_arg
+
     agent = Agent(FunctionModel(model_function))
 
-    @agent.tool_plain(args_before_validator=decode_command_arg)
+    @agent.tool_plain(args_before_validator=args_before_validator)
     def memory(command: Command) -> str:
         return command.path
 
