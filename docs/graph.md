@@ -445,7 +445,7 @@ class EmailOk(BaseModel):
     pass
 
 
-feedback_agent = Agent[None, EmailRequiresWrite | EmailOk](
+feedback_agent = Agent[object, EmailRequiresWrite | EmailOk](
     'openai:gpt-5.2',
     output_type=EmailRequiresWrite | EmailOk,  # type: ignore
     instructions=(

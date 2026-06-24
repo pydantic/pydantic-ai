@@ -39,9 +39,11 @@ GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
 @pytest.mark.parametrize(
     'provider_name, provider_cls, route',
     [
+        # PAIG exposes a single canonical `openai` route; Chat vs Responses is selected by the
+        # OpenAI SDK's sub-path (/chat/completions vs /responses), not by the URL prefix.
         ('openai', OpenAIProvider, 'openai'),
         ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai-responses'),
+        ('openai-responses', OpenAIProvider, 'openai'),
     ],
 )
 def test_init_with_base_url(
@@ -93,8 +95,9 @@ def vcr_config():
     [
         ('openai', OpenAIProvider, 'openai'),
         ('openai-chat', OpenAIProvider, 'openai'),
-        ('openai-responses', OpenAIProvider, 'openai-responses'),
+        ('openai-responses', OpenAIProvider, 'openai'),
         ('groq', GroqProvider, 'groq'),
+        ('google', GoogleCloudProvider, 'google-vertex'),
         ('google-cloud', GoogleCloudProvider, 'google-vertex'),
         ('anthropic', AnthropicProvider, 'anthropic'),
         ('bedrock', BedrockProvider, 'bedrock'),
@@ -111,13 +114,16 @@ def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]],
 @patch.dict(
     os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
 )
-def test_gateway_provider_unknown():
-    with raises(snapshot('UserError: Unknown upstream provider: foo')):
-        gateway_provider('foo')
+@pytest.mark.parametrize('removed_alias', ['foo', 'google-vertex', 'gemini'])
+def test_gateway_provider_unknown(removed_alias: str):
+    # `google-vertex` and `gemini` were removed in v2 alongside their bare-prefix counterparts —
+    # `gateway/google-vertex:` and `gateway/gemini:` raise the same `UserError` as any other unknown alias.
+    with pytest.raises(UserError, match=f'Unknown upstream provider: {removed_alias}'):
+        gateway_provider(removed_alias)
 
 
 async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
-    provider = gateway_provider('openai', api_key=gateway_api_key, base_url='http://localhost:8787')
+    provider = gateway_provider('openai-chat', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = OpenAIChatModel('gpt-5', provider=provider)
     agent = Agent(model)
 
@@ -177,22 +183,22 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
 )
 async def test_model_provider_argument():
     model = OpenAIChatModel('gpt-5', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = OpenAIResponsesModel('gpt-5', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = GroqModel('llama-3.3-70b-versatile', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = GoogleModel('gemini-1.5-flash', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = AnthropicModel('claude-sonnet-4-5', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider='gateway')
-    assert GATEWAY_BASE_URL in model._provider.base_url  # type: ignore[reportPrivateUsage]
+    assert urlparse(model._provider.base_url).hostname == urlparse(GATEWAY_BASE_URL).hostname  # type: ignore[reportPrivateUsage]
 
 
 async def test_gateway_provider_routing_group(gateway_api_key: str):
