@@ -35,7 +35,12 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.messages import (
+    INVALID_JSON_KEY,
+    MULTI_MODAL_CONTENT_TYPES,
+    NativeToolSearchReturnPart,
+    is_multi_modal_content,
+)
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
@@ -834,6 +839,25 @@ def test_model_request_with_native_tool_return_part_round_trips():
 
     serialized_python = ModelMessagesTypeAdapter.dump_python(messages)
     assert ModelMessagesTypeAdapter.validate_python(serialized_python) == messages
+
+    # The search variant (NativeToolSearchReturnPart, tag 'builtin-tool-search-return')
+    # shares the same request-side path and must round-trip too.
+    search_messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                NativeToolSearchReturnPart(
+                    tool_call_id='c2',
+                    content={'discovered_tools': []},
+                    provider_name='anthropic',
+                ),
+            ]
+        ),
+    ]
+    search_json = ModelMessagesTypeAdapter.dump_json(search_messages)
+    assert ModelMessagesTypeAdapter.validate_json(search_json) == search_messages
+
+    search_python = ModelMessagesTypeAdapter.dump_python(search_messages)
+    assert ModelMessagesTypeAdapter.validate_python(search_python) == search_messages
 
 
 def test_image_url_validation_with_optional_identifier():
