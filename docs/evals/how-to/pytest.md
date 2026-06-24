@@ -13,7 +13,7 @@ pip install 'pydantic-evals[pytest]'
 The recommended pattern is to mark the task function directly. The marked function receives each
 [`Case.inputs`][pydantic_evals.dataset.Case.inputs] value and returns the task output.
 
-```python {test="skip"}
+```python
 import pytest
 
 from pydantic_evals import Case, Dataset
@@ -50,15 +50,29 @@ By default, the test fails when:
 
 Set marker keyword arguments to adjust the pass criteria and forward evaluation options:
 
-```python {test="skip"}
+```python
+import pytest
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EqualsExpected
+
+dataset = Dataset(
+    name='uppercase',
+    cases=[
+        Case(name='basic', inputs='hello', expected_output='HELLO'),
+    ],
+    evaluators=[EqualsExpected()],
+)
+
+
 @pytest.mark.eval(
     dataset,
     min_assertion_pass_rate=0.95,
     max_concurrency=5,
     repeat=3,
 )
-async def test_support_agent(inputs: SupportInput) -> SupportOutput:
-    return await run_support_agent(inputs)
+async def test_uppercase(text: str) -> str:
+    return text.upper()
 ```
 
 Most [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate] keyword arguments can be passed through the marker,
@@ -75,16 +89,31 @@ pytest --pydantic-evals-report=none     # disable terminal-summary eval reports
 Use `report_check` for project-specific checks that need the full
 [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport]:
 
-```python {test="skip"}
-def check_report(report):
+```python
+import pytest
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EqualsExpected
+from pydantic_evals.reporting import EvaluationReport
+
+dataset = Dataset(
+    name='uppercase',
+    cases=[
+        Case(name='basic', inputs='hello', expected_output='HELLO'),
+    ],
+    evaluators=[EqualsExpected()],
+)
+
+
+def check_report(report: EvaluationReport[str, str, None]) -> None:
     averages = report.averages()
     assert averages is not None
     assert averages.metrics.get('cost', 0) < 1
 
 
 @pytest.mark.eval(dataset, report_check=check_report)
-async def test_support_agent(inputs: SupportInput) -> SupportOutput:
-    return await run_support_agent(inputs)
+async def test_uppercase(text: str) -> str:
+    return text.upper()
 ```
 
 ## Use Pytest Fixtures
@@ -92,8 +121,19 @@ async def test_support_agent(inputs: SupportInput) -> SupportOutput:
 If the eval task needs pytest fixtures, use `task_factory=True`. In this mode, the marked function receives pytest
 fixtures and returns the task callable.
 
-```python {test="skip"}
+```python
 import pytest
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EqualsExpected
+
+dataset = Dataset(
+    name='suffix',
+    cases=[
+        Case(name='basic', inputs='hello', expected_output='hello!'),
+    ],
+    evaluators=[EqualsExpected()],
+)
 
 
 @pytest.fixture
@@ -118,8 +158,18 @@ In addition to the marker, [`assert_evaluation_passes()`][pydantic_evals.pytest.
 [`assert_evaluation_passes_sync()`][pydantic_evals.pytest.assert_evaluation_passes_sync] can be used from ordinary
 pytest tests:
 
-```python {test="skip"}
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EqualsExpected
 from pydantic_evals.pytest import assert_evaluation_passes
+
+dataset = Dataset(
+    name='uppercase',
+    cases=[
+        Case(name='basic', inputs='hello', expected_output='HELLO'),
+    ],
+    evaluators=[EqualsExpected()],
+)
 
 
 async def test_uppercase_eval():
@@ -132,6 +182,8 @@ When a test uses `pytest.mark.eval`, the plugin automatically configures Logfire
 package is installed:
 
 ```python
+import logfire
+
 logfire.configure(
     send_to_logfire='if-token-present',
     service_name='pydantic-evals-pytest',
@@ -158,10 +210,10 @@ pytest --pydantic-evals-logfire=none
 If your eval task runs Pydantic AI agents and you want agent/model/tool spans inside the eval trace, enable Pydantic AI
 instrumentation in your test setup:
 
-```python {test="skip"}
+```python
 import logfire
 
 
-def pytest_configure():
+def pytest_configure() -> None:
     logfire.instrument_pydantic_ai()
 ```

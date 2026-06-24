@@ -14,7 +14,13 @@ with try_import() as imports_successful:
     from pydantic_evals.evaluators import EqualsExpected
     from pydantic_evals.pytest import assert_evaluation_passes_sync
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.vcr,
+    pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'),
+]
+
+_INLINE_PYTEST_TIMEOUT = 120
 
 
 def test_assert_evaluation_passes_sync_returns_report() -> None:
@@ -119,6 +125,34 @@ def test_eval_mark_supports_task_factory_with_fixtures(tmp_path: Path) -> None:
     assert '1 passed' in result.stdout
     assert 'Pydantic Evals' in result.stdout
     assert 'Evaluation Summary: task' in result.stdout
+
+
+def test_eval_mark_supports_direct_task_methods(tmp_path: Path) -> None:
+    result = _run_inline_pytest(
+        tmp_path,
+        """
+        import pytest
+
+        from pydantic_evals import Case, Dataset
+        from pydantic_evals.evaluators import EqualsExpected
+
+        dataset = Dataset(
+            name='uppercase',
+            cases=[Case(name='basic', inputs='hello', expected_output='HELLO')],
+            evaluators=[EqualsExpected()],
+        )
+
+
+        class TestUppercase:
+            @pytest.mark.eval(dataset)
+            async def test_uppercase(self, text: str) -> str:
+                return text.upper()
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '1 passed' in result.stdout
+    assert 'Evaluation Summary: test_uppercase' in result.stdout
 
 
 def test_eval_report_terminal_summary_can_be_disabled(tmp_path: Path) -> None:
@@ -264,9 +298,30 @@ def test_terminal_summary_prints_logfire_eval_links(tmp_path: Path) -> None:
 def _run_inline_pytest(tmp_path: Path, source: str, *pytest_args: str) -> subprocess.CompletedProcess[str]:
     test_file = tmp_path / 'test_eval_marker.py'
     test_file.write_text(textwrap.dedent(source), encoding='utf-8')
-    return subprocess.run(
-        [sys.executable, '-m', 'pytest', str(test_file), '-q', *pytest_args],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    args = [sys.executable, '-m', 'pytest', str(test_file), '-q', *pytest_args]
+    try:
+        return subprocess.run(
+            args,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_INLINE_PYTEST_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stderr = _subprocess_output(exc.stderr)
+        if stderr:
+            stderr = f'\n{stderr}'
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=124,
+            stdout=_subprocess_output(exc.stdout),
+            stderr=f'pytest timed out after {_INLINE_PYTEST_TIMEOUT}s{stderr}',
+        )
+
+
+def _subprocess_output(output: bytes | str | None) -> str:
+    if output is None:
+        return ''
+    if isinstance(output, bytes):
+        return output.decode(errors='replace')
+    return output

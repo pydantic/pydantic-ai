@@ -555,6 +555,8 @@ def _is_dataset(value: object) -> TypeGuard[Dataset[Any, Any, Any]]:
 def _is_direct_task(obj: Callable[..., Any]) -> bool:
     signature = inspect.signature(obj)
     parameters = list(signature.parameters.values())
+    if parameters and parameters[0].name in {'self', 'cls'}:
+        parameters = parameters[1:]
     return len(parameters) == 1 and parameters[0].kind in (
         inspect.Parameter.POSITIONAL_ONLY,
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
