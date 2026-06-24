@@ -21,6 +21,7 @@ from pydantic_ai.realtime import (
     InputTranscript,
     SessionError,
     SpeechStarted,
+    SpeechStopped,
     TextInput,
     ToolCall,
     ToolResult,
@@ -68,6 +69,11 @@ def test_map_transcript_missing_field_defaults_to_empty() -> None:
 def test_map_input_transcript() -> None:
     event = map_event({'type': 'conversation.item.input_audio_transcription.completed', 'transcript': 'weather?'})
     assert event == InputTranscript(text='weather?', is_final=True)
+
+
+def test_map_input_transcript_delta() -> None:
+    event = map_event({'type': 'conversation.item.input_audio_transcription.delta', 'delta': 'wea'})
+    assert event == InputTranscript(text='wea', is_final=False)
 
 
 def test_map_function_call() -> None:
@@ -129,6 +135,10 @@ def test_map_error_event_non_dict_payload() -> None:
 
 def test_map_speech_started() -> None:
     assert map_event({'type': 'input_audio_buffer.speech_started'}) == SpeechStarted()
+
+
+def test_map_speech_stopped() -> None:
+    assert map_event({'type': 'input_audio_buffer.speech_stopped'}) == SpeechStopped()
 
 
 def test_map_unknown_event_returns_none() -> None:
@@ -394,11 +404,25 @@ async def test_connection_send_tool_result_triggers_response() -> None:
 
 
 @pytest.mark.anyio
+async def test_connection_send_image() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(ImageInput(data=b'\x01\x02', mime_type='image/png'))
+    item = json.loads(ws.sent[0])
+    assert item['type'] == 'conversation.item.create'
+    content = item['item']['content'][0]
+    assert content['type'] == 'input_image'
+    assert content['image_url'] == 'data:image/png;base64,' + base64.b64encode(b'\x01\x02').decode('ascii')
+    assert len(ws.sent) == 1  # image is context only → no response.create
+
+
+@pytest.mark.anyio
 async def test_connection_send_unsupported_raises() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    with pytest.raises(NotImplementedError, match='ImageInput'):
-        await conn.send(ImageInput(data=b'\x00'))
+    # Every member of the RealtimeInput union is handled, so the defensive branch needs a non-member.
+    with pytest.raises(NotImplementedError, match='object'):
+        await conn.send(object())  # type: ignore[arg-type]
 
 
 @pytest.mark.anyio

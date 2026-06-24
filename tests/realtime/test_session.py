@@ -17,6 +17,7 @@ from pydantic_ai.realtime import (
     ClearAudio,
     CommitAudio,
     CreateResponse,
+    ImageInput,
     InputTranscript,
     RealtimeConnection,
     RealtimeEvent,
@@ -343,8 +344,14 @@ async def test_send_helpers_forward_to_connection() -> None:
     session = RealtimeSession(conn, _noop_runner)
     await session.send_audio(b'\x01\x02')
     await session.send_text('hello')
+    await session.send_image(b'\xff\xd8', mime_type='image/jpeg')
     await session.send(AudioInput(data=b'\x03'))
-    assert conn.sent == [AudioInput(data=b'\x01\x02'), TextInput(text='hello'), AudioInput(data=b'\x03')]
+    assert conn.sent == [
+        AudioInput(data=b'\x01\x02'),
+        TextInput(text='hello'),
+        ImageInput(data=b'\xff\xd8', mime_type='image/jpeg'),
+        AudioInput(data=b'\x03'),
+    ]
 
 
 async def test_manual_turn_control_helpers_forward_to_connection() -> None:

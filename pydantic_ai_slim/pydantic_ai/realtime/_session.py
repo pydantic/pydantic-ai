@@ -14,6 +14,7 @@ from ._base import (
     ClearAudio,
     CommitAudio,
     CreateResponse,
+    ImageInput,
     RealtimeConnection,
     RealtimeInput,
     RealtimeSessionEvent,
@@ -87,6 +88,10 @@ class RealtimeSession:
     async def send_text(self, text: str) -> None:
         """Send a complete text turn to the model."""
         await self._connection.send(TextInput(text=text))
+
+    async def send_image(self, data: bytes, *, mime_type: str = 'image/jpeg') -> None:
+        """Send an image frame as conversation context (e.g. a video frame)."""
+        await self._connection.send(ImageInput(data=data, mime_type=mime_type))
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""

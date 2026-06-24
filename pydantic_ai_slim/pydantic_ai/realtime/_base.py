@@ -172,6 +172,14 @@ class SpeechStarted:
 
 
 @dataclass
+class SpeechStopped:
+    """The provider detected that the user stopped speaking.
+
+    Useful as a 'processing' indicator: the user's turn has ended and the model is about to respond.
+    """
+
+
+@dataclass
 class SessionError:
     """A provider-reported error occurred in the session."""
 
@@ -181,7 +189,7 @@ class SessionError:
 
 RealtimeEvent = TypeAliasType(
     'RealtimeEvent',
-    'AudioDelta | Transcript | InputTranscript | ToolCall | TurnComplete | SpeechStarted | SessionError',
+    'AudioDelta | Transcript | InputTranscript | ToolCall | TurnComplete | SpeechStarted | SpeechStopped | SessionError',
 )
 """Union of events yielded by [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection]."""
 
@@ -216,7 +224,7 @@ class ToolCallCompleted:
 
 RealtimeSessionEvent = TypeAliasType(
     'RealtimeSessionEvent',
-    'AudioDelta | Transcript | InputTranscript | ToolCallStarted | ToolCallCompleted | TurnComplete | SpeechStarted | SessionError',
+    'AudioDelta | Transcript | InputTranscript | ToolCallStarted | ToolCallCompleted | TurnComplete | SpeechStarted | SpeechStopped | SessionError',
 )
 """Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession]."""
 

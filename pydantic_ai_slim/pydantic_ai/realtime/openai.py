@@ -38,6 +38,7 @@ from ._base import (
     ClearAudio,
     CommitAudio,
     CreateResponse,
+    ImageInput,
     InputTranscript,
     RealtimeConnection,
     RealtimeEvent,
@@ -45,6 +46,7 @@ from ._base import (
     RealtimeModel,
     SessionError,
     SpeechStarted,
+    SpeechStopped,
     TextInput,
     ToolCall,
     ToolResult,
@@ -135,6 +137,9 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
     if event_type == 'response.output_text.done':
         return Transcript(text=_str_field(data, 'text'), is_final=True)
 
+    if event_type == 'conversation.item.input_audio_transcription.delta':
+        return InputTranscript(text=_str_field(data, 'delta'), is_final=False)
+
     if event_type in _INPUT_TRANSCRIPT_DONE_TYPES:
         return InputTranscript(text=_str_field(data, 'transcript'), is_final=True)
 
@@ -147,6 +152,9 @@ def map_event(data: dict[str, Any]) -> RealtimeEvent | None:
 
     if event_type == 'input_audio_buffer.speech_started':
         return SpeechStarted()
+
+    if event_type == 'input_audio_buffer.speech_stopped':
+        return SpeechStopped()
 
     if event_type == 'response.done':
         return _map_response_done(data)
@@ -184,8 +192,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the OpenAI Realtime API.
 
-        Accepts `AudioInput` (PCM16, 24kHz, mono), `TextInput`, `ToolResult`, and the control verbs
-        `CommitAudio`, `ClearAudio`, `CreateResponse`, and `CancelResponse`.
+        Accepts `AudioInput` (PCM16, 24kHz, mono), `TextInput`, `ImageInput`, `ToolResult`, and the
+        control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`, and `CancelResponse`.
         """
         if isinstance(content, AudioInput):
             await self._send_event(
@@ -218,6 +226,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 }
             )
             await self._request_response()
+        elif isinstance(content, ImageInput):
+            # An image is added as conversation context (like a video frame), not a turn of its own,
+            # so it doesn't trigger a response — drive that with audio (VAD) or `CreateResponse`.
+            data_uri = f'data:{content.mime_type};base64,{base64.b64encode(content.data).decode("ascii")}'
+            await self._send_event(
+                {
+                    'type': 'conversation.item.create',
+                    'item': {
+                        'type': 'message',
+                        'role': 'user',
+                        'content': [{'type': 'input_image', 'image_url': data_uri}],
+                    },
+                }
+            )
         elif isinstance(content, CommitAudio):
             await self._send_event({'type': 'input_audio_buffer.commit'})
         elif isinstance(content, ClearAudio):
