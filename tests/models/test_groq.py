@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -93,6 +93,7 @@ class MockGroq:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.groq.com'
 
     @cached_property
@@ -112,8 +113,9 @@ class MockGroq:
         return cast(AsyncGroq, cls(stream=stream))
 
     async def chat_completions_create(
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
+        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items()})
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
@@ -143,6 +145,13 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
         object='chat.completion',
         usage=usage,
     )
+
+
+def get_mock_chat_completion_kwargs(mock_client: AsyncGroq) -> list[dict[str, Any]]:
+    if isinstance(mock_client, MockGroq):  # type: ignore
+        return mock_client.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockGroq instance')
 
 
 async def test_request_simple_success(allow_model_requests: None):
@@ -666,6 +675,28 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     assert result.output == snapshot(
         'The fruit depicted in the image is a potato. Although commonly mistaken as a vegetable, potatoes are technically fruits because they are the edible, ripened ovary of a flower, containing seeds. However, in culinary and everyday contexts, potatoes are often referred to as a vegetable due to their savory flavor and uses in dishes. The botanical classification of a potato as a fruit comes from its origin as the tuberous part of the Solanum tuberosum plant, which produces flowers and subsequently the potato as a fruit that grows underground.'
     )
+
+
+async def test_groq_image_detail_vendor_metadata(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage(content='done', role='assistant'),
+    )
+    mock_client = MockGroq.create_mock(c)
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(model)
+
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'high'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'low'})
+
+    await agent.run(['Describe these inputs.', image_url, binary_image])
+
+    request_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    image_parts = [
+        item['image_url'] for item in request_kwargs[0]['messages'][0]['content'] if item['type'] == 'image_url'
+    ]
+    assert image_parts
+    assert image_parts[0] == {'url': 'https://example.com/image.png', 'detail': 'high'}
+    assert image_parts[1]['detail'] == 'low'
 
 
 async def test_image_as_binary_content_tool_response(

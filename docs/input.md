@@ -291,6 +291,7 @@ asyncio.run(main())
     [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] can only reference uploaded *documents* by `file_id`. Referencing an uploaded image (an `image/*` media type) raises a [`UserError`][pydantic_ai.exceptions.UserError], because the Chat Completions API doesn't accept a `file_id` for image parts. Use [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent] for images, or use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which does support uploaded images.
 
     With `OpenAIResponsesModel`, control the image [detail level](https://platform.openai.com/docs/guides/images-vision) by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the `UploadedFile`; it defaults to `'auto'`.
+    With `OpenAIChatModel`, `GroqModel`, and `XaiModel`, control the image detail level by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent]; it defaults to `'auto'`.
 
 ### Google
 
