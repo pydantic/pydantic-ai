@@ -1368,7 +1368,7 @@ dynamic_instructions_agent = Agent(FunctionModel(_echo_instructions), name='dyna
 
 
 @dynamic_instructions_agent.toolset(id='dynamic_instruction_toolset', per_run_step=False)
-def dynamic_instruction_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+def dynamic_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
     # A toolset that only contributes instructions, no tools.
     return FunctionToolset(instructions='SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET', id='instruction-only-toolset')
 
@@ -1441,10 +1441,12 @@ multi_step_instructions_agent = Agent(
 
 
 @multi_step_instructions_agent.toolset(id='multi_step_instruction_toolset')
-def multi_step_instruction_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+def multi_step_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
     # Instructions encode the run step, so a stale step-1 cached value read at step 2 would
     # surface as the wrong sentinel in the model output.
-    toolset = FunctionToolset[None](instructions=f'INSTRUCTIONS_FOR_STEP_{ctx.run_step}', id='step-instruction-toolset')
+    toolset = FunctionToolset[object](
+        instructions=f'INSTRUCTIONS_FOR_STEP_{ctx.run_step}', id='step-instruction-toolset'
+    )
 
     @toolset.tool_plain
     def noop() -> str:
