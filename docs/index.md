@@ -27,7 +27,7 @@ Tightly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/lo
 Designed to give your IDE or AI coding agent as much context as possible for auto-completion and [type checking](agent.md#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel.
 
 5. **Powerful Evals**:
-Enables you to systematically test and [evaluate](evals.md) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
+Enables you to systematically test and [evaluate](evals/) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
 6. **Extensible by Design**:
 Build agents from composable [capabilities](capabilities.md) that bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](capabilities.md#provider-adaptive-tools), [thinking](capabilities.md#thinking), and [MCP](capabilities.md#provider-adaptive-tools), pick from the [Pydantic AI Harness](harness/overview.md) capability library, build your own, or install [third-party capability packages](extensibility.md). Define agents entirely in [YAML/JSON](agent-spec.md) — no code required.

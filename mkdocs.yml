@@ -69,7 +69,7 @@ nav:
       - Code Mode: harness/code-mode.md
 
   - Pydantic Evals:
-      - Overview: evals.md
+      - Overview: evals/index.md
       - Getting Started:
           - Quick Start: evals/quick-start.md
           - Core Concepts: evals/core-concepts.md
@@ -409,7 +409,7 @@ plugins:
         API Reference:
           - api/*.md
         Evals:
-          - evals.md
+          - evals/index.md
           - evals/*.md
         Durable Execution:
           - durable_execution/*.md
