@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
 
@@ -63,7 +63,7 @@ def test_moonshotai_provider_creates_http_client() -> None:
 def test_moonshotai_model_profile():
     provider = MoonshotAIProvider(api_key='api-key')
     model = OpenAIChatModel('kimi-k2-0711-preview', provider=provider)
-    assert isinstance(model.profile, OpenAIModelProfile)
-    assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
-    assert model.profile.openai_supports_tool_choice_required is False
-    assert model.profile.supports_json_object_output is True
+    assert isinstance(model.profile, dict)
+    assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert model.profile.get('openai_supports_tool_choice_required', True) is False
+    assert model.profile.get('supports_json_object_output', False) is True

@@ -7,7 +7,9 @@ import pytest
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.direct import model_request
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 
 from ..conftest import try_import
 
@@ -36,19 +38,28 @@ async def test_cerebras_model_simple(allow_model_requests: None, cerebras_api_ke
     assert '4' in result.output
 
 
-async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str):
-    """Test that cerebras_disable_reasoning setting is properly transformed to extra_body.
+async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str, vcr: Cassette):
+    """The deprecated `cerebras_disable_reasoning` still disables reasoning, now via `reasoning_effort='none'`.
 
-    Note: disable_reasoning is only supported on reasoning models: zai-glm-4.6 and gpt-oss-120b.
+    Cerebras deprecated `extra_body['disable_reasoning']` in favor of the standard `reasoning_effort='none'`.
     """
     provider = CerebrasProvider(api_key=cerebras_api_key)
-    model = CerebrasModel('zai-glm-4.6', provider=provider)
+    model = CerebrasModel('zai-glm-4.7', provider=provider)
 
     settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
-    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`cerebras_disable_reasoning` is deprecated'):
+        response = await model_request(
+            model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings
+        )
 
     text_part = cast(TextPart, response.parts[0])
     assert '4' in text_part.content
+
+    body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert body.get('reasoning_effort') == 'none'
+    assert 'disable_reasoning' not in body
+    # zai replays prior reasoning as `<think>` tags, so `clear_thinking=false` is injected by default.
+    assert body.get('clear_thinking') is False
 
 
 async def test_cerebras_thinking_part_survives_multiturn(
@@ -87,25 +98,89 @@ async def test_cerebras_thinking_part_survives_multiturn(
     assert any(m.get('reasoning') == turn1_thinking[0].content for m in assistant_messages)
 
 
+async def test_cerebras_zai_reasoning_replayed_as_think_tags(
+    allow_model_requests: None, cerebras_api_key: str, vcr: Cassette
+):
+    """GLM replays prior reasoning inside `<think>...</think>` tags in the assistant `content`, not a `reasoning` field.
+
+    Unlike gpt-oss (Harmony, replayed in the `reasoning` field), Cerebras GLM/Qwen require previous reasoning to
+    be wrapped in `<think>` tags inside the assistant message content, so `CerebrasProvider.model_profile()` sets
+    `openai_chat_send_back_thinking_parts='tags'` for `zai`. See https://inference-docs.cerebras.ai/capabilities/reasoning.
+    """
+    provider = CerebrasProvider(api_key=cerebras_api_key)
+    model = CerebrasModel('zai-glm-4.7', provider=provider)
+    agent = Agent(model=model)
+
+    result1 = await agent.run('What is 25 * 4? Think briefly first.')
+    turn1_response = next(m for m in reversed(result1.all_messages()) if isinstance(m, ModelResponse))
+    turn1_thinking = [p for p in turn1_response.parts if isinstance(p, ThinkingPart)]
+    assert turn1_thinking, 'expected a ThinkingPart on turn 1'
+
+    await agent.run('Now divide that by 2.', message_history=result1.all_messages())
+
+    turn2_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assistant_messages = [m for m in turn2_body['messages'] if m.get('role') == 'assistant']
+    start_tag, end_tag = model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+    assert any(
+        start_tag in (m.get('content') or '') and end_tag in (m.get('content') or '') for m in assistant_messages
+    ), 'expected prior reasoning wrapped in think tags in the assistant content'
+    assert all('reasoning' not in m for m in assistant_messages), 'reasoning must not be replayed in a separate field'
+
+
 async def test_cerebras_settings_transformation():
-    """Test that CerebrasModelSettings are correctly transformed to OpenAIChatModelSettings."""
+    """`CerebrasModelSettings` are transformed to `OpenAIChatModelSettings` without the deprecated `disable_reasoning`."""
     from pydantic_ai.models import ModelRequestParameters
 
     params = ModelRequestParameters()
 
-    # Test with disable_reasoning
+    # The deprecated `cerebras_disable_reasoning=True` maps onto `reasoning_effort='none'`.
     settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
-    transformed = _cerebras_settings_to_openai_settings(settings, params)
-    extra_body = cast(dict[str, Any], transformed.get('extra_body', {}))
-    assert extra_body.get('disable_reasoning') is True
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`cerebras_disable_reasoning` is deprecated'):
+        transformed = _cerebras_settings_to_openai_settings(settings, params)
+    assert transformed.get('openai_reasoning_effort') == 'none'
 
-    # Test without disable_reasoning (should not have extra_body)
+    # An empty settings object stays empty.
     settings_empty = CerebrasModelSettings()
     transformed_empty = _cerebras_settings_to_openai_settings(settings_empty, params)
+    assert 'openai_reasoning_effort' not in transformed_empty
     assert transformed_empty.get('extra_body') is None
 
-    # Test with disable_reasoning=False
+    # `cerebras_disable_reasoning=False` is an explicit opt-out, so no disable signal is emitted.
     settings_false = CerebrasModelSettings(cerebras_disable_reasoning=False)
-    transformed_false = _cerebras_settings_to_openai_settings(settings_false, params)
-    extra_body_false = cast(dict[str, Any], transformed_false.get('extra_body', {}))
-    assert extra_body_false.get('disable_reasoning') is False
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`cerebras_disable_reasoning` is deprecated'):
+        transformed_false = _cerebras_settings_to_openai_settings(settings_false, params)
+    assert 'openai_reasoning_effort' not in transformed_false
+
+    # `cerebras_clear_thinking` is written to `extra_body['clear_thinking']` only when explicitly set.
+    settings_clear = CerebrasModelSettings(cerebras_clear_thinking=False)
+    transformed_clear = _cerebras_settings_to_openai_settings(settings_clear, params)
+    extra_body_clear = cast(dict[str, Any], transformed_clear.get('extra_body', {}))
+    assert extra_body_clear.get('clear_thinking') is False
+
+    transformed_no_clear = _cerebras_settings_to_openai_settings(CerebrasModelSettings(), params)
+    assert transformed_no_clear.get('extra_body') is None
+
+
+async def test_cerebras_clear_thinking_default_for_tags_path():
+    """`clear_thinking=False` is injected by default for `zai`/GLM (the `<think>`-replay path) so Cerebras
+    doesn't strip replayed reasoning; non-GLM models don't get it, and an explicit setting always wins."""
+    from pydantic_ai.models import ModelRequestParameters
+
+    params = ModelRequestParameters()
+
+    # zai/GLM replays prior reasoning as `<think>` tags → `clear_thinking=False` injected by default.
+    zai = CerebrasModel('zai-glm-4.7', provider=CerebrasProvider(api_key='mock-api-key'))
+    zai_settings, _ = zai.prepare_request(CerebrasModelSettings(), params)
+    assert zai_settings is not None
+    assert cast(dict[str, Any], zai_settings.get('extra_body', {})).get('clear_thinking') is False
+
+    # gpt-oss doesn't replay as tags → `clear_thinking` is not sent at all (GLM-specific param).
+    gpt_oss = CerebrasModel('gpt-oss-120b', provider=CerebrasProvider(api_key='mock-api-key'))
+    gpt_oss_settings, _ = gpt_oss.prepare_request(CerebrasModelSettings(), params)
+    assert gpt_oss_settings is not None
+    assert gpt_oss_settings.get('extra_body') is None
+
+    # An explicit `cerebras_clear_thinking` overrides the zai default.
+    zai_override, _ = zai.prepare_request(CerebrasModelSettings(cerebras_clear_thinking=True), params)
+    assert zai_override is not None
+    assert cast(dict[str, Any], zai_override.get('extra_body', {})).get('clear_thinking') is True

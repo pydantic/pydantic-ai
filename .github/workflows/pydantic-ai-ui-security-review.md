@@ -44,8 +44,12 @@ safe-outputs:
   noop:
   create-pull-request-review-comment:
     max: 30
-  # Non-voting (COMMENT only): avoids overwriting pr-review's merge-gate
-  # verdict since both run as github-actions[bot].
+  # Non-voting by design: the prompt restricts the event to COMMENT only,
+  # because both this workflow and pydantic-ai-pr-review submit reviews as
+  # `github-actions[bot]` and GitHub's merge-gate uses the latest verdict
+  # per reviewer login — an APPROVE/REQUEST_CHANGES from here would
+  # overwrite pr-review's. To be reconsidered when gh-aw supports check
+  # runs (https://github.com/githubnext/gh-aw — Bill Easton's WIP).
   submit-pull-request-review:
     max: 1
 timeout-minutes: 30

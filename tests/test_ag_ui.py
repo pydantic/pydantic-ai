@@ -9,12 +9,9 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
-from http import HTTPStatus
 from typing import Any, Literal
 
-import httpx
 import pytest
-from asgi_lifespan import LifespanManager
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -55,10 +52,9 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import PrepareTools
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -71,7 +67,14 @@ from pydantic_ai.models.function import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import (
+    AgentDepsT,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
@@ -111,45 +114,53 @@ with try_import() as imports_successful:
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
 
-    # `handle_ag_ui_request` and `run_ag_ui` are shim-only helpers being removed in 2.0;
-    # this file exercises them for 1.x coverage. Suppress the module-import deprecation
-    # warning at import time — runtime warnings on `to_ag_ui()` are handled via `pytestmark`.
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            'ignore', message='The `pydantic_ai.ag_ui` module is deprecated', category=PydanticAIDeprecationWarning
-        )
-        from pydantic_ai.ag_ui import handle_ag_ui_request, run_ag_ui
-
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import() as interrupts_imports_successful:
+    # `ResumeEntry` and the interrupt-aware run lifecycle were added in ag-ui-protocol 0.1.19
+    # (PR #1569). On older installs, the dedicated interrupt tests below are skipped.
+    from ag_ui.core import ResumeEntry
 
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol not installed'),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
-def simple_result() -> Any:
+def simple_result(*, outcome: dict[str, Any] | None = None) -> Any:
+    """Expected event sequence for `simple_stream`.
+
+    Pass `outcome={'type': 'success'}` for callers that run against `ag-ui-protocol >= 0.1.19`
+    (where the adapter emits `RunFinishedEvent.outcome`). Older negotiated versions
+    (e.g. `ag_ui_version='0.1.10'`) suppress the field, so the default `outcome=None`
+    matches a bare `RUN_FINISHED`.
+    """
+    thread_id = IsSameStr()
+    run_id = IsSameStr()
+    message_id = IsSameStr()
+    run_finished: dict[str, Any] = {
+        'type': 'RUN_FINISHED',
+        'timestamp': IsInt(),
+        'threadId': thread_id,
+        'runId': run_id,
+    }
+    if outcome is not None:
+        run_finished['outcome'] = outcome
     return snapshot(
         [
             {
                 'type': 'RUN_STARTED',
                 'timestamp': IsInt(),
-                'threadId': (thread_id := IsSameStr()),
-                'runId': (run_id := IsSameStr()),
+                'threadId': thread_id,
+                'runId': run_id,
             },
             {
                 'type': 'TEXT_MESSAGE_START',
                 'timestamp': IsInt(),
-                'messageId': (message_id := IsSameStr()),
+                'messageId': message_id,
                 'role': 'assistant',
             },
             {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'success '},
@@ -160,12 +171,7 @@ def simple_result() -> Any:
                 'delta': '(no tool calls)',
             },
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
-            {
-                'type': 'RUN_FINISHED',
-                'timestamp': IsInt(),
-                'threadId': thread_id,
-                'runId': run_id,
-            },
+            run_finished,
         ]
     )
 
@@ -177,16 +183,6 @@ def test_manage_system_prompt_visible_in_ag_ui_from_request_signature() -> None:
     assert from_request_parameters['manage_system_prompt'].default == 'server'
 
 
-def test_deprecated_ag_ui_helpers_expose_file_url_force_download_allowlist() -> None:
-    handle_parameters = inspect.signature(handle_ag_ui_request).parameters
-    run_parameters = inspect.signature(run_ag_ui).parameters
-
-    assert 'allowed_file_url_force_download' in handle_parameters
-    assert handle_parameters['allowed_file_url_force_download'].default == frozenset()
-    assert 'allowed_file_url_force_download' in run_parameters
-    assert run_parameters['allowed_file_url_force_download'].default == frozenset()
-
-
 async def run_and_collect_events(
     agent: Agent[AgentDepsT, OutputDataT],
     *run_inputs: RunAgentInput,
@@ -196,7 +192,8 @@ async def run_and_collect_events(
 ) -> list[dict[str, Any]]:
     events = list[dict[str, Any]]()
     for run_input in run_inputs:
-        async for event in run_ag_ui(agent, run_input, ag_ui_version=ag_ui_version, deps=deps, on_complete=on_complete):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version)
+        async for event in adapter.encode_stream(adapter.run_stream(deps=deps, on_complete=on_complete)):
             events.append(json.loads(event.removeprefix('data: ')))
     return events
 
@@ -2033,7 +2030,7 @@ async def test_thinking_roundtrip_anthropic(allow_model_requests: None, anthropi
     """Test that pydantic -> AG-UI -> pydantic round-trip preserves thinking metadata with real Anthropic responses."""
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
-    agent: Agent[None, str] = Agent(m, model_settings=settings)
+    agent = Agent(m, model_settings=settings)
 
     result = await agent.run('What is 1+1? Reply in one word.')
     original = result.all_messages()
@@ -2271,10 +2268,11 @@ async def test_request_with_state() -> None:
         async def on_complete(result: AgentRunResult[Any]):
             seen_deps_states.append(deps.state.value)
 
-        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for event in adapter.encode_stream(adapter.run_stream(deps=deps, on_complete=on_complete)):
             events.append(json.loads(event.removeprefix('data: ')))
 
-        assert events == simple_result()
+        assert events == simple_result(outcome={'type': 'success'})
     assert seen_states == snapshot([41, 0, 0, 42])
     assert seen_deps_states == snapshot([42, 1, 1, 43])
 
@@ -2295,10 +2293,11 @@ async def test_request_with_state_without_handler() -> None:
         match='State was provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol, so the state was ignored. Use `StateDeps\\[\\.\\.\\.\\]` or implement `StateHandler` to receive AG-UI state.',
     ):
         events = list[dict[str, Any]]()
-        async for event in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for event in adapter.encode_stream(adapter.run_stream()):
             events.append(json.loads(event.removeprefix('data: ')))
 
-    assert events == simple_result()
+    assert events == simple_result(outcome={'type': 'success'})
 
 
 async def test_request_with_empty_state_without_handler() -> None:
@@ -2313,10 +2312,11 @@ async def test_request_with_empty_state_without_handler() -> None:
     )
 
     events = list[dict[str, Any]]()
-    async for event in run_ag_ui(agent, run_input):
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    async for event in adapter.encode_stream(adapter.run_stream()):
         events.append(json.loads(event.removeprefix('data: ')))
 
-    assert events == simple_result()
+    assert events == simple_result(outcome={'type': 'success'})
 
 
 async def test_request_with_state_with_custom_handler() -> None:
@@ -2344,7 +2344,8 @@ async def test_request_with_state_with_custom_handler() -> None:
         state={'value': 42},
     )
 
-    async for _ in run_ag_ui(agent, run_input, deps=CustomStateDeps(state={'value': 0})):
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    async for _ in adapter.encode_stream(adapter.run_stream(deps=CustomStateDeps(state={'value': 0}))):
         pass
 
     assert seen_states[-1] == {'value': 42}
@@ -2421,46 +2422,6 @@ async def test_concurrent_runs() -> None:
             {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
             {'type': 'RUN_FINISHED', 'timestamp': IsInt(), 'threadId': f'test_thread_{i}', 'runId': run_id},
         ]
-
-
-@pytest.mark.anyio
-@pytest.mark.filterwarnings(
-    'ignore:`Agent.to_ag_ui\\(\\)` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
-)
-async def test_to_ag_ui() -> None:
-    """Test the deprecated `agent.to_ag_ui` method for 1.x-coverage. New AG-UI tests use `AGUIAdapter.dispatch_request` directly."""
-
-    agent = Agent(model=FunctionModel(stream_function=simple_stream), deps_type=StateDeps[StateInt])
-
-    deps = StateDeps(StateInt(value=0))
-    app = agent.to_ag_ui(deps=deps)  # pyright: ignore[reportDeprecated]
-    async with LifespanManager(app):
-        transport = httpx.ASGITransport(app)
-        async with httpx.AsyncClient(transport=transport) as client:
-            client.base_url = 'http://localhost:8000'
-            run_input = create_input(
-                UserMessage(
-                    id='msg_1',
-                    content='Hello, world!',
-                ),
-                state=StateInt(value=42),
-            )
-            async with client.stream(
-                'POST',
-                '/',
-                content=run_input.model_dump_json(),
-                headers={'Content-Type': 'application/json', 'Accept': SSE_CONTENT_TYPE},
-            ) as response:
-                assert response.status_code == HTTPStatus.OK, f'Unexpected status code: {response.status_code}'
-                events: list[dict[str, Any]] = []
-                async for line in response.aiter_lines():
-                    if line:
-                        events.append(json.loads(line.removeprefix('data: ')))
-
-            assert events == simple_result()
-
-    # Verify the state was not mutated by the run
-    assert deps.state.value == 0
 
 
 async def test_callback_sync() -> None:
@@ -2577,6 +2538,28 @@ async def test_adapter_explicit_conversation_id_overrides_thread_id() -> None:
         pass
 
     assert captured_results[0].conversation_id == 'explicit-conv-id'
+
+
+async def test_adapter_run_stream_native_capabilities_kwarg_merged_into_run() -> None:
+    """`AGUIAdapter.run_stream_native(capabilities=[...])` extends the run-level capability
+    list passed through to `Agent.run_stream_events`."""
+    seen_tool_defs: list[ToolDefinition] = []
+
+    async def prep(_ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_tool_defs.extend(tool_defs)
+        return tool_defs
+
+    def my_tool() -> str:
+        return 'ok'
+
+    agent = Agent(TestModel(), tools=[my_tool])
+    run_input = create_input(UserMessage(id='msg0', content='Hello!'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
+
+    async for _ in adapter.transform_stream(adapter.run_stream_native(capabilities=[PrepareTools(prep)])):
+        pass
+
+    assert seen_tool_defs, 'PrepareTools capability passed via run_stream_native(capabilities=...) should fire'
 
 
 async def test_callback_async() -> None:
@@ -3138,6 +3121,7 @@ async def test_event_stream_back_to_back_text():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
+                'outcome': {'type': 'success'},
             },
         ]
     )
@@ -3363,6 +3347,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
                 'timestamp': IsInt(),
                 'threadId': thread_id,
                 'runId': run_id,
+                'outcome': {'type': 'success'},
             },
         ]
     )
@@ -3420,7 +3405,7 @@ async def test_tool_returns_event_with_timestamp_preserved():
     assert custom_event['timestamp'] == custom_timestamp
 
 
-async def test_handle_ag_ui_request():
+async def test_dispatch_request():
     agent = Agent(model=TestModel())
     run_input = create_input(
         UserMessage(
@@ -3443,7 +3428,7 @@ async def test_handle_ag_ui_request():
         receive=receive,
     )
 
-    response = await handle_ag_ui_request(agent, starlette_request)
+    response = await AGUIAdapter.dispatch_request(starlette_request, agent=agent)
 
     assert isinstance(response, StreamingResponse)
 
@@ -3535,6 +3520,7 @@ async def test_handle_ag_ui_request():
                     'timestamp': IsInt(),
                     'threadId': thread_id,
                     'runId': run_id,
+                    'outcome': {'type': 'success'},
                 },
                 'more_body': True,
             },
@@ -4209,7 +4195,8 @@ async def test_system_prompt_with_ag_ui_adapter():
     )
 
     with capture_run_messages() as messages:
-        async for _ in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
     assert messages == snapshot(
@@ -4242,7 +4229,7 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
     agent = Agent(model=TestModel())
 
     @agent.system_prompt
-    def dynamic_prompt(ctx: RunContext[None]) -> str:
+    def dynamic_prompt(ctx: RunContext) -> str:
         return 'Dynamic system prompt'
 
     run_input = create_input(
@@ -4253,7 +4240,8 @@ async def test_dynamic_system_prompt_with_ag_ui_adapter():
     )
 
     with capture_run_messages() as messages:
-        async for _ in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
     assert messages == snapshot(
@@ -4663,7 +4651,8 @@ async def test_system_prompt_reinjected_with_ag_ui_history():
     )
 
     with capture_run_messages() as messages:
-        async for _ in run_ag_ui(agent, run_input):
+        adapter = AGUIAdapter(agent=agent, run_input=run_input)
+        async for _ in adapter.encode_stream(adapter.run_stream()):
             pass
 
     assert messages == snapshot(
@@ -4807,6 +4796,427 @@ async def test_client_submitted_file_url_disallowed_scheme_stripped() -> None:
     user_part = request.parts[0]
     assert isinstance(user_part, UserPromptPart)
     assert user_part.content == ['See attached', ImageUrl(url='https://example.com/ok.png')]
+
+
+# endregion
+
+
+# region: Interrupts — AG-UI RunFinished outcome and resume[] translation
+
+
+pytestmark_interrupts = pytest.mark.skipif(
+    not interrupts_imports_successful(),
+    reason='ag-ui-protocol < 0.1.19 — interrupt types unavailable',
+)
+
+
+_INTERRUPTS_AG_UI_VERSION = '0.1.19'
+
+
+async def _collect_adapter_events(
+    agent: Agent[Any, Any],
+    run_input: RunAgentInput,
+    *,
+    ag_ui_version: str = _INTERRUPTS_AG_UI_VERSION,
+    deferred_tool_results: DeferredToolResults | None = None,
+) -> list[dict[str, Any]]:
+    """Drive `AGUIAdapter` directly so we can pin `ag_ui_version` to the interrupt-aware release."""
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version=ag_ui_version)
+    events: list[dict[str, Any]] = []
+    async for encoded in adapter.encode_stream(adapter.run_stream(deferred_tool_results=deferred_tool_results)):
+        events.append(json.loads(encoded.removeprefix('data: ')))
+    return events
+
+
+@pytestmark_interrupts
+async def test_run_finished_success_outcome_on_modern_version() -> None:
+    """On ag-ui-protocol >= 0.1.19, a normal run ends with `outcome.type == 'success'`."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert run_finished['outcome'] == snapshot({'type': 'success'})
+
+
+@pytestmark_interrupts
+async def test_run_finished_no_outcome_on_legacy_version() -> None:
+    """On ag-ui-protocol < 0.1.19, no `outcome` field is emitted — matches today's behavior."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(
+        agent, create_input(UserMessage(id='m1', content='hi')), ag_ui_version='0.1.10'
+    )
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert 'outcome' not in run_finished
+
+
+@pytestmark_interrupts
+async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the installed ag-ui-protocol SDK predates interrupts, `after_stream` emits a bare
+    `RUN_FINISHED` with no `outcome` field — even on a modern negotiated version. This is the
+    import-gated path (`HAS_INTERRUPTS` is False), distinct from the version-gated path.
+    """
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._event_stream.HAS_INTERRUPTS', False)
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert 'outcome' not in run_finished
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
+    """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
+    interrupt outcome carrying one `Interrupt` per pending approval, with `reason='tool_call'`
+    and the original `tool_call_id` bound for resume.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:  # pragma: no cover
+        # Body never runs: the tool is deferred for approval and this test asserts the
+        # pre-execution interrupt outcome. The roundtrip test covers an approved execution.
+        return f'deleted {path}'
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete .env')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert run_finished['outcome'] == snapshot(
+        {
+            'type': 'interrupt',
+            'interrupts': [
+                {
+                    'id': IsStr(),
+                    'reason': 'tool_call',
+                    'message': IsStr(),
+                    'toolCallId': IsStr(),
+                    'responseSchema': {
+                        'type': 'object',
+                        'properties': {
+                            'approved': {'type': 'boolean'},
+                            'editedArgs': {'type': 'object'},
+                            'reason': {'type': 'string'},
+                        },
+                        'required': ['approved'],
+                    },
+                }
+            ],
+        }
+    )
+    interrupt = run_finished['outcome']['interrupts'][0]
+    # The `id` must let the client round-trip back to the original tool_call_id.
+    assert interrupt['id'].endswith(interrupt['toolCallId'])
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_outcome_carries_metadata() -> None:
+    """Per-call `DeferredToolRequests.metadata` surfaces on `Interrupt.metadata`.
+
+    A tool raising `ApprovalRequired(metadata=...)` attaches metadata keyed by `tool_call_id`;
+    the adapter must forward it so a frontend can render context-specific approval UI.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def delete_file(path: str) -> str:
+        raise ApprovalRequired(metadata={'risk': 'high', 'scope': 'filesystem'})
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='delete .env')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['metadata'] == snapshot({'risk': 'high', 'scope': 'filesystem'})
+
+
+@pytestmark_interrupts
+async def test_resume_resolved_approves_tool() -> None:
+    """`status='resolved'` + `payload.approved=True` → `ToolApproved()` for the bound tool call."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolApproved()}))
+
+
+@pytestmark_interrupts
+async def test_resume_resolved_with_edited_args_passes_override_args() -> None:
+    """`payload.editedArgs` on an approval translates to `ToolApproved(override_args=...)`."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            ResumeEntry(
+                interrupt_id='int-tc-001',
+                status='resolved',
+                payload={'approved': True, 'editedArgs': {'path': '/tmp/safer.env'}},
+            )
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-001': ToolApproved(override_args={'path': '/tmp/safer.env'})})
+    )
+
+
+@pytestmark_interrupts
+async def test_resume_resolved_with_approved_false_denies_tool() -> None:
+    """`payload.approved=False` with a `reason` → `ToolDenied(reason)`."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            ResumeEntry(
+                interrupt_id='int-tc-001',
+                status='resolved',
+                payload={'approved': False, 'reason': 'too destructive'},
+            )
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-001': ToolDenied(message='too destructive')})
+    )
+
+
+@pytestmark_interrupts
+async def test_resume_cancelled_denies_tool_regardless_of_payload() -> None:
+    """`status='cancelled'` → `ToolDenied('Cancelled by user.')` regardless of payload contents."""
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[
+            # Even an apparently-approving payload is overridden by `status='cancelled'`.
+            ResumeEntry(interrupt_id='int-tc-001', status='cancelled', payload={'approved': True}),
+        ],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-001': ToolDenied(message='Cancelled by user.')})
+    )
+
+
+@pytestmark_interrupts
+@pytest.mark.parametrize(
+    'payload',
+    [
+        pytest.param({}, id='missing-approved'),
+        pytest.param({'approved': None}, id='approved-null'),
+        pytest.param({'approved': 'true'}, id='approved-string-true'),
+        pytest.param({'approved': 1}, id='approved-truthy-int'),
+        pytest.param('approved', id='payload-is-string'),
+        pytest.param([{'approved': True}], id='payload-is-list'),
+        pytest.param(None, id='payload-null'),
+    ],
+)
+async def test_resume_deny_by_default_for_ambiguous_payload(payload: Any) -> None:
+    """Approval requires an explicit `payload.approved == True`.
+
+    Anything else (missing, null, non-bool, non-dict payload) must deny so a malformed or
+    hostile client cannot bypass the `requires_approval=True` gate by omitting the field.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload=payload)],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(DeferredToolResults(approvals={'tc-001': ToolDenied()}))
+
+
+@pytestmark_interrupts
+async def test_resume_unknown_interrupt_id_prefix_raises() -> None:
+    """An `interrupt_id` that doesn't carry the adapter's prefix is a protocol error
+    we surface as `UserError` rather than silently mapping to a wrong tool call.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='bogus-123', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    with pytest.raises(UserError, match=r'does not start with the expected'):
+        _ = adapter.deferred_tool_results
+
+
+@pytestmark_interrupts
+async def test_deferred_tool_results_none_when_sdk_lacks_interrupts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the installed ag-ui-protocol SDK predates interrupts, `resume[]` is ignored entirely
+    (`deferred_tool_results` returns `None`) so the old SDK path stays byte-for-byte unchanged.
+    """
+    monkeypatch.setattr('pydantic_ai.ui.ag_ui._adapter.HAS_INTERRUPTS', False)
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results is None
+
+
+@pytestmark_interrupts
+async def test_resume_well_formed_but_nonexistent_interrupt_id_is_noop() -> None:
+    """A well-formed `int-` id that binds to no pending approval is accepted, not an error.
+
+    Unlike a missing prefix (which raises `UserError`), a correctly-prefixed id that matches no
+    pending call maps to its own stripped `tool_call_id` — never to a different pending call — so
+    the agent simply finds no call to resolve and the entry is a harmless no-op.
+    """
+    agent = Agent(model=TestModel())
+    run_input = RunAgentInput(
+        thread_id=uuid_str(),
+        run_id=uuid_str(),
+        state={},
+        messages=[],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id='int-tc-does-not-exist', status='resolved', payload={'approved': True})],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    assert adapter.deferred_tool_results == snapshot(
+        DeferredToolResults(approvals={'tc-does-not-exist': ToolApproved()})
+    )
+
+
+@pytestmark_interrupts
+async def test_interrupt_resume_roundtrip_executes_approved_tool() -> None:
+    """End-to-end: turn 1 ends with an interrupt outcome; turn 2 supplies `resume[]` and the
+    tool actually runs. The resumed turn must NOT re-emit `TOOL_CALL_START` for the same
+    `tool_call_id` (per AG-UI spec) — the agent loops back into execution with the original id
+    and we only see `TOOL_CALL_RESULT`.
+    """
+    executed: list[dict[str, Any]] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        # Whenever the agent has just a user prompt + system prompts, propose the call;
+        # after the tool result is in history, emit a final text response.
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in getattr(m, 'parts', [])):
+            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": ".env"}')}
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        executed.append({'path': path})
+        return f'deleted {path}'
+
+    # Turn 1: collect the interrupt outcome.
+    turn1_input = create_input(UserMessage(id='m1', content='delete .env'))
+    turn1_events = await _collect_adapter_events(agent, turn1_input)
+
+    run_finished_1 = next(e for e in turn1_events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished_1['outcome']['interrupts'][0]
+    interrupt_id = interrupt['id']
+    tool_call_id = interrupt['toolCallId']
+    assert executed == [], 'turn 1 must not execute the deferred tool'
+
+    # Turn 2: resume with approval; the message history must include the proposed call so the
+    # agent's tool manager can match the resume back to it.
+    turn2_input = RunAgentInput(
+        thread_id=turn1_input.thread_id,
+        run_id=uuid_str(),
+        state={},
+        messages=[
+            UserMessage(id='m1', content='delete .env'),
+            AssistantMessage(
+                id='m2',
+                tool_calls=[
+                    ToolCall(
+                        id=tool_call_id,
+                        type='function',
+                        function=FunctionCall(name='delete_file', arguments='{"path": ".env"}'),
+                    )
+                ],
+            ),
+        ],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+        resume=[ResumeEntry(interrupt_id=interrupt_id, status='resolved', payload={'approved': True})],
+    )
+    turn2_events = await _collect_adapter_events(agent, turn2_input)
+
+    assert executed == [{'path': '.env'}], 'turn 2 must execute the approved tool'
+
+    tool_starts_for_call = [
+        e for e in turn2_events if e['type'] == 'TOOL_CALL_START' and e.get('toolCallId') == tool_call_id
+    ]
+    tool_results_for_call = [
+        e for e in turn2_events if e['type'] == 'TOOL_CALL_RESULT' and e.get('toolCallId') == tool_call_id
+    ]
+    assert tool_starts_for_call == [], 'spec: resumed turn must not re-emit TOOL_CALL_START for the same tool_call_id'
+    assert len(tool_results_for_call) == 1, 'resumed turn must emit exactly one TOOL_CALL_RESULT'
+
+    run_finished_2 = next(e for e in turn2_events if e['type'] == 'RUN_FINISHED')
+    assert run_finished_2['outcome'] == snapshot({'type': 'success'})
 
 
 # endregion
