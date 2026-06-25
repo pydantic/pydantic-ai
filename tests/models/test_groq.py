@@ -749,6 +749,24 @@ async def test_image_as_binary_content_tool_response(
     )
 
 
+async def test_image_detail_vendor_metadata(
+    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
+):
+    """`vendor_metadata['detail']` is forwarded to the Groq API for image inputs."""
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m)
+
+    image_url = ImageUrl(
+        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+        vendor_metadata={'detail': 'high'},
+    )
+    binary_image = BinaryContent(
+        data=image_content.data, media_type=image_content.media_type, vendor_metadata={'detail': 'low'}
+    )
+
+    await agent.run(['Describe these images.', image_url, binary_image])
+
+
 @pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
