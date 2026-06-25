@@ -1215,7 +1215,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # unwinds from is not pinned down — so this is a best-effort guard: when the group
                 # contains only tool/protocol errors, treat it like the bare case above; otherwise
                 # re-raise unchanged so a concurrent cancellation grouped alongside is never swallowed.
-                if self.tool_error_behavior != 'retry':
+                if self.tool_error_behavior == 'error':
                     raise
                 matched, rest = eg.split((ToolError, mcp_exceptions.McpError))
                 if matched is None or rest is not None:
@@ -1224,7 +1224,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 error: BaseException = matched
                 while isinstance(error, _utils.BaseExceptionGroup):
                     error = error.exceptions[0]
-                raise exceptions.ModelRetry(message=str(error)) from eg
+                if self.tool_error_behavior == 'retry':
+                    raise exceptions.ModelRetry(message=str(error)) from eg
+                raise exceptions.ToolFailed(message=str(error)) from eg
 
         # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
         # structured content for backward compatibility).

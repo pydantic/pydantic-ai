@@ -588,7 +588,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         content=part.model_response_str(),
                         tool_call_id=part.tool_call_id,
-                        error=part.model_response_str() if part.outcome == 'failed' else None,
+                        error=part.model_response_str() if part.outcome in ('failed', 'denied') else None,
                     )
                 )
             elif isinstance(part, RetryPromptPart):
@@ -690,7 +690,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=builtin_return.model_response_str(),
                             tool_call_id=prefixed_id,
-                            error=builtin_return.model_response_str() if builtin_return.outcome == 'failed' else None,
+                            error=builtin_return.model_response_str()
+                            if builtin_return.outcome in ('failed', 'denied')
+                            else None,
                         )
                     )
             elif isinstance(part, NativeToolReturnPart):
@@ -746,6 +748,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `NativeToolReturnPart.provider_details` is lost.
         - `RetryPromptPart` becomes `ToolReturnPart` with `outcome='failed'` (or `UserPromptPart`
           when it has no `tool_name`) on reload, since the protocol has no separate retry concept.
+        - `ToolReturnPart` with `outcome='denied'` reloads as `outcome='failed'`, since AG-UI's
+          `ToolMessage.error` field can't distinguish a denial from a failure.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.
         - `FilePart` is silently dropped unless `preserve_file_data=True`.

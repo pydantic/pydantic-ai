@@ -1620,6 +1620,31 @@ def test_dump_load_roundtrip_failed_tool_return() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_tool_return_outcome() -> None:
+    """Regression: a failed/denied `ToolReturnPart.outcome` survives a dump -> load round-trip
+    via the AG-UI `ToolMessage.error` field, instead of silently reloading as `outcome='success'`.
+
+    AG-UI's `error` is a single string and can't distinguish `failed` from `denied`, so both
+    round-trip back as `failed` (the error state is what matters); `success` stays `success`.
+    """
+
+    def reload_outcome(outcome: Literal['success', 'failed', 'denied']) -> str:
+        original: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{}')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='my_tool', tool_call_id='call_abc', content='nope', outcome=outcome)]
+            ),
+        ]
+        reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(original))
+        part = reloaded[-1].parts[0]
+        assert isinstance(part, ToolReturnPart)
+        return part.outcome
+
+    assert reload_outcome('success') == 'success'
+    assert reload_outcome('failed') == 'failed'
+    assert reload_outcome('denied') == 'failed'
+
+
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
     """Test round-trip preserves multiple ThinkingParts with their metadata."""
     original: list[ModelMessage] = [
