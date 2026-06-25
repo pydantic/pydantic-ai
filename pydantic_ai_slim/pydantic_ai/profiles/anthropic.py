@@ -14,8 +14,8 @@ from ..settings import ThinkingEffort, ThinkingLevel
 from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
-"""Builtin tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_builtin_tools()` minus `ToolSearchTool`, which is gated
+"""Native tool types Anthropic generally supports across the model line. Mirrors
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
 per-model in the profile below."""
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
@@ -57,6 +57,13 @@ class AnthropicModelProfile(ModelProfile, total=False):
 
     When True and the unified thinking level is a string (e.g. 'high'), it is also
     mapped to `output_config.effort`.
+    """
+
+    anthropic_supports_dynamic_filtering: bool
+    """Whether the model supports Anthropic-managed dynamic filtering for web search/fetch. Default: `False`.
+
+    When enabled, Pydantic AI selects the `web_search_20260209` / `web_fetch_20260209` tool versions,
+    which let Claude filter web results via code execution before they enter context.
     """
 
     anthropic_supports_xhigh_effort: bool
@@ -213,6 +220,18 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview')
     )
 
+    supports_dynamic_filtering = model_name.startswith(
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-mythos-preview',
+            'claude-sonnet-4-6',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+        )
+    )
+
     # Native tool search requires the `tool_search_tool_bm25_20251119` /
     # `tool_search_tool_regex_20251119` API types, which post-date Claude 4.0. In
     # practice, Anthropic enables it for Sonnet 4.5+, Opus 4.5+, and Haiku 4.5+.
@@ -240,6 +259,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supports_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
         anthropic_supports_effort=supports_effort,
+        anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
         anthropic_supports_xhigh_effort=supports_xhigh_effort,
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
