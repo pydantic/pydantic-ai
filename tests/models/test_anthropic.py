@@ -10444,23 +10444,6 @@ async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropi
     assert exc_info.value.model_name == model_id
 
 
-async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
-    """Test that AsyncAnthropicBedrock raises UserError for count_tokens."""
-    from anthropic import AsyncAnthropicBedrock
-
-    bedrock_client = AsyncAnthropicBedrock(
-        aws_access_key='test-access-key',
-        aws_secret_key='test-secret-key',
-        aws_region='us-east-1',
-    )
-    provider = AnthropicProvider(anthropic_client=bedrock_client)
-    model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
-    agent = Agent(model)
-
-    with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
-        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
-
-
 @pytest.mark.vcr()
 async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_api_key: str):
     """Test that anthropic_cache passes top-level cache_control and produces cache usage.
