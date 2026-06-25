@@ -639,7 +639,7 @@ print(LOG)
 """
 ```
 
-1. All docs examples are tested in CI and their their output is verified, so we need `LOG` to always have the same order whenever this code is run. Since the tools could finish in any order, we sleep an increasing amount of time based on which number tool call we are to ensure that they finish (and log) in the same order they were called in.
+1. All docs examples are tested in CI and their output is verified, so we need `LOG` to always have the same order whenever this code is run. Since the tools could finish in any order, we sleep an increasing amount of time based on which number tool call we are to ensure that they finish (and log) in the same order they were called in.
 2. We use [`TestModel`][pydantic_ai.models.test.TestModel] here as it will automatically call each tool.
 
 _(This example is complete, it can be run "as is")_
