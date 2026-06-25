@@ -108,13 +108,19 @@ INSTRUCTIONS = (
     'You are a friendly, concise voice assistant. The user is talking to you and may show you things '
     'through their camera — when relevant, describe and reason about what you can see. Keep replies '
     'short and natural, like a conversation.'
-    + (' Search the web when a question needs current or external facts.' if WEB_SEARCH else '')
+    + (
+        ' Search the web when a question needs current or external facts.'
+        if WEB_SEARCH
+        else ''
+    )
 )
 
 # `WebSearch()` flows in as Gemini's native Grounding with Google Search, the same way it would for a
 # normal `agent.run()`. When the model grounds an answer, the session emits a `Sources` event that the
 # browser renders as citation chips.
-agent = Agent(instructions=INSTRUCTIONS, capabilities=[WebSearch()] if WEB_SEARCH else [])
+agent = Agent(
+    instructions=INSTRUCTIONS, capabilities=[WebSearch()] if WEB_SEARCH else []
+)
 app = FastAPI()
 
 
