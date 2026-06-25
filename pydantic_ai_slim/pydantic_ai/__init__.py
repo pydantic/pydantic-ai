@@ -107,6 +107,7 @@ from .messages import (
     VideoFormat,
     VideoMediaType,
     VideoUrl,
+    sanitize_message_history,
 )
 from .models import ModelRequestContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
@@ -265,6 +266,7 @@ __all__ = (
     'VideoFormat',
     'VideoMediaType',
     'VideoUrl',
+    'sanitize_message_history',
     # profiles
     'ModelProfile',
     'ModelProfileSpec',

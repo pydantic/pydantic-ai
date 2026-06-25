@@ -34,6 +34,7 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    sanitize_message_history,
 )
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
@@ -626,6 +627,56 @@ def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None
 def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
     part = NativeToolCallPart(tool_name='web_search', args=args)
     assert not part.has_content()
+
+
+def test_sanitize_message_history_resets_force_download_from_serialized_history():
+    serialized = [
+        {
+            'parts': [
+                {
+                    'content': [
+                        'summarize this image',
+                        {
+                            'kind': 'image-url',
+                            'url': 'http://127.0.0.1/internal.png',
+                            'force_download': 'allow-local',
+                        },
+                    ],
+                    'part_kind': 'user-prompt',
+                }
+            ],
+            'kind': 'request',
+        }
+    ]
+    messages = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    with pytest.warns(UserWarning, match=r'force_download.*allow-local.*reset to `False`'):
+        sanitized = sanitize_message_history(messages)
+
+    message = sanitized[0]
+    assert isinstance(message, ModelRequest)
+    part = message.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert part.content == snapshot(
+        [
+            'summarize this image',
+            ImageUrl(url='http://127.0.0.1/internal.png', force_download=False),
+        ]
+    )
+
+
+def test_sanitize_message_history_keeps_resolved_trailing_tool_call():
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='do the thing')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='do_thing', tool_call_id='call-1')]),
+    ]
+
+    kept = sanitize_message_history(messages, resolved_tool_call_ids=['call-1'])
+    assert kept == snapshot(messages)
+
+    with pytest.warns(UserWarning, match=r'unresolved tool call.*do_thing'):
+        dropped = sanitize_message_history(messages)
+    assert dropped == snapshot([ModelRequest(parts=[UserPromptPart(content='do the thing', timestamp=IsDatetime())])])
 
 
 def test_file_part_serialization_roundtrip():
