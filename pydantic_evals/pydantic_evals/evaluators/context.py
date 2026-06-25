@@ -105,4 +105,11 @@ class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
 
 
 EVALUATOR_CONTEXT_ADAPTER = TypeAdapter(EvaluatorContext)
-"""This adapter can be used to serialize and deserialize `EvaluatorContext` objects to and from JSON."""
+"""This adapter can be used to serialize and deserialize `EvaluatorContext` objects to and from JSON.
+
+It is bound to the bare generic `EvaluatorContext[Any, Any, Any]`, so it operates at the `Any` defaults
+for `inputs`, `output`, `metadata`, and `expected_output`. It does not reconstruct the concrete Python
+types of those fields: non-primitive values round-trip back as plain dicts/lists, and a value that is not
+JSON-serializable raises `PydanticSerializationError` at dump time. For typed round-trips, build your own
+`TypeAdapter(EvaluatorContext[InputsT, OutputT, MetadataT])`.
+"""

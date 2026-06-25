@@ -18,7 +18,12 @@ class SpanTreeRecordingError(Exception):
 
     @classmethod
     def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> core_schema.CoreSchema:
-        """Pydantic core schema to allow `SpanTreeRecordingError` to be (de)serialized."""
+        """Pydantic core schema to allow `SpanTreeRecordingError` to be (de)serialized.
+
+        Only the human-readable `message` is preserved by design: the exception's `__context__`,
+        `__cause__`, and traceback (e.g. the underlying `ImportError` chained in `context_subtree`) are
+        dropped on serialization and not reconstructed on the way back.
+        """
         schema = core_schema.typed_dict_schema(
             {
                 'message': core_schema.typed_dict_field(core_schema.str_schema()),
