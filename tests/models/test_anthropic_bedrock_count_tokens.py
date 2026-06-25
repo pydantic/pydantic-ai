@@ -30,15 +30,17 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import UsageLimits
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import TestEnv, try_import
 
 if TYPE_CHECKING:
-    from anthropic import AsyncAnthropicBedrock
     from vcr.cassette import Cassette
 
 with try_import() as imports_successful:
+    from anthropic import NOT_GIVEN, AsyncAnthropicBedrock, BadRequestError, omit as OMIT
     from anthropic.types.beta import BetaMessageParam, BetaToolUnionParam
 
+    from pydantic_ai.models._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -58,8 +60,6 @@ def bedrock_client() -> AsyncAnthropicBedrock:
     """
     pytest.importorskip('botocore')
 
-    from anthropic import AsyncAnthropicBedrock
-
     return AsyncAnthropicBedrock(
         aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
         aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
@@ -74,8 +74,6 @@ async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
     Mocks `client.post` to return a body without `inputTokens` — a shape no real Bedrock
     CountTokens endpoint returns, so it can't be exercised through a VCR recording.
     """
-    from anthropic import AsyncAnthropicBedrock
-
     bedrock_client = AsyncAnthropicBedrock(
         aws_access_key='test-access-key',
         aws_secret_key='test-secret-key',
@@ -129,9 +127,8 @@ async def test_anthropic_bedrock_count_tokens_real_api(
 
     assert result.input_tokens == snapshot(18)
 
-    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens')  # pyright: ignore[reportUnknownMemberType]
-    envelope = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    envelope = single_request_body(vcr)
     body = json.loads(base64.b64decode(envelope['input']['invokeModel']['body']))
     assert body == snapshot(
         {
@@ -196,10 +193,6 @@ async def test_anthropic_bedrock_count_tokens_rejects_server_tools(
     rather than counting the tool, so Bedrock does not diverge from the standard endpoint and there is
     no Bedrock-specific undercounting to fix.
     """
-    from anthropic import NOT_GIVEN, BadRequestError, omit as OMIT
-
-    from pydantic_ai.models._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
-
     messages: list[BetaMessageParam] = [{'role': 'user', 'content': 'What is the weather in Paris today?'}]
     tools: list[BetaToolUnionParam] = [{'type': 'web_search_20250305', 'name': 'web_search'}]
 
