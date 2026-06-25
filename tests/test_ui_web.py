@@ -38,7 +38,6 @@ with try_import() as openai_import_successful:
 
 pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
-    pytest.mark.xdist_group(name='ui_web'),
 ]
 
 
@@ -191,7 +190,36 @@ def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.Monk
         assert len([m for m in model_ids if 'gpt-4o' in m]) == 2
 
 
-def test_chat_app_index_endpoint():
+@pytest.fixture
+def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Isolate the index route's HTML cache to a temp dir and stub the CDN fetch.
+
+    The index route caches the default UI HTML under the shared user cache dir; without
+    per-test isolation, tests that serve `/` race on the same file across xdist workers
+    (a non-atomic write being read mid-write), and miss the cache into a real CDN request.
+    """
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    class MockResponse:
+        content = b'<html>Test UI</html>'
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+
+def test_chat_app_index_endpoint(isolated_ui_cache: None):
     """Test that the index endpoint serves HTML with proper caching headers."""
     agent = Agent('test')
     app = create_web_app(agent)
@@ -252,7 +280,7 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
-def test_chat_app_index_caching():
+def test_chat_app_index_caching(isolated_ui_cache: None):
     """Test that the UI HTML is cached after first fetch."""
     agent = Agent('test')
     app = create_web_app(agent)
