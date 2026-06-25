@@ -5,7 +5,6 @@ import os
 import re
 import time
 import uuid
-import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -33,7 +32,6 @@ from pydantic_ai import (
     ToolsetTool,
     UserPromptPart,
 )
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
@@ -49,8 +47,9 @@ from .conftest import IsDatetime, IsNow, IsStr
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
-    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
+    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSModel
     from pydantic_ai.durable_exec.dbos._mcp import DBOSMCPToolsetBase
+    from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
@@ -64,14 +63,9 @@ except ImportError:  # pragma: lax no cover
 try:
     from fastmcp.client.transports import StdioTransport
 
-    from pydantic_ai.mcp import MCPServerStdio, MCPToolset  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.mcp import MCPToolset
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
-
-try:
-    from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
-except ImportError:  # pragma: lax no cover
-    pytest.skip('fastmcp not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -211,30 +205,26 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
-# See note in `tests/test_temporal.py`: `DBOSAgent` reads `agent.event_stream_handler`,
-# which only the legacy kwarg populates. Suppress the deprecation locally until v2 wires
-# the handler through capabilities.
-with warnings.catch_warnings():
-    warnings.filterwarnings(
-        'ignore', r'`Agent\(event_stream_handler=\.\.\.\)` is deprecated', PydanticAIDeprecationWarning
-    )
-    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
-    complex_agent: Agent[Deps, Response] = Agent(  # pyright: ignore[reportCallIssue, reportAssignmentType]
-        model,
-        deps_type=Deps,
-        output_type=Response,
-        toolsets=[
-            FunctionToolset[Deps](tools=[get_country], id='country'),
-            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),  # pyright: ignore[reportDeprecated]
-            ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
-        ],
-        tools=[get_weather],
-        event_stream_handler=event_stream_handler,
-        capabilities=[Instrumentation(settings=InstrumentationSettings())],  # Enable instrumentation for testing
-        name='complex_agent',
-    )
-complex_dbos_agent = DBOSAgent(complex_agent)
-seq_complex_dbos_agent = DBOSAgent(complex_agent, parallel_execution_mode='sequential', name='seq_complex_agent')
+complex_agent = Agent(
+    model,
+    deps_type=Deps,
+    output_type=Response,
+    toolsets=[
+        FunctionToolset[Deps](tools=[get_country], id='country'),
+        MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
+    ],
+    tools=[get_weather],
+    capabilities=[Instrumentation(settings=InstrumentationSettings())],  # Enable instrumentation for testing
+    name='complex_agent',
+)
+complex_dbos_agent = DBOSAgent(complex_agent, event_stream_handler=event_stream_handler)
+seq_complex_dbos_agent = DBOSAgent(
+    complex_agent,
+    event_stream_handler=event_stream_handler,
+    parallel_execution_mode='sequential',
+    name='seq_complex_agent',
+)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -330,7 +320,10 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                 BasicSpan(
                     content='complex_agent run',
                     children=[
-                        BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
+                        BasicSpan(
+                            content='complex_agent__mcp_server__mcp.get_tools',
+                            children=[BasicSpan(content='tools/list')],
+                        ),
                         BasicSpan(
                             content='chat gpt-4o',
                             children=[
@@ -381,7 +374,12 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                         BasicSpan(content='running tool: get_country'),
                         BasicSpan(
                             content='running tool: get_product_name',
-                            children=[BasicSpan(content='complex_agent__mcp_server__mcp.call_tool')],
+                            children=[
+                                BasicSpan(
+                                    content='complex_agent__mcp_server__mcp.call_tool',
+                                    children=[BasicSpan(content='tools/call get_product_name')],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='event_stream_handler',
@@ -626,11 +624,11 @@ async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, db
     With caching disabled, every model request should be preceded by a get_tools step,
     rather than only the first one populating the cache.
     """
-    mcp_toolset = next(ts for ts in complex_dbos_agent.toolsets if isinstance(ts, DBOSMCPServer))
-    server = mcp_toolset._server  # pyright: ignore[reportPrivateUsage]
+    mcp_toolset = next(ts for ts in complex_dbos_agent.toolsets if isinstance(ts, DBOSMCPToolset))
+    wrapped = cast(MCPToolset[Deps], mcp_toolset.wrapped)
 
-    original_cache_tools = server.cache_tools
-    server.cache_tools = False
+    original_cache_tools = wrapped.cache_tools
+    wrapped.cache_tools = False
 
     try:
         wfid = str(uuid.uuid4())
@@ -653,7 +651,7 @@ async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, db
         # Without caching, get_tools should be called 3 times (once per model request)
         assert step_names.count('complex_agent__mcp_server__mcp.get_tools') == 3
     finally:
-        server.cache_tools = original_cache_tools
+        wrapped.cache_tools = original_cache_tools
 
 
 # Test sequential tool call works
@@ -770,7 +768,7 @@ async def test_dbos_agent():
     assert toolsets[2].tools.keys() == {'get_country'}
 
     # Wrapped 'mcp' MCP server
-    assert isinstance(toolsets[3], DBOSMCPServer)
+    assert isinstance(toolsets[3], DBOSMCPToolset)
     assert toolsets[3].id == 'mcp'
     assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
@@ -818,7 +816,7 @@ async def test_dbos_agent_run_stream_events(allow_model_requests: None):
             '`agent.run_stream_events()` cannot be used with DBOS. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
         ),
     ):
-        async for _ in simple_dbos_agent.run_stream_events('What is the capital of Mexico?'):
+        async with simple_dbos_agent.run_stream_events('What is the capital of Mexico?'):
             pass
 
 
@@ -875,7 +873,8 @@ async def test_dbos_agent_run_stream_in_workflow(allow_model_requests: None, dbo
 async def test_dbos_agent_run_stream_events_in_workflow(allow_model_requests: None, dbos: DBOS):
     @DBOS.workflow()
     async def run_stream_events_workflow():
-        return [event async for event in simple_dbos_agent.run_stream_events('What is the capital of Mexico?')]
+        async with simple_dbos_agent.run_stream_events('What is the capital of Mexico?') as event_stream:
+            return [event async for event in event_stream]  # pragma: no cover
 
     with workflow_raises(
         UserError,
@@ -912,7 +911,7 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     # DBOS workflow input must be serializable, so we cannot use an inner function as an argument.
     # It's fine to pass in an event_stream_handler that is defined as a top-level function.
     async def simple_event_stream_handler(
-        ctx: RunContext[None],
+        ctx: RunContext,
         stream: AsyncIterable[AgentStreamEvent],
     ):
         pass
@@ -1081,8 +1080,8 @@ test_model = TestModel()
 dynamic_agent = Agent(name='dynamic_agent', model=test_model, deps_type=ToggleableDeps)
 
 
-@dynamic_agent.toolset  # type: ignore
-def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset[None]:
+@dynamic_agent.toolset
+def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset:
     if ctx.deps.active == 'weather':
         return weather_toolset
     else:
@@ -1120,13 +1119,13 @@ hitl_agent = Agent(
 
 @hitl_agent.tool
 @DBOS.step()
-def create_file(ctx: RunContext[None], path: str) -> None:
+def create_file(ctx: RunContext, path: str) -> None:
     raise CallDeferred
 
 
 @hitl_agent.tool
 @DBOS.step()
-def delete_file(ctx: RunContext[None], path: str) -> bool:
+def delete_file(ctx: RunContext, path: str) -> bool:
     if not ctx.tool_call_approved:
         raise ApprovalRequired
     return True
@@ -1602,22 +1601,6 @@ def return_mcp_instructions(messages: list[ModelMessage], agent_info: AgentInfo)
     return ModelResponse(parts=[TextPart(agent_info.instructions or '')])
 
 
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
-    mcp_instructions_agent = Agent(
-        FunctionModel(return_mcp_instructions),
-        name='mcp_instructions_agent',
-        toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True, id='mcp')],  # pyright: ignore[reportDeprecated]
-    )
-mcp_instructions_dbos_agent = DBOSAgent(mcp_instructions_agent)
-
-
-async def test_dbos_mcp_toolset_instructions_propagate(dbos: DBOS):
-    """MCP instructions should propagate through DBOS wrapper toolsets."""
-    result = await mcp_instructions_dbos_agent.run('Use MCP instructions')
-    assert result.output == snapshot('Be a helpful assistant.')
-
-
 class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
     @property
     def _cache_tools(self) -> bool:
@@ -1627,13 +1610,11 @@ class _TestDBOSMCPToolset(DBOSMCPToolsetBase[int]):
         raise AssertionError('tool_for_tool_def should not be invoked in this test')  # pragma: no cover
 
 
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
-    _uninit_instructions_toolset = _TestDBOSMCPToolset(
-        MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True),  # pyright: ignore[reportDeprecated]
-        step_name_prefix='coverage_test',
-        step_config={},
-    )
+_uninit_instructions_toolset = _TestDBOSMCPToolset(
+    MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), include_instructions=True),
+    step_name_prefix='coverage_test',
+    step_config={},
+)
 
 
 async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
@@ -1641,11 +1622,10 @@ async def test_dbos_mcp_toolset_get_instructions_falls_back_to_step(dbos: DBOS):
     run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage())
 
     instructions = await _uninit_instructions_toolset.get_instructions(run_context)
-    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=True)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
 
 
-# Parallel to `mcp_instructions_agent` above, using `MCPToolset` instead of `MCPServerStdio`.
-# Exercises the `DBOSMCPToolset` wrapper's `get_instructions` step path.
+# Exercises the `DBOSMCPToolset` wrapper's `get_instructions` step path with a real `MCPToolset`.
 mcptoolset_instructions_agent = Agent(
     FunctionModel(return_mcp_instructions),
     name='mcptoolset_instructions_agent',
@@ -1661,11 +1641,7 @@ mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)
 
 
 async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
-    """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper.
-
-    Parallel to `test_dbos_mcp_toolset_instructions_propagate`; exercises the new
-    `MCPToolset`/`DBOSMCPToolset` path instead of the legacy `MCPServerStdio`/`DBOSMCPServer`.
-    """
+    """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper."""
     result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
     assert result.output == snapshot('Be a helpful assistant.')
 
@@ -1702,7 +1678,7 @@ def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> Mode
     """Two model steps: call an MCP tool on the first request, return text on the second.
 
     Two model requests means `get_tools` runs twice on the MCP toolset within one run, so the
-    run-scoped cache (and whether it schedules a step each time) is exercised across recovery.
+    run-scoped cache (and whether it schedules a step each time) is exercised.
     """
     tool_returned = any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
     if tool_returned:
@@ -1710,88 +1686,58 @@ def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> Mode
     return ModelResponse(parts=[ToolCallPart('get_weather_forecast', {'location': 'Mexico City'})])
 
 
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', r'`MCPServerStdio` is deprecated', DeprecationWarning)
-    mcp_replay_agent = Agent(
-        FunctionModel(_call_mcp_then_finish),
-        name='mcp_replay_agent',
-        toolsets=[MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp')],  # pyright: ignore[reportDeprecated]
-    )
+mcp_replay_agent = Agent(
+    FunctionModel(_call_mcp_then_finish),
+    name='mcp_replay_agent',
+    toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp', init_timeout=20)],
+)
 mcp_replay_dbos_agent = DBOSAgent(mcp_replay_agent)
 
 
-async def test_dbos_mcp_get_tools_recovery_deterministic(allow_model_requests: None, dbos: DBOS):
-    """#5875 regression: DBOS `get_tools` step scheduling must depend only on recorded history.
+async def test_dbos_mcp_get_tools_recorded_independently_per_run(allow_model_requests: None, dbos: DBOS):
+    """#5875 regression: DBOS `get_tools` step scheduling must depend only on the workflow's own history.
 
-    The run-scoped tool-defs cache collapses the per-request `get_tools` calls to a single step
-    within a run (the #4331 win), but that step must still be recorded in the same position when
-    the workflow is recovered. Forking the completed workflow re-executes its body while the
-    module-level wrapper's instance cache is warm from the first run: a process-shared cache skips
-    the `get_tools` step on the second execution, so recovery re-records a different step sequence
-    than history (the `DBOSUnexpectedStepError` nondeterminism class). The per-run cache (empty at
-    each execution start) reschedules `get_tools` in the same position, so recovery matches history.
+    The run-scoped tool-defs cache collapses the per-request `get_tools` calls to a single recorded
+    step within a run (the #4331 win). Crucially the cache lives on the run, not on the process-shared
+    wrapper instance: two workflows executed back-to-back in the same worker process each record their
+    own `get_tools` step at the front. With the old instance-level cache, run 2 would read run 1's warm
+    cache and record ZERO `get_tools` steps — a different recorded step sequence than a cold run, which
+    is what breaks replay determinism on recovery (`DBOSUnexpectedStepError`).
     """
-    wfid = str(uuid.uuid4())
-    with SetWorkflowID(wfid):
-        result = await mcp_replay_dbos_agent.run('hello')
-    assert result.output == snapshot('done')
-
     get_tools_step = 'mcp_replay_agent__mcp_server__mcp.get_tools'
-    original_steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
-    # The run-scoped cache collapses both requests' `get_tools` calls to one recorded step, at the front.
-    assert original_steps.count(get_tools_step) == 1
-    assert original_steps[0] == get_tools_step
 
-    # Recover by forking the body past the recorded `get_tools` step, re-executing it while the
-    # module-level wrapper's process cache is warm from the first run. An instance-level cache would
-    # skip `get_tools` here, diverging from recorded history; the per-run cache reschedules it.
-    handle = await dbos.fork_workflow_async(wfid, 1)
-    forked_result = await handle.get_result()
-    assert forked_result.output == snapshot('done')
+    async def run_and_list_steps() -> list[str]:
+        wfid = str(uuid.uuid4())
+        with SetWorkflowID(wfid):
+            result = await mcp_replay_dbos_agent.run('hello')
+        assert result.output == 'done'
+        return [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
 
-    forked_steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(handle.get_workflow_id())]
-    assert forked_steps == original_steps
+    run1_steps = await run_and_list_steps()
+    run2_steps = await run_and_list_steps()
 
-
-with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', r'`FastMCPToolset` is deprecated', DeprecationWarning)
-    fastmcp_agent = Agent(
-        model,
-        name='fastmcp_agent',
-        toolsets=[FastMCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],  # pyright: ignore[reportDeprecated]
-    )
-
-fastmcp_dbos_agent = DBOSAgent(fastmcp_agent)
+    # Within a run, the run-scoped cache collapses both requests' `get_tools` calls to one step, at the front.
+    assert run1_steps.count(get_tools_step) == 1
+    assert run1_steps[0] == get_tools_step
+    # Run 2 records `get_tools` independently — it does NOT inherit run 1's warm process cache (the #5875 fix).
+    assert run2_steps.count(get_tools_step) == 1
+    assert run2_steps[0] == get_tools_step
 
 
-async def test_fastmcp_toolset(allow_model_requests: None, dbos: DBOS):
-    wfid = str(uuid.uuid4())
-    with SetWorkflowID(wfid):
-        result = await fastmcp_dbos_agent.run(
-            'Can you tell me more about the pydantic/pydantic-ai repo? Keep your answer short'
-        )
-    assert result.output == snapshot(
-        'The `pydantic/pydantic-ai` repository is a Python agent framework designed for building production-grade Generative AI applications. It emphasizes type-safety, a model-agnostic design, and an ergonomic developer experience. Key features include type-safe agents using Pydantic, support for over 15 LLM providers, structured outputs with automatic validation, comprehensive observability, and production-ready tooling. The framework is structured as a UV workspace monorepo with core and supporting packages for defining and executing complex applications.'
-    )
+async def test_dbos_mcp_toolset_get_instructions_uses_local_when_initialized(dbos: DBOS):
+    """When the wrapped MCP toolset is already initialized, the DBOS wrapper short-circuits and returns the local instructions."""
+    run_context = RunContext(deps=0, model=TestModel(), usage=RunUsage())
 
-    steps = await dbos.list_workflow_steps_async(wfid)
-    assert [step['function_name'] for step in steps] == snapshot(
-        [
-            'fastmcp_agent__mcp_server__deepwiki.get_tools',
-            'fastmcp_agent__model.request',
-            'fastmcp_agent__mcp_server__deepwiki.call_tool',
-            'fastmcp_agent__mcp_server__deepwiki.get_tools',
-            'fastmcp_agent__model.request',
-        ]
-    )
+    # Entering the wrapped toolset populates `_instructions` so the local fast-path returns the part directly.
+    async with _uninit_instructions_toolset.wrapped:
+        instructions = await _uninit_instructions_toolset.get_instructions(run_context)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
 
 
 def test_dbos_mcp_wrapper_visit_and_replace():
     """DBOS MCP wrapper toolsets should not be replaced by visit_and_replace."""
-    from pydantic_ai.durable_exec.dbos._fastmcp_toolset import DBOSFastMCPToolset
-
-    toolsets = fastmcp_dbos_agent._toolsets  # pyright: ignore[reportPrivateUsage]
-    dbos_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, DBOSFastMCPToolset)]
+    toolsets = mcptoolset_instructions_dbos_agent._toolsets  # pyright: ignore[reportPrivateUsage]
+    dbos_mcp_toolsets = [ts for ts in toolsets if isinstance(ts, DBOSMCPToolset)]
     assert len(dbos_mcp_toolsets) >= 1
 
     dbos_mcp_toolset = dbos_mcp_toolsets[0]

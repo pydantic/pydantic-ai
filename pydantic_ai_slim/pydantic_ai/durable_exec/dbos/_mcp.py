@@ -127,21 +127,13 @@ class DBOSMCPToolsetBase(WrapperToolset[AgentDepsT], ABC):
         if result is not None:
             return result
         # If instructions are enabled but the server isn't initialized locally, fetch via step.
-        _mcp_types: tuple[type, ...] = ()
         try:
-            from pydantic_ai.mcp import MCPServer, MCPToolset
-
-            _mcp_types += (MCPServer, MCPToolset)
+            from pydantic_ai.mcp import MCPToolset
         except ImportError:
             pass
-        try:
-            from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
-
-            _mcp_types += (FastMCPToolset,)  # pyright: ignore[reportDeprecated]
-        except ImportError:
-            pass
-        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]
-            return await self._dbos_wrapped_get_instructions_step(ctx)
+        else:
+            if isinstance(self.wrapped, MCPToolset) and self.wrapped.include_instructions:
+                return await self._dbos_wrapped_get_instructions_step(ctx)
         return None
 
     async def call_tool(

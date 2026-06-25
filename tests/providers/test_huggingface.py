@@ -180,30 +180,29 @@ def test_huggingface_provider_model_profile(mocker: MockerFixture):
     deepseek_profile = provider.model_profile('deepseek-ai/DeepSeek-R1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.ignore_streamed_leading_whitespace is True
+    assert deepseek_profile.get('ignore_streamed_leading_whitespace', False) is True
 
     meta_profile = provider.model_profile('meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8')
     meta_model_profile_mock.assert_called_with('llama-4-maverick-17b-128e-instruct-fp8')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     qwen_profile = provider.model_profile('Qwen/QwQ-32B')
     qwen_model_profile_mock.assert_called_with('qwq-32b')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('ignore_streamed_leading_whitespace', False) is True
 
     mistral_profile = provider.model_profile('mistralai/Devstral-Small-2505')
     mistral_model_profile_mock.assert_called_with('devstral-small-2505')
     assert mistral_profile is not None
-    assert mistral_profile.supports_inline_system_prompts is True
+    assert mistral_profile.get('supports_inline_system_prompts', False) is True
 
     google_profile = provider.model_profile('google/gemma-3-27b-it')
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
-    assert google_profile.supports_inline_system_prompts is True
+    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
+    assert google_profile.get('supports_inline_system_prompts', False) is True
 
     unknown_profile = provider.model_profile('unknown/model')
-    assert unknown_profile is not None
-    assert unknown_profile.supports_inline_system_prompts is True
+    assert unknown_profile is None

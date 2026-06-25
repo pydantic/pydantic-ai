@@ -126,30 +126,22 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
             return await super().get_instructions(ctx)
 
         # If instructions are enabled, fetch via activity (the server isn't initialized locally in workflows).
-        _mcp_types: tuple[type, ...] = ()
         try:
-            from pydantic_ai.mcp import MCPServer, MCPToolset
-
-            _mcp_types += (MCPServer, MCPToolset)
+            from pydantic_ai.mcp import MCPToolset
         except ImportError:
             pass
-        try:
-            from pydantic_ai.toolsets.fastmcp import FastMCPToolset  # pyright: ignore[reportDeprecated]
-
-            _mcp_types += (FastMCPToolset,)  # pyright: ignore[reportDeprecated]
-        except ImportError:
-            pass
-        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]
-            serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-            activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
-            return await workflow.execute_activity(
-                activity=self.get_instructions_activity,
-                args=[
-                    GetToolsParams(serialized_run_context=serialized_run_context),
-                    ctx.deps,
-                ],
-                **activity_config,
-            )
+        else:
+            if isinstance(self.wrapped, MCPToolset) and self.wrapped.include_instructions:
+                serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+                activity_config: ActivityConfig = {'summary': f'get instructions: {self.id}', **self.activity_config}
+                return await workflow.execute_activity(
+                    activity=self.get_instructions_activity,
+                    args=[
+                        GetToolsParams(serialized_run_context=serialized_run_context),
+                        ctx.deps,
+                    ],
+                    **activity_config,
+                )
         return None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

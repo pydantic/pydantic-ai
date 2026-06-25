@@ -92,7 +92,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     # Custom search function — used locally, and by provider-native "client-executed"
     # modes when supported.
     def my_search(
-        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+        ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]
     ) -> list[str]:
         return [
             t.name
