@@ -4974,9 +4974,12 @@ async def test_run_stream_cancel_after_complete():
         assert not result.is_complete
         await result.get_output()
         assert result.is_complete
-        # Cancelling an already-completed stream sets the flag but doesn't error
+        assert result.response.state == 'complete'
+        # A defensive cancel() after the stream is fully consumed records the
+        # flag but must not downgrade response.state to 'interrupted'.
         await result.cancel()
         assert result.cancelled
+        assert result.response.state == 'complete'
 
 
 async def test_completed_streamed_response_cancel_noop():
