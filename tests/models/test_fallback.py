@@ -320,7 +320,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
     assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
-                'name': 'chat function::success_response_stream',
+                'name': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                 'context': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'start_time': 2000000000,
@@ -343,10 +343,10 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.conversation.id': IsStr(),
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
-                    'gen_ai.provider.name': 'function',
+                    'gen_ai.provider.name': 'fallback:function,function',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
-                    'gen_ai.system': 'function',
-                    'gen_ai.request.model': 'function::success_response_stream',
+                    'gen_ai.system': 'fallback:function,function',
+                    'gen_ai.request.model': 'fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]}],
                     'gen_ai.output.messages': [
                         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hello world'}]}
@@ -1521,6 +1521,37 @@ async def test_response_handler_streaming_mid_stream_exception_events() -> None:
         partial_failure_model_stream,
         success_model_stream,
         fallback_on=[ModelHTTPError, reject_empty_text],
+    )
+
+    assert await fallback_stream_events(fallback_model) == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='bad ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content='bad ')),
+            ModelResponseResetEvent(
+                discarded_response=ModelResponse(
+                    parts=[TextPart(content='bad ')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::partial_failure_response_stream',
+                    timestamp=IsNow(tz=timezone.utc),
+                    state='incomplete',
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world')),
+            PartEndEvent(index=0, part=TextPart(content='hello world')),
+        ]
+    )
+
+
+async def test_exception_only_streaming_mid_stream_exception_falls_back() -> None:
+    """Exception-only fallback (no response handler) should recover from mid-stream exceptions
+    and emit a `ModelResponseResetEvent` at the candidate boundary, matching the response-handler path."""
+    fallback_model = FallbackModel(
+        partial_failure_model_stream,
+        success_model_stream,
+        fallback_on=[ModelHTTPError],
     )
 
     assert await fallback_stream_events(fallback_model) == snapshot(

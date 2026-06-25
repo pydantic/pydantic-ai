@@ -391,47 +391,29 @@ class FallbackModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
-        """Try each model in sequence until one succeeds."""
-        if self._response_handlers:
-            async with AsyncExitStack() as stack:
-                response = _FallbackStreamedResponse(
+        """Try each model in sequence until one succeeds.
+
+        Collapses all streaming failure modes that surface — pre-stream exceptions, mid-stream
+        exceptions, and rejected end-of-stream responses — into the mid-stream fallback mechanism
+        within `_FallbackStreamedResponse`, emitting a `ModelResponseResetEvent` at each candidate
+        boundary. With no response handler configured, the response-reject branch is a no-op.
+        """
+        async with AsyncExitStack() as stack:
+            response = _FallbackStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                _models=self.models,
+                _request_args=_StreamRequestArgs(
+                    messages=messages,
+                    model_settings=model_settings,
                     model_request_parameters=model_request_parameters,
-                    _models=self.models,
-                    _request_args=_StreamRequestArgs(
-                        messages=messages,
-                        model_settings=model_settings,
-                        model_request_parameters=model_request_parameters,
-                        run_context=run_context,
-                    ),
-                    _exit_stack=stack,
-                    _should_fallback_handler=self._should_fallback,
-                    _on_model_selected=self._set_span_attributes,
-                )
-                await response.open_next_stream()
-                yield response
-                return
-
-        exceptions: list[Exception] = []
-
-        for model in self.models:
-            async with AsyncExitStack() as stack:
-                try:
-                    _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-                    prepared_messages = model.prepare_messages(messages)
-                    response = await stack.enter_async_context(
-                        model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
-                    )
-                except Exception as exc:
-                    if await self._should_fallback(exc):
-                        exceptions.append(exc)
-                        continue
-                    raise exc  # pragma: no cover
-
-                self._set_span_attributes(model, prepared_parameters)
-                yield response
-                return
-
-        _raise_fallback_exception_group(exceptions, [])
+                    run_context=run_context,
+                ),
+                _exit_stack=stack,
+                _should_fallback_handler=self._should_fallback,
+                _on_model_selected=self._set_span_attributes,
+            )
+            await response.open_next_stream()
+            yield response
 
     @cached_property
     def profile(self) -> ModelProfile:
