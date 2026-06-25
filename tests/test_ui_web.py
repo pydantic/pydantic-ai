@@ -280,6 +280,69 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
+def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """`_get_cache_dir` derives its path from `XDG_CACHE_HOME` and creates the directory."""
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+
+    cache_dir = app_module._get_cache_dir()  # pyright: ignore[reportPrivateUsage]
+
+    assert cache_dir == tmp_path / 'pydantic-ai' / 'web-ui'
+    assert cache_dir.is_dir()
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The cache file is never observable in a partial state while it is being written.
+
+    `Path.write_bytes` truncates its target before writing the content, so a concurrent
+    reader can catch the destination file existing but empty. The instrumented write below
+    makes that intrinsic window synchronously observable (no timing/threads): it asserts the
+    destination cache file only ever becomes visible with its complete content, which holds
+    only when the write is routed through a temp file + atomic `os.replace`.
+    """
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    full_content = b'<html>complete UI document</html>'
+
+    class MockResponse:
+        content = full_content
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    real_write_bytes = Path.write_bytes
+    destination_views: list[bytes] = []
+
+    def instrumented_write_bytes(self: Path, data: bytes) -> int:
+        # Model the non-atomic truncate-then-write: the target appears empty before bytes land.
+        real_write_bytes(self, b'')
+        if cache_file.exists():
+            destination_views.append(cache_file.read_bytes())
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, 'write_bytes', instrumented_write_bytes)
+
+    result = await _get_ui_html()
+
+    assert result == full_content
+    assert cache_file.read_bytes() == full_content
+    # Atomicity invariant: the destination was never seen existing-but-incomplete.
+    assert all(view == full_content for view in destination_views)
+
+
 def test_chat_app_index_caching(isolated_ui_cache: None):
     """Test that the UI HTML is cached after first fetch."""
     agent = Agent('test')

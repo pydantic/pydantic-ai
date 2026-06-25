@@ -47,6 +47,18 @@ def _get_cache_dir() -> Path:
     return cache_dir
 
 
+def _write_cache_atomically(cache_file: Path, content: bytes) -> None:
+    """Write `content` to `cache_file` atomically.
+
+    `Path.write_bytes` truncates the destination before writing, so a concurrent reader can
+    observe the file existing but empty. Writing to a sibling temp file and `os.replace`-ing it
+    into place makes the swap atomic, so readers only ever see the complete file.
+    """
+    tmp_file = cache_file.with_name(f'{cache_file.name}.{os.getpid()}.tmp')
+    tmp_file.write_bytes(content)
+    os.replace(tmp_file, cache_file)
+
+
 async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
     """Get UI HTML content from the specified source or default CDN.
 
@@ -73,7 +85,7 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
             response.raise_for_status()
             content = response.content
 
-        cache_file.write_bytes(content)
+        _write_cache_atomically(cache_file, content)
         return content
 
     # Handle Path instances
@@ -97,7 +109,7 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
             response.raise_for_status()
             content = response.content
 
-        cache_file.write_bytes(content)
+        _write_cache_atomically(cache_file, content)
         return content
 
     # Handle local file paths (strings)
