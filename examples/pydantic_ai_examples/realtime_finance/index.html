@@ -46,6 +46,9 @@
       .status { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
       .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
       .status.live .dot { background: var(--pos); box-shadow: 0 0 0 3px rgba(21,128,61,0.15); }
+      .controls { display: flex; gap: 8px; margin-left: 16px; }
+      .sel { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; cursor: pointer; }
+      .sel:hover { border-color: var(--accent); }
 
       .feed { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 4px; display: flex; flex-direction: column; gap: 14px; }
       .feed > * { flex: 0 0 auto; }  /* never let older messages shrink — overflow & scroll instead */
@@ -113,13 +116,66 @@
       .send { border: 0; background: var(--accent); color: #fff; font-weight: 600; font-size: 14px; padding: 0 18px; height: 42px; border-radius: 11px; cursor: pointer; }
       .send:hover { background: #16304f; }
       .hint { text-align: center; color: var(--faint); font-size: 12.5px; margin: 8px 0 2px; }
+
+      .gear { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line);
+        border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+      .gear:hover { border-color: var(--accent); }
+      .panel { margin-top: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+        box-shadow: var(--shadow); padding: 14px 16px; }
+      .panel[hidden] { display: none; }
+      .panel .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 16px; }
+      .panel label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600;
+        color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+      .panel .in { font: inherit; font-size: 14px; font-weight: 400; text-transform: none; letter-spacing: 0;
+        color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+      .panel .in:focus { outline: none; border-color: var(--accent); }
+      .panel .check { flex-direction: row; align-items: center; gap: 8px; text-transform: none; letter-spacing: 0; font-size: 13px; }
+      .panel .check input { width: 16px; height: 16px; accent-color: var(--accent); }
+      .panel .grp { display: contents; }
+      .panel .grp[hidden] { display: none; }
+      .panel-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
     </style>
   </head>
   <body>
     <div class="shell">
       <div class="topbar">
         <div class="brand"><span class="mark">A</span>Atlas <small>Finance Assistant</small></div>
+        <div class="controls">
+          <select id="provider" class="sel" title="Voice provider">
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+          </select>
+          <button id="gear" class="gear" title="Voice settings">⚙ Settings</button>
+        </div>
         <div class="status" id="status"><span class="dot"></span><span id="statusText">connecting…</span></div>
+      </div>
+
+      <div class="panel" id="panel" hidden>
+        <div class="grid">
+          <label>Model<input id="model" class="in" list="models" placeholder="default" autocomplete="off" /></label>
+          <datalist id="models"></datalist>
+          <label>Voice<input id="voice" class="in" list="voices" placeholder="default" autocomplete="off" /></label>
+          <datalist id="voices"></datalist>
+          <label>Output<select id="modality" class="in"><option value="audio">audio</option><option value="text">text</option></select></label>
+
+          <div class="grp" id="grp-openai">
+            <label>Turn detection<select id="vad" class="in"><option value="server">Server VAD</option><option value="semantic">Semantic VAD</option><option value="off">Off (push-to-talk)</option></select></label>
+            <label>Eagerness (semantic)<select id="eagerness" class="in"><option value="auto">auto</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+            <label>Silence (ms, server)<input id="silence_ms" class="in" type="number" min="0" step="50" placeholder="default" /></label>
+            <label>Noise reduction<select id="noise" class="in"><option value="">none</option><option value="near_field">near field</option><option value="far_field">far field</option></select></label>
+            <label>Output speed<input id="speed" class="in" type="number" min="0.25" max="4" step="0.05" placeholder="1.0" /></label>
+          </div>
+
+          <div class="grp" id="grp-gemini" hidden>
+            <label>Language code<input id="language" class="in" placeholder="e.g. en-US" autocomplete="off" /></label>
+            <label>Turn coverage<select id="turn_coverage" class="in"><option value="">provider default</option><option value="activity_only">activity only</option><option value="all_input">all input</option><option value="all_video">all video</option></select></label>
+            <label>Start sensitivity<select id="start_sensitivity" class="in"><option value="">default</option><option value="high">high</option><option value="low">low</option></select></label>
+            <label>End sensitivity<select id="end_sensitivity" class="in"><option value="">default</option><option value="high">high</option><option value="low">low</option></select></label>
+            <label class="check"><input id="proactive" type="checkbox" />Proactive audio (native)</label>
+            <label class="check"><input id="affective" type="checkbox" />Affective dialog (native)</label>
+          </div>
+        </div>
+        <div class="panel-foot"><button id="apply" class="send">Apply &amp; reconnect</button></div>
       </div>
 
       <div class="feed" id="feed"></div>
@@ -333,12 +389,62 @@
       function flushPlayback() { for (const n of scheduled) { try { n.stop(); } catch (e) {} } scheduled = []; if (playCtx) playHead = playCtx.currentTime; }
 
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const sock = new WebSocket(`${proto}://${location.host}/ws`);
-      sock.binaryType = 'arraybuffer';
-      sock.onopen = () => { statusText.textContent = 'voice ready'; statusEl.classList.add('live'); };
-      sock.onclose = () => { statusText.textContent = 'disconnected'; statusEl.classList.remove('live'); };
-      sock.onerror = () => { statusText.textContent = 'connection error'; };
-      sock.onmessage = (ev) => {
+      // Models/voices are suggestions in editable inputs — type any value the provider offers
+      // (e.g. a new model) without waiting for this list. `inputRate` is the mic PCM rate.
+      const PROVIDERS = {
+        openai: {
+          inputRate: 24000,
+          models: ['gpt-realtime', 'gpt-realtime-mini', 'gpt-4o-realtime-preview', 'gpt-4o-mini-realtime-preview'],
+          voices: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'],
+        },
+        gemini: {
+          inputRate: 16000,
+          models: ['gemini-live-2.5-flash', 'gemini-live-2.5-flash-native-audio', 'gemini-2.0-flash-live-preview-04-09'],
+          voices: ['Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede', 'Leda', 'Orus', 'Zephyr'],
+        },
+      };
+      const providerSel = document.getElementById('provider');
+      const panel = document.getElementById('panel');
+      let provider = providerSel.value;
+      let sock = null;
+
+      function field(id) { return document.getElementById(id); }
+      function fillList(id, items) {
+        const dl = field(id); dl.textContent = '';
+        for (const v of items) { const o = document.createElement('option'); o.value = v; dl.appendChild(o); }
+      }
+      function syncProviderUI() {
+        const p = PROVIDERS[provider];
+        fillList('models', p.models); fillList('voices', p.voices);
+        field('model').placeholder = 'default — ' + p.models[0];
+        field('grp-openai').hidden = provider !== 'openai';
+        field('grp-gemini').hidden = provider !== 'gemini';
+      }
+
+      // Collect every (non-empty) setting from the panel into the WS query string.
+      function settings() {
+        const s = { provider, model: field('model').value, voice: field('voice').value, modality: field('modality').value };
+        if (provider === 'openai') {
+          Object.assign(s, {
+            vad: field('vad').value, eagerness: field('eagerness').value,
+            silence_ms: field('silence_ms').value, noise: field('noise').value, speed: field('speed').value,
+          });
+        } else {
+          Object.assign(s, {
+            language: field('language').value, turn_coverage: field('turn_coverage').value,
+            start_sensitivity: field('start_sensitivity').value, end_sensitivity: field('end_sensitivity').value,
+            proactive: field('proactive').checked ? '1' : '0', affective: field('affective').checked ? '1' : '0',
+          });
+        }
+        return s;
+      }
+      function query() {
+        const params = new URLSearchParams();
+        for (const [k, v] of Object.entries(settings())) if (v !== '' && v != null) params.set(k, v);
+        return params.toString();
+      }
+
+      function onSockMessage(ev) {
         if (ev.data instanceof ArrayBuffer) { playPCM(ev.data); return; }
         const m = JSON.parse(ev.data);
         switch (m.type) {
@@ -355,7 +461,28 @@
           case 'widget': addWidget(m.id, m.widget); break;
           case 'tool_done': finishToolCard(m.id); break;
         }
-      };
+      }
+
+      function connect() {
+        if (sock) { try { sock.close(); } catch (e) {} }
+        statusEl.classList.remove('live');
+        sock = new WebSocket(`${proto}://${location.host}/ws?${query()}`);
+        sock.binaryType = 'arraybuffer';
+        sock.onopen = () => { statusText.textContent = 'voice ready'; statusEl.classList.add('live'); };
+        sock.onclose = () => { statusEl.classList.remove('live'); };
+        sock.onerror = () => { statusText.textContent = 'connection error'; };
+        sock.onmessage = onSockMessage;
+      }
+
+      function switchSession() {
+        if (capturing) stopMicRealtime();
+        flushPlayback();
+        statusText.textContent = 'switching…';
+        connect();
+      }
+      providerSel.onchange = () => { provider = providerSel.value; syncProviderUI(); switchSession(); };
+      field('gear').onclick = () => { panel.hidden = !panel.hidden; };
+      field('apply').onclick = () => { panel.hidden = true; switchSession(); };
 
       function sendText() {
         const q = input.value.trim(); if (!q || sock.readyState !== 1) return;
@@ -368,7 +495,7 @@
       async function startMicRealtime() {
         ensurePlayback();
         micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
-        micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+        micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: PROVIDERS[provider].inputRate });
         const src = micCtx.createMediaStreamSource(micStream);
         micNode = micCtx.createScriptProcessor(4096, 1, 1);
         const mute = micCtx.createGain(); mute.gain.value = 0;
@@ -391,6 +518,9 @@
         if (capturing) { stopMicRealtime(); return; }
         try { await startMicRealtime(); } catch (err) { statusText.textContent = 'mic error: ' + err.message; }
       };
+
+      syncProviderUI();
+      connect();
     </script>
   </body>
 </html>

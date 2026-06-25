@@ -137,6 +137,9 @@ nav:
       - Streaming:
           - examples/stream-markdown.md
           - examples/stream-whales.md
+      - Realtime:
+          - examples/realtime-finance.md
+          - examples/realtime-camera.md
       - Complex Workflows:
           - examples/flight-booking.md
       - Business Applications:

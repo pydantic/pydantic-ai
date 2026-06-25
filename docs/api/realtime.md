@@ -83,3 +83,20 @@ including turn-taking via [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] /
 via [`ReconnectPolicy`][pydantic_ai.realtime.openai.ReconnectPolicy].
 
 ::: pydantic_ai.realtime.openai
+
+## Gemini provider
+
+The Gemini Live API provider. Requires the `google` optional group
+(`pip install "pydantic-ai-slim[google]"`).
+
+[`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] runs over the `google-genai`
+SDK (which manages the WebSocket transport). Gemini expects **16 kHz** PCM input (output is 24 kHz),
+produces one response modality per session, and natively accepts live video frames sent as
+[`ImageInput`][pydantic_ai.realtime.ImageInput]. It exposes Gemini Live's configuration as optional
+fields — turn-taking via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] plus
+`activity_handling`/`turn_coverage`, voice via [`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker],
+long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression], and resilience via
+session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.google.ReconnectPolicy]. Generation
+parameters are read from `model_settings`.
+
+::: pydantic_ai.realtime.google

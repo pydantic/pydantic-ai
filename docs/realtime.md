@@ -17,13 +17,34 @@ loop for you.
     [`Agent`][pydantic_ai.Agent] when you need structured output or heavier reasoning (see
     [Delegating to a text agent](#delegating-to-a-text-agent)).
 
+!!! tip "Prefer to see it running first?"
+    Two complete, runnable apps are the fastest way in: a [voice finance assistant](examples/realtime-finance.md)
+    that delegates to a text agent, and a [talk-and-show camera assistant](examples/realtime-camera.md)
+    you can open on your phone. Come back here for the *why*.
+
 ## Installation
 
-The OpenAI provider uses WebSockets, available via the `realtime` optional group:
+The OpenAI provider ([`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]) uses
+WebSockets, available via the `realtime` optional group:
 
 ```bash
 pip install "pydantic-ai-slim[realtime]"
 ```
+
+The Gemini provider ([`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel]) uses
+the `google-genai` SDK, available via the `google` optional group:
+
+```bash
+pip install "pydantic-ai-slim[google]"
+```
+
+Both implement the same [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] interface, so the rest
+of this guide applies to either — swap `OpenAIRealtimeModel('gpt-realtime')` for
+`GoogleRealtimeModel('gemini-live-2.5-flash')`. A few provider differences are worth knowing: Gemini
+expects **16 kHz** PCM input audio (OpenAI uses 24 kHz), produces a single response modality per
+session, and natively accepts **live video frames** sent as
+[`ImageInput`][pydantic_ai.realtime.ImageInput] (stream camera/screen frames with
+[`send_image`][pydantic_ai.realtime.RealtimeSession.send_image] for "show me this" interactions).
 
 ## Quickstart
 
@@ -99,6 +120,41 @@ model = OpenAIRealtimeModel(
 `tool_choice` and `parallel_tool_calls` are read from `model_settings` passed to
 `realtime_session`. (GA realtime sessions have no `temperature`, so it is not forwarded.)
 
+### Gemini configuration
+
+[`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] exposes Gemini Live's knobs
+as optional fields, grouped by concern. Generation parameters come from `model_settings` (consistent
+with the rest of pydantic-ai), so `temperature`, `top_p`, `top_k`, `max_tokens`, `seed`,
+`google_thinking_config`, and `google_video_resolution` all flow through.
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime.google import AutomaticVAD, ContextCompression, GoogleRealtimeModel, MultiSpeaker
+
+model = GoogleRealtimeModel(
+    'gemini-live-2.5-flash-native-audio',
+    voice='Puck',
+    language_code='en-US',                              # output language
+    affective_dialog=True,                              # emotion-aware delivery (native-audio)
+    proactive_audio=True,                               # model decides when to speak (native-audio)
+    vad=AutomaticVAD(start_sensitivity='high', end_sensitivity='low'),
+    turn_coverage='all_video',                          # keep every video frame in context
+    context_compression=ContextCompression(trigger_tokens=16000, target_tokens=8000),
+    config_overrides={'explicit_vad_signal': True},     # escape hatch for unmodelled SDK fields
+)
+```
+
+| Field | What it does |
+| --- | --- |
+| `voice`, `language_code`, `multi_speaker` ([`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker]) | Prebuilt voice, output language, per-speaker voices |
+| `affective_dialog`, `proactive_audio` | Emotion-aware delivery; let the model decide when to speak (native-audio models) |
+| `vad` ([`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD]) | VAD `disabled`, start/end sensitivity, padding/silence |
+| `activity_handling`, `turn_coverage` | Whether activity interrupts; which input a turn covers (`activity_only`/`all_input`/`all_video`) |
+| `input_transcription`, `output_transcription`, `transcription_language_codes` | Transcription on/off and language hints |
+| `context_compression` ([`ContextCompression`][pydantic_ai.realtime.google.ContextCompression]) | Sliding-window compression for long sessions |
+| `enable_session_resumption`, `reconnect` | Transparent resume on a dropped connection (see [Reconnecting](#reconnecting)) |
+| `config_overrides` | Raw keys merged last into the `LiveConnectConfig` — forward-compat escape hatch |
+| `vertexai`, `project`, `location` | Use Vertex AI / ADC instead of an API key |
+
 ## Turn-taking and barge-in
 
 By default the provider uses server-side voice activity detection
@@ -148,6 +204,13 @@ response — the model picks it up on the next turn (via VAD or `create_response
 ```python {test="skip" lint="skip"}
 await session.send_image(jpeg_bytes, mime_type='image/jpeg')
 ```
+
+**Live vision (Gemini).** For a "show the camera and ask about it" experience, stream frames
+continuously and set `turn_coverage='all_video'` so every frame stays in context. Because a frame
+alone never triggers a turn, drive proactive narration by periodically sending a short text turn
+("say what changed, else stay silent"); combine with `proactive_audio=True` (native-audio) so the
+model keeps quiet when nothing changed. The [realtime camera example](examples/realtime-camera.md)
+implements exactly this with a *Watch* toggle.
 
 ## Tool calling
 
@@ -219,6 +282,21 @@ policy (the default), a dropped connection surfaces as a non-recoverable
 [`SessionError`][pydantic_ai.realtime.SessionError] (`recoverable=False`) and ends the stream, so the
 app can restart the session itself.
 
+Gemini reconnects via **session resumption**, which *does* restore conversation state. Enable it with
+both `enable_session_resumption=True` and a
+[`ReconnectPolicy`][pydantic_ai.realtime.google.ReconnectPolicy] — the session re-dials from the
+latest resumption handle the server issued:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime.google import GoogleRealtimeModel, ReconnectPolicy
+
+model = GoogleRealtimeModel(
+    'gemini-live-2.5-flash',
+    enable_session_resumption=True,
+    reconnect=ReconnectPolicy(max_attempts=5),
+)
+```
+
 ## Delegating to a text agent
 
 Realtime models do not support structured output, and are typically weaker at multi-step reasoning
@@ -252,6 +330,9 @@ async def main():
     async with voice.realtime_session(model=OpenAIRealtimeModel('gpt-realtime')) as session:
         ...
 ```
+
+The [realtime finance example](examples/realtime-finance.md) builds this out into a full voice app —
+including [background tools](#background-tools) so the model keeps talking while a slow analysis runs.
 
 ## Implementing a provider
 
