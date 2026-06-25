@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+import time
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
@@ -663,6 +664,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
+            # Stamp the request-issue instant so the instrumentation capability can record
+            # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
+            # the first-chunk instant; the delta is the client-side time to first token.
+            request_start = time.perf_counter()
             with set_current_run_context(run_context):
                 async with req_ctx.model.request_stream(
                     req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
@@ -673,6 +678,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
                     await stream_done.wait()
+            req_ctx.time_to_first_chunk = sr.time_to_first_chunk(request_start)
             response = sr.get()
             _handler_response = response
             return response

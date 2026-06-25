@@ -512,6 +512,38 @@ def test_logfire_metadata_override(get_logfire_summary: Callable[[], LogfireSumm
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_logfire_streaming_records_time_to_first_chunk(capfire: CaptureLogfire) -> None:
+    """A streaming agent run records `gen_ai.client.operation.time_to_first_chunk` on the
+    model-request span and as a histogram metric (value is non-deterministic, so assert shape)."""
+    agent = Agent(
+        model=TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
+    )
+    async with agent.run_stream('Hello') as result:
+        async for _ in result.stream_text(delta=True):
+            pass
+
+    chat_spans = [
+        s for s in capfire.exporter.exported_spans_as_dict() if s['attributes'].get('gen_ai.operation.name') == 'chat'
+    ]
+    assert chat_spans
+    for span in chat_spans:
+        ttft = span['attributes'].get('gen_ai.client.operation.time_to_first_chunk')
+        assert isinstance(ttft, float)
+
+    # Pin the histogram emission through the agent-flow path (capability handler -> req_ctx ->
+    # finish), not just the metric name, so a regression that drops the value between the handler
+    # and `finish` can't slip through.
+    ttft_metrics = [
+        m for m in capfire.get_collected_metrics() if m['name'] == 'gen_ai.client.operation.time_to_first_chunk'
+    ]
+    assert len(ttft_metrics) == 1
+    assert ttft_metrics[0]['unit'] == 's'
+    assert len(ttft_metrics[0]['data']['data_points']) == 1
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'instrument',
     [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],

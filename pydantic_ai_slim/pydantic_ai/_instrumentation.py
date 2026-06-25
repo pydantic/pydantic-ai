@@ -5,7 +5,7 @@ import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 from urllib.parse import urlparse
 
 from opentelemetry.baggage import get_baggage
@@ -162,11 +162,21 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
     return tool_definitions
 
 
+class _FinishModelRequestSpan(Protocol):
+    """The `finish` callback yielded by `open_model_request_span`.
+
+    `time_to_first_chunk` is the streaming-only TTFT in seconds; non-streaming
+    callers omit it.
+    """
+
+    def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
-) -> Generator[tuple[Callable[[ModelResponse], None], ModelRequestContext]]:
+) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
     Shared between `Instrumentation.wrap_model_request` (agent flow) and
@@ -219,7 +229,7 @@ def open_model_request_span(
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
             # so observability backends that aggregate metrics from span attributes
             # don't double-count.
-            def finish(response: ModelResponse) -> None:
+            def finish(response: ModelResponse, time_to_first_chunk: float | None = None) -> None:
                 nonlocal record_metrics
 
                 annotate_tool_call_otel_metadata(response, prepared_parameters)
@@ -240,7 +250,7 @@ def open_model_request_span(
                         'gen_ai.request.model': request_model,
                         'gen_ai.response.model': response_model,
                     }
-                    settings.record_metrics(response, price_calculation, metric_attributes)
+                    settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
 
                 record_metrics = _record_metrics
 
@@ -271,6 +281,8 @@ def open_model_request_span(
                     attributes_to_set['gen_ai.response.id'] = response.provider_response_id
                 if response.finish_reason is not None:
                     attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
+                if time_to_first_chunk is not None:
+                    attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
 

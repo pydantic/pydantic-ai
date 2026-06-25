@@ -43,7 +43,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot, warns
-from ..conftest import IsDatetime, IsInt, IsStr, try_import
+from ..conftest import IsDatetime, IsFloat, IsInt, IsStr, try_import
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -408,12 +408,22 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
                     'operation.cost': 0.00475,
+                    'gen_ai.client.operation.time_to_first_chunk': IsFloat(),
                 },
             },
         ]
     )
 
     assert capfire.log_exporter.exported_logs_as_dicts() == snapshot([])
+
+    # Streaming records the time-to-first-chunk histogram (value is non-deterministic, so
+    # assert shape rather than snapshot the float).
+    ttft_metrics = [
+        m for m in capfire.get_collected_metrics() if m['name'] == 'gen_ai.client.operation.time_to_first_chunk'
+    ]
+    assert len(ttft_metrics) == 1
+    assert ttft_metrics[0]['unit'] == 's'
+    assert len(ttft_metrics[0]['data']['data_points']) == 1
 
 
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
@@ -488,6 +498,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
                     'operation.cost': 0.00475,
+                    'gen_ai.client.operation.time_to_first_chunk': IsFloat(),
                     'logfire.exception.fingerprint': '0000000000000000000000000000000000000000000000000000000000000000',
                     'logfire.level_num': 17,
                 },
