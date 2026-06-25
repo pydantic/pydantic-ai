@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 import logfire
 from twelvelabs import AsyncTwelveLabs
+from twelvelabs.types import VideoContext_Url
 
 from pydantic_ai import Agent, RunContext
 
@@ -61,7 +62,7 @@ async def analyze_video(ctx: RunContext[Deps], prompt: str) -> str:
     """
     response = await ctx.deps.twelvelabs.analyze(
         model_name='pegasus1.5',
-        video={'type': 'url', 'url': ctx.deps.video_url},
+        video=VideoContext_Url(url=ctx.deps.video_url),
         prompt=prompt,
         max_tokens=2048,
     )
