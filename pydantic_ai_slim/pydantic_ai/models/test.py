@@ -231,6 +231,7 @@ class TestModel(Model):
                     for name, args in tool_calls
                 ],
                 model_name=self._model_name,
+                provider_name=self._system,
             )
 
         if messages:  # pragma: no branch
@@ -260,7 +261,7 @@ class TestModel(Model):
                             if tool.name in new_retry_names
                         ]
                     )
-                return ModelResponse(parts=retry_parts, model_name=self._model_name)
+                return ModelResponse(parts=retry_parts, model_name=self._model_name, provider_name=self._system)
 
         if isinstance(output_wrapper, _WrappedTextOutput):
             if (response_text := output_wrapper.value) is None:
@@ -273,12 +274,20 @@ class TestModel(Model):
                                 output[part.tool_name] = part.content
                 if output:
                     return ModelResponse(
-                        parts=[TextPart(pydantic_core.to_json(output).decode())], model_name=self._model_name
+                        parts=[TextPart(pydantic_core.to_json(output).decode())],
+                        model_name=self._model_name,
+                        provider_name=self._system,
                     )
                 else:
-                    return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self._model_name)
+                    return ModelResponse(
+                        parts=[TextPart('success (no tool calls)')],
+                        model_name=self._model_name,
+                        provider_name=self._system,
+                    )
             else:
-                return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
+                return ModelResponse(
+                    parts=[TextPart(response_text)], model_name=self._model_name, provider_name=self._system
+                )
         else:
             assert output_tools, 'No output tools provided'
             custom_output_args = output_wrapper.value
@@ -293,6 +302,7 @@ class TestModel(Model):
                         )
                     ],
                     model_name=self._model_name,
+                    provider_name=self._system,
                 )
             else:
                 response_args = self.gen_tool_args(output_tool)
@@ -305,6 +315,7 @@ class TestModel(Model):
                         )
                     ],
                     model_name=self._model_name,
+                    provider_name=self._system,
                 )
 
 

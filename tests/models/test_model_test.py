@@ -36,6 +36,15 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr
 
 
+def test_run_provider_name_matches_streaming_path():
+    """Regression test for #6062: agent.run() should set provider_name like run_stream()."""
+    agent = Agent()
+    result = agent.run_sync('Hello', model=TestModel())
+    provider_names = [m.provider_name for m in result.all_messages() if isinstance(m, ModelResponse)]
+    assert provider_names
+    assert all(name == 'test' for name in provider_names)
+
+
 def test_call_one():
     agent = Agent()
     calls: list[str] = []
@@ -91,6 +100,7 @@ def test_custom_output_args():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -143,6 +153,7 @@ def test_custom_output_args_model():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -191,6 +202,7 @@ def test_output_type():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -240,6 +252,7 @@ def test_tool_retry():
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -261,6 +274,7 @@ def test_tool_retry():
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=61, output_tokens=8),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -279,6 +293,7 @@ def test_tool_retry():
                 parts=[TextPart(content='{"my_ret":"1"}')],
                 usage=RequestUsage(input_tokens=62, output_tokens=12),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
