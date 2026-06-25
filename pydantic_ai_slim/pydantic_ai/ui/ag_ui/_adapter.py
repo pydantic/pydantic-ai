@@ -216,10 +216,17 @@ def _rehydrate_tool_return_content(content: str) -> Any:
     Used only with `preserve_file_data=True`, where nested file bytes survive the round trip. A non-JSON
     string (a plain-text return) is left untouched. No JS-binary coercion (unlike Vercel): AG-UI content
     is always our own base64 dump, never a frontend `Uint8Array`/`Buffer` shape.
+
+    Only a parsed mapping or sequence is run through the discriminator, since nested multimodal items can
+    only live inside those. A parsed JSON scalar (`'123'`, `'true'`, `'null'`) is returned as the original
+    string: AG-UI's `ToolMessage.content` is text-only, so a scalar return is indistinguishable from a
+    string return on the wire, and rehydrating it would silently change `'123'` into `123` on reload.
     """
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError:
+        return content
+    if not isinstance(parsed, (dict, list)):
         return content
     return narrow_binary_images(tool_return_content_ta.validate_python(parsed))
 

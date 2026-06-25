@@ -3687,6 +3687,30 @@ def test_dump_load_roundtrip_tool_return_multimodal(
     )
 
 
+@pytest.mark.parametrize('content', ['123', 'true', 'null'])
+def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
+    """A string return that happens to be a valid JSON *scalar* must not change type on the `preserve_file_data=True` round-trip.
+
+    `ToolMessage.content` is text-only on the AG-UI wire, so a string return is dumped verbatim. Re-parsing it
+    through the discriminator would turn `'123'` into `123`, `'true'` into `True`, etc. The rehydrator only runs the
+    discriminator on a parsed mapping/sequence (where nested multimodal items can live), leaving scalars as strings.
+    A container-shaped string (`'[1, 2]'`) is wire-indistinguishable from a real list return, so it does rehydrate —
+    that ambiguity is inherent to the text-only wire and only the scalar coercion is recoverable.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='get_value', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content)]),
+    ]
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
 def test_tool_return_multimodal_dropped_by_default(tiny_image: BinaryImage) -> None:
     """Test that multimodal `ToolReturnPart.content` is silently dropped when `preserve_file_data=False`."""
     original: list[ModelMessage] = [
