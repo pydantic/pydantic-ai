@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebSearchTool, WebSearchUserLocation
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
@@ -22,8 +19,15 @@ WebSearchLocalStrategy = Literal['duckduckgo']
 class WebSearch(NativeOrLocalTool[AgentDepsT]):
     """Web search capability.
 
-    Uses the model's native web search when available, falling back to a local
-    function tool (DuckDuckGo by default) when it isn't.
+    Uses the model's native web search and raises `UserError` on models that
+    don't support it natively. Pass `local='duckduckgo'` (or `local=True`) to opt into a
+    local DuckDuckGo fallback — requires the `duckduckgo` optional group:
+
+    ```bash
+    pip install "pydantic-ai-slim[duckduckgo]"
+    ```
+
+    `local=` also accepts any callable, `Tool`, or `AbstractToolset` for a custom fallback.
     """
 
     search_context_size: Literal['low', 'medium', 'high'] | None
@@ -86,24 +90,6 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
     def _native_unique_id(self) -> str:
         return WebSearchTool.kind
 
-    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        try:
-            from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
-        except ImportError:
-            # No DDG installed → the auto-fallback path can't run, so there's no deprecated
-            # behavior to warn about. If the model also doesn't support the native tool, the
-            # user will hit a clear UserError at request time with `local=…` migration hints.
-            return None
-
-        warnings.warn(
-            'WebSearch will stop auto-selecting DuckDuckGo based on package availability in v2. '
-            "To keep this fallback, pass `local='duckduckgo'` (or `local=True`). "
-            'To disable the fallback, pass `local=False`.',
-            PydanticAIDeprecationWarning,
-            stacklevel=5,
-        )
-        return duckduckgo_search_tool()
-
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         # True → the default strategy (DuckDuckGo)
         strategy = 'duckduckgo' if name is True else name
@@ -123,6 +109,3 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
 
     def _requires_native(self) -> bool:
         return self.blocked_domains is not None or self.allowed_domains is not None or self.max_uses is not None
-
-
-install_deprecated_kwarg_alias(WebSearch, old='builtin', new='native')

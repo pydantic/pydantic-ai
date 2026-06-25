@@ -36,7 +36,6 @@ from pydantic_evals._utils import get_event_loop
 
 from . import _task_run
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
-from ._warnings import PydanticEvalsDeprecationWarning
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
 from .evaluators._run_evaluator import run_evaluator
@@ -85,51 +84,6 @@ _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
 _REPORT_CASES_ADAPTER = TypeAdapter(list[ReportCase])
 _REPORT_CASE_FAILURES_ADAPTER = TypeAdapter(list[ReportCaseFailure])
 _REPORT_CASE_AGGREGATE_ADAPTER = TypeAdapter(ReportCaseAggregate)
-
-
-# TODO(v2): drop this helper and the `*_deprecated_positional` parameter on
-# `Dataset.evaluate` / `Dataset.evaluate_sync`; the remaining params will become keyword-only.
-_LEGACY_POSITIONAL_EVALUATE_NAMES = (
-    'name',
-    'max_concurrency',
-    'progress',
-    'retry_task',
-    'retry_evaluators',
-)
-
-
-def _resolve_positional_evaluate_args(
-    positional: tuple[Any, ...],
-    *,
-    name: str | None,
-    max_concurrency: int | None,
-    progress: bool,
-    retry_task: RetryConfig | None,
-    retry_evaluators: RetryConfig | None,
-) -> tuple[str | None, int | None, bool, RetryConfig | None, RetryConfig | None]:
-    """Fold deprecated positional args back onto their named slots, warning if any were passed."""
-    if not positional:
-        return name, max_concurrency, progress, retry_task, retry_evaluators
-    if len(positional) > len(_LEGACY_POSITIONAL_EVALUATE_NAMES):
-        raise TypeError(
-            f'evaluate() takes at most {1 + len(_LEGACY_POSITIONAL_EVALUATE_NAMES)} positional '
-            f'arguments but {1 + len(positional)} were given'
-        )
-    warnings.warn(
-        'Passing `name`, `max_concurrency`, `progress`, `retry_task`, or `retry_evaluators` '
-        'positionally to `Dataset.evaluate` / `Dataset.evaluate_sync` is deprecated; pass them '
-        'as keyword arguments. Positional support will be removed in pydantic-evals v2.',
-        PydanticEvalsDeprecationWarning,
-        stacklevel=3,
-    )
-    overrides = dict(zip(_LEGACY_POSITIONAL_EVALUATE_NAMES, positional))
-    return (
-        overrides.get('name', name),
-        overrides.get('max_concurrency', max_concurrency),
-        overrides.get('progress', progress),
-        overrides.get('retry_task', retry_task),
-        overrides.get('retry_evaluators', retry_evaluators),
-    )
 
 
 class _CaseModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'):
@@ -272,8 +226,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     ```
     """
 
-    name: str | None = None
-    """Name of the dataset. Required in future versions."""
+    name: str
+    """Name of the dataset."""
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
@@ -284,7 +238,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def __init__(
         self,
         *,
-        name: str | None = None,
+        name: str,
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
         evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
         report_evaluators: Sequence[ReportEvaluator[InputsT, OutputT, MetadataT]] = (),
@@ -292,18 +246,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """Initialize a new dataset with test cases and optional evaluators.
 
         Args:
-            name: Name for the dataset. Omitting this is deprecated and will raise an error in a future version.
+            name: Name for the dataset.
             cases: Sequence of test cases to include in the dataset.
             evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
             report_evaluators: Optional sequence of report evaluators that run on the full evaluation report.
         """
-        if name is None:
-            warnings.warn(
-                'Omitting the `name` parameter is deprecated. Please provide a name for your `Dataset`.',
-                PydanticEvalsDeprecationWarning,
-                stacklevel=2,
-            )
-
         case_names = set[str]()
         for case in cases:
             if case.name is None:
@@ -331,12 +278,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         else:
             return [(case, case.name or f'Case {i}', None) for i, case in enumerate(self.cases, 1)]
 
-    # TODO(v2): drop `*_deprecated_positional` and the `_resolve_positional_evaluate_args` call;
-    # `name`, `max_concurrency`, `progress`, `retry_task`, `retry_evaluators` will be keyword-only.
     async def evaluate(
         self,
         task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
-        *_deprecated_positional: Any,
+        *,
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
@@ -373,14 +318,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A report containing the results of the evaluation.
         """
-        name, max_concurrency, progress, retry_task, retry_evaluators = _resolve_positional_evaluate_args(
-            _deprecated_positional,
-            name=name,
-            max_concurrency=max_concurrency,
-            progress=progress,
-            retry_task=retry_task,
-            retry_evaluators=retry_evaluators,
-        )
         if repeat < 1:
             raise ValueError(f'repeat must be >= 1, got {repeat}')
 
@@ -471,11 +408,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             _set_experiment_span_attributes(eval_span, report, metadata, len(self.cases), repeat)
         return report
 
-    # TODO(v2): drop `*_deprecated_positional`; see the matching note on `Dataset.evaluate`.
     def evaluate_sync(
         self,
         task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
-        *_deprecated_positional: Any,
+        *,
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
@@ -511,14 +447,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A report containing the results of the evaluation.
         """
-        name, max_concurrency, progress, retry_task, retry_evaluators = _resolve_positional_evaluate_args(
-            _deprecated_positional,
-            name=name,
-            max_concurrency=max_concurrency,
-            progress=progress,
-            retry_task=retry_task,
-            retry_evaluators=retry_evaluators,
-        )
         return get_event_loop().run_until_complete(
             self.evaluate(
                 task,
@@ -606,7 +534,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:  # pragma: no branch
                 return args
-        else:  # pragma: lax no cover
+        else:
             warnings.warn(
                 f'Could not determine the generic parameters for {cls}; using `Any` for each.'
                 f' You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
@@ -799,8 +727,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases.append(row)
         if errors:
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
-        # Use default_name if no name was provided in the serialized data
         name = dataset_model.name if dataset_model.name is not None else default_name
+        if name is None:
+            raise ValueError('Dataset name is required: provide one in the serialized data or via `default_name`.')
         result = cls(name=name, cases=cases, report_evaluators=report_evaluators)
         result.evaluators = dataset_evaluators
         return result
