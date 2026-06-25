@@ -74,7 +74,6 @@ class FallbackModel(Model):
 
     models: list[Model]
 
-    _model_name: str = field(repr=False)
     _exception_handlers: list[ExceptionHandler] = field(repr=False)
     _response_handlers: list[ResponseHandler] = field(repr=False)
 
