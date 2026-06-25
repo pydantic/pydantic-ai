@@ -46,6 +46,7 @@ class AgentSpec(BaseModel):
     tool_timeout: float | None = None
     metadata: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
+    import_capability_types: list[str] = []
 
     @classmethod
     def from_file(
@@ -201,6 +202,7 @@ class AgentSpec(BaseModel):
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
                 capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007
+            import_capability_types: list[str] | None = None
 
         json_schema = _AgentSpecSchema.model_json_schema()
         json_schema['title'] = 'AgentSpec'
