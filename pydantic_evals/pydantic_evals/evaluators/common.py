@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
@@ -14,6 +14,11 @@ from pydantic_ai.settings import ModelSettings
 from ..otel.span_tree import SpanQuery
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
+
+if TYPE_CHECKING:
+    # DEFAULT_EVALUATORS is assembled lazily via __getattr__ to avoid a circular import
+    # between `common` and `quality`; expose it here for type checkers.
+    DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...]
 
 __all__ = (
     'Equals',
@@ -193,7 +198,7 @@ class OutputConfig(TypedDict, total=False):
     include_reason: bool
 
 
-def _update_combined_output(
+def update_combined_output(
     combined_output: dict[str, EvaluationScalar | EvaluationReason],
     value: EvaluationScalar,
     reason: str | None,
@@ -205,6 +210,22 @@ def _update_combined_output(
         combined_output[name] = EvaluationReason(value=value, reason=reason)
     else:
         combined_output[name] = value
+
+
+def serialize_model_as_string(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Replace a `model` argument's [`Model`][pydantic_ai.models.Model] instance with its `model_id` string.
+
+    Shared by [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] and the quality-pack evaluators, which all
+    accept `model: Model | KnownModelName | str | None` but should serialize the model as a plain string so
+    the spec round-trips cleanly.
+
+    Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model. I expect
+    that is rare enough to be worth not solving yet, but common enough that we probably will want to solve it
+    eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
+    """
+    if (model := arguments.get('model')) and isinstance(model, models.Model):
+        arguments['model'] = model.model_id
+    return arguments
 
 
 @dataclass(repr=False)
@@ -258,24 +279,16 @@ class LLMJudge(Evaluator[object, object, object]):
 
         if self.score is not False:
             default_name = f'{evaluation_name}_score' if include_both else evaluation_name
-            _update_combined_output(output, grading_output.score, grading_output.reason, self.score, default_name)
+            update_combined_output(output, grading_output.score, grading_output.reason, self.score, default_name)
 
         if self.assertion is not False:
             default_name = f'{evaluation_name}_pass' if include_both else evaluation_name
-            _update_combined_output(output, grading_output.pass_, grading_output.reason, self.assertion, default_name)
+            update_combined_output(output, grading_output.pass_, grading_output.reason, self.assertion, default_name)
 
         return output
 
     def build_serialization_arguments(self):
-        result = super().build_serialization_arguments()
-        # always serialize the model as a string when present; use its name if it's a KnownModelName
-        if (model := result.get('model')) and isinstance(model, models.Model):  # pragma: no branch
-            result['model'] = model.model_id
-
-        # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
-        # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
-        # solve it eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
-        return result
+        return serialize_model_as_string(super().build_serialization_arguments())
 
 
 @dataclass(repr=False)
@@ -295,7 +308,7 @@ class HasMatchingSpan(Evaluator[object, object, object]):
         return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
 
-DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
+_COMMON_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     Equals,
     EqualsExpected,
     Contains,
@@ -307,6 +320,18 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
 
 
 def __getattr__(name: str):
+    if name == 'DEFAULT_EVALUATORS':
+        # Import lazily to avoid a circular import (these modules import helpers from this one).
+        from . import quality, ragas
+
+        return _COMMON_EVALUATORS + (
+            ragas.Faithfulness,
+            ragas.AnswerRelevance,
+            ragas.ContextPrecision,
+            ragas.ContextRecall,
+            quality.GEval,
+            quality.GembaScore,
+        )
     if name == 'Python':
         raise ImportError(
             'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
