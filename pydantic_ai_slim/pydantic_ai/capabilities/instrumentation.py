@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
@@ -38,7 +38,7 @@ from .abstract import (
 if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
-    from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.models.instrumented import InstrumentationSettings, MessageJsonCache
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
     from pydantic_ai.tools import AgentDepsT
@@ -79,6 +79,10 @@ class Instrumentation(AbstractCapability[Any]):
     """Last formatted instructions sent to the model, or `UNSET` before the first request."""
     _variable_instructions: bool = field(default=False, repr=False, init=False)
     """Whether agent-level instructions varied across requests in this run."""
+    _message_json_cache: MessageJsonCache = field(
+        default_factory=lambda: cast('MessageJsonCache', {}), repr=False, init=False
+    )
+    """Per-run cache of serialized message fragments; reset per run in `for_run`."""
     # Resolved once from `self.settings.version` in `__post_init__` and preserved across
     # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
     _instrumentation_names: InstrumentationNames = field(
@@ -120,6 +124,7 @@ class Instrumentation(AbstractCapability[Any]):
         inst = replace(self)
         inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
         inst._new_message_index = len(ctx.messages)
+        inst._message_json_cache = {}
         return inst
 
     # ------------------------------------------------------------------
@@ -253,7 +258,10 @@ class Instrumentation(AbstractCapability[Any]):
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
         self._last_messages = request_context.messages
 
-        with open_model_request_span(self.settings, request_context) as (finish, prepared_request_context):
+        with open_model_request_span(self.settings, request_context, self._message_json_cache) as (
+            finish,
+            prepared_request_context,
+        ):
             # Stash for `_run_span_end_attributes`: feeding the parameters into
             # `get_instructions` lets it use the canonical `instruction_parts` source
             # (which includes prompted-output template instructions and is properly sorted)

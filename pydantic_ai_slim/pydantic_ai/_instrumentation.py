@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
-    from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.models.instrumented import InstrumentationSettings, MessageJsonCache
 
 DEFAULT_INSTRUMENTATION_VERSION = 5
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -180,6 +180,7 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
+    message_json_cache: MessageJsonCache | None = None,
 ) -> Generator[tuple[Callable[[ModelResponse], None], ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
@@ -190,6 +191,9 @@ def open_model_request_span(
     response with OTel tool-call metadata and records outcome attributes. Token/cost metrics are
     recorded *after* the span closes so backends that aggregate from span attributes don't
     double-count.
+
+    `message_json_cache` is a per-run cache reused across requests so the growing input history isn't
+    re-serialized in full each time; the agent flow passes one, one-off requests pass `None`.
     """
     # TODO Missing attributes:
     #  - error.type: unclear if we should do something here or just always rely on span exceptions
@@ -273,7 +277,9 @@ def open_model_request_span(
                 if not span.is_recording():
                     return
 
-                settings.handle_messages(prepared_request_context.messages, response, span, prepared_parameters)
+                settings.handle_messages(
+                    prepared_request_context.messages, response, span, prepared_parameters, message_json_cache
+                )
 
                 attributes_to_set: dict[str, Any] = {
                     **response.usage.opentelemetry_attributes(),

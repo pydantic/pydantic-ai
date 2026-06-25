@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gc
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -40,7 +39,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel, MessageJsonCache
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -315,16 +314,15 @@ async def test_instrumented_model_not_recording():
     )
 
 
-async def test_instrumented_model_input_messages_match_whole_history_serialization(capfire: CaptureLogfire):
-    """The cached `gen_ai.input.messages` attribute is byte-identical to serializing the whole history.
+def test_input_messages_json_matches_whole_history_with_and_without_cache():
+    """A per-run cache produces output byte-identical to serializing the whole history at once.
 
-    Drives growing histories through `model.request` (the real per-request path) and compares the
-    emitted span attribute to a fresh whole-history `to_json`, so the fragment-reuse optimization is
-    proven not to change the output a backend sees. The empty `ModelRequest` maps to no OTel message
-    and must be dropped from the array (rather than emitted as an empty fragment).
+    Walks growing prefixes through one shared cache (as an agent run does) and compares each result
+    to both the uncached path and a fresh whole-history `to_json`. The empty `ModelRequest` maps to
+    no OTel message and must be dropped from the array, not emitted as an empty fragment.
     """
     settings = InstrumentationSettings()
-    model = InstrumentedModel(MyModel(), settings)
+    cache: MessageJsonCache = {}
     history: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('sys'), UserPromptPart('hello')]),
         ModelRequest(parts=[]),
@@ -332,62 +330,27 @@ async def test_instrumented_model_input_messages_match_whole_history_serializati
         ModelRequest(parts=[ToolReturnPart('tool', 'result', 'call_1')]),
         ModelResponse(parts=[TextPart('done')]),
     ]
-    for length in range(1, len(history) + 1):
+    for length in range(len(history) + 1):
         prefix = history[:length]
-        await model.request(prefix, model_settings=None, model_request_parameters=ModelRequestParameters())
-        attributes = capfire.exporter.exported_spans_as_dict()[-1]['attributes']
-        assert attributes['gen_ai.input.messages'] == to_json(settings.messages_to_otel_messages(prefix)).decode()
-
-
-def test_input_messages_json_caches_per_message_and_evicts_on_gc():
-    """Fragments are cached per message and the cache empties once the history is garbage collected.
-
-    Reaches into the private cache because eviction-on-GC has no public observable surface; the
-    serialized output equivalence is covered through the public span attribute by the test above.
-    """
-    settings = InstrumentationSettings()
-    cache = settings._message_json_cache  # pyright: ignore[reportPrivateUsage]
-    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(f'm{i}')]) for i in range(3)]
-
-    settings._input_messages_json(history)  # pyright: ignore[reportPrivateUsage]
-    assert len(cache) == 3
-
-    history.append(ModelResponse(parts=[TextPart('reply')]))
-    settings._input_messages_json(history)  # pyright: ignore[reportPrivateUsage]
-    assert len(cache) == 4
-
-    del history
-    gc.collect()
-    assert len(cache) == 0
+        whole = to_json(settings.messages_to_otel_messages(prefix))
+        assert settings._input_messages_json(prefix, cache) == whole  # pyright: ignore[reportPrivateUsage]
+        assert settings._input_messages_json(prefix, None) == whole  # pyright: ignore[reportPrivateUsage]
 
 
 def test_input_messages_json_refreshes_when_message_parts_are_replaced():
-    """A reused message whose `parts` list is reassigned (e.g. dynamic system prompt re-evaluation)
-    is re-serialized rather than served stale, without leaving an orphan cache entry."""
+    """A cached message whose `parts` list is reassigned (e.g. dynamic system prompt re-evaluation)
+    is re-serialized rather than served stale, keeping a single entry per message."""
     settings = InstrumentationSettings()
-    cache = settings._message_json_cache  # pyright: ignore[reportPrivateUsage]
+    cache: MessageJsonCache = {}
     message = ModelRequest(parts=[SystemPromptPart('old', dynamic_ref='ref')])
 
-    before = settings._input_messages_json([message])  # pyright: ignore[reportPrivateUsage]
+    before = settings._input_messages_json([message], cache)  # pyright: ignore[reportPrivateUsage]
     assert b'old' in before
 
     message.parts = [SystemPromptPart('new', dynamic_ref='ref')]
-    after = settings._input_messages_json([message])  # pyright: ignore[reportPrivateUsage]
+    after = settings._input_messages_json([message], cache)  # pyright: ignore[reportPrivateUsage]
     assert b'new' in after and b'old' not in after
     assert len(cache) == 1
-
-
-def test_input_messages_json_refreshes_when_include_content_flips():
-    """Flipping `include_content` on a reused settings instance must not serve cached content."""
-    settings = InstrumentationSettings(include_content=True)
-    message = ModelRequest(parts=[UserPromptPart('secret')])
-
-    with_content = settings._input_messages_json([message])  # pyright: ignore[reportPrivateUsage]
-    assert b'secret' in with_content
-
-    settings.include_content = False
-    without_content = settings._input_messages_json([message])  # pyright: ignore[reportPrivateUsage]
-    assert b'secret' not in without_content
 
 
 async def test_instrumented_model_serializes_lone_surrogates_without_crashing(capfire: CaptureLogfire):

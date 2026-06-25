@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import itertools
 import warnings
-import weakref
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from genai_prices.types import PriceCalculation
 from opentelemetry.metrics import MeterProvider, get_meter_provider
@@ -36,6 +35,15 @@ from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters
 from .wrapper import WrapperModel
 
 __all__ = 'instrument_model', 'InstrumentationSettings', 'InstrumentedModel'
+
+MessageJsonCache: TypeAlias = 'dict[int, tuple[int, bytes]]'
+"""Per-run cache of input messages' serialized OTel JSON fragments.
+
+Maps `id(message)` to `(id(message.parts), fragment_bytes)`. Created fresh per agent run and
+discarded when the run ends, so it never outlives the messages it caches. The `id(message.parts)`
+tag is re-checked on each lookup: a message mutated in place (e.g. dynamic system prompt
+re-evaluation) reassigns its `parts` to a new list, so a stale fragment is detected and rebuilt.
+"""
 
 
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
@@ -67,18 +75,6 @@ class InstrumentationSettings:
     include_content: bool = True
     version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
-
-    # Cache of each input message's serialized OTel JSON fragment, so a growing history's per-request
-    # serialization cost stays proportional to the new messages instead of the whole history.
-    # Keyed by `id(message)` and stored with the validity tags `(id(message.parts), fingerprint)`:
-    # `parts` is reassigned to a new list when a message is mutated in place (e.g. dynamic system
-    # prompt re-evaluation across runs) and `fingerprint` captures the content-affecting settings, so
-    # a stale fragment is detected and re-serialized. Entries are evicted via `weakref.finalize` when
-    # the message is garbage collected, so the cache can't outlive the run's history or be poisoned by
-    # `id()` reuse.
-    _message_json_cache: dict[int, tuple[int, tuple[bool, bool, int], bytes]] = field(
-        repr=False, compare=False, init=False
-    )
 
     def __init__(
         self,
@@ -144,7 +140,6 @@ class InstrumentationSettings:
             )
         self.version = version
         self.use_aggregated_usage_attribute_names = use_aggregated_usage_attribute_names
-        self._message_json_cache = {}
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -189,29 +184,31 @@ class InstrumentationSettings:
                 result.append(otel_message)
         return result
 
-    def _input_messages_json(self, input_messages: list[ModelMessage]) -> bytes:
-        """Serialize the input message history to a JSON array, reusing cached per-message fragments.
+    def _input_messages_json(
+        self, input_messages: list[ModelMessage], message_json_cache: MessageJsonCache | None
+    ) -> bytes:
+        """Serialize the input message history to a JSON array.
 
-        Each message's fragment is the comma-joined JSON of its OTel `ChatMessage`s without the
-        enclosing brackets, so fragments can be concatenated into the final array. Caching keeps
-        the per-request cost proportional to new messages rather than the entire (growing) history.
+        With a `message_json_cache` (agent runs, where the growing history is re-serialized every
+        request), each message's fragment - the comma-joined JSON of its OTel `ChatMessage`s without
+        the enclosing brackets - is cached and concatenated, keeping the per-request cost proportional
+        to new messages rather than the whole history. Without a cache (one-off requests), the whole
+        history is serialized in a single call.
         """
-        cache = self._message_json_cache
-        fingerprint = (self.include_content, self.include_binary_content, self.version)
+        if message_json_cache is None:
+            return safe_to_json(self.messages_to_otel_messages(input_messages))
+
         fragments: list[bytes] = []
         for message in input_messages:
             key = id(message)
             parts_id = id(message.parts)
-            cached = cache.get(key)
-            if cached is not None and cached[0] == parts_id and cached[1] == fingerprint:
-                fragment = cached[2]
+            cached = message_json_cache.get(key)
+            if cached is not None and cached[0] == parts_id:
+                fragment = cached[1]
             else:
-                otel_messages = self.messages_to_otel_messages([message])
                 # Strip the outer `[` and `]` so fragments concatenate into a single array.
-                fragment = safe_to_json(otel_messages)[1:-1]
-                if cached is None:
-                    weakref.finalize(message, cache.pop, key, None)
-                cache[key] = (parts_id, fingerprint, fragment)
+                fragment = safe_to_json(self.messages_to_otel_messages([message]))[1:-1]
+                message_json_cache[key] = (parts_id, fragment)
             if fragment:
                 fragments.append(fragment)
         return b'[' + b','.join(fragments) + b']'
@@ -222,6 +219,7 @@ class InstrumentationSettings:
         response: ModelResponse,
         span: Span,
         parameters: ModelRequestParameters | None = None,
+        message_json_cache: MessageJsonCache | None = None,
     ):
         output_messages = self.messages_to_otel_messages([response])
         assert len(output_messages) == 1
@@ -231,7 +229,7 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': self._input_messages_json(input_messages).decode(),
+            'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
             'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
             'logfire.json_schema': to_json(
