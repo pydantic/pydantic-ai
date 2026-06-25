@@ -6,7 +6,7 @@ request-response pattern of the standard [`Model`][pydantic_ai.models.Model] int
 
 The provider-agnostic ABCs and event types live here; concrete providers live in submodules
 (e.g. `pydantic_ai.realtime.openai`). The high-level entry point is
-[`Agent.realtime_session`][pydantic_ai.Agent.realtime_session].
+[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session].
 """
 
 from ._base import (
@@ -27,6 +27,7 @@ from ._base import (
     RealtimeSessionEvent,
     Reconnected,
     SessionError,
+    Sources,
     SpeechStarted,
     SpeechStopped,
     TextInput,
@@ -38,6 +39,7 @@ from ._base import (
     TruncateOutput,
     TurnComplete,
     Usage,
+    WebSource,
 )
 from ._session import RealtimeSession, ToolRunner
 
@@ -52,14 +54,15 @@ __all__ = (
     'InputTranscript',
     'RateLimit',
     'RateLimits',
-    'Reconnected',
     'RealtimeConnection',
     'RealtimeEvent',
     'RealtimeInput',
     'RealtimeModel',
     'RealtimeSession',
     'RealtimeSessionEvent',
+    'Reconnected',
     'SessionError',
+    'Sources',
     'SpeechStarted',
     'SpeechStopped',
     'TextInput',
@@ -72,4 +75,5 @@ __all__ = (
     'TruncateOutput',
     'TurnComplete',
     'Usage',
+    'WebSource',
 )

@@ -12,8 +12,12 @@ Demonstrates:
 - [sending images](../realtime.md#images) — each camera frame is an
   [`ImageInput`][pydantic_ai.realtime.ImageInput] sent with
   [`send_image`][pydantic_ai.realtime.RealtimeSession.send_image]
-- [live vision](../realtime.md#images) — `turn_coverage='all_video'` plus a *Watch* toggle so the
+- [live vision](../realtime.md#images) — `turn_coverage='all_input'` plus a *Watch* toggle so the
   assistant reacts to what changes, not just to your voice
+- [web search](../realtime.md#built-in-tools-web-search) — the
+  [`WebSearch`][pydantic_ai.capabilities.WebSearch] capability (Grounding with Google Search), so it
+  can answer with current facts and render the [`Sources`][pydantic_ai.realtime.Sources] it grounded
+  on as citation chips in the UI (on by default)
 
 ## Running the Example
 

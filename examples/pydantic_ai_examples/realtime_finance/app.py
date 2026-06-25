@@ -188,7 +188,7 @@ app = FastAPI()
 
 @app.get('/')
 async def index() -> HTMLResponse:
-    return HTMLResponse(_INDEX_PATH.read_text())
+    return HTMLResponse(_INDEX_PATH.read_text(encoding='utf-8'))
 
 
 def _json_messages(

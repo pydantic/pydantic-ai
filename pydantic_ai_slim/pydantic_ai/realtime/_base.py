@@ -14,10 +14,11 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from typing_extensions import TypeAliasType
 
+from ..native_tools import AbstractNativeTool
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -233,9 +234,34 @@ class SessionError:
     """Whether the session can continue. A protocol `error` is recoverable; a dropped connection is not."""
 
 
+@dataclass
+class WebSource:
+    """A web page the model used to ground its response."""
+
+    url: str
+    """URL of the source page."""
+    title: str | None = None
+    """Title of the page, if the provider reported one."""
+
+
+@dataclass
+class Sources:
+    """Web sources the model grounded its response on (search results or fetched URLs).
+
+    Emitted by providers that report grounding metadata — e.g. Gemini Live when the agent uses
+    [`WebSearch`][pydantic_ai.capabilities.WebSearch] (Grounding with Google Search) or
+    [`WebFetch`][pydantic_ai.capabilities.WebFetch] (URL context). Use it to surface citations in a UI.
+    """
+
+    sources: list[WebSource]
+    """The web pages the response drew on."""
+    queries: list[str] = field(default_factory=list[str])
+    """Search queries the model issued, if the provider reported them."""
+
+
 RealtimeEvent = TypeAliasType(
     'RealtimeEvent',
-    'AudioDelta | Transcript | InputTranscript | ToolCall | TurnComplete | SpeechStarted | SpeechStopped | Usage | RateLimits | Reconnected | SessionError',
+    'AudioDelta | Transcript | InputTranscript | ToolCall | TurnComplete | SpeechStarted | SpeechStopped | Usage | RateLimits | Reconnected | Sources | SessionError',
 )
 """Union of events yielded by [`RealtimeConnection`][pydantic_ai.realtime.RealtimeConnection]."""
 
@@ -270,7 +296,7 @@ class ToolCallCompleted:
 
 RealtimeSessionEvent = TypeAliasType(
     'RealtimeSessionEvent',
-    'AudioDelta | Transcript | InputTranscript | ToolCallStarted | ToolCallCompleted | TurnComplete | SpeechStarted | SpeechStopped | Usage | RateLimits | Reconnected | SessionError',
+    'AudioDelta | Transcript | InputTranscript | ToolCallStarted | ToolCallCompleted | TurnComplete | SpeechStarted | SpeechStopped | Usage | RateLimits | Reconnected | Sources | SessionError',
 )
 """Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession]."""
 
@@ -312,6 +338,7 @@ class RealtimeModel(ABC):
         *,
         instructions: str,
         tools: list[ToolDefinition] | None = None,
+        native_tools: list[AbstractNativeTool] | None = None,
         model_settings: ModelSettings | None = None,
     ) -> AbstractAsyncContextManager[RealtimeConnection]:
         """Open a connection to the realtime model.
@@ -319,6 +346,8 @@ class RealtimeModel(ABC):
         Args:
             instructions: System instructions for the session.
             tools: Tool definitions the model may invoke.
+            native_tools: Provider-native tools (e.g. [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool])
+                the model runs server-side. Providers raise `UserError` for ones they don't support.
             model_settings: Optional provider-specific settings.
 
         Returns:

@@ -10,6 +10,9 @@ from typing import Any, cast
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebFetch
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
@@ -37,7 +40,8 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 pytestmark = pytest.mark.anyio
 
@@ -71,6 +75,7 @@ class FakeRealtimeModel(RealtimeModel):
         self._connection = connection
         self.last_instructions: str | None = None
         self.last_tools: list[ToolDefinition] | None = None
+        self.last_native_tools: list[AbstractNativeTool] | None = None
         self.last_model_settings: ModelSettings | None = None
 
     @property
@@ -83,10 +88,12 @@ class FakeRealtimeModel(RealtimeModel):
         *,
         instructions: str,
         tools: list[ToolDefinition] | None = None,
+        native_tools: list[AbstractNativeTool] | None = None,
         model_settings: ModelSettings | None = None,
     ) -> AsyncGenerator[FakeRealtimeConnection]:
         self.last_instructions = instructions
         self.last_tools = tools
+        self.last_native_tools = native_tools
         self.last_model_settings = model_settings
         yield self._connection
 
@@ -500,13 +507,14 @@ async def test_agent_realtime_session_wires_tools_and_instructions() -> None:
     assert 'greet' in [t.name for t in model.last_tools]
 
 
-async def test_agent_realtime_session_custom_instructions() -> None:
+async def test_agent_realtime_session_additional_instructions() -> None:
+    # `instructions=` is additive (combined with the agent's), mirroring `run`/`iter`.
     agent: Agent[None, str] = Agent(instructions='Default')
     conn = FakeRealtimeConnection([TurnComplete()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime_session(model=model, instructions='Custom') as session:
         _ = [e async for e in session]
-    assert model.last_instructions == 'Custom'
+    assert model.last_instructions == 'Default\nCustom'
 
 
 async def test_agent_realtime_session_default_instructions_empty() -> None:
@@ -648,3 +656,219 @@ async def test_agent_realtime_session_send_audio() -> None:
     async with agent.realtime_session(model=model) as session:
         await session.send_audio(b'\xab\xcd')
     assert conn.sent == [AudioInput(data=b'\xab\xcd')]
+
+
+# --- parity with run/iter: instructions, toolsets, usage, usage_limits, capabilities, metadata ---
+
+
+async def test_agent_realtime_session_dynamic_instructions() -> None:
+    # Dynamic `@agent.instructions` functions are evaluated once at connect time (like `run`).
+    agent: Agent[None, str] = Agent(instructions='Base')
+
+    @agent.instructions
+    def extra() -> str:
+        return 'Dynamic'
+
+    conn = FakeRealtimeConnection([TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model) as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Base\nDynamic'
+
+
+async def test_agent_realtime_session_additional_toolsets() -> None:
+    agent: Agent[None, str] = Agent()
+    extra_toolset: FunctionToolset[object] = FunctionToolset()
+
+    @extra_toolset.tool_plain
+    def extra_tool() -> str:
+        return 'x'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='extra_tool', args='{}'), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model, toolsets=[extra_toolset]) as session:
+        events = [e async for e in session]
+    assert 'extra_tool' in [t.name for t in model.last_tools or []]
+    completed = next(e for e in events if isinstance(e, ToolCallCompleted))
+    assert completed.result == 'x'  # the extra toolset's tool is offered AND callable
+
+
+async def test_agent_realtime_session_external_usage_accumulates() -> None:
+    usage = RunUsage()
+    conn = FakeRealtimeConnection([Usage(usage=RequestUsage(input_tokens=7, output_tokens=3)), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime_session(model=model, usage=usage) as session:
+        assert session.usage is usage  # the provided accumulator is used
+        _ = [e async for e in session]
+    assert usage.input_tokens == 7
+    assert usage.output_tokens == 3
+
+
+async def test_agent_realtime_session_token_limit_emits_session_error() -> None:
+    conn = FakeRealtimeConnection([Usage(usage=RequestUsage(input_tokens=100, output_tokens=100)), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime_session(model=model, usage_limits=UsageLimits(total_tokens_limit=50)) as session:
+        events = [e async for e in session]
+    assert len(events) == 1
+    assert isinstance(events[0], SessionError)
+    assert events[0].recoverable is False and events[0].type == 'usage_limit_exceeded'
+
+
+async def test_agent_realtime_session_tool_call_limit_emits_session_error() -> None:
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def greet() -> str:  # pragma: no cover - never runs: the limit trips first
+        return 'hi'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model, usage_limits=UsageLimits(tool_calls_limit=0)) as session:
+        events = [e async for e in session]
+    assert len(events) == 1
+    assert isinstance(events[0], SessionError) and events[0].recoverable is False
+
+
+async def test_agent_realtime_session_usage_limits_within_budget() -> None:
+    # Limits set but not breached → both checks pass (return None) and the session completes.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def greet() -> str:
+        return 'hi'
+
+    conn = FakeRealtimeConnection(
+        [
+            Usage(usage=RequestUsage(input_tokens=1, output_tokens=1)),
+            ToolCall(tool_call_id='t1', tool_name='greet', args='{}'),
+            TurnComplete(),
+        ]
+    )
+    model = FakeRealtimeModel(conn)
+    limits = UsageLimits(total_tokens_limit=1000, tool_calls_limit=10)
+    async with agent.realtime_session(model=model, usage_limits=limits) as session:
+        events = [e async for e in session]
+    assert not any(isinstance(e, SessionError) for e in events)
+    assert any(isinstance(e, ToolCallCompleted) for e in events)
+
+
+async def test_agent_realtime_session_native_tools_from_capability() -> None:
+    # `WebSearchTool` (a native tool) reaches the provider via `capabilities=[NativeTool(...)]`.
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model, capabilities=[NativeTool(WebSearchTool())]) as session:
+        _ = [e async for e in session]
+    assert model.last_native_tools is not None
+    assert any(isinstance(t, WebSearchTool) for t in model.last_native_tools)
+
+
+async def test_agent_realtime_session_local_capability_tool_declared() -> None:
+    # A capability's *local* fallback is a plain function tool: it must be declared to the provider
+    # (so the model can call it) and its native tool must NOT be forwarded. Mirrors the camera demo's
+    # `WebFetch(native=False, local=...)`, which the native-audio model needs since it lacks url_context.
+    def fetch(url: str) -> str:
+        return f'content of {url}'  # pragma: no cover - not executed in this wiring test
+
+    agent: Agent[None, str] = Agent(capabilities=[WebFetch(native=False, local=fetch)])
+    conn = FakeRealtimeConnection([TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model) as session:
+        _ = [e async for e in session]
+    assert model.last_tools is not None
+    assert 'fetch' in [t.name for t in model.last_tools]
+    assert model.last_native_tools == []  # native=False -> no url_context forwarded
+
+
+class _HookCapability(AbstractCapability[object]):
+    """Records and rewrites tool execution through the tool-lifecycle hooks."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    async def before_tool_execute(
+        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.events.append(f'before:{call.tool_name}')
+        return args
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        self.events.append(f'after:{result}')
+        return f'[hooked] {result}'
+
+
+async def test_agent_realtime_session_capability_tool_hooks() -> None:
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def greet() -> str:
+        return 'hi'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='greet', args='{}'), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    cap = _HookCapability()
+    async with agent.realtime_session(model=model, capabilities=[cap]) as session:
+        events = [e async for e in session]
+    completed = next(e for e in events if isinstance(e, ToolCallCompleted))
+    assert completed.result == '[hooked] hi'
+    assert cap.events == ['before:greet', 'after:hi']
+
+
+async def test_agent_realtime_session_metadata_and_conversation_id() -> None:
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool
+    def whoami(ctx: RunContext) -> str:
+        return f'{ctx.conversation_id}|{ctx.metadata}'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='t1', tool_name='whoami', args='{}'), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model, conversation_id='conv-1', metadata={'tier': 'gold'}) as session:
+        events = [e async for e in session]
+    completed = next(e for e in events if isinstance(e, ToolCallCompleted))
+    assert 'conv-1' in completed.result
+    assert 'gold' in completed.result
+
+
+async def test_agent_realtime_session_native_tools_override_honored() -> None:
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    with agent.override(native_tools=[WebSearchTool()]):
+        async with agent.realtime_session(model=model) as session:
+            _ = [e async for e in session]
+    assert model.last_native_tools is not None
+    assert any(isinstance(t, WebSearchTool) for t in model.last_native_tools)
+
+
+async def test_wrapper_agent_realtime_session_proxies() -> None:
+    from pydantic_ai.agent import WrapperAgent
+
+    inner: Agent[None, str] = Agent(instructions='Inner')
+    wrapper = WrapperAgent(inner)
+    conn = FakeRealtimeConnection([TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with wrapper.realtime_session(model=model) as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Inner'  # the wrapped agent's session was used
+
+
+async def test_agent_realtime_session_drops_auto_injected_tool_search() -> None:
+    # A plain agent auto-injects an optional ToolSearchTool; it must NOT be forwarded as a native
+    # tool (providers like Gemini Live reject it). Regression for the realtime native-tools wiring.
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model) as session:
+        _ = [e async for e in session]
+    assert model.last_native_tools == []

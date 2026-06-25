@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any, cast
@@ -10,7 +11,8 @@ from typing import TYPE_CHECKING, Any, cast
 import pydantic_core
 from opentelemetry.trace import Span, SpanKind
 
-from ..usage import RunUsage
+from ..exceptions import UsageLimitExceeded
+from ..usage import RunUsage, UsageLimits
 from ._base import (
     AudioInput,
     CancelResponse,
@@ -20,8 +22,10 @@ from ._base import (
     ImageInput,
     InputTranscript,
     RealtimeConnection,
+    RealtimeEvent,
     RealtimeInput,
     RealtimeSessionEvent,
+    SessionError,
     TextInput,
     ToolCall,
     ToolCallCompleted,
@@ -100,6 +104,8 @@ class RealtimeSession:
         instrumentation: InstrumentationSettings | None = None,
         model_name: str | None = None,
         agent_name: str | None = None,
+        usage: RunUsage | None = None,
+        usage_limits: UsageLimits | None = None,
     ) -> None:
         self._connection = connection
         self._tool_runner = tool_runner
@@ -107,8 +113,13 @@ class RealtimeSession:
         self._instrumentation = instrumentation
         self._model_name = model_name
         self._agent_name = agent_name
-        self.usage = RunUsage()
-        """Cumulative token usage and tool-call counts for the session, updated as events stream in."""
+        self._usage_limits = usage_limits
+        self.usage = usage if usage is not None else RunUsage()
+        """Cumulative token usage and tool-call counts for the session, updated as events stream in.
+
+        Pass `usage` to [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] to accumulate
+        into a shared [`RunUsage`][pydantic_ai.usage.RunUsage]; otherwise a fresh one is used.
+        """
 
     async def send(self, content: RealtimeInput) -> None:
         """Feed content into the underlying connection."""
@@ -232,6 +243,71 @@ class RealtimeSession:
             if tokens:
                 settings.tokens_histogram.record(tokens, {**base_attributes, 'gen_ai.token.type': token_type})
 
+    def _tool_call_limit_error(self) -> SessionError | None:
+        """A non-recoverable `SessionError` if running one more tool would breach the limits, else `None`."""
+        if self._usage_limits is None:
+            return None
+        projected = dataclasses.replace(self.usage, tool_calls=self.usage.tool_calls + 1)
+        try:
+            self._usage_limits.check_before_tool_call(projected)
+        except UsageLimitExceeded as e:
+            return SessionError(message=str(e), type='usage_limit_exceeded', recoverable=False)
+        return None
+
+    def _token_limit_error(self) -> SessionError | None:
+        """A non-recoverable `SessionError` if accumulated token usage breaches the limits, else `None`."""
+        if self._usage_limits is None:
+            return None
+        try:
+            self._usage_limits.check_tokens(self.usage)
+        except UsageLimitExceeded as e:
+            return SessionError(message=str(e), type='usage_limit_exceeded', recoverable=False)
+        return None
+
+    async def _run_background_tool(self, call: ToolCall, queue: asyncio.Queue[RealtimeSessionEvent | object]) -> None:
+        """Run a background tool and feed its completion (or failure) back through the queue."""
+        try:
+            result = await self._run_tool(call)
+        except Exception as e:
+            # Surface the failure through the queue so the consumer re-raises it, instead of letting it
+            # vanish into the final `gather(..., return_exceptions=True)` and hang the session on a
+            # completion that never arrives.
+            await queue.put(e)
+            return
+        await queue.put(ToolCallCompleted(tool_name=call.tool_name, tool_call_id=call.tool_call_id, result=result))
+
+    async def _handle_pump_event(
+        self,
+        event: RealtimeEvent,
+        queue: asyncio.Queue[RealtimeSessionEvent | object],
+        background: set[asyncio.Task[None]],
+    ) -> bool:
+        """Process one upstream event onto the queue; return `True` to stop the pump (a limit tripped)."""
+        if isinstance(event, ToolCall):
+            if (limit_error := self._tool_call_limit_error()) is not None:
+                await queue.put(limit_error)
+                return True
+            self.usage.tool_calls += 1
+            await queue.put(ToolCallStarted(tool_name=event.tool_name, tool_call_id=event.tool_call_id))
+            if event.tool_name in self._background_tools:
+                task = asyncio.create_task(self._run_background_tool(event, queue))
+                background.add(task)
+                task.add_done_callback(background.discard)
+            else:
+                result = await self._run_tool(event)
+                await queue.put(
+                    ToolCallCompleted(tool_name=event.tool_name, tool_call_id=event.tool_call_id, result=result)
+                )
+            return False
+        if isinstance(event, Usage):
+            self.usage.incr(event.usage)
+            self.usage.requests += 1
+            if (limit_error := self._token_limit_error()) is not None:
+                await queue.put(limit_error)
+                return True
+        await queue.put(event)
+        return False
+
     async def _stream(self) -> AsyncIterator[RealtimeSessionEvent]:
         # Both the upstream connection and finished background tools feed a single queue, so a
         # background completion wakes the consumer immediately instead of waiting for the next
@@ -241,40 +317,12 @@ class RealtimeSession:
         background: set[asyncio.Task[None]] = set()
         pump_error: Exception | None = None
 
-        async def run_background(call: ToolCall) -> None:
-            try:
-                result = await self._run_tool(call)
-            except Exception as e:
-                # Surface the failure through the queue so the consumer re-raises it, instead of
-                # letting it vanish into the final `gather(..., return_exceptions=True)` and hang the
-                # session on a completion that never arrives.
-                await queue.put(e)
-                return
-            await queue.put(ToolCallCompleted(tool_name=call.tool_name, tool_call_id=call.tool_call_id, result=result))
-
         async def pump() -> None:
             nonlocal pump_error
             try:
                 async for event in self._connection:
-                    if isinstance(event, ToolCall):
-                        self.usage.tool_calls += 1
-                        await queue.put(ToolCallStarted(tool_name=event.tool_name, tool_call_id=event.tool_call_id))
-                        if event.tool_name in self._background_tools:
-                            task = asyncio.create_task(run_background(event))
-                            background.add(task)
-                            task.add_done_callback(background.discard)
-                        else:
-                            result = await self._run_tool(event)
-                            await queue.put(
-                                ToolCallCompleted(
-                                    tool_name=event.tool_name, tool_call_id=event.tool_call_id, result=result
-                                )
-                            )
-                    else:
-                        if isinstance(event, Usage):
-                            self.usage.incr(event.usage)
-                            self.usage.requests += 1
-                        await queue.put(event)
+                    if await self._handle_pump_event(event, queue, background):
+                        return  # a usage limit tripped: stop reading the upstream
             except Exception as e:
                 pump_error = e
             finally:

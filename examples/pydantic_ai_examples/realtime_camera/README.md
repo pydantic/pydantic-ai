@@ -45,6 +45,19 @@ Other overrides: `CAMERA_TURN_COVERAGE` (`activity_only` | `all_input` | `all_vi
 `CAMERA_WATCH_PROMPT` (what the model is asked on each nudge). Watch mode costs extra tokens, since
 it prompts the model on a timer.
 
+### Web search
+
+The assistant can **search the web** (Gemini's Grounding with Google Search) via
+`Agent(capabilities=[WebSearch()])` — on by default. Ask it something current ("what's the weather
+where I'm pointing?", "who won last night?") and it grounds the answer, then the UI shows the
+**sources** it used as clickable chips. Set `CAMERA_WEB_SEARCH=false` to disable, or if your
+model/region doesn't support grounding.
+
+> URL reading (`WebFetch`) isn't enabled here: the Live native-audio model can't combine Google Search
+> grounding with function calling in one session, so a fetch tool alongside grounding wouldn't be
+> callable. See the [realtime guide](https://ai.pydantic.dev/realtime/#built-in-tools-web-search) for
+> how to use `WebFetch` (including its local fallback) on its own.
+
 ### Using a work Google Cloud account (Vertex AI)
 
 If your organization disallows Gemini API keys, use **Vertex AI** with Application Default

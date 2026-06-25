@@ -800,3 +800,14 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     async with model.connect(instructions='x') as conn:
         events = [e async for e in conn]
     assert events == [TurnComplete(interrupted=False)]
+
+
+async def test_connect_rejects_native_tools() -> None:
+    # The OpenAI realtime provider doesn't support native tools yet → clear error before dialing.
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.native_tools import WebSearchTool
+
+    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    with pytest.raises(UserError, match='native tools'):
+        async with model.connect(instructions='x', native_tools=[WebSearchTool()]):
+            pass  # pragma: no cover - connect raises before yielding

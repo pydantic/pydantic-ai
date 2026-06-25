@@ -30,6 +30,8 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `realtime` optional group - `pip install "pydantic-ai-slim[realtime]"`'
     ) from _import_error
 
+from ..exceptions import UserError
+from ..native_tools import AbstractNativeTool
 from ..settings import ModelSettings, ToolChoice
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -604,8 +606,14 @@ class OpenAIRealtimeModel(RealtimeModel):
         *,
         instructions: str,
         tools: list[ToolDefinition] | None = None,
+        native_tools: list[AbstractNativeTool] | None = None,
         model_settings: ModelSettings | None = None,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
+        if native_tools:
+            raise UserError(
+                f'The OpenAI realtime provider does not support native tools yet (got '
+                f'{", ".join(type(t).__name__ for t in native_tools)}).'
+            )
         api_key = self.api_key or os.environ.get('OPENAI_API_KEY', '')
         url = f'{self.base_url}?model={self.model}'
         headers = {'Authorization': f'Bearer {api_key}'}

@@ -7,7 +7,7 @@ detect when the user starts talking (so the model can be interrupted), and can c
 conversation.
 
 Pydantic AI exposes this through a small provider-agnostic layer in
-[`pydantic_ai.realtime`][pydantic_ai.realtime], with [`Agent.realtime_session`][pydantic_ai.Agent.realtime_session]
+[`pydantic_ai.realtime`][pydantic_ai.realtime], with [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session]
 as the high-level entry point: it reuses the agent's tools and instructions and runs the tool-call
 loop for you.
 
@@ -98,6 +98,7 @@ Iterating a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] yields:
 | [`Usage`][pydantic_ai.realtime.Usage] | Token usage for a completed model response (see [Usage and cost](#usage-and-cost)). |
 | [`RateLimits`][pydantic_ai.realtime.RateLimits] | An updated rate-limit snapshot from the provider. |
 | [`Reconnected`][pydantic_ai.realtime.Reconnected] | The connection dropped and was automatically re-established (see [Reconnecting](#reconnecting)). |
+| [`Sources`][pydantic_ai.realtime.Sources] | Web pages the model grounded its answer on, when using a built-in web tool (see [Built-in tools](#built-in-tools-web-search)). |
 | [`SessionError`][pydantic_ai.realtime.SessionError] | The provider reported an error (`recoverable=False` means the connection dropped). |
 
 ## Configuring the session
@@ -231,6 +232,62 @@ async with agent.realtime_session(model=model, background_tools={'deep_research'
     ...
 ```
 
+### Built-in tools (web search)
+
+Provider-native tools run server-side. Add them as you would for a normal run — via the high-level
+[`WebSearch`][pydantic_ai.capabilities.WebSearch] / [`WebFetch`][pydantic_ai.capabilities.WebFetch]
+capabilities (or the lower-level [`NativeTool`][pydantic_ai.capabilities.NativeTool]) — and they flow
+into the session. **Gemini** maps [`WebSearch`][pydantic_ai.capabilities.WebSearch] to Grounding with
+Google Search and [`WebFetch`][pydantic_ai.capabilities.WebFetch] to URL context, so the model can
+search the web and read a page mid-conversation:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.realtime import Sources
+from pydantic_ai.realtime.google import GoogleRealtimeModel
+
+agent = Agent(instructions='Answer questions, searching the web when useful.')
+
+async with agent.realtime_session(
+    model=GoogleRealtimeModel('gemini-live-2.5-flash-native-audio'),
+    capabilities=[WebSearch()],
+) as session:
+    async for event in session:
+        if isinstance(event, Sources):
+            # Cite what the model grounded its answer on.
+            for source in event.sources:
+                print(source.title, source.url)
+```
+
+`WebFetch()` works the same way on models that support URL context — but see the caveats below before
+combining it with `WebSearch` on Gemini 2.5.
+
+When the model grounds an answer on web results, the session emits a
+[`Sources`][pydantic_ai.realtime.Sources] event carrying the search queries and the
+[`WebSource`][pydantic_ai.realtime.WebSource] pages it used — surface these as citations in your UI.
+
+Only `WebSearch` / `WebFetch` (web search and URL context) are supported on Gemini Live today; other
+native tools raise a `UserError`. The OpenAI realtime provider does not support native tools yet (it
+raises `UserError`).
+
+!!! warning "`WebFetch` (URL context) isn't supported natively on native-audio models"
+    The `gemini-live-2.5-flash-native-audio` model supports `WebSearch` (Grounding with Google Search)
+    but **not** native `WebFetch` (`url_context`): the connection opens, but the session drops with
+    `Unexpected function call` the first time the model tries to fetch a URL.
+
+    Use the **local fallback** instead — `WebFetch(native=False, local=True)`. It registers an ordinary
+    function tool (which the native-audio model *does* support) that fetches the page in your own
+    process, so it works on any Live model. The fetch runs from your network and needs the `web-fetch`
+    optional group. The same applies to `WebSearch(native=False, local='duckduckgo')` if you need
+    search on a model without grounding.
+
+!!! warning "Don't combine native Google Search grounding with function tools on Gemini 2.5"
+    Gemini 2.5 models (including native-audio) can't use Grounding with Google Search **and** function
+    calling in the same session — only Gemini 3 supports that combination. So pairing native
+    `WebSearch()` (grounding) with *any* function tool (including a local `WebFetch` fallback) leaves
+    the function tool uncallable: the model will say it can't use it. Pick one — native grounding, or
+    function tools (use local fallbacks for both search and fetch) — unless you're on Gemini 3.
+
 ## Usage and cost
 
 The session accumulates token usage as the model responds. Read it from
@@ -245,6 +302,21 @@ async with agent.realtime_session(model=model) as session:
     async for event in session:
         ...
     print(session.usage)  # cumulative tokens + tool calls for the session
+```
+
+Pass `usage` to accumulate into a shared [`RunUsage`][pydantic_ai.usage.RunUsage] (e.g. to total a
+voice session and follow-up text runs together), and `usage_limits` to cap a session. Token and
+tool-call limits are enforced as usage accrues; on breach the session emits a non-recoverable
+[`SessionError`][pydantic_ai.realtime.SessionError] and ends.
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.usage import RunUsage, UsageLimits
+
+shared = RunUsage()
+async with agent.realtime_session(
+    model=model, usage=shared, usage_limits=UsageLimits(total_tokens_limit=100_000)
+) as session:
+    ...
 ```
 
 ## Observability with Logfire
@@ -296,6 +368,48 @@ model = GoogleRealtimeModel(
     reconnect=ReconnectPolicy(max_attempts=5),
 )
 ```
+
+## Relationship to `run` / `iter`
+
+[`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] is the realtime sibling of
+[`run`][pydantic_ai.agent.AbstractAgent.run] / [`iter`][pydantic_ai.agent.AbstractAgent.iter]. It
+accepts the parameters that map to a long-lived, bidirectional session and intentionally omits the
+ones that are specific to the request-response graph (faking them would be misleading).
+
+| `run` / `iter` parameter | In `realtime_session`? |
+| --- | --- |
+| `deps`, `model_settings` | ✅ same |
+| `instructions` | ✅ additive (combined with the agent's); dynamic `@agent.instructions` evaluated once at connect |
+| `toolsets` | ✅ extra toolsets for the session |
+| `capabilities` | ⚠️ **tool-lifecycle hooks only** — `prepare_tools` and `before`/`after`/`wrap`/`on_error` `tool_execute`. The session executes tools but has no model-request/graph/output stages, so those hooks (and deferred loading / capability toolsets) don't run |
+| `usage`, `usage_limits` | ✅ accumulate / enforce (token + tool-call limits; see [Usage and cost](#usage-and-cost)) |
+| `metadata`, `conversation_id` | ✅ set on the `RunContext` (and telemetry span) for tools/correlation |
+| `output_type` | ❌ no structured output → [delegate](#delegating-to-a-text-agent) |
+| `message_history` / `conversation_id` (as history) | ❌ conversation state lives on the provider; for Gemini see [session resumption](#reconnecting) |
+| `user_prompt` | ❌ stream input with `send_audio` / `send_text` / `send_image` instead |
+| `retries`, `deferred_tool_results`, `event_stream_handler` | ❌ graph-only (the session *is* the event stream) |
+
+Realtime-only: `background_tools` (run a tool concurrently while the model keeps talking).
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+from pydantic_ai.usage import UsageLimits
+
+async with agent.realtime_session(
+    model=OpenAIRealtimeModel('gpt-realtime'),
+    toolsets=[extra_toolset],            # extra tools for this session
+    capabilities=[my_capability],        # tool-lifecycle hooks run
+    usage_limits=UsageLimits(total_tokens_limit=100_000),
+    metadata={'tenant': 'acme'},
+) as session:
+    ...
+```
+
+`realtime_session` lives on [`AbstractAgent`][pydantic_ai.agent.AbstractAgent], so it's available on
+[`WrapperAgent`][pydantic_ai.agent.WrapperAgent] and wrapped agents (durable, instrumented, …) just
+like `run`/`iter`. [`agent.override(...)`][pydantic_ai.agent.AbstractAgent.override] of `deps`,
+`toolsets`, `instructions`, `metadata`, and `native_tools` is honored (spec-based capability override
+is the one exception, since capabilities only run their tool hooks here).
 
 ## Delegating to a text agent
 

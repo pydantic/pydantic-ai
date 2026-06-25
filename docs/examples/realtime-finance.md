@@ -21,7 +21,7 @@ Demonstrates:
 
 Here's the mental model — it's smaller than it sounds:
 
-```
+```text
 🎙  you speak ──▶ OpenAI Realtime (the "voice")
                       │  "let me check that…"  (speaks immediately)
                       ▼

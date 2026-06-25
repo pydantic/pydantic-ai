@@ -32,6 +32,8 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `google` optional group - `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
 
+from ..exceptions import UserError
+from ..native_tools import AbstractNativeTool, WebFetchTool, WebSearchTool
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -46,6 +48,7 @@ from ._base import (
     RealtimeModel,
     Reconnected,
     SessionError,
+    Sources,
     SpeechStarted,
     TextInput,
     ToolCall,
@@ -53,6 +56,7 @@ from ._base import (
     Transcript,
     TurnComplete,
     Usage,
+    WebSource,
 )
 
 INPUT_SAMPLE_RATE = 16000
@@ -139,6 +143,46 @@ def _tool_def_to_genai(tool: ToolDefinition) -> genai_types.FunctionDeclaration:
         description=tool.description or None,
         parameters_json_schema=tool.parameters_json_schema,
     )
+
+
+def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
+    """Map a pydantic-ai native tool to a Gemini built-in `Tool`.
+
+    [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] maps to Grounding with Google Search and
+    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] to URL context; other native tools raise a
+    `UserError`.
+    """
+    if isinstance(tool, WebSearchTool):
+        return genai_types.Tool(google_search=genai_types.GoogleSearch())
+    if isinstance(tool, WebFetchTool):
+        return genai_types.Tool(url_context=genai_types.UrlContext())
+    raise UserError(
+        f'Gemini Live does not support the native tool {type(tool).__name__!r} (only WebSearchTool and WebFetchTool).'
+    )
+
+
+def _map_grounding(content: genai_types.LiveServerContent) -> Sources | None:
+    """Extract web citations from Gemini grounding / URL-context metadata, if any.
+
+    Combines the web pages from Google Search grounding (`grounding_metadata`) and the URLs fetched via
+    URL context (`url_context_metadata`) into a single [`Sources`][pydantic_ai.realtime.Sources] event.
+    """
+    sources: list[WebSource] = []
+    queries: list[str] = []
+    grounding = content.grounding_metadata
+    if grounding is not None:
+        queries = list(grounding.web_search_queries or [])
+        for chunk in grounding.grounding_chunks or []:
+            if chunk.web is not None and chunk.web.uri:
+                sources.append(WebSource(url=chunk.web.uri, title=chunk.web.title))
+    url_context = content.url_context_metadata
+    if url_context is not None:
+        for meta in url_context.url_metadata or []:
+            if meta.retrieved_url:
+                sources.append(WebSource(url=meta.retrieved_url))
+    if not sources and not queries:
+        return None
+    return Sources(sources=sources, queries=queries)
 
 
 def _map_usage(usage: genai_types.UsageMetadata) -> RequestUsage:
@@ -302,6 +346,7 @@ class GoogleRealtimeModel(RealtimeModel):
         tools: list[ToolDefinition] | None,
         model_settings: ModelSettings | None,
         *,
+        native_tools: list[AbstractNativeTool] | None = None,
         resumption_handle: str | None = None,
     ) -> genai_types.LiveConnectConfig:
         modality = genai_types.Modality.AUDIO if self.response_modality == 'audio' else genai_types.Modality.TEXT
@@ -329,8 +374,14 @@ class GoogleRealtimeModel(RealtimeModel):
             )
         if self.enable_session_resumption:
             config.session_resumption = genai_types.SessionResumptionConfig(handle=resumption_handle)
+        # Typed as `list[Any]` because `LiveConnectConfig.tools` is a broad union (Tool | Callable |
+        # MCP types); a precisely-typed `list[Tool]` isn't assignable to it (list invariance).
+        genai_tools: list[Any] = []
         if tools:
-            config.tools = [genai_types.Tool(function_declarations=[_tool_def_to_genai(t) for t in tools])]
+            genai_tools.append(genai_types.Tool(function_declarations=[_tool_def_to_genai(t) for t in tools]))
+        genai_tools.extend(_native_tool_to_genai(t) for t in native_tools or [])
+        if genai_tools:
+            config.tools = genai_tools
         self._apply_generation(config, model_settings)
         if self.config_overrides:
             for key, value in self.config_overrides.items():
@@ -343,6 +394,7 @@ class GoogleRealtimeModel(RealtimeModel):
         *,
         instructions: str,
         tools: list[ToolDefinition] | None = None,
+        native_tools: list[AbstractNativeTool] | None = None,
         model_settings: ModelSettings | None = None,
     ) -> AsyncGenerator[GoogleRealtimeConnection]:
         client = self._client()
@@ -358,9 +410,10 @@ class GoogleRealtimeModel(RealtimeModel):
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
-            opening = client.aio.live.connect(
-                model=self.model, config=self._config(instructions, tools, model_settings, resumption_handle=handle)
+            config = self._config(
+                instructions, tools, model_settings, native_tools=native_tools, resumption_handle=handle
             )
+            opening = client.aio.live.connect(model=self.model, config=config)
             session = await opening.__aenter__()
             cm = opening
             return session
@@ -408,7 +461,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 audio=genai_types.Blob(data=content.data, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
             )
         elif isinstance(content, TextInput):
-            await self._session.send_realtime_input(text=content.text)  # pyright: ignore[reportUnknownMemberType]
+            # A typed message is a discrete turn: commit it with `send_client_content(turn_complete=True)`
+            # so the model replies, rather than buffering it as streaming realtime input.
+            await self._session.send_client_content(
+                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
+                turn_complete=True,
+            )
         elif isinstance(content, ImageInput):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
                 video=genai_types.Blob(data=content.data, mime_type=content.mime_type)
@@ -486,6 +544,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 )
             if content.interrupted:
                 events.append(SpeechStarted())
+            if (sources := _map_grounding(content)) is not None:
+                events.append(sources)
             if content.turn_complete:
                 events.append(TurnComplete(interrupted=False))
         if message.tool_call is not None:

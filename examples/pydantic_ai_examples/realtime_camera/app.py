@@ -32,6 +32,10 @@ only) so the model stays silent when nothing changed instead of replying to ever
 `CAMERA_TURN_COVERAGE` defaults to `all_input` (works on both the Gemini Developer API and Vertex AI).
 The newer `all_video` value keeps *all* video but only audio during speech — but it isn't accepted on
 Vertex's `v1beta1` API yet, so it's not the default.
+
+Web search (the `WebSearch` capability — Grounding with Google Search) is **on by default** so the
+assistant can answer with current facts and cite its sources as chips in the UI; set
+`CAMERA_WEB_SEARCH=false` to disable (or if your model/region doesn't support grounding).
 """
 
 from __future__ import annotations
@@ -49,11 +53,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.realtime import (
     AudioDelta,
     InputTranscript,
     RealtimeSession,
     RealtimeSessionEvent,
+    Sources,
     SpeechStarted,
     Transcript,
     TurnComplete,
@@ -86,6 +92,11 @@ TURN_COVERAGE = cast(
 )
 PROACTIVE = os.environ.get('CAMERA_PROACTIVE', '').lower() in ('1', 'true', 'yes')
 AFFECTIVE = os.environ.get('CAMERA_AFFECTIVE', '').lower() in ('1', 'true', 'yes')
+# Grounding with Google Search (a native tool) — on by default; `gemini-live-2.5-flash-native-audio`
+# supports it. Set `CAMERA_WEB_SEARCH=false` to disable, or if your model/region doesn't support it.
+# (We don't also add `WebFetch` here: Gemini 2.5 / native-audio can't combine Google Search grounding
+# with function calling in one session, so a fetch tool alongside grounding wouldn't be callable.)
+WEB_SEARCH = os.environ.get('CAMERA_WEB_SEARCH', 'true').lower() in ('1', 'true', 'yes')
 WATCH_PROMPT = os.environ.get(
     'CAMERA_WATCH_PROMPT',
     "Look at the current camera view. In a few words, say what's changed since you last spoke; "
@@ -97,9 +108,13 @@ INSTRUCTIONS = (
     'You are a friendly, concise voice assistant. The user is talking to you and may show you things '
     'through their camera — when relevant, describe and reason about what you can see. Keep replies '
     'short and natural, like a conversation.'
+    + (' Search the web when a question needs current or external facts.' if WEB_SEARCH else '')
 )
 
-agent = Agent(instructions=INSTRUCTIONS)
+# `WebSearch()` flows in as Gemini's native Grounding with Google Search, the same way it would for a
+# normal `agent.run()`. When the model grounds an answer, the session emits a `Sources` event that the
+# browser renders as citation chips.
+agent = Agent(instructions=INSTRUCTIONS, capabilities=[WebSearch()] if WEB_SEARCH else [])
 app = FastAPI()
 
 
@@ -119,7 +134,9 @@ async def index() -> HTMLResponse:
             'affective': AFFECTIVE,
         }
     )
-    return HTMLResponse(_INDEX_PATH.read_text().replace('__DEFAULTS__', defaults))
+    return HTMLResponse(
+        _INDEX_PATH.read_text(encoding='utf-8').replace('__DEFAULTS__', defaults)
+    )
 
 
 def _build_model(params: Mapping[str, str]) -> GoogleRealtimeModel:
@@ -163,6 +180,12 @@ def _json_message(event: RealtimeSessionEvent) -> dict[str, object] | None:
         return {'type': 'user', 'text': event.text}
     if isinstance(event, Transcript) and event.is_final and event.text:
         return {'type': 'assistant', 'text': event.text}
+    if isinstance(event, Sources):
+        return {
+            'type': 'sources',
+            'queries': event.queries,
+            'sources': [{'url': s.url, 'title': s.title} for s in event.sources],
+        }
     if isinstance(event, TurnComplete):
         return {'type': 'turn_complete'}
     return None

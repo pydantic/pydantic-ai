@@ -8,6 +8,8 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
     AudioInput,
@@ -15,6 +17,7 @@ from pydantic_ai.realtime import (
     InputTranscript,
     Reconnected,
     SessionError,
+    Sources,
     SpeechStarted,
     TextInput,
     ToolCall,
@@ -22,6 +25,7 @@ from pydantic_ai.realtime import (
     Transcript,
     TurnComplete,
     Usage,
+    WebSource,
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -64,9 +68,13 @@ class _RecordingSession:
         self._close_exc = close_exc or ConnectionClosed(None, None)
         self.realtime: list[dict[str, Any]] = []
         self.tool_responses: list[Any] = []
+        self.client_content: list[dict[str, Any]] = []
 
     async def send_realtime_input(self, **kwargs: Any) -> None:
         self.realtime.append(kwargs)
+
+    async def send_client_content(self, *, turns: Any = None, turn_complete: bool = True) -> None:
+        self.client_content.append({'turns': turns, 'turn_complete': turn_complete})
 
     async def send_tool_response(self, *, function_responses: Any) -> None:
         self.tool_responses.append(function_responses)
@@ -99,6 +107,28 @@ def test_tool_def_to_genai_with_and_without_description() -> None:
         ToolDefinition(name='ping', parameters_json_schema={'type': 'object'})
     )
     assert without_desc.description is None
+
+
+def test_native_tool_web_search_maps_to_google_search() -> None:
+    tool = rt_google._native_tool_to_genai(WebSearchTool())  # pyright: ignore[reportPrivateUsage]
+    assert tool.google_search is not None
+
+
+def test_native_tool_web_fetch_maps_to_url_context() -> None:
+    tool = rt_google._native_tool_to_genai(WebFetchTool())  # pyright: ignore[reportPrivateUsage]
+    assert tool.url_context is not None
+
+
+def test_native_tool_unsupported_raises() -> None:
+    with pytest.raises(UserError, match='WebSearchTool and WebFetchTool'):
+        rt_google._native_tool_to_genai(CodeExecutionTool())  # pyright: ignore[reportPrivateUsage]
+
+
+def test_config_combines_function_and_native_tools() -> None:
+    tools = [ToolDefinition(name='f', parameters_json_schema={'type': 'object'})]
+    config = GoogleRealtimeModel()._config('hi', tools, None, native_tools=[WebSearchTool()])  # pyright: ignore[reportPrivateUsage]
+    assert config.tools[0].function_declarations[0].name == 'f'  # type: ignore[index,union-attr]
+    assert config.tools[1].google_search is not None  # type: ignore[index,union-attr]
 
 
 def test_map_usage_full_and_empty() -> None:
@@ -196,9 +226,13 @@ async def test_send_audio() -> None:
 
 
 async def test_send_text() -> None:
+    # A typed turn is committed with `send_client_content(turn_complete=True)` so the model replies.
     session = _RecordingSession()
     await _conn(session).send(TextInput(text='hello'))
-    assert session.realtime[0]['text'] == 'hello'
+    sent = session.client_content[0]
+    assert sent['turn_complete'] is True
+    assert sent['turns'].role == 'user'
+    assert sent['turns'].parts[0].text == 'hello'
 
 
 async def test_send_image_as_video_frame() -> None:
@@ -285,6 +319,49 @@ def test_map_tool_call_and_usage() -> None:
         ToolCall(tool_call_id='c1', tool_name='calc', args=json.dumps({'x': 1})),
         Usage(usage=RequestUsage(input_tokens=7, output_tokens=2)),
     ]
+
+
+def test_map_grounding_and_url_context_to_sources() -> None:
+    conn = _conn(_RecordingSession())
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(
+            grounding_metadata=genai_types.GroundingMetadata(
+                web_search_queries=['weather rome'],
+                grounding_chunks=[
+                    genai_types.GroundingChunk(
+                        web=genai_types.GroundingChunkWeb(uri='https://example.com', title='Example')
+                    ),
+                    genai_types.GroundingChunk(web=None),  # ignored: no web chunk
+                    genai_types.GroundingChunk(web=genai_types.GroundingChunkWeb(uri=None)),  # ignored: no uri
+                ],
+            ),
+            url_context_metadata=genai_types.UrlContextMetadata(
+                url_metadata=[
+                    genai_types.UrlMetadata(retrieved_url='https://fetched.example'),
+                    genai_types.UrlMetadata(retrieved_url=None),  # ignored: no url
+                ]
+            ),
+        )
+    )
+    assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
+        Sources(
+            sources=[
+                WebSource(url='https://example.com', title='Example'),
+                WebSource(url='https://fetched.example'),
+            ],
+            queries=['weather rome'],
+        )
+    ]
+
+
+def test_map_grounding_absent_yields_no_sources() -> None:
+    conn = _conn(_RecordingSession())
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(
+            grounding_metadata=genai_types.GroundingMetadata(grounding_chunks=[]),
+        )
+    )
+    assert conn._map_message(message) == []  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_empty_message_yields_nothing() -> None:
