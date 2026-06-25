@@ -144,7 +144,9 @@ class BedrockModelProfile(ModelProfile, total=False):
     `False` is the default only because non-reasoning families (Nova, Llama, …) never produce signed parts,
     so it is equivalent to `'auto'` for them. It is **deprecated** and will be removed in v3: setting it on a
     reasoning model drops signed thinking blocks, which Anthropic-via-Bedrock rejects on tool-use turns with a
-    `ValidationException`. Use `'auto'` instead."""
+    `ValidationException`. Use `'auto'` instead.
+
+    This field used to be a `bool`; the old `True` maps to `'auto'`."""
     bedrock_supports_prompt_caching: bool
     """Default: `False`."""
     bedrock_supports_tool_caching: bool
@@ -302,6 +304,7 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
         _strip_builtin_tools(qwen_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_thinking_variant='qwen',
+            bedrock_send_back_thinking_parts='auto',
             supports_thinking=supports_reasoning,
             thinking_always_enabled=supports_reasoning,
             json_schema_transformer=BedrockJsonSchemaTransformer,
