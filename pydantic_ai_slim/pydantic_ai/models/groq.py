@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -46,8 +47,7 @@ from ..messages import (
 )
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..output import OutputObjectDefinition
-from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.groq import GroqModelProfile
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -140,6 +140,12 @@ class GroqModelSettings(ModelSettings, total=False):
     See [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-format) for more details.
     """
 
+    groq_reasoning_effort: Literal['none', 'default', 'low', 'medium', 'high']
+    """The reasoning effort level.
+
+    See [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort) for more details.
+    """
+
 
 @dataclass(init=False)
 class GroqModel(Model[AsyncGroq]):
@@ -178,7 +184,7 @@ class GroqModel(Model[AsyncGroq]):
             provider = infer_provider('gateway/groq' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> AsyncGroq:
@@ -323,7 +329,7 @@ class GroqModel(Model[AsyncGroq]):
         elif (
             model_request_parameters.output_mode == 'prompted'
             and not tools
-            and self.profile.supports_json_object_output
+            and self.profile.get('supports_json_object_output', False)
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
@@ -335,17 +341,29 @@ class GroqModel(Model[AsyncGroq]):
         # stay aligned for the default path. An explicit `groq_reasoning_format` does still ride alongside
         # `reasoning_effort='none'` on the wire (it short-circuits `_translate_thinking`), but Groq accepts the pair
         # (HTTP 200) and lets `reasoning_effort='none'` win — reasoning is disabled and the format is ignored.
-        groq_profile = GroqModelProfile.from_profile(self.profile)
-        disable_via_effort = model_request_parameters.thinking is False and groq_profile.groq_supports_reasoning_disable
+        disable_via_effort = model_request_parameters.thinking is False and self.profile.get(
+            'groq_supports_reasoning_disable', False
+        )
 
         extra_body = model_settings.get('extra_body')
-        if disable_via_effort:
+        # `reasoning_effort` value sets are family-specific on Groq (qwen3: none/default; gpt-oss: low/medium/high),
+        # so we don't map the unified `thinking` level here — only the explicit `groq_reasoning_effort` setting, plus
+        # the qwen3 disable signal (`'none'`), which wins. Unified thinking still controls `reasoning_format` above.
+        groq_reasoning_effort = model_settings.get('groq_reasoning_effort')
+        if disable_via_effort and groq_reasoning_effort is not None:
+            warnings.warn(
+                "`thinking=False` disables reasoning on this Groq model via `reasoning_effort='none'`, "
+                'which overrides the `groq_reasoning_effort` setting; `groq_reasoning_effort` will be ignored.',
+                UserWarning,
+            )
+        effort = 'none' if disable_via_effort else groq_reasoning_effort
+        if effort is not None:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
             # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.
             merged_extra_body: dict[str, object] = {}
             if isinstance(extra_body, Mapping):
                 merged_extra_body.update(extra_body)  # pyright: ignore[reportUnknownArgumentType]
-            merged_extra_body['reasoning_effort'] = 'none'
+            merged_extra_body['reasoning_effort'] = effort
             extra_body = merged_extra_body
 
         with _map_api_errors(self.model_name):
@@ -387,7 +405,11 @@ class GroqModel(Model[AsyncGroq]):
                     items.append(return_part)
         if choice.message.content:
             # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
-            items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
+            items.extend(
+                split_content_into_text_and_thinking(
+                    choice.message.content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+                )
+            )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
@@ -474,7 +496,7 @@ class GroqModel(Model[AsyncGroq]):
         tools: list[chat.ChatCompletionToolParam] = []
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
+                if not self.profile.get('groq_always_has_web_search_builtin_tool', False):
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
             else:  # pragma: no cover
                 raise UserError(
@@ -500,7 +522,7 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.thinking_tags
+                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # These are not currently sent back
@@ -703,8 +725,10 @@ class GroqStreamedResponse(StreamedResponse):
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id='content',
                             content=content,
-                            thinking_tags=self._model_profile.thinking_tags,
-                            ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                            thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
+                            ignore_leading_whitespace=self._model_profile.get(
+                                'ignore_streamed_leading_whitespace', False
+                            ),
                         ):
                             yield event
 
@@ -735,8 +759,10 @@ class GroqStreamedResponse(StreamedResponse):
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id='tool_use_failed',
                             content=failed_generation,
-                            thinking_tags=self._model_profile.thinking_tags,
-                            ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                            thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
+                            ignore_leading_whitespace=self._model_profile.get(
+                                'ignore_streamed_leading_whitespace', False
+                            ),
                         ):
                             yield event
                     return

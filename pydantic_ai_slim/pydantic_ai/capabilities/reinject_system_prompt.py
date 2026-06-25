@@ -12,14 +12,6 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 
-# TODO (v2): consider making this the default behavior by adding `ReinjectSystemPrompt()` to
-# every `Agent`'s default capabilities. Issue #1646 has been open since 2025-05 with community
-# users repeatedly asking for this. Deferred to v2 because it changes the documented contract
-# of `agent.run(message_history=[...])` — callers who deliberately omit the agent's system
-# prompt (compaction pipelines, replay harnesses, OpenAI Responses with `previous_response_id`
-# server-side memory) would see new content added to their requests.
-
-
 @dataclass
 class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     """Capability that reinjects the agent's configured `system_prompt` when missing from history.
