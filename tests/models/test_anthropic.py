@@ -6683,7 +6683,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     )
 
     # Get tools from model
-    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, beta_features = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -6693,6 +6693,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
 
     # Verify all parameters are passed correctly
     assert web_fetch_tool_param.get('type') == 'web_fetch_20250910'
+    assert 'web-fetch-2025-09-10' in beta_features
     assert web_fetch_tool_param.get('max_uses') == 5
     assert web_fetch_tool_param.get('allowed_domains') == ['example.com', 'ai.pydantic.dev']
     assert web_fetch_tool_param.get('blocked_domains') is None
@@ -10268,10 +10269,10 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     assert {tool['name'] for tool in create_kwargs['tools']} == {'lookup', 'code_execution', 'web_fetch', 'memory'}
     assert {tool['name']: tool['type'] for tool in create_kwargs['tools'] if 'type' in tool} == {
         'code_execution': 'code_execution_20260120',
-        'web_fetch': 'web_fetch_20250910',
+        'web_fetch': 'web_fetch_20260209',
         'memory': 'memory_20250818',
     }
-    assert create_kwargs['betas'] == ['context-management-2025-06-27', 'web-fetch-2025-09-10']
+    assert create_kwargs['betas'] == ['context-management-2025-06-27']
 
 
 async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_requests: None):
