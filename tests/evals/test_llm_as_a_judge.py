@@ -8,7 +8,9 @@ from ..conftest import BinaryContent, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.settings import ModelSettings
+    from pydantic_evals.evaluators import llm_as_a_judge as _llm_judge_mod
     from pydantic_evals.evaluators.llm_as_a_judge import (
+        _REASON_FIELD_GUIDANCE,  # pyright: ignore[reportPrivateUsage]
         GradingOutput,
         _stringify,  # pyright: ignore[reportPrivateUsage]
         judge_input_output,
@@ -39,6 +41,27 @@ def test_grading_output():
     assert output.reason == 'Test passed'
     assert output.pass_ is True
     assert output.score == 1.0
+
+
+def test_all_judge_agents_carry_reason_guidance():
+    """Pins the contract from #5034: every built-in judge agent's system prompt
+    must include the `_REASON_FIELD_GUIDANCE` block, so `reason` stays
+    retry-safe (concise, stable, no leaked chain-of-thought) regardless of
+    which judge function the caller picks.
+    """
+    agents = [
+        _llm_judge_mod._judge_output_agent,  # pyright: ignore[reportPrivateUsage]
+        _llm_judge_mod._judge_input_output_agent,  # pyright: ignore[reportPrivateUsage]
+        _llm_judge_mod._judge_input_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
+        _llm_judge_mod._judge_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
+    ]
+    assert _REASON_FIELD_GUIDANCE, 'guidance block must not be empty'
+    for agent in agents:
+        rendered = '\n'.join(agent._system_prompts)  # pyright: ignore[reportPrivateUsage]
+        assert _REASON_FIELD_GUIDANCE in rendered, (
+            f'agent {agent.name!r} lost reason-field guidance — '
+            'judge `reason` outputs can drift back to verbose self-reflection.'
+        )
 
 
 def test_stringify():
