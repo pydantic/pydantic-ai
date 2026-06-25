@@ -8084,6 +8084,7 @@ also from spec\
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
                     timestamp=IsDatetime(),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
