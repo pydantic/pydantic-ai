@@ -1,7 +1,7 @@
 # Third-Party Integrations
 
 Pydantic Evals does not take a hard dependency on any particular metrics framework. When a team
-already uses [Ragas](https://github.com/explodinggradients/ragas),
+already uses [Ragas](https://github.com/vibrantlabsai/ragas),
 [DeepEval](https://github.com/confident-ai/deepeval), or another scoring library, the
 [`Evaluator`][pydantic_evals.evaluators.Evaluator] base class makes it straightforward to wrap the
 upstream metric and run it inside any Pydantic Evals dataset. This page shows worked examples for

@@ -64,8 +64,6 @@ from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
     UploadedFile,
 )
@@ -117,12 +115,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 # Test model constants
@@ -1187,29 +1179,6 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     assert result.output == 'test response'
 
 
-async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking='high' flows through to xAI reasoning_effort."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
-    agent = Agent(m, model_settings={'thinking': 'high'})
-
-    result = await agent.run('What is 2+2?')
-    assert '4' in result.output
-    # Verify we get thinking parts (reasoning model with high effort)
-    response_messages = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
-    assert len(response_messages) >= 1
-    # The reasoning model should produce some output
-    assert result.output
-
-
-async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking=False on a reasoning model is silently ignored (no reasoning_effort sent)."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
-    agent = Agent(m, model_settings={'thinking': False})
-
-    result = await agent.run('What is 2+2?')
-    assert '4' in result.output
-
-
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
     """Test that instructions are passed through to xAI SDK as a system message."""
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
@@ -2109,42 +2078,6 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'San Francisco weather today Celsius'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'web_search'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'browse_page'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
         ]
     )
 
@@ -2336,24 +2269,6 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             PartStartEvent(index=2, part=TextPart(content='4'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(index=2, part=TextPart(content='4')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': 'print(2 + 2)'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'code_execution'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
         ]
     )
 
@@ -3054,55 +2969,6 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                     content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='mcp_server:deepwiki',
-                    args={
-                        'action': 'call_tool',
-                        'tool_name': 'ask_question',
-                        'tool_args': {
-                            'repoName': 'pydantic/pydantic-ai',
-                            'question': 'Provide a short summary of the repository, including its purpose and main features.',
-                        },
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'deepwiki.ask_question'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='mcp_server:deepwiki',
-                    content="""\
-This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
-
-## Purpose
-The primary purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework . It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic .
-
-## Main Features
-The `pydantic-ai` repository offers several core features:
-*   **Agent System**: The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks . Agents can be configured with generic types for dependency injection and output validation, ensuring type safety throughout the application .
-*   **Model Integration**: The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace . Each model integration follows a consistent settings pattern with provider-specific prefixes .
-*   **Graph-based Execution**: Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine .
-*   **Tool System**: Function tools enable models to perform actions and retrieve additional information . Tools can be registered using decorators like `@agent.tool` or `@agent.tool_plain` .
-*   **Output Handling**: The framework supports various output types, including `TextOutput`, `ToolOutput`, `NativeOutput`, and `PromptedOutput` .
-*   **Durable Execution**: Pydantic AI integrates with durable execution systems like DBOS and Temporal, allowing agents to maintain state and resume execution after failures or restarts .
-*   **Multi-Agent Patterns and Integrations**: The repository supports multi-agent applications and various integrations, including Pydantic Evals, Pydantic Graph, Logfire, Agent-User Interaction (AG-UI), Agent2Agent (A2A), and Clai .
-
-## Notes
-The repository is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools) . The documentation is built using MkDocs  and includes API references and examples .
-
-Wiki pages you might want to explore:
-- [OpenAI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.2)
-- [Google Gemini and Vertex AI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.4)
-
-View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
-""",
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
         ]
     )
 
@@ -3157,12 +3023,14 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             top_p=0.95,
             presence_penalty=0.1,
             frequency_penalty=0.2,
+            seed=123,
             # xAI-specific settings
             xai_logprobs=True,
             xai_top_logprobs=5,
             xai_user='test-user-123',
             xai_store_messages=True,
             xai_previous_response_id='prev-resp-456',
+            xai_max_turns=3,
         ),
     )
 
@@ -3186,12 +3054,14 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
                 'top_p': 0.95,
                 'presence_penalty': 0.1,
                 'frequency_penalty': 0.2,
+                'seed': 123,
                 # xAI-specific settings (mapped from xai_* to SDK parameter names)
                 'logprobs': True,
                 'top_logprobs': 5,
                 'user': 'test-user-123',
                 'store_messages': True,
                 'previous_response_id': 'prev-resp-456',
+                'max_turns': 3,
             }
         ]
     )
@@ -4750,7 +4620,7 @@ async def test_xai_prompted_output_json_object(allow_model_requests: None):
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     # Use PromptedOutput explicitly - uses json_object mode when no tools
-    agent: Agent[None, SimpleResult] = Agent(m, output_type=PromptedOutput(SimpleResult))
+    agent: Agent[object, SimpleResult] = Agent(m, output_type=PromptedOutput(SimpleResult))
 
     result = await agent.run('What is the meaning of life?')
     assert result.output == SimpleResult(answer='42')
@@ -5120,7 +4990,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
             {
                 'model': XAI_NON_REASONING_MODEL,
                 'messages': [{'content': [{'text': 'Search for test'}], 'role': 'ROLE_USER'}],
-                'tools': [{'web_search': {'enable_image_understanding': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
@@ -5145,7 +5015,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                     {'content': [{'text': 'Tool completed successfully.'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'What did you find?'}], 'role': 'ROLE_USER'},
                 ],
-                'tools': [{'web_search': {'enable_image_understanding': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
@@ -5763,6 +5633,62 @@ async def test_xai_close_stream_only_suppresses_async_generator_race(error_messa
             await response.close_stream()
     else:
         await response.close_stream()
+
+
+async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: None):
+    """`provider_name='grok'` from 1.x histories (when `GrokProvider` existed) must still route through the native xAI paths on replay."""
+    response = create_response(content='second response', usage=create_usage(prompt_tokens=20, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_encrypted_content=True))
+
+    # Hardcoded `provider_name='grok'` simulates a history serialized in 1.x with the old `GrokProvider`.
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='legacy reasoning', signature='sig-legacy', provider_name='grok'),
+                NativeToolCallPart(
+                    tool_name=WebSearchTool.kind,
+                    args={'query': 'legacy query'},
+                    tool_call_id='legacy-call-1',
+                    provider_name='grok',
+                ),
+                NativeToolReturnPart(
+                    tool_name=WebSearchTool.kind,
+                    content=None,
+                    tool_call_id='legacy-call-1',
+                    provider_name='grok',
+                ),
+                TextPart(content='first response'),
+            ],
+            model_name=XAI_REASONING_MODEL,
+            provider_name='grok',
+        ),
+    ]
+    result = await agent.run('Second question', message_history=message_history)
+    assert result.output == 'second response'
+
+    sent_messages = get_mock_chat_create_kwargs(mock_client)[0]['messages']
+    assistant_msgs = [m for m in sent_messages if m['role'] == 'ROLE_ASSISTANT']
+    # The `ThinkingPart(provider_name='grok')` must surface as native `reasoning_content` + `encrypted_content`,
+    # NOT wrapped in `<think>` tags (which is the fallback for foreign providers).
+    native_thinking = [m for m in assistant_msgs if m.get('reasoning_content') or m.get('encrypted_content')]
+    assert len(native_thinking) == 1, (
+        f'Expected exactly one assistant message with native thinking content; got {assistant_msgs!r}'
+    )
+    assert native_thinking[0]['reasoning_content'] == 'legacy reasoning'
+    assert native_thinking[0]['encrypted_content'] == 'sig-legacy'
+    # The `NativeToolCallPart(provider_name='grok')` must be forwarded as a native xAI builtin tool call.
+    tool_call_msgs = [m for m in assistant_msgs if m.get('tool_calls')]
+    assert len(tool_call_msgs) == 1
+    tool_calls = tool_call_msgs[0]['tool_calls']
+    assert len(tool_calls) == 1
+    assert tool_calls[0]['id'] == 'legacy-call-1'
+    # No `<think>...</think>` fallback text should appear in any assistant content.
+    for m in assistant_msgs:
+        for part in m.get('content', []):
+            assert '<think>' not in part.get('text', '')
 
 
 # End of tests
