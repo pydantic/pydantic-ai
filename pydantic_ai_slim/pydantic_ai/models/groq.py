@@ -808,21 +808,16 @@ def _map_usage(
     details: dict[str, int] = {
         k: v
         for k, v in usage_data.items()
-        if k not in {
-            'prompt_tokens', 'completion_tokens', 'total_tokens',
-            'completion_tokens_details', 'prompt_tokens_details',
-        }
+        if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
         if isinstance(v, int)
     }
-    # Walk nested detail dicts (prompt_tokens_details, completion_tokens_details)
-    # to surface metrics like cached_tokens and reasoning_tokens.
-    for detail_key in ('prompt_tokens_details', 'completion_tokens_details'):
-        detail_dict = usage_data.get(detail_key, {}) or {}
-        if not isinstance(detail_dict, dict):
-            detail_dict = {}
-        for nested_k, nested_v in detail_dict.items():
-            if isinstance(nested_v, int):
-                details[nested_k] = nested_v
+    # `completion_tokens_details` carries `reasoning_tokens`, which the genai-prices
+    # extractors don't surface, so lift its integer fields into `details` here.
+    # `cached_tokens` (from `prompt_tokens_details`) is intentionally left to the
+    # genai-prices extractors invoked by `RequestUsage.extract`; see
+    # https://github.com/pydantic/genai-prices/issues/414.
+    completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
+    details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
 
     return usage.RequestUsage.extract(
         dict(model=model, usage=usage_data),
