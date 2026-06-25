@@ -406,6 +406,7 @@ class BedrockProvider(Provider[BaseClient]):
             # Converse rejects `reasoning_effort='none'` — mark always-on.
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
+                bedrock_send_back_thinking_parts='auto',
                 supports_thinking=True,
                 thinking_always_enabled=True,
             ),

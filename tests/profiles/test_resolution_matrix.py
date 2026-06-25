@@ -594,7 +594,12 @@ def test_bedrock_openai():
     """Bedrock-hosted OpenAI — only has the `openai` thinking variant, no upstream profile."""
     profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
     assert _normalize(profile) == snapshot(
-        {'supports_thinking': True, 'bedrock_thinking_variant': 'openai', 'thinking_always_enabled': True}
+        {
+            'supports_thinking': True,
+            'bedrock_send_back_thinking_parts': 'auto',
+            'bedrock_thinking_variant': 'openai',
+            'thinking_always_enabled': True,
+        }
     )
 
 
