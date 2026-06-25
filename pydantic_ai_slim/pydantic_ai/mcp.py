@@ -1206,7 +1206,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     raise exceptions.ModelRetry(message=str(e)) from e
                 elif self.tool_error_behavior == 'failed':
                     raise exceptions.ToolFailed(message=str(e)) from e
-                raise
+                elif self.tool_error_behavior == 'error':
+                    raise
+                else:
+                    assert_never(self.tool_error_behavior)
             except _utils.BaseExceptionGroup as eg:
                 # The FastMCP client runs the MCP session in an anyio task group, so a tool/protocol
                 # error can surface wrapped in an `ExceptionGroup` rather than as a bare
