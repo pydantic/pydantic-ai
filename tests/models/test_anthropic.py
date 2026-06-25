@@ -561,6 +561,7 @@ def test_cache_control_unsupported_param_type():
 
 
 def test_cache_control_last_cacheable_param_allows_empty_params():
+    """Empty-params guard for the cache-control walk — a defensive branch no real API response reaches, so it's a unit test, not VCR."""
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
     params: list[Any] = []
 
@@ -772,6 +773,10 @@ async def test_anthropic_cache_messages_preserves_existing_cache_point(allow_mod
 
 
 async def test_anthropic_code_execution_files_with_message_cache(allow_model_requests: None):
+    """Pins that the non-cacheable `container_upload` block doesn't capture the cache breakpoint (it lands on the text instead).
+
+    Not a VCR test: cassette matchers aren't sensitive to `cache_control` placement in the request body, so this asserts the built payload via the mock client.
+    """
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     mock_client = MockAnthropic.create_mock(c)
 
@@ -814,6 +819,10 @@ async def test_anthropic_code_execution_files_with_message_cache(allow_model_req
 
 
 async def test_anthropic_code_execution_files_append_to_last_user_message(allow_model_requests: None):
+    """Pins the internal `_map_message` placement: uploads attach to the last user message, and none are added when history has no user message.
+
+    Not a VCR test: the no-user-message branch can't be reached through a single agent run, so it taps `_map_message` directly.
+    """
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
     mock_client = MockAnthropic.create_mock(c)
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
