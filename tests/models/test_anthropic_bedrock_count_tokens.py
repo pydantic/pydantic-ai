@@ -33,6 +33,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
 
 if TYPE_CHECKING:
+    from anthropic import AsyncAnthropicBedrock
     from vcr.cassette import Cassette
 
 with try_import() as imports_successful:
@@ -46,6 +47,25 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
+
+
+@pytest.fixture
+def bedrock_client() -> AsyncAnthropicBedrock:
+    """The env-var-defaulted `AsyncAnthropicBedrock` client shared by the live-recorded Bedrock tests.
+
+    `AsyncAnthropicBedrock`'s SigV4 signer imports `botocore` at request-prep time, which only
+    ships under the `bedrock` extra (not in the default `pydantic-ai` install on v2).
+    """
+    pytest.importorskip('botocore')
+
+    from anthropic import AsyncAnthropicBedrock
+
+    return AsyncAnthropicBedrock(
+        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
+        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
+        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
+        aws_region=os.environ.get('AWS_REGION', 'us-east-1'),
+    )
 
 
 async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
@@ -74,7 +94,9 @@ async def test_anthropic_bedrock_count_tokens_unexpected_response(env: TestEnv):
 
 
 @pytest.mark.vcr()
-async def test_anthropic_bedrock_count_tokens_real_api(allow_model_requests: None, vcr: Cassette):
+async def test_anthropic_bedrock_count_tokens_real_api(
+    allow_model_requests: None, bedrock_client: AsyncAnthropicBedrock, vcr: Cassette
+):
     """Bedrock token counting hits the low-level `/model/{model}/count-tokens` endpoint.
 
     The Anthropic SDK blocks the high-level `count_tokens()` on Bedrock, so the request is
@@ -83,18 +105,6 @@ async def test_anthropic_bedrock_count_tokens_real_api(allow_model_requests: Non
     test is now end-of-life on Bedrock's CountTokens endpoint, and CRIS inference-profile ids
     (`us.`/`eu.`/`global.`) aren't accepted there either.
     """
-    # `AsyncAnthropicBedrock`'s SigV4 signer imports `botocore` at request-prep time, which only
-    # ships under the `bedrock` extra (not in the default `pydantic-ai` install on v2).
-    pytest.importorskip('botocore')
-
-    from anthropic import AsyncAnthropicBedrock
-
-    bedrock_client = AsyncAnthropicBedrock(
-        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
-        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
-        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
-        aws_region=os.environ.get('AWS_REGION', 'us-east-1'),
-    )
     model = AnthropicModel(
         'anthropic.claude-sonnet-4-20250514-v1:0',
         provider=AnthropicProvider(anthropic_client=bedrock_client),
@@ -136,23 +146,13 @@ async def test_anthropic_bedrock_count_tokens_real_api(allow_model_requests: Non
 
 
 @pytest.mark.vcr()
-async def test_anthropic_bedrock_count_tokens_error(allow_model_requests: None):
+async def test_anthropic_bedrock_count_tokens_error(allow_model_requests: None, bedrock_client: AsyncAnthropicBedrock):
     """A cross-region inference-profile (CRIS) id surfaces Bedrock's own error as `ModelHTTPError`.
 
     Before this fix, `AsyncAnthropicBedrock` raised a `UserError` for every `count_tokens` call. Now
     the request reaches Bedrock's `/count-tokens` endpoint, which only accepts base foundation-model
     ids and 400s on a CRIS profile id; `_map_api_errors` maps that to `ModelHTTPError`.
     """
-    pytest.importorskip('botocore')
-
-    from anthropic import AsyncAnthropicBedrock
-
-    bedrock_client = AsyncAnthropicBedrock(
-        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
-        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
-        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
-        aws_region=os.environ.get('AWS_REGION', 'us-east-1'),
-    )
     model_id = 'us.anthropic.claude-sonnet-4-20250514-v1:0'
     model = AnthropicModel(model_id, provider=AnthropicProvider(anthropic_client=bedrock_client))
     agent = Agent(model)
@@ -165,23 +165,15 @@ async def test_anthropic_bedrock_count_tokens_error(allow_model_requests: None):
 
 
 @pytest.mark.vcr('test_anthropic_bedrock_count_tokens_real_api.yaml')
-async def test_anthropic_bedrock_count_tokens_before_request(allow_model_requests: None):
+async def test_anthropic_bedrock_count_tokens_before_request(
+    allow_model_requests: None, bedrock_client: AsyncAnthropicBedrock
+):
     """The user-facing path: `agent.run(count_tokens_before_request=True)` counts tokens via Bedrock.
 
     Reuses the `..._real_api` cassette (a single `/count-tokens` interaction returning 18 tokens). With
     a limit below that count, the pre-request check raises `UsageLimitExceeded` before any message
     request, so only the count-tokens call is played back.
     """
-    pytest.importorskip('botocore')
-
-    from anthropic import AsyncAnthropicBedrock
-
-    bedrock_client = AsyncAnthropicBedrock(
-        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
-        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
-        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
-        aws_region=os.environ.get('AWS_REGION', 'us-east-1'),
-    )
     model = AnthropicModel(
         'anthropic.claude-sonnet-4-20250514-v1:0',
         provider=AnthropicProvider(anthropic_client=bedrock_client),
@@ -193,7 +185,9 @@ async def test_anthropic_bedrock_count_tokens_before_request(allow_model_request
 
 
 @pytest.mark.vcr()
-async def test_anthropic_bedrock_count_tokens_rejects_server_tools(allow_model_requests: None):
+async def test_anthropic_bedrock_count_tokens_rejects_server_tools(
+    allow_model_requests: None, bedrock_client: AsyncAnthropicBedrock
+):
     """Bedrock's count-tokens endpoint rejects server tools, exactly like the standard endpoint.
 
     `_messages_count_tokens` strips server tools (keeping only client-side tools like `MemoryTool`)
@@ -202,18 +196,10 @@ async def test_anthropic_bedrock_count_tokens_rejects_server_tools(allow_model_r
     rather than counting the tool, so Bedrock does not diverge from the standard endpoint and there is
     no Bedrock-specific undercounting to fix.
     """
-    pytest.importorskip('botocore')
-
-    from anthropic import NOT_GIVEN, AsyncAnthropicBedrock, BadRequestError, omit as OMIT
+    from anthropic import NOT_GIVEN, BadRequestError, omit as OMIT
 
     from pydantic_ai.models._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
 
-    bedrock_client = AsyncAnthropicBedrock(
-        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
-        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
-        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
-        aws_region=os.environ.get('AWS_REGION', 'us-east-1'),
-    )
     messages: list[BetaMessageParam] = [{'role': 'user', 'content': 'What is the weather in Paris today?'}]
     tools: list[BetaToolUnionParam] = [{'type': 'web_search_20250305', 'name': 'web_search'}]
 
