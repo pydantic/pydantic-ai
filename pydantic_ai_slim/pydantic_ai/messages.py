@@ -2615,7 +2615,7 @@ def _sanitize_tool_return_content(
             if keep:
                 sanitized_mapping[key] = sanitized_value
         return True, sanitized_mapping
-    if isinstance(content, Sequence) and not isinstance(content, (str, bytes)):
+    if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
         sequence: Sequence[ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
         sanitized_sequence: list[ToolReturnContent] = []
         for item in sequence:

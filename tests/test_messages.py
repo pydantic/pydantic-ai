@@ -679,6 +679,25 @@ def test_sanitize_message_history_keeps_resolved_trailing_tool_call():
     assert dropped == snapshot([ModelRequest(parts=[UserPromptPart(content='do the thing', timestamp=IsDatetime())])])
 
 
+def test_sanitize_message_history_keeps_bytearray_tool_return_content():
+    """A `bytearray` tool return must be left intact, not iterated into a list of ints.
+
+    `bytearray` is a `Sequence`, so the recursive tool-return walker has to exclude it alongside
+    `str`/`bytes` (matching `_tool_return_content_discriminator` and the UI-adapter file walkers);
+    otherwise sanitizing untrusted history silently rewrites `bytearray(b'abc')` to `[97, 98, 99]`.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='read_bytes', tool_call_id='call-1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='read_bytes', content=bytearray(b'abc'), tool_call_id='call-1')]),
+    ]
+    sanitized = sanitize_message_history(messages, resolved_tool_call_ids=['call-1'])
+    request = sanitized[1]
+    assert isinstance(request, ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.content == bytearray(b'abc')
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
