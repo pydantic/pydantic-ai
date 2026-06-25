@@ -196,9 +196,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             usage = ctx.usage if self._forward_usage else None
             usage_limits = None
 
+        # A sub-agent with no model of its own (e.g. one loaded from disk) inherits
+        # the parent run's model; one that brought its own keeps it.
+        model = None if sub_agent.agent.model is not None else ctx.model
         run = sub_agent.agent.run(
             task,
             deps=ctx.deps,
+            model=model,
             usage=usage,
             usage_limits=usage_limits,
             toolsets=toolsets,
