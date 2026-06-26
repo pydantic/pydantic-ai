@@ -190,7 +190,36 @@ def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.Monk
         assert len([m for m in model_ids if 'gpt-4o' in m]) == 2
 
 
-def test_chat_app_index_endpoint():
+@pytest.fixture
+def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Isolate the index route's HTML cache to a temp dir and stub the CDN fetch.
+
+    The index route caches the default UI HTML under the shared user cache dir; without
+    per-test isolation, tests that serve `/` race on the same file across xdist workers
+    (a non-atomic write being read mid-write), and miss the cache into a real CDN request.
+    """
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    class MockResponse:
+        content = b'<html>Test UI</html>'
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+
+def test_chat_app_index_endpoint(isolated_ui_cache: None):
     """Test that the index endpoint serves HTML with proper caching headers."""
     agent = Agent('test')
     app = create_web_app(agent)
@@ -251,7 +280,124 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
-def test_chat_app_index_caching():
+def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """`_get_cache_dir` derives its path from `XDG_CACHE_HOME` and creates the directory."""
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+
+    cache_dir = app_module._get_cache_dir()  # pyright: ignore[reportPrivateUsage]
+
+    assert cache_dir == tmp_path / 'pydantic-ai' / 'web-ui'
+    assert cache_dir.is_dir()
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_refetches_empty_cache_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    cache_file.write_bytes(b'')
+    test_content = b'<html>Recovered UI</html>'
+    fetch_count = 0
+
+    class MockResponse:
+        content = test_content
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            nonlocal fetch_count
+            fetch_count += 1
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+    result = await _get_ui_html()
+
+    assert result == test_content
+    assert cache_file.read_bytes() == test_content
+    assert fetch_count == 1
+
+
+def test_write_cached_file_removes_temp_file_on_replace_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    cache_file.write_bytes(b'old content')
+    temp_paths: list[Path] = []
+
+    def fail_replace(src: Any, dst: Any) -> None:
+        temp_paths.append(Path(src))
+        assert Path(dst) == cache_file
+        assert Path(src).exists()
+        raise OSError('replace failed')
+
+    monkeypatch.setattr(app_module.os, 'replace', fail_replace)
+
+    with pytest.raises(OSError, match='replace failed'):
+        app_module._write_cached_file(cache_file, b'new content')  # pyright: ignore[reportPrivateUsage]
+
+    assert cache_file.read_bytes() == b'old content'
+    assert temp_paths
+    assert not temp_paths[0].exists()
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The destination cache file only ever materializes complete, via an atomic `os.replace`.
+
+    A direct `write_bytes` to the destination truncates it before writing the content, so a
+    concurrent reader can catch it existing-but-empty. Interposing on `os.replace` lets us assert
+    deterministically (no timing/threads) that the destination materializes only through the atomic
+    rename, and that the rename source already holds the complete content.
+    """
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    full_content = b'<html>complete UI document</html>'
+
+    class MockResponse:
+        content = full_content
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    real_replace = app_module.os.replace
+    replaced_targets: list[Path] = []
+
+    def instrumented_replace(src: Any, dst: Any) -> None:
+        assert Path(src).read_bytes() == full_content
+        assert not cache_file.exists()
+        replaced_targets.append(Path(dst))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(app_module.os, 'replace', instrumented_replace)
+
+    result = await _get_ui_html()
+
+    assert result == full_content
+    assert cache_file.read_bytes() == full_content
+    assert replaced_targets == [cache_file]
+
+
+def test_chat_app_index_caching(isolated_ui_cache: None):
     """Test that the UI HTML is cached after first fetch."""
     agent = Agent('test')
     app = create_web_app(agent)
