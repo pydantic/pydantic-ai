@@ -60,9 +60,9 @@ def test_mistral_provider_with_base_url() -> None:
 
 def test_mistral_provider_model_profile_sets_inline_flag():
     profile = MistralProvider.model_profile('mistral-large-latest')
-    assert profile.supports_inline_system_prompts is True
-    assert profile.supports_thinking is False
+    assert profile.get('supports_inline_system_prompts', False) is True
+    assert profile.get('supports_thinking', False) is False
 
     magistral_profile = MistralProvider.model_profile('magistral-medium-2509')
-    assert magistral_profile.supports_inline_system_prompts is True
-    assert magistral_profile.supports_thinking is True
+    assert magistral_profile.get('supports_inline_system_prompts', False) is True
+    assert magistral_profile.get('supports_thinking', False) is True

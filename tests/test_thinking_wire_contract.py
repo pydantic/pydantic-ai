@@ -1,4 +1,4 @@
-"""Wire-contract tests for the unified `thinking` setting.
+"""Wire-contract tests for reasoning settings (`thinking` and provider-specific effort).
 
 Each case asserts on the actual request wire body (`vcr.requests[0].body`), NOT on mock
 kwargs or `_translate_thinking` return values. The cassette matcher isn't sensitive to the
@@ -9,7 +9,7 @@ the wire (the methodology that surfaced the OpenRouter `enabled: True` miss).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 from vcr.cassette import Cassette
@@ -21,7 +21,7 @@ from .cassette_utils import single_request_body
 from .conftest import try_import
 
 with try_import() as groq_imports:
-    from pydantic_ai.models.groq import GroqModel
+    from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 
 with try_import() as cerebras_imports:
@@ -39,13 +39,18 @@ class WireCase:
     id: str
     provider: str
     model_name: str
-    thinking: ThinkingLevel
+    thinking: ThinkingLevel | None = None
+    """Unified `thinking` setting; `None` leaves it unset (for cases that exercise only a provider-specific knob)."""
+    groq_reasoning_effort: Literal['none', 'default', 'low', 'medium', 'high'] | None = None
+    """Explicit `GroqModelSettings.groq_reasoning_effort`, to exercise the effort setting independently of `thinking`."""
     extra_body: dict[str, object] | None = None
     """User-supplied `extra_body` passed via `ModelSettings`, to exercise the disable-signal merge path."""
     present: dict[str, object] = field(default_factory=dict[str, object])
     """Keys that must appear in the request body with exactly these values."""
     absent: tuple[str, ...] = ()
     """Keys that must NOT appear in the request body."""
+    expect_warning: str | None = None
+    """If set, a `UserWarning` matching this regex must be emitted during the run."""
     marks: tuple[pytest.MarkDecorator, ...] = ()
 
 
@@ -71,6 +76,44 @@ CASES = [
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
     WireCase(
+        id='cerebras-zai-clear-thinking',
+        provider='cerebras',
+        model_name='zai-glm-4.7',
+        thinking=False,
+        # GLM disables via the standard `reasoning_effort='none'`, not the upstream-deprecated
+        # `extra_body['disable_reasoning']` (https://inference-docs.cerebras.ai/resources/glm-47-migration).
+        # `clear_thinking=false` is injected by default for the `zai` `<think>`-replay path so Cerebras
+        # doesn't strip replayed reasoning — no user setting needed.
+        present={'reasoning_effort': 'none', 'clear_thinking': False},
+        absent=('disable_reasoning',),
+        marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
+    ),
+    WireCase(
+        id='groq-qwen3-effort-setting',
+        provider='groq',
+        model_name='qwen/qwen3-32b',
+        groq_reasoning_effort='default',
+        extra_body={'service_tier': 'on_demand'},
+        # `groq_reasoning_effort` rides on the wire as `reasoning_effort`, merged with the user's own `extra_body`.
+        present={'reasoning_effort': 'default', 'service_tier': 'on_demand'},
+        # `thinking` is unset, so `_translate_thinking` returns NOT_GIVEN and `reasoning_format` stays off the wire.
+        absent=('reasoning_format',),
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-qwen3-disable-overrides-effort-setting',
+        provider='groq',
+        model_name='qwen/qwen3-32b',
+        thinking=False,
+        groq_reasoning_effort='high',
+        # The qwen3 disable signal (`thinking=False` → `'none'`) wins over an explicit `groq_reasoning_effort`,
+        # and the user is warned that their `groq_reasoning_effort` is ignored.
+        present={'reasoning_effort': 'none'},
+        absent=('reasoning_format',),
+        expect_warning='`groq_reasoning_effort` will be ignored',
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
         id='cerebras-gpt-oss-always-on',
         provider='cerebras',
         model_name='gpt-oss-120b',
@@ -93,20 +136,30 @@ def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str) ->
 
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in CASES])
-async def test_thinking_disable_wire_contract(
+async def test_reasoning_wire_contract(
     case: WireCase,
     allow_model_requests: None,
     groq_api_key: str,
     cerebras_api_key: str,
     vcr: Cassette,
 ):
-    """`thinking=False` produces the correct wire behavior: a true disable signal where the model supports it, and its absence where reasoning is always on."""
+    """Reasoning settings produce the correct request wire body: a `thinking` disable signal where the model
+    supports it, its absence where reasoning is always on, and `groq_reasoning_effort` mapped to `reasoning_effort`."""
     model = _build_model(case, groq_api_key=groq_api_key, cerebras_api_key=cerebras_api_key)
-    settings = ModelSettings(thinking=case.thinking)
+    if case.groq_reasoning_effort is not None:
+        settings = GroqModelSettings(groq_reasoning_effort=case.groq_reasoning_effort)
+    else:
+        settings = ModelSettings()
+    if case.thinking is not None:
+        settings['thinking'] = case.thinking
     if case.extra_body is not None:
         settings['extra_body'] = case.extra_body
     agent = Agent(model, model_settings=settings)
-    await agent.run('What is 2+2? Reply with just the number.')
+    if case.expect_warning is not None:
+        with pytest.warns(UserWarning, match=case.expect_warning):
+            await agent.run('What is 2+2? Reply with just the number.')
+    else:
+        await agent.run('What is 2+2? Reply with just the number.')
 
     body = single_request_body(vcr)
     for key, value in case.present.items():

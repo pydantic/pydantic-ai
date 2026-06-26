@@ -42,7 +42,6 @@ nav:
           - models/mistral.md
           - models/ollama.md
           - models/openrouter.md
-          - models/outlines.md
       - Tools & Toolsets:
           - tools.md
           - tools-advanced.md
@@ -58,7 +57,6 @@ nav:
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
-          - mcp/fastmcp-client.md
           - mcp/server.md
       - Extensibility: extensibility.md
       - Multi-Agent Patterns: multi-agent-applications.md
@@ -113,11 +111,12 @@ nav:
           - DBOS: durable_execution/dbos.md
           - Prefect: durable_execution/prefect.md
           - Restate: durable_execution/restate.md
+          - Kitaru: durable_execution/kitaru.md
+          - Apache Airflow: durable_execution/airflow.md
       - UI Event Streams:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
           - Vercel AI: ui/vercel-ai.md
-      - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
       - clai: cli.md
@@ -139,7 +138,6 @@ nav:
           - examples/stream-whales.md
       - Complex Workflows:
           - examples/flight-booking.md
-          - examples/question-graph.md
       - Business Applications:
           - examples/slack-lead-qualifier.md
       - UI Examples:
@@ -147,7 +145,6 @@ nav:
 
   - API Reference:
       - pydantic_ai:
-          - api/ag_ui.md
           - api/agent.md
           - api/native_tools.md
           - api/capabilities.md
@@ -179,7 +176,6 @@ nav:
           - api/models/ollama.md
           - api/models/openai.md
           - api/models/openrouter.md
-          - api/models/outlines.md
           - api/models/test.md
           - api/models/wrapper.md
           - api/output.md
@@ -211,9 +207,8 @@ nav:
           - api/pydantic_graph/join.md
           - api/pydantic_graph/decision.md
           - api/pydantic_graph/node.md
+          - api/pydantic_graph/util.md
           - api/pydantic_graph/exceptions.md
-      - fasta2a:
-          - api/fasta2a.md
 
   - Project:
       - contributing.md
@@ -343,7 +338,7 @@ plugins:
           paths: [pydantic_ai_slim/pydantic_ai]
           options:
             docstring_options:
-              # pydantic_graph/beta/graph.py uses "Type Parameters:" sections to document Generic type params
+              # pydantic_graph/graph_builder.py uses "Type Parameters:" sections to document Generic type params
               # like StateT, OutputT, etc. Griffe can't extract these from Generic[T] base classes
               # (only from PEP 695 syntax), so we disable the validation warnings.
               warn_unknown_params: false
@@ -383,7 +378,6 @@ plugins:
           - troubleshooting.md
           - coding-agent-skills.md
         Concepts documentation:
-          - a2a.md
           - agent.md
           - agent-spec.md
           - native-tools.md
