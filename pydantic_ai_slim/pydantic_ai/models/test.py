@@ -126,8 +126,7 @@ class TestModel(Model):
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
         model_response.usage = _estimate_usage([*messages, model_response])
-        if model_response.provider_name is None:
-            model_response.provider_name = self._system
+        model_response.provider_name = self._system
         return model_response
 
     @asynccontextmanager
