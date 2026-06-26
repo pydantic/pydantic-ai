@@ -54,6 +54,20 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
         assert groups == expected
 
 
+async def test_group_by_temporal_delayed_first_item():
+    async def stream() -> AsyncIterator[int]:
+        await asyncio.sleep(0.08)
+        yield 1
+        await asyncio.sleep(0.01)
+        yield 2
+        await asyncio.sleep(0.2)
+        yield 3
+
+    async with group_by_temporal(stream(), soft_max_interval=0.04) as groups_iter:
+        groups: list[list[int]] = [g async for g in groups_iter]
+        assert groups == [[1, 2], [3]]
+
+
 def test_check_object_json_schema():
     object_schema = {'type': 'object', 'properties': {'a': {'type': 'string'}}}
     assert check_object_json_schema(object_schema) == object_schema
