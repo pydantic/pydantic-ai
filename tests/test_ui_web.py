@@ -190,7 +190,36 @@ def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.Monk
         assert len([m for m in model_ids if 'gpt-4o' in m]) == 2
 
 
-def test_chat_app_index_endpoint():
+@pytest.fixture
+def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Isolate the index route's HTML cache to a temp dir and stub the CDN fetch.
+
+    The index route caches the default UI HTML under the shared user cache dir; without
+    per-test isolation, tests that serve `/` race on the same file across xdist workers
+    (a non-atomic write being read mid-write), and miss the cache into a real CDN request.
+    """
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    class MockResponse:
+        content = b'<html>Test UI</html>'
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+
+def test_chat_app_index_endpoint(isolated_ui_cache: None):
     """Test that the index endpoint serves HTML with proper caching headers."""
     agent = Agent('test')
     app = create_web_app(agent)
@@ -308,7 +337,57 @@ def test_write_cached_file_removes_temp_file_on_replace_error(monkeypatch: pytes
     assert not temp_paths[0].exists()
 
 
-def test_chat_app_index_caching():
+@pytest.mark.anyio
+async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The destination cache file only ever materializes complete, via an atomic `os.replace`.
+
+    A direct `write_bytes` to the destination truncates it before writing the content, so a
+    concurrent reader can catch it existing-but-empty. Interposing on `os.replace` lets us assert
+    deterministically (no timing/threads) that the destination materializes only through the atomic
+    rename, and that the rename source already holds the complete content.
+    """
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+
+    full_content = b'<html>complete UI document</html>'
+
+    class MockResponse:
+        content = full_content
+
+        def raise_for_status(self) -> None:
+            pass
+
+    class MockAsyncClient:
+        async def __aenter__(self) -> MockAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        async def get(self, url: str) -> MockResponse:
+            return MockResponse()
+
+    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    real_replace = app_module.os.replace
+    replaced_targets: list[Path] = []
+
+    def instrumented_replace(src: Any, dst: Any) -> None:
+        assert Path(src).read_bytes() == full_content
+        assert not cache_file.exists()
+        replaced_targets.append(Path(dst))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(app_module.os, 'replace', instrumented_replace)
+
+    result = await _get_ui_html()
+
+    assert result == full_content
+    assert cache_file.read_bytes() == full_content
+    assert replaced_targets == [cache_file]
+
+
+def test_chat_app_index_caching(isolated_ui_cache: None):
     """Test that the UI HTML is cached after first fetch."""
     agent = Agent('test')
     app = create_web_app(agent)
