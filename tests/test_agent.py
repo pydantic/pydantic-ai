@@ -11909,6 +11909,22 @@ TOOL_RETRY_BUDGET_CASES = [
         run={'retries': 9},
         expected_budget=2,
     ),
+    # A `0` budget must survive resolution as "no retries", not be dropped as falsy and fall back to
+    # the agent default (the zero-as-falsy footgun): once via the run arg, once via `override()`.
+    ToolRetryBudgetCase(
+        id='run-dict-zero-overrides-agent-default',
+        init={'retries': {'tools': 5}},
+        override=None,
+        run={'retries': {'tools': 0}},
+        expected_budget=0,
+    ),
+    ToolRetryBudgetCase(
+        id='override-dict-zero-overrides-agent-default',
+        init={'retries': {'tools': 5}},
+        override={'retries': {'tools': 0}},
+        run={},
+        expected_budget=0,
+    ),
 ]
 
 
@@ -11944,9 +11960,10 @@ def test_tool_retry_budget_resolution(case: ToolRetryBudgetCase):
 
 def test_run_level_tool_retry_override_preserves_explicit_budgets():
     """A run-level `retries={'tools': N}` overrides the agent default for a tool with no explicit
-    budget, but does NOT clobber an explicit per-tool `@agent.tool(retries=...)` or per-toolset
-    `FunctionToolset(max_retries=...)` budget."""
-    counts = {'default_tool': 0, 'explicit_tool': 0, 'toolset_tool': 0}
+    budget — including one on a user-provided `FunctionToolset()` that itself sets no `max_retries`
+    (the inheritance path) — but does NOT clobber an explicit per-tool `@agent.tool(retries=...)` or
+    per-toolset `FunctionToolset(max_retries=...)` budget."""
+    counts = {'default_tool': 0, 'explicit_tool': 0, 'toolset_tool': 0, 'inheriting_toolset_tool': 0}
     target = ''
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -11959,7 +11976,14 @@ def test_run_level_tool_retry_override_preserves_explicit_budgets():
         counts['toolset_tool'] += 1
         raise ModelRetry('again')
 
-    agent = Agent(FunctionModel(model_fn), toolsets=[explicit_toolset], retries={'tools': 1})
+    inheriting_toolset = FunctionToolset[object]()
+
+    @inheriting_toolset.tool_plain
+    def inheriting_toolset_tool() -> str:
+        counts['inheriting_toolset_tool'] += 1
+        raise ModelRetry('again')
+
+    agent = Agent(FunctionModel(model_fn), toolsets=[explicit_toolset, inheriting_toolset], retries={'tools': 1})
 
     @agent.tool_plain
     def default_tool() -> str:
@@ -11988,6 +12012,14 @@ def test_run_level_tool_retry_override_preserves_explicit_budgets():
     with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'toolset_tool' exceeded max retries count of 4"):
         agent.run_sync('Hello', retries={'tools': 3})
     assert counts['toolset_tool'] == 5
+
+    # A user toolset with no explicit budget inherits the run override (3) via `ToolManager.default_max_retries`.
+    target = 'inheriting_toolset_tool'
+    with pytest.raises(
+        UnexpectedModelBehavior, match=r"Tool 'inheriting_toolset_tool' exceeded max retries count of 3"
+    ):
+        agent.run_sync('Hello', retries={'tools': 3})
+    assert counts['inheriting_toolset_tool'] == 4
 
 
 def test_wrapper_override_forwards_retries():
