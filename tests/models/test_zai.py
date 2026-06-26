@@ -282,6 +282,25 @@ def test_zai_thinking_silently_ignored_on_non_thinking_model(zai_api_key: str):
     assert merged_settings == {}
 
 
+def test_zai_sends_back_thinking_in_reasoning_content_field(zai_api_key: str):
+    """Preserved thinking: a prior-turn `ThinkingPart` is sent back to Z.AI in the `reasoning_content`
+    field (via `openai_chat_send_back_thinking_parts='field'`), not dropped or wrapped in `<think>` tags.
+
+    A unit test (not VCR): the send-back goes in the request body, which VCR cassette matchers aren't
+    sensitive to, so a regression here would still replay green against an existing cassette.
+    """
+    model = ZaiModel('glm-4.7', provider=ZaiProvider(api_key=zai_api_key))
+    response = ModelResponse(
+        parts=[
+            ThinkingPart(content='2 plus 2 is 4', id='reasoning_content', provider_name='zai'),
+            TextPart(content='4'),
+        ]
+    )
+    assert model._map_model_response(response) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        {'role': 'assistant', 'reasoning_content': '2 plus 2 is 4', 'content': '4'}
+    )
+
+
 @pytest.mark.parametrize(
     'thinking,expected',
     [
