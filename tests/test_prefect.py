@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelSettings,
     RunContext,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import Instrumentation
