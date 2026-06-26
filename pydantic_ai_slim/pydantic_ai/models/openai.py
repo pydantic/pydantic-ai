@@ -2441,6 +2441,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 has_image_generating_tool = True
                 container: responses.tool_param.CodeInterpreterContainerCodeInterpreterToolAuto = {'type': 'auto'}
                 if tool.files:
+                    # Cross-provider files are dropped silently here, not raised via
+                    # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
                     provider_file_ids = [file.file_id for file in tool.files if file.provider_name == self.system]
                     if provider_file_ids:
                         container['file_ids'] = provider_file_ids

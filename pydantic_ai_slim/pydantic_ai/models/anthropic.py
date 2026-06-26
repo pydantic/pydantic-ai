@@ -1181,6 +1181,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
+                # Cross-provider files are dropped silently here, not raised via
+                # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
                 if tool.files and any(file.provider_name == self.system for file in tool.files):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
@@ -1321,6 +1323,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        # Cross-provider files are dropped silently here, not raised via
+        # `_validate_uploaded_file_provider`; intentional per #4338 (ignore over raise).
         pending_container_uploads = [
             file.file_id
             for tool in model_request_parameters.native_tools
