@@ -28,6 +28,8 @@ LatestZaiModelNames = Literal[
     'glm-5.2',
     'glm-5.1',
     'glm-5',
+    'glm-5-turbo',
+    'glm-5v-turbo',
     'glm-4.7',
     'glm-4.7-flash',
     'glm-4.7-flashx',

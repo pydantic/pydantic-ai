@@ -44,7 +44,7 @@ agent = Agent(model)
 
 ## Thinking mode
 
-Z.AI's `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking) models support thinking/reasoning mode, where the model produces reasoning content before the final response. Configure this through the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
+Z.AI's `glm-5.2`, `glm-5.1`, `glm-5`, `glm-4.7`, `glm-4.6` (hybrid thinking), and `glm-4.5` (interleaved thinking) models support thinking/reasoning mode, where the model produces reasoning content before the final response. This includes the `glm-4.6v` and `glm-4.5v` vision models. Configure this through the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
 
 ```python
 from pydantic_ai import Agent

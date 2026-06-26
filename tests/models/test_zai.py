@@ -7,7 +7,7 @@ import pytest
 from inline_snapshot import snapshot
 from vcr.cassette import Cassette
 
-from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
+from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
 from pydantic_ai.direct import model_request
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
@@ -120,6 +120,49 @@ async def test_zai_clear_thinking_without_thinking(allow_model_requests: None, z
     assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assert request_body['thinking'] == {'clear_thinking': False}
+
+
+async def test_zai_vision_thinking(allow_model_requests: None, zai_api_key: str, image_content: BinaryImage):
+    """`glm-4.6v` is a vision model that also supports thinking mode.
+
+    Recorded against the real Z.AI API to confirm the vision profile's `supports_thinking=True`: with
+    `thinking=True` and image input, the model returns a `ThinkingPart` alongside the answer.
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.6v', provider=provider)
+    request = ModelRequest(parts=[UserPromptPart(content=['What fruit is in this image?', image_content])])
+    response = await model_request(model, [request], model_settings=ModelSettings(thinking=True))
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content=IsStr(regex='(?is).*kiwi.*')),
+        ]
+    )
+
+
+async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
+    """On GLM-5.2+, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`
+    alongside the `thinking` object.
+
+    Recorded against the real Z.AI API to confirm GLM-5.2 accepts the `reasoning_effort` parameter; the
+    transformation itself is unit-tested in `test_zai_reasoning_effort_on_glm_5_2` (VCR matchers aren't
+    sensitive to the request body).
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-5.2', provider=provider)
+    settings = ModelSettings(thinking='high')
+    response = await model_request(model, [ModelRequest.user_text_prompt('What is 2 + 2?')], model_settings=settings)
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content='2 + 2 = 4'),
+        ]
+    )
+
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert request_body['thinking'] == {'type': 'enabled'}
+    assert request_body['reasoning_effort'] == 'high'
 
 
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str):

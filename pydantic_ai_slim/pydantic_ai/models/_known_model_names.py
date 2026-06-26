@@ -510,8 +510,10 @@ KnownModelName = TypeAliasType(
         'zai:glm-4.7-flash',
         'zai:glm-4.7-flashx',
         'zai:glm-5',
+        'zai:glm-5-turbo',
         'zai:glm-5.1',
         'zai:glm-5.2',
+        'zai:glm-5v-turbo',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
