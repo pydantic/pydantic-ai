@@ -923,6 +923,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters=model_request_parameters,
         )
         self.last_request_context = request_context
+
+        # Capture the resumed request's position before `before_model_request` may
+        # `replace()` it.  Capabilities such as `ReinjectSystemPrompt` swap the
+        # trailing `ModelRequest` for a new object, which defeats both the `is`
+        # identity check and the `_is_same_request` field-equality fallback in
+        # `_first_new_message_index`.  The *position* is stable, so we prefer it.
+        resumed_request_index = len(request_context.messages) - 1 if self.is_resuming_without_prompt else None
+
         request_context = await ctx.deps.root_capability.before_model_request(
             run_context,
             request_context,
@@ -948,7 +956,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.state.message_history[:] = messages
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
-            messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+            messages,
+            ctx.state.run_id,
+            resumed_request=ctx.deps.resumed_request,
+            resumed_request_index=resumed_request_index,
         )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
@@ -1674,8 +1685,23 @@ def _first_new_message_index(
     run_id: str,
     *,
     resumed_request: _messages.ModelRequest | None,
+    resumed_request_index: int | None = None,
 ) -> int:
-    """Return the first index that should be included in `new_messages()`."""
+    """Return the first index that should be included in `new_messages()`.
+
+    When ``resumed_request_index`` is provided, it marks the position of the
+    resumed request in the message list *before* any ``before_model_request``
+    mutation.  Capabilities such as ``ReinjectSystemPrompt`` may ``replace()``
+    the trailing ``ModelRequest`` — breaking both the ``is`` identity check and
+    the ``_is_same_request`` field-equality fallback — but the *position* is
+    stable, so we use it as a last-resort fallback.
+
+    The position check runs *after* the identity and field-equality checks so
+    that capabilities which insert messages before the resumed request (e.g.
+    ``ProcessHistory`` prepending a system-prompt request) are handled correctly:
+    the resumed request object survives at a shifted index, so identity or
+    field-equality finds it first.
+    """
     if resumed_request is not None:
         for index, message in enumerate(messages):
             if message is resumed_request:
@@ -1687,6 +1713,9 @@ def _first_new_message_index(
         for index in range(len(messages) - 1, -1, -1):
             if _is_same_request(messages[index], resumed_request):
                 return index + 1
+
+        if resumed_request_index is not None and 0 <= resumed_request_index < len(messages):
+            return resumed_request_index + 1
     return _first_run_id_index(messages, run_id)
 
 
