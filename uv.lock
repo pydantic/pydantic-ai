@@ -5486,6 +5486,7 @@ dependencies = [
     { name = "pydantic-evals" },
     { name = "python-multipart" },
     { name = "rich" },
+    { name = "twelvelabs" },
     { name = "uvicorn" },
 ]
 
@@ -5505,6 +5506,7 @@ requires-dist = [
     { name = "pydantic-evals", editable = "pydantic_evals" },
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
+    { name = "twelvelabs", specifier = ">=1.2.8" },
     { name = "uvicorn", specifier = ">=0.32.0" },
 ]
 
@@ -7729,6 +7731,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/53/a3/1585216310e344e8102c22482f6060c7a6ea0322b63e026372e6dcefcfd6/truststore-0.10.4.tar.gz", hash = "sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301", size = 26169, upload-time = "2025-08-12T18:49:02.73Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/19/97/56608b2249fe206a67cd573bc93cd9896e1efb9e98bce9c163bcdc704b88/truststore-0.10.4-py3-none-any.whl", hash = "sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981", size = 18660, upload-time = "2025-08-12T18:49:01.46Z" },
+]
+
+[[package]]
+name = "twelvelabs"
+version = "1.2.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5f/24/2604563f5a528bf5f12f9bbb7e3102e91c0e4f9bfd7aeb9963dced3a0b0f/twelvelabs-1.2.8.tar.gz", hash = "sha256:bb0846cc839845c800de8061bb7b99212a472e24bf20770d569f6f620b845e3c", size = 178449, upload-time = "2026-06-18T06:38:48.135Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/a6/6380129c65222bb2497cbef27334a496a1a31f4f38973fac46b62b9224fc/twelvelabs-1.2.8-py3-none-any.whl", hash = "sha256:c0487dd892b03728ac2afe3e4ebd4ea5e30ff404b61896667eb5a39264db282b", size = 372073, upload-time = "2026-06-18T06:38:46.747Z" },
 ]
 
 [[package]]

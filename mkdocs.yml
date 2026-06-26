@@ -133,6 +133,7 @@ nav:
           - examples/sql-gen.md
           - examples/data-analyst.md
           - examples/rag.md
+          - examples/twelvelabs-video-agent.md
       - Streaming:
           - examples/stream-markdown.md
           - examples/stream-whales.md
