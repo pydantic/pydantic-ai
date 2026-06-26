@@ -122,7 +122,9 @@ async def test_zai_clear_thinking_without_thinking(allow_model_requests: None, z
     assert request_body['thinking'] == {'clear_thinking': False}
 
 
-async def test_zai_vision_thinking(allow_model_requests: None, zai_api_key: str, image_content: BinaryImage):
+async def test_zai_vision_thinking(
+    allow_model_requests: None, zai_api_key: str, image_content: BinaryImage, vcr: Cassette
+):
     """`glm-4.6v` is a vision model that also supports thinking mode.
 
     Recorded against the real Z.AI API to confirm the vision profile's `supports_thinking=True`: with
@@ -139,14 +141,21 @@ async def test_zai_vision_thinking(allow_model_requests: None, zai_api_key: str,
         ]
     )
 
+    # Assert the wire body so a regression to `supports_thinking=False` on the vision profile is caught:
+    # VCR matchers aren't body-sensitive, so the recorded thinking response would otherwise replay green
+    # even if `thinking` stopped reaching the request.
+    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert request_body['thinking'] == {'type': 'enabled'}
+
 
 async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
-    """On GLM-5.2+, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`
+    """On GLM-5.2, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`
     alongside the `thinking` object.
 
     Recorded against the real Z.AI API to confirm GLM-5.2 accepts the `reasoning_effort` parameter; the
-    transformation itself is unit-tested in `test_zai_reasoning_effort_on_glm_5_2` (VCR matchers aren't
-    sensitive to the request body).
+    transformation itself is unit-tested in `test_zai_reasoning_effort_forwarded_when_supported` (VCR
+    matchers aren't sensitive to the request body).
     """
     provider = ZaiProvider(api_key=zai_api_key)
     model = ZaiModel('glm-5.2', provider=provider)
@@ -325,10 +334,13 @@ def test_zai_sends_back_thinking_in_reasoning_content_field(zai_api_key: str):
         pytest.param(False, {'extra_body': {'thinking': {'type': 'disabled'}}}, id='disabled'),
     ],
 )
-def test_zai_reasoning_effort_on_glm_5_2(thinking: ThinkingLevel, expected: dict[str, Any]):
-    """On GLM-5.2+, an explicit unified thinking effort level is forwarded as `extra_body.reasoning_effort`.
+def test_zai_reasoning_effort_forwarded_when_supported(thinking: ThinkingLevel, expected: dict[str, Any]):
+    """When the model supports reasoning effort, an explicit unified effort level is forwarded as
+    `extra_body.reasoning_effort`, while a bare `thinking=True`/`False` adds none.
 
-    Earlier GLM models collapse effort to thinking on/off (covered by `test_zai_settings_transformation`).
+    Exercises the transform with `supports_reasoning_effort=True`; the model-name -> flag mapping that
+    produces it (GLM-5.2) is covered by `test_zai_provider_model_profile`. Models without effort support
+    collapse the level to thinking on/off (covered by `test_zai_settings_transformation`).
     """
     transformed = _zai_settings_to_openai_settings(
         ZaiModelSettings(), ModelRequestParameters(thinking=thinking), supports_reasoning_effort=True

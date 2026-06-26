@@ -147,7 +147,7 @@ def _zai_settings_to_openai_settings(
     Args:
         model_settings: The 'ZaiModelSettings' object to transform.
         model_request_parameters: The request parameters carrying the resolved unified `thinking` value.
-        supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2+).
+        supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2).
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.

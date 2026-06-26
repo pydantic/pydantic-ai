@@ -7,14 +7,14 @@ class ZaiModelProfile(ModelProfile, total=False):
     """Profile for Z.AI (Zhipu AI) GLM models."""
 
     zai_supports_reasoning_effort: bool
-    """Whether the model accepts a per-request `reasoning_effort` level (GLM-5.2 and newer)."""
+    """Whether the model accepts a per-request `reasoning_effort` level (GLM-5.2)."""
 
 
 _REASONING_EFFORT_MODEL_PREFIXES = ('glm-5.2',)
 """Model name prefixes for GLM models that accept the per-request `reasoning_effort` parameter.
 
-Listed explicitly (like the `gpt-5.1+` set in the OpenAI profile) since there's no version ordering to
-derive "GLM-5.2 and newer" from; extend this as new GLM models gain effort support. On earlier GLM models
+GLM-5.2 introduced per-request reasoning effort. Add released models here as they gain support (like the
+OpenAI profile's enumerated `gpt-5.x` set — concrete ids, not a derived "and newer"). On earlier GLM models
 the effort levels collapse to thinking on/off.
 """
 
@@ -24,7 +24,7 @@ def zai_model_profile(model_name: str) -> ModelProfile | None:
 
     Marks thinking-capable models (`glm-5`, `glm-4.7`, `glm-4.6`, `glm-4.5`) via `supports_thinking=True`.
     This includes the `glm-4.6v` and `glm-4.5v` vision models, which also support thinking mode per the
-    Z.AI docs. GLM-5.2 and newer additionally accept a per-request reasoning effort level, flagged via
+    Z.AI docs. GLM-5.2 additionally accepts a per-request reasoning effort level, flagged via
     `zai_supports_reasoning_effort=True`.
 
     The provider-specific request/response shape (e.g. the `reasoning_content` field used by Z.AI's API)

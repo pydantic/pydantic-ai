@@ -57,7 +57,7 @@ agent = Agent(
 ...
 ```
 
-`thinking=True` enables thinking and `thinking=False` disables it. On GLM-5.2 and newer models, an explicit effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`) is forwarded to Z.AI as `reasoning_effort`; on earlier GLM models, which don't expose effort granularity, the effort levels all collapse to enabled. Omit the field to use each model's default behavior.
+`thinking=True` enables thinking and `thinking=False` disables it. On GLM-5.2, an explicit effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`) is forwarded to Z.AI as `reasoning_effort`; on other GLM models, which don't expose effort granularity, the effort levels all collapse to enabled. Omit the field to use each model's default behavior.
 
 ### Preserved thinking
 

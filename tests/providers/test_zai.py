@@ -86,7 +86,7 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     # glm-4.7 only supports thinking on/off, so no per-request reasoning effort.
     assert profile.get('zai_supports_reasoning_effort', False) is False
 
-    # GLM-5.2+ additionally accepts a per-request reasoning effort level.
+    # GLM-5.2 additionally accepts a per-request reasoning effort level.
     profile_5_2 = provider.model_profile('glm-5.2')
     zai_model_profile_mock.assert_called_with('glm-5.2')
     assert profile_5_2 is not None
