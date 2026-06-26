@@ -750,7 +750,7 @@ async def test_image_as_binary_content_tool_response(
 
 
 async def test_image_detail_vendor_metadata(
-    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
+    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent, vcr: Any
 ):
     """`vendor_metadata['detail']` is forwarded to the Groq API for image inputs."""
     m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
@@ -765,6 +765,10 @@ async def test_image_detail_vendor_metadata(
     )
 
     await agent.run(['Describe these images.', image_url, binary_image])
+
+    request_body = json.loads(vcr.requests[0].body)
+    image_parts = [item['image_url'] for item in request_body['messages'][0]['content'] if item['type'] == 'image_url']
+    assert [part['detail'] for part in image_parts] == snapshot(['high', 'low'])
 
 
 @pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
