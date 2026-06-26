@@ -3,10 +3,9 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -195,152 +194,6 @@ async def test_callback_sink_ignores_span_reference():
     )
     assert len(collector.calls) == 1
     assert collector.result_count == 0
-
-
-@pytest.mark.anyio
-async def test_legacy_sink_without_target_kwarg_is_wrapped_with_deprecation_warning():
-    """Sinks using the four-kwarg (pre-`target`) signature still work via the back-compat shim.
-
-    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
-    """
-    calls: list[dict[str, Any]] = []
-
-    class LegacySink:
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-        ) -> None:
-            calls.append(
-                {
-                    'results': list(results),
-                    'failures': list(failures),
-                    'context': context,
-                    'span_reference': span_reference,
-                }
-            )
-
-    @dataclass
-    class LegacyEvaluator(Evaluator):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
-
-    # Cast: the point of this test is that LegacySink intentionally doesn't
-    # satisfy the current EvaluationSink protocol (uses the old kwargs shape).
-    config = OnlineEvalConfig(default_sink=cast(Any, LegacySink()), emit_otel_events=False)
-
-    @config.evaluate(LegacyEvaluator())
-    async def run(x: int) -> int:
-        return x
-
-    with pytest.warns(DeprecationWarning, match=r'deprecated kwargs signature'):
-        await run(1)
-        await wait_for_evaluations()
-
-    assert len(calls) == 1
-    # The pre-`target` legacy sink receives the original four kwargs.
-    assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
-
-
-async def test_legacy_sink_warning_fires_once_per_class():
-    """The back-compat shim warns the first time it wraps a given class, not every time.
-
-    Exercises the compat shim directly rather than the full dispatch pipeline,
-    so parallel tests touching the module-level `_warned_legacy_sink_ids` set
-    can't flake this assertion via `id()` reuse.
-
-    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
-    """
-    from pydantic_evals._online import (
-        _ensure_payload_compat,  # pyright: ignore[reportPrivateUsage]
-        _warned_legacy_sink_ids,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    class OnceLegacySink:
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-        ) -> None:
-            pass
-
-    # Defensive: drop any stale id(cls) collision from an earlier GC'd class.
-    _warned_legacy_sink_ids.discard(id(OnceLegacySink))
-
-    sink = cast(Any, OnceLegacySink())
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always', DeprecationWarning)
-        _ensure_payload_compat(sink)
-        _ensure_payload_compat(sink)
-
-    legacy_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert len(legacy_warnings) == 1
-
-
-@pytest.mark.anyio
-async def test_sink_with_var_keyword_only_is_shimmed():
-    """A sink whose `submit` uses only **kwargs is treated as legacy — shim unpacks the payload.
-
-    The modern API is called positionally as `submit(payload)`, which a **kwargs-only
-    signature can't receive. The shim routes around this by forwarding the unpacked
-    kwargs; a deprecation warning nudges the user to the new signature.
-
-    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
-    """
-    from pydantic_evals._online import _warned_legacy_sink_ids  # pyright: ignore[reportPrivateUsage]
-
-    calls: list[dict[str, Any]] = []
-
-    class KwargsSink:
-        async def submit(self, **kwargs: Any) -> None:
-            calls.append(kwargs)
-
-    @dataclass
-    class E(Evaluator):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
-
-    # Defensive: drop any stale `id(cls)` collision from an earlier GC'd class so the
-    # first-use-per-class warning fires deterministically under parallel test runners.
-    _warned_legacy_sink_ids.discard(id(KwargsSink))
-
-    # Cast: KwargsSink intentionally uses the pre-`SinkPayload` signature to exercise the shim.
-    config = OnlineEvalConfig(default_sink=cast(Any, KwargsSink()), emit_otel_events=False)
-
-    @config.evaluate(E(), target='my_target')
-    async def run(x: int) -> int:
-        return x
-
-    with pytest.warns(DeprecationWarning, match=r'deprecated kwargs signature'):
-        await run(1)
-        await wait_for_evaluations()
-
-    assert len(calls) == 1
-    assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
-
-
-def test_sink_with_keyword_only_payload_is_not_classified_as_legacy():
-    """A sink with a single keyword-only `payload` parameter routes to the modern path.
-
-    Arity is what distinguishes legacy from modern — not whether the single
-    parameter is positional-or-keyword vs keyword-only. Without this, a
-    `submit(self, *, payload)` sink would be misclassified as legacy and
-    trigger a spurious deprecation warning.
-    """
-    from pydantic_evals._online import _is_legacy_submit  # pyright: ignore[reportPrivateUsage]
-
-    class KeywordOnlyPayloadSink:
-        async def submit(self, *, payload: SinkPayload) -> None:
-            pass
-
-    assert _is_legacy_submit(cast(Any, KeywordOnlyPayloadSink())) is False
 
 
 @pytest.mark.anyio

@@ -123,7 +123,7 @@ from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunConte
 agent = Agent('openai:gpt-5.2')
 
 
-async def stream_handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]):
+async def stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
     async for event in events:
         if isinstance(event, FunctionToolCallEvent):
             print(f'Calling {event.part.tool_name}...')
