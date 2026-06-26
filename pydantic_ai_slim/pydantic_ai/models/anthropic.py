@@ -290,6 +290,7 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES: tuple[_AnthropicCodeExecutionToolName, ...
     'text_editor_code_execution',
 )
 _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
+# See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
 _ANTHROPIC_CACHEABLE_PARAM_TYPES = frozenset(
     {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
 )
@@ -1908,11 +1909,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self, params: list[BetaContentBlockParam], ttl: Literal['5m', '1h'] = '5m'
     ) -> None:
         for param in reversed(params):
-            param_dict = cast(dict[str, Any], param)
-            if 'cache_control' in param_dict:
+            if not is_str_dict(param):  # pragma: no cover
+                continue
+            if 'cache_control' in param:
                 return
-            if param_dict['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
-                param_dict['cache_control'] = self._build_cache_control(ttl)
+            if param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
+                param['cache_control'] = self._build_cache_control(ttl)
                 return
 
     def _add_cache_control_to_last_param(
