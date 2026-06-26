@@ -343,9 +343,8 @@ import asyncio
 
 import anthropic
 
-from pydantic_ai import Agent, CodeExecutionTool
+from pydantic_ai import Agent, CodeExecutionTool, UploadedFile
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import UploadedFile
 
 
 async def main():
@@ -377,9 +376,8 @@ import asyncio
 
 from openai import AsyncOpenAI
 
-from pydantic_ai import Agent, CodeExecutionTool
+from pydantic_ai import Agent, CodeExecutionTool, UploadedFile
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import UploadedFile
 
 
 async def main():
