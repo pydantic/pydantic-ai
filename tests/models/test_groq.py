@@ -148,7 +148,7 @@ def completion_message(message: ChatCompletionMessage, *, usage: CompletionUsage
 
 
 def get_mock_chat_completion_kwargs(mock_client: AsyncGroq) -> list[dict[str, Any]]:
-    if isinstance(mock_client, MockGroq):  # type: ignore
+    if isinstance(mock_client, MockGroq):
         return mock_client.chat_completion_kwargs
     else:  # pragma: no cover
         raise RuntimeError('Not a MockGroq instance')
@@ -165,7 +165,7 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
-    mock_client.index = 0  # type: ignore
+    mock_client.index = 0
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
