@@ -295,6 +295,31 @@ def test_model_profile_opus():
     assert profile.get('supports_json_schema_output', False) is True
 
 
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'claude-fable-5',
+        'claude-mythos-5',
+        'claude-mythos-preview',
+        'claude-sonnet-4-6',
+        'claude-opus-4-6',
+        'claude-opus-4-7',
+        'claude-opus-4-8',
+    ],
+)
+def test_model_profile_supports_dynamic_filtering(model_name: str):
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('anthropic_supports_dynamic_filtering') is True
+
+
+@pytest.mark.parametrize('model_name', ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5'])
+def test_model_profile_does_not_support_dynamic_filtering(model_name: str):
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('anthropic_supports_dynamic_filtering') is False
+
+
 def test_model_profile_fable_5():
     """Claude Fable 5 mirrors the Opus 4.8 capability set, minus fast speed and forced tool choice.
 

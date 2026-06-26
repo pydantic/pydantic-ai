@@ -323,6 +323,10 @@ filterwarnings = [
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
     # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
     "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
+    # outlines' llamacpp backend calls llama-cpp-python's `Llama.from_pretrained`, which forwards
+    # `local_dir_use_symlinks` to `hf_hub_download`; huggingface-hub >= 1.0 deprecated (and ignores)
+    # that arg and warns about it. The arg is a no-op and the call site isn't ours to change.
+    "ignore:The `local_dir_use_symlinks` argument is deprecated and ignored:UserWarning",
     # fastmcp v3 does standard OTel distributed tracing (inject on client, extract on server).
     # logfire's default config wraps the global propagator to warn on extract via warnings.warn(),
     # which crashes tool execution when filterwarnings=["error"]. The proper upstream fix is for

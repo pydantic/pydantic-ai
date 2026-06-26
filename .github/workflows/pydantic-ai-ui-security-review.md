@@ -3,26 +3,39 @@ emoji: "🛡️"
 name: "Pydantic AI UI Security Review"
 description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a non-voting COMMENT-type review summary (pydantic-ai-pr-review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
+  # Runs on EVERY PR (no `paths:` filter) so the review's check is always
+  # reported on the head commit. The UI-path selection moved into the `detect`
+  # job below: non-UI PRs skip the agent via `if:` (a job skipped by `if:`
+  # reports as success, so it never blocks merge), while UI PRs gate the agent
+  # behind the `ui-security-review` Environment (required reviewers) — a
+  # maintainer clicks "Approve" to start the AI run, and the pending approval
+  # blocks merge until the review has run. `synchronize` is kept so a new
+  # commit re-reports the check on the new head and re-pends the approval.
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    # Additive security lens for the UI adapters (SSRF boundary). PRs not
-    # touching these paths get only the general pydantic-ai-pr-review.
-    paths:
-      - 'pydantic_ai_slim/pydantic_ai/ui/**'
-      - 'pydantic_ai_slim/pydantic_ai/_ssrf.py'
-      - 'pydantic_ai_slim/pydantic_ai/messages.py'
-      - 'pydantic_ai_slim/pydantic_ai/common_tools/web_fetch.py'
-      - 'docs/ui/**'
-      - 'docs/input.md'
-      - 'tests/test_vercel_ai.py'
-      - 'tests/test_ag_ui.py'
-      - 'tests/test_ui.py'
-      - 'tests/test_ui_web.py'
   workflow_dispatch:
   # Fork-PR safety: only trigger when the actor has admin/maintainer/write
   # access. Without this, any established external contributor's PR would
   # consume the configured Anthropic key and a model run.
   roles: [admin, maintainer, write]
+  # Make the activation chain wait on the cheap `detect` job below so the
+  # top-level `if:` (which gh-aw copies onto the activation + agent jobs) can
+  # reference `needs.detect.outputs.touched` validly. Listing it here makes
+  # `detect` a pre-activation dependency; without it gh-aw would make `detect`
+  # depend on `activation`, and the `if:` reference would point at a
+  # non-dependency.
+  needs: [detect]
+  # Pause for a maintainer's approval of the `ui-security-review` Environment
+  # before the agent runs. This gates the `activation` job, but because
+  # `activation` is itself gated by the `if:` below, the approval is only
+  # requested on UI-touching PRs (a skipped job never requests Environment
+  # approval). The pending approval keeps the agent's required check pending,
+  # blocking merge until a maintainer clicks Approve to start the review.
+  manual-approval: ui-security-review
+# Only run the review (and request approval) when the PR touches the UI
+# security surface. Non-UI PRs skip the activation chain, so the agent reports
+# "skipped" (= success for required checks) and never blocks merge.
+if: ${{ needs.detect.outputs.touched == 'true' }}
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -91,6 +104,34 @@ pre-agent-steps:
       fi
 
 jobs:
+  detect:
+    # Cheap, no-AI path filter: does this PR touch the UI security surface?
+    # The agent job's top-level `if:` keys on this output. Replaces the old
+    # trigger-level `paths:` filter so the workflow still runs (and reports a
+    # check) on every PR — non-UI PRs skip the agent and merge freely.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      touched: ${{ steps.filter.outputs.touched }}
+    steps:
+      - name: Detect UI security paths in the PR
+        id: filter
+        if: ${{ github.event.pull_request.number }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          files="$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename')"
+          if printf '%s\n' "$files" | grep -qE '^(pydantic_ai_slim/pydantic_ai/ui/|pydantic_ai_slim/pydantic_ai/_ssrf\.py$|pydantic_ai_slim/pydantic_ai/messages\.py$|pydantic_ai_slim/pydantic_ai/common_tools/web_fetch\.py$|docs/ui/|docs/input\.md$|tests/test_vercel_ai\.py$|tests/test_ag_ui\.py$|tests/test_ui\.py$|tests/test_ui_web\.py$)'; then
+            echo 'touched=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'touched=false' >> "$GITHUB_OUTPUT"
+          fi
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
     timeout-minutes: 5
