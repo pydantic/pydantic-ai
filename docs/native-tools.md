@@ -338,7 +338,7 @@ Files whose [`UploadedFile.provider_name`][pydantic_ai.messages.UploadedFile.pro
 
 #### Anthropic
 
-```py {title="code_execution_with_files_anthropic.py" test="skip" lint="skip"}
+```py {title="code_execution_with_files_anthropic.py" test="skip" line_length="120"}
 import asyncio
 
 import anthropic
@@ -348,6 +348,8 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import UploadedFile
 
 
+# `test="skip"`: this reads a real local file and makes live Files API + code-execution
+# calls, which the docs test suite cannot replay.
 async def main():
     # Upload a file via the Anthropic Files API
     client = anthropic.AsyncAnthropic()
@@ -372,7 +374,7 @@ For details on file management, persistence, and container behavior, see the [An
 
 #### OpenAI
 
-```py {title="code_execution_with_files_openai.py" test="skip" lint="skip"}
+```py {title="code_execution_with_files_openai.py" test="skip" line_length="120"}
 import asyncio
 
 from openai import AsyncOpenAI
@@ -382,6 +384,8 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import UploadedFile
 
 
+# `test="skip"`: this reads a real local file and makes live Files API + code-execution
+# calls, which the docs test suite cannot replay.
 async def main():
     # Upload a file via the OpenAI Files API
     client = AsyncOpenAI()
