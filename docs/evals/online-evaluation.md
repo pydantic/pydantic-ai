@@ -801,6 +801,39 @@ async def main():
 asyncio.run(main())
 ```
 
+#### Serializing an `EvaluatorContext`
+
+To populate a store like the one above, you need to serialize an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] to JSON (and read it back). `EvaluatorContext` is a Pydantic-serializable dataclass, so a [`TypeAdapter`][pydantic.TypeAdapter] handles both directions. Bind it to the concrete `inputs`, `output`, and `metadata` types your contexts carry so those fields are reconstructed faithfully:
+
+```python
+from pydantic import TypeAdapter
+
+from pydantic_evals.evaluators import EvaluatorContext
+from pydantic_evals.otel.span_tree import SpanTree
+
+context_adapter = TypeAdapter(EvaluatorContext[dict[str, str], str, dict[str, str]])
+
+ctx = EvaluatorContext[dict[str, str], str, dict[str, str]](
+    name='span_abc',
+    inputs={'query': 'What is AI?'},
+    output='AI is artificial intelligence.',
+    expected_output=None,
+    metadata={'model': 'gpt-4o'},
+    duration=1.2,
+    _span_tree=SpanTree(),
+    attributes={},
+    metrics={},
+)
+
+json_bytes = context_adapter.dump_json(ctx)
+restored = context_adapter.validate_json(json_bytes)
+print(restored.output)
+#> AI is artificial intelligence.
+```
+
+!!! note "Bind the type parameters"
+    A bare `TypeAdapter(EvaluatorContext)` operates at the `Any` defaults for `inputs`, `output`, `metadata`, and `expected_output`: it does not reconstruct their concrete Python types, so non-primitive values round-trip back as plain dicts/lists, and a value that is not JSON-serializable raises `PydanticSerializationError` at dump time. Pass the concrete type parameters (as above) for faithful round-trips.
+
 ## Concurrency Control
 
 Each [`OnlineEvaluator`][pydantic_evals.online.OnlineEvaluator] has a `max_concurrency` limit (default: 10). When the limit is reached, new evaluation requests for that evaluator are **dropped** (not queued). This prevents expensive evaluators from consuming unbounded resources:

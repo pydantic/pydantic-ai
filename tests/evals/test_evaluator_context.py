@@ -10,7 +10,7 @@ from pydantic import TypeAdapter
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals.evaluators.context import EVALUATOR_CONTEXT_ADAPTER, EvaluatorContext
+    from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanNode, SpanTree
 
@@ -131,11 +131,12 @@ def test_span_tree_recording_error_serde_json_shape():
 
 
 def test_evaluator_context_serde_with_span_tree():
-    """Test EvaluatorContext round-trips through EVALUATOR_CONTEXT_ADAPTER when _span_tree is a populated SpanTree.
+    """Test EvaluatorContext round-trips through `TypeAdapter(EvaluatorContext)` when _span_tree is a populated SpanTree.
 
     The tree is built with `add_spans` rather than `SpanTree(roots=[...])`: `__post_init__` rebuilds the
     tree from `nodes_by_id`, so passing `roots` directly would leave the parent/child path untested.
     """
+    adapter = TypeAdapter(EvaluatorContext)
     root = SpanNode(
         name='root',
         trace_id=1,
@@ -169,7 +170,7 @@ def test_evaluator_context_serde_with_span_tree():
         metrics={},
     )
 
-    assert EVALUATOR_CONTEXT_ADAPTER.dump_python(ctx, mode='json') == snapshot(
+    assert adapter.dump_python(ctx, mode='json') == snapshot(
         {
             'name': 'test_case',
             'inputs': 'hello',
@@ -215,8 +216,8 @@ def test_evaluator_context_serde_with_span_tree():
         }
     )
 
-    json_bytes = EVALUATOR_CONTEXT_ADAPTER.dump_json(ctx)
-    restored = EVALUATOR_CONTEXT_ADAPTER.validate_json(json_bytes)
+    json_bytes = adapter.dump_json(ctx)
+    restored = adapter.validate_json(json_bytes)
 
     assert isinstance(restored.span_tree, SpanTree)
     assert [node.name for node in restored.span_tree.roots] == ['root']
@@ -224,7 +225,8 @@ def test_evaluator_context_serde_with_span_tree():
 
 
 def test_evaluator_context_serde_with_error():
-    """Test EvaluatorContext round-trips through EVALUATOR_CONTEXT_ADAPTER when _span_tree is an error."""
+    """Test EvaluatorContext round-trips through `TypeAdapter(EvaluatorContext)` when _span_tree is an error."""
+    adapter = TypeAdapter(EvaluatorContext)
     ctx = EvaluatorContext(
         name='test_case',
         inputs={'key': 'value'},
@@ -237,8 +239,8 @@ def test_evaluator_context_serde_with_error():
         metrics={'m': 42},
     )
 
-    json_bytes = EVALUATOR_CONTEXT_ADAPTER.dump_json(ctx)
-    restored = EVALUATOR_CONTEXT_ADAPTER.validate_json(json_bytes)
+    json_bytes = adapter.dump_json(ctx)
+    restored = adapter.validate_json(json_bytes)
 
     assert restored.name == ctx.name
     assert restored.inputs == ctx.inputs

@@ -9,13 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Generic
 
-from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
 from ..otel._errors import SpanTreeRecordingError
 from ..otel.span_tree import SpanTree
 
-__all__ = ('EVALUATOR_CONTEXT_ADAPTER', 'EvaluatorContext')
+__all__ = ('EvaluatorContext',)
 
 # ScoringContext needs to be covariant
 InputsT = TypeVar('InputsT', default=Any, covariant=True)
@@ -102,14 +101,3 @@ class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
             # In this case, there was a reason we couldn't record the SpanTree. We raise that now
             raise self._span_tree
         return self._span_tree
-
-
-EVALUATOR_CONTEXT_ADAPTER = TypeAdapter(EvaluatorContext)
-"""This adapter can be used to serialize and deserialize `EvaluatorContext` objects to and from JSON.
-
-It is bound to the bare generic `EvaluatorContext[Any, Any, Any]`, so it operates at the `Any` defaults
-for `inputs`, `output`, `metadata`, and `expected_output`. It does not reconstruct the concrete Python
-types of those fields: non-primitive values round-trip back as plain dicts/lists, and a value that is not
-JSON-serializable raises `PydanticSerializationError` at dump time. For typed round-trips, build your own
-`TypeAdapter(EvaluatorContext[InputsT, OutputT, MetadataT])`.
-"""
