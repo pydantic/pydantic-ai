@@ -181,6 +181,7 @@ class _ResolvedSpec:
     metadata: dict[str, Any] | None
     name: str | None
     output_retries: int | None
+    tool_retries: int | None
 
 
 @dataclasses.dataclass(init=False)
@@ -370,7 +371,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 On the text path, `output` is a global budget shared across all output-validation retries
                 in a run; on the tool path it is the default per-tool `max_retries` for each output tool,
                 overridable via [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput.max_retries].
-                The `output` budget can be overridden per run via `agent.run(retries=...)` (and friends).
+                Both budgets can be overridden per run via `agent.run(retries=...)` (and friends), passing
+                an `AgentRetries` dict (e.g. `retries={'tools': 3}`) for per-category control.
                 For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             validation_context: Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context) used to validate tool arguments and outputs.
             tools: Tools to register with the agent, you can also register tools via the decorators
@@ -464,9 +466,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._output_toolset and self._output_toolset.max_retries is None:
             self._output_toolset.max_retries = self._max_output_retries
 
+        # Leave the function toolset's `max_retries` unset so the agent-level tool-retry default
+        # flows through `ToolManager.default_max_retries` -> `RunContext.max_retries` instead of
+        # being baked onto every tool at construction. This lets `run`/`iter`/`override` override
+        # the tool-retry budget per run (via `default_max_retries`) while explicit per-tool
+        # (`@agent.tool(retries=...)`) and per-toolset (`FunctionToolset(max_retries=...)`) budgets
+        # still take precedence through the `tool.max_retries -> toolset.max_retries -> ctx.max_retries`
+        # fallback chain.
         self._function_toolset = _AgentFunctionToolset(
             tools,
-            max_retries=self._max_tool_retries,
+            max_retries=None,
             timeout=self._tool_timeout,
             output_schema=self._output_schema,
         )
@@ -513,6 +522,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_output_retries: ContextVar[_utils.Option[int]] = ContextVar(
             '_override_output_retries', default=None
         )
+        self._override_tool_retries: ContextVar[_utils.Option[int]] = ContextVar('_override_tool_retries', default=None)
         self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
             '_override_root_capability', default=None
         )
@@ -1035,8 +1045,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control, including the
+                tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1049,19 +1059,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        # Tool retries cannot be overridden per run: `int` is treated as the output budget. An explicit
-        # `retries={'tools': ...}` is rejected so the value isn't silently dropped.
+        # At run time an `int` is treated as the output budget; a `retries={'tools': ...}` dict
+        # overrides the tool-retry budget for this run (riding `ToolManager.default_max_retries`).
         retry_overrides = _normalize_agent_retry_overrides(retries, int_means='output')
-        if 'tools' in retry_overrides:
-            raise exceptions.UserError(
-                'Per-run `retries` cannot set tool retries: tool retries can only be configured at agent '
-                "construction time. Use `retries={'output': ...}` (or `retries=<int>` to override the output "
-                'budget) here, and `Agent(retries=...)` for tool retries.'
-            )
 
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
         effective_output_retries = retry_overrides.get('output')
+        effective_tool_retries = retry_overrides.get('tools')
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
             if model is None and resolved.model is not None:
@@ -1069,6 +1074,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Output retries: run param > spec > agent default
             if effective_output_retries is None and resolved.output_retries is not None:
                 effective_output_retries = resolved.output_retries
+            # Tool retries: run param > spec > agent default
+            if effective_tool_retries is None and resolved.tool_retries is not None:
+                effective_tool_retries = resolved.tool_retries
             # Instructions: spec instructions are additional
             if resolved.instructions:
                 extra = resolved.instructions
@@ -1106,6 +1114,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override_output_retries = self._override_output_retries.get()
         if override_output_retries is not None:
             effective_output_retries = override_output_retries.value
+        override_tool_retries = self._override_tool_retries.get()
+        if override_tool_retries is not None:
+            effective_tool_retries = override_tool_retries.value
+
+        # Resolve the effective tool-retry default: override > run arg > spec > agent init default.
+        effective_tool_retries_resolved = (
+            effective_tool_retries if effective_tool_retries is not None else self._max_tool_retries
+        )
 
         model_used = self._get_model(model)
         del model
@@ -1334,7 +1350,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         toolset = await toolset.for_run(initial_ctx)
         tool_manager = ToolManager[AgentDepsT](
-            toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
+            toolset, root_capability=run_capability, default_max_retries=effective_tool_retries_resolved
         )
 
         # Build instructions with per-run capability contributions
@@ -1618,12 +1634,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         combined = CombinedCapability(capabilities) if capabilities else None
 
         retry_overrides = _retry_overrides_from_spec(validated_spec)
-        if 'tools' in retry_overrides:
-            warnings.warn(
-                "AgentSpec retry field 'tools' is not supported at run/override time and will be ignored",
-                UserWarning,
-                stacklevel=3,
-            )
 
         # Warn for unsupported fields with non-default values. Read via `__dict__` to avoid
         # triggering pydantic deprecation warnings on deprecated spec fields.
@@ -1648,6 +1658,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             metadata=validated_spec.metadata,
             name=validated_spec.name,
             output_retries=retry_overrides.get('output'),
+            tool_retries=retry_overrides.get('tools'),
         )
 
     @contextmanager
@@ -1687,26 +1698,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
                 override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
-                dict for finer control. When set, any per-run `retries` argument is ignored. Tool retries
-                cannot be overridden via `override()`.
+                dict for finer control, including the tool-retry budget (e.g. `retries={'tools': 3}`).
+                When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec providing defaults for override. Explicit params take precedence
                 over spec values. When the spec includes `capabilities`, they replace (not merge with)
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
                 to `run()` or `iter()` instead.
         """
-        # Tool retries cannot be overridden via `override()`. An int means "override output only".
+        # An `int` means "override output only"; a `retries={'tools': ...}` dict overrides the
+        # tool-retry budget (and `{'output': ...}` the output budget).
         override_output_retries: int | _utils.Unset
+        override_tool_retries: int | _utils.Unset
         if _utils.is_set(retries):
             retry_overrides = _normalize_agent_retry_overrides(retries, int_means='output')
-            if 'tools' in retry_overrides:
-                raise exceptions.UserError(
-                    '`agent.override(retries=...)` cannot set tool retries: tool retries can only be '
-                    "configured at agent construction time. Use `retries={'output': ...}` (or "
-                    '`retries=<int>` to override the output budget) here.'
-                )
             override_output_retries = retry_overrides.get('output', _utils.UNSET)
+            override_tool_retries = retry_overrides.get('tools', _utils.UNSET)
         else:
             override_output_retries = _utils.UNSET
+            override_tool_retries = _utils.UNSET
 
         resolved = self._resolve_spec(spec)
 
@@ -1724,6 +1733,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 metadata = resolved.metadata
             if not _utils.is_set(override_output_retries) and resolved.output_retries is not None:
                 override_output_retries = resolved.output_retries
+            if not _utils.is_set(override_tool_retries) and resolved.tool_retries is not None:
+                override_tool_retries = resolved.tool_retries
 
         if _utils.is_set(name):
             name_token = self._override_name.set(_utils.Some(name))
@@ -1776,6 +1787,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             output_retries_token = None
 
+        if _utils.is_set(override_tool_retries):
+            tool_retries_token = self._override_tool_retries.set(_utils.Some(override_tool_retries))
+        else:
+            tool_retries_token = None
+
         # Set capability from spec, replacing the agent's existing root capability.
         # Auto-inject infrastructure capabilities since the override replaces
         # (not merges with) the agent's root capability.
@@ -1810,6 +1826,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_model_settings.reset(model_settings_token)
             if output_retries_token is not None:
                 self._override_output_retries.reset(output_retries_token)
+            if tool_retries_token is not None:
+                self._override_tool_retries.reset(tool_retries_token)
             if cap_token is not None:
                 self._override_root_capability.reset(cap_token)
 
@@ -2538,9 +2556,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
         if some_tools := self._override_tools.get():
+            # `max_retries=None` for the same reason as the agent's own function toolset: the
+            # tool-retry default rides `ToolManager.default_max_retries` rather than being baked here.
             function_toolset = _AgentFunctionToolset(
                 some_tools.value,
-                max_retries=self._max_tool_retries,
+                max_retries=None,
                 timeout=self._tool_timeout,
                 output_schema=self._output_schema,
             )
