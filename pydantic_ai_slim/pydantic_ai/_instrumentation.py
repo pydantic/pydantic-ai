@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
@@ -12,7 +13,7 @@ from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
-from pydantic_core import to_json
+from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
@@ -87,6 +88,19 @@ def serialize_any(value: Any) -> str:
             return str(value)
         except Exception as e:
             return f'Unable to serialize: {e}'
+
+
+def safe_to_json(value: Any) -> bytes:
+    """Serialize `value` to compact JSON bytes, tolerating lone surrogates.
+
+    `to_json` raises on unpaired surrogates (e.g. text decoded with `errors='surrogateescape'`),
+    which would crash an otherwise-successful run from within instrumentation. The stdlib fallback
+    escapes them, matching the lenient behavior callers had before adopting `to_json`.
+    """
+    try:
+        return to_json(value)
+    except PydanticSerializationError:
+        return json.dumps(value, separators=(',', ':')).encode()
 
 
 def model_attributes(model: Model) -> dict[str, AttributeValue]:
