@@ -40,6 +40,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot, warns
@@ -2079,8 +2080,6 @@ async def test_instrumented_model_tolerates_lone_surrogates_in_request_parameter
     (e.g. text decoded with `errors='surrogateescape'`) in a tool description from raising
     `PydanticSerializationError` and crashing an otherwise-successful run.
     """
-    from pydantic_ai.tools import ToolDefinition
-
     tool_def = ToolDefinition(name='weather', description='get the weather before\udce4after')
 
     model = InstrumentedModel(MyModel())
