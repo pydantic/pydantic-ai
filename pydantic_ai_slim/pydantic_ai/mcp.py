@@ -1229,7 +1229,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     error = error.exceptions[0]
                 if self.tool_error_behavior == 'retry':
                     raise exceptions.ModelRetry(message=str(error)) from eg
-                raise exceptions.ToolFailed(message=str(error)) from eg
+                elif self.tool_error_behavior == 'failed':
+                    raise exceptions.ToolFailed(message=str(error)) from eg
+                else:
+                    assert_never(self.tool_error_behavior)
 
         # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
         # structured content for backward compatibility).
