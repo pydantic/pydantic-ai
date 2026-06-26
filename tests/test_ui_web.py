@@ -292,13 +292,12 @@ def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_
 
 @pytest.mark.anyio
 async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """The cache file is never observable in a partial state while it is being written.
+    """The destination cache file is never written in place, so a reader can't catch it partial.
 
-    `Path.write_bytes` truncates its target before writing the content, so a concurrent
-    reader can catch the destination file existing but empty. The instrumented write below
-    makes that intrinsic window synchronously observable (no timing/threads): it asserts the
-    destination cache file only ever becomes visible with its complete content, which holds
-    only when the write is routed through a temp file + atomic `os.replace`.
+    `Path.write_bytes` truncates its target before writing the content, so a concurrent reader
+    can catch the destination existing but empty. Recording every `write_bytes` target lets us
+    assert deterministically (no timing/threads) that the destination is never written directly —
+    it only materializes, complete, via the atomic `os.replace` the fix routes the write through.
     """
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
@@ -324,13 +323,10 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
 
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     real_write_bytes = Path.write_bytes
-    destination_views: list[bytes] = []
+    written_targets: list[Path] = []
 
     def instrumented_write_bytes(self: Path, data: bytes) -> int:
-        # Model the non-atomic truncate-then-write: the target appears empty before bytes land.
-        real_write_bytes(self, b'')
-        if cache_file.exists():
-            destination_views.append(cache_file.read_bytes())
+        written_targets.append(self)
         return real_write_bytes(self, data)
 
     monkeypatch.setattr(Path, 'write_bytes', instrumented_write_bytes)
@@ -339,8 +335,9 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
 
     assert result == full_content
     assert cache_file.read_bytes() == full_content
-    # Atomicity invariant: the destination was never seen existing-but-incomplete.
-    assert all(view == full_content for view in destination_views)
+    # The cache write happened, but never directly to the destination (only via atomic os.replace).
+    assert written_targets
+    assert cache_file not in written_targets
 
 
 def test_chat_app_index_caching(isolated_ui_cache: None):
