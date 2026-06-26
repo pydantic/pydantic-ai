@@ -1,7 +1,9 @@
 from __future__ import annotations as _annotations
 
 import json
+import math
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -16,9 +18,10 @@ from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
-    from pydantic_evals import Case, Dataset, PydanticEvalsDeprecationWarning
+    from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
+        EvaluationReason,
         EvaluationResult,
         Evaluator,
         EvaluatorFailure,
@@ -139,22 +142,37 @@ def simple_evaluator() -> type[Evaluator[TaskInput, TaskOutput, TaskMetadata]]:
     return SimpleEvaluator
 
 
-def test_dataset_name_deprecation_warning(
+def test_dataset_name_required(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
 ):
-    """Test that omitting the name parameter emits a deprecation warning."""
-    with pytest.warns(PydanticEvalsDeprecationWarning, match='Omitting the `name` parameter is deprecated'):
-        Dataset(cases=example_cases)
+    """Test that omitting the name parameter raises a validation error."""
+    with pytest.raises(Exception, match='name'):
+        Dataset(cases=example_cases)  # pyright: ignore[reportCallIssue]
 
 
 def test_from_file_uses_filename_as_default_name(tmp_path: Path):
-    """Test that from_file uses filename stem as name and does not emit a deprecation warning."""
+    """Test that from_file uses filename stem as name."""
     yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
     yaml_path = tmp_path / 'my_dataset.yaml'
     yaml_path.write_text(yaml_content)
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert dataset.name == 'my_dataset'
+
+
+def test_from_dict_without_name_raises():
+    """If neither the serialized data nor `default_name` supplies a name, `from_dict` errors."""
+    data = {'cases': [{'name': 'test', 'inputs': {'query': 'hi'}}]}
+    with pytest.raises(ValueError, match='Dataset name is required'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(data)
+
+
+def test_from_dict_without_generic_params_warns():
+    """Calling `from_dict` on the bare `Dataset` class (no generic params) warns and falls back to `Any`."""
+    data = {'name': 'demo', 'cases': [{'name': 'c1', 'inputs': {'q': 'hi'}}]}
+    with pytest.warns(UserWarning, match='Could not determine the generic parameters'):
+        dataset = Dataset.from_dict(data)
+    assert dataset.name == 'demo'
 
 
 async def test_dataset_init(
@@ -1361,6 +1379,46 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
         ]
     )
     assert report.failures == snapshot([])
+
+
+@pytest.mark.parametrize(
+    'output_factory',
+    [
+        pytest.param(lambda: math.nan, id='nan-scalar'),
+        pytest.param(lambda: math.inf, id='inf-scalar'),
+        pytest.param(lambda: -math.inf, id='negative-inf-scalar'),
+        pytest.param(lambda: {'score': math.nan}, id='nan-mapping'),
+        pytest.param(lambda: EvaluationReason(value=math.nan, reason='not finite'), id='nan-reason'),
+        pytest.param(lambda: {'score': EvaluationReason(value=math.inf, reason='not finite')}, id='inf-mapped-reason'),
+    ],
+)
+async def test_dataset_evaluate_with_non_finite_evaluator_result(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], output_factory: Callable[[], Any]
+):
+    """Non-finite evaluator scores should be reported as evaluator failures."""
+    output = output_factory()
+
+    class NonFiniteEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> Any:
+            return output
+
+    example_dataset.add_evaluator(NonFiniteEvaluator())
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await example_dataset.evaluate(task)
+
+    assert report.failures == []
+    assert len(report.cases) == 2
+    for case in report.cases:
+        assert case.scores == {}
+        assert len(case.evaluator_failures) == 1
+        failure = case.evaluator_failures[0]
+        assert failure.name == 'NonFiniteEvaluator'
+        assert failure.error_type == 'ValueError'
+        assert 'returned a value of an invalid type' in failure.error_message
+        assert repr(output) in failure.error_message
 
 
 async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):

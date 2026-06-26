@@ -12,7 +12,7 @@ import pytest
 
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.profiles.groq import GroqModelProfile
@@ -67,7 +67,7 @@ def test_agent_to_web_with_model_instances():
 async def test_model_instance_preserved_in_dispatch(monkeypatch: pytest.MonkeyPatch):
     """Test that model instances are preserved and used in dispatch, not reconstructed from string."""
     model_instance = TestModel(custom_output_text='Custom output')
-    agent: Agent[None, str] = Agent()
+    agent = Agent()
     app = create_web_app(agent, models=[model_instance])
 
     # Mock dispatch_request to capture the model parameter
@@ -462,7 +462,7 @@ def test_model_profile():
 
 @pytest.mark.parametrize('profile_name', ['base', 'openai', 'google', 'groq'])
 def test_supported_native_tools(profile_name: str):
-    """Test profile.supported_native_tools returns proper tool types."""
+    """Test `profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)` returns proper tool types."""
     if profile_name == 'base':
         profile: ModelProfile = ModelProfile()
     elif profile_name == 'openai':
@@ -472,7 +472,7 @@ def test_supported_native_tools(profile_name: str):
     else:
         profile = GroqModelProfile()
 
-    result = profile.supported_native_tools
+    result = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
     assert isinstance(result, frozenset)
     assert all(issubclass(t, AbstractNativeTool) for t in result)
 

@@ -100,7 +100,6 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Bedrock
     * MCP Sampling
-    * Outlines (all providers)
     * xAI
     """
 
@@ -121,7 +120,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
-    * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -141,8 +139,20 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Bedrock
-    * Outlines (Transformers, LlamaCpp, SgLang, VLLMOffline)
     * xAI
+    """
+
+    top_k: int
+    """Only sample from the top K options for each subsequent token.
+
+    Used to remove "long tail" low probability responses.
+
+    Supported by:
+
+    * Gemini
+    * Anthropic
+    * Cohere
+    * Bedrock (Anthropic and Amazon Nova models only)
     """
 
     timeout: float | Timeout
@@ -213,7 +223,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Mistral
     * Gemini
-    * Outlines (LlamaCpp, VLLMOffline)
+    * xAI
     """
 
     presence_penalty: float
@@ -226,7 +236,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
-    * Outlines (LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -240,7 +249,6 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Gemini
     * Mistral
-    * Outlines (LlamaCpp, SgLang, VLLMOffline)
     * xAI
     """
 
@@ -251,7 +259,6 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Groq
-    * Outlines (Transformers, LlamaCpp, VLLMOffline)
     """
 
     stop_sequences: list[str]
@@ -330,7 +337,6 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
-    * Outlines (all providers)
     """
 
 

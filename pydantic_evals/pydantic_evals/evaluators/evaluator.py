@@ -4,9 +4,10 @@ import inspect
 from abc import abstractmethod
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, cast
+from typing import Annotated, Any, Generic, cast
 
-from typing_extensions import TypeVar, deprecated
+from pydantic import Field
+from typing_extensions import TypeVar
 
 from .._utils import get_event_loop
 from ._base import BaseEvaluator
@@ -23,10 +24,10 @@ __all__ = (
     'EvaluatorSpec',
 )
 
-EvaluationScalar = bool | int | float | str
+EvaluationScalar = bool | int | Annotated[float, Field(allow_inf_nan=False)] | str
 """The most primitive output allowed as an output from an Evaluator.
 
-`int` and `float` are treated as scores, `str` as labels, and `bool` as assertions.
+`int` and finite `float` are treated as scores, `str` as labels, and `bool` as assertions.
 """
 
 
@@ -49,18 +50,13 @@ EvaluatorOutput = EvaluationScalar | EvaluationReason | Mapping[str, EvaluationS
 """Type for the output of an evaluator, which can be a scalar, an EvaluationReason, or a mapping of names to either."""
 
 
-# TODO(DavidM): Add bound=EvaluationScalar to the following typevar once pydantic 2.11 is the min supported version
-EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covariant=True)
+EvaluationScalarT = TypeVar('EvaluationScalarT', bound=EvaluationScalar, default=EvaluationScalar, covariant=True)
 """Type variable for the scalar result type of an evaluation."""
 
-T = TypeVar('T')
+T = TypeVar('T', bound=EvaluationScalar)
 
 
-# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
-# without shifting positional-argument bindings, and consider reordering the existing
-# fields into a more logical grouping (e.g. identity → value → source metadata) while
-# we're free to rearrange.
-@dataclass
+@dataclass(kw_only=True)
 class EvaluationResult(Generic[EvaluationScalarT]):
     """The details of an individual evaluation result.
 
@@ -72,9 +68,10 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         reason: An optional explanation of the evaluation result.
         source: The spec of the evaluator that produced this result.
         evaluator_version: Optional version tag for the evaluator that produced this result
-            (e.g. `'v2'`). Sourced automatically from the `evaluator_version` class attribute
-            on the `Evaluator` subclass. Lets online-evaluation dashboards filter out results
-            from retired versions without deleting historical rows.
+            (e.g. `'v2'`). Sourced automatically from the evaluator's
+            [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]
+            method. Lets online-evaluation dashboards filter out results from retired versions
+            without deleting historical rows.
     """
 
     name: str
@@ -103,11 +100,7 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         return None
 
 
-# TODO(v2): switch to `@dataclass(kw_only=True)` so new fields can be inserted anywhere
-# without shifting positional-argument bindings, and consider reordering the existing
-# fields into a more logical grouping (e.g. identity → error detail → source metadata)
-# while we're free to rearrange.
-@dataclass
+@dataclass(kw_only=True)
 class EvaluatorFailure:
     """Represents a failure raised during the execution of an evaluator."""
 
@@ -117,7 +110,8 @@ class EvaluatorFailure:
     source: EvaluatorSpec
     evaluator_version: str | None = None
     """Optional version tag for the evaluator that raised (e.g. `'v2'`). Sourced automatically
-    from the `evaluator_version` class attribute on the `Evaluator` subclass."""
+    from the evaluator's
+    [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] method."""
     error_type: str | None = None
     """Class name of the exception that caused the failure (e.g. `'ValueError'`). Populated
     automatically when `EvaluatorFailure` is constructed from a caught exception; surfaced
@@ -156,15 +150,10 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
             return ctx.output == ctx.expected_output
     ```
 
-    Optional class-level attributes:
-
-    - `evaluation_name`: override the default name used in reports for this evaluator's output
-      (only applies when `evaluate` returns a scalar or `EvaluationReason` — mapping outputs
-      always use their own keys).
-    - `evaluator_version`: an optional version tag (e.g. `'v2'`) describing the evaluator's
-      behavior. Propagated to online-evaluation sinks so dashboards can filter out results
-      produced by retired versions without deleting rows. Applies to every result the
-      evaluator emits. Bump whenever behavior changes in a way that invalidates prior scores.
+    Override [`get_default_evaluation_name`][pydantic_evals.evaluators.Evaluator.get_default_evaluation_name]
+    to customize the name used in reports, and
+    [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version] to tag the
+    evaluator with a version that downstream sinks can filter on.
 
     Example:
     ```python
@@ -175,37 +164,33 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
 
     @dataclass
     class LLMJudge(Evaluator):
-        evaluator_version = 'v2'  # bumped after prompt rewrite
-
         def evaluate(self, ctx: EvaluatorContext) -> bool: ...
+
+        def get_evaluator_version(self) -> str | None:
+            return 'v2'  # bumped after prompt rewrite
     ```
     """
-
-    @classmethod
-    @deprecated('`name` has been renamed, use `get_serialization_name` instead.')
-    def name(cls) -> str:
-        """`name` has been renamed, use `get_serialization_name` instead."""
-        return cls.get_serialization_name()
 
     def get_default_evaluation_name(self) -> str:
         """Return the default name to use in reports for the output of this evaluator.
 
-        By default, if the evaluator has an attribute called `evaluation_name` of type string, that will be used.
-        Otherwise, the serialization name of the evaluator (which is usually the class name) will be used.
-
-        This can be overridden to get a more descriptive name in evaluation reports, e.g. using instance information.
+        Defaults to the serialization name of the evaluator (which is usually the class name). Override this
+        method to customize the name, e.g. using instance information.
 
         Note that evaluators that return a mapping of results will always use the keys of that mapping as the names
         of the associated evaluation results.
         """
-        # TODO(v2): declare `evaluation_name: ClassVar[str | None] = None` on the
-        # base (alongside `evaluator_version`) and read it directly.
-        evaluation_name = getattr(self, 'evaluation_name', None)
-        if isinstance(evaluation_name, str):
-            # If the evaluator has an attribute `name` of type string, use that
-            return evaluation_name
-
         return self.get_serialization_name()
+
+    def get_evaluator_version(self) -> str | None:
+        """Return the version tag for this evaluator, or `None` if it has no version.
+
+        Propagated to online-evaluation sinks so dashboards can filter out results produced by retired
+        versions without deleting historical rows. Applies to every result the evaluator emits; bump
+        whenever behavior changes in a way that invalidates prior scores. Override this method to set
+        a non-`None` version.
+        """
+        return None
 
     @abstractmethod
     def evaluate(

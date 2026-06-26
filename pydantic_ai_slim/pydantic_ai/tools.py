@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import inspect
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
@@ -14,7 +13,6 @@ from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
-from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry
 from .function_signature import FunctionSignature
 from .messages import RetryPromptPart, ToolCallPart, ToolPartKind, ToolReturn
@@ -56,7 +54,7 @@ SystemPromptFunc: TypeAlias = (
     | Callable[[], str | None]
     | Callable[[], Awaitable[str | None]]
 )
-"""A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
+"""A function that may or may not take `RunContext` as an argument, and may or may not be async.
 
 Functions which return None are excluded from model requests.
 
@@ -124,7 +122,7 @@ Usage `ToolPrepareFunc[AgentDepsT]`.
 
 ToolsPrepareFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT], list['ToolDefinition']],
-    Awaitable['list[ToolDefinition] | None'] | list['ToolDefinition'] | None,
+    Awaitable[list['ToolDefinition']] | list['ToolDefinition'],
 ]
 """Definition of a function that can prepare the tool definition of all tools for each step.
 This is useful if you want to customize the definition of multiple tools or you want to register
@@ -141,8 +139,8 @@ from pydantic_ai.tools import ToolDefinition
 
 
 def turn_on_strict_if_openai(
-    ctx: RunContext[None], tool_defs: list[ToolDefinition]
-) -> list[ToolDefinition] | None:
+    ctx: RunContext, tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition]:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
@@ -379,7 +377,7 @@ DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 class DeferredToolResults:
     """Results for deferred tool calls from a previous run that required approval or external execution.
 
-    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object from the previous run.
+    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object from the previous run.
 
     See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
@@ -542,7 +540,8 @@ class Tool(Generic[ToolAgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -603,7 +602,8 @@ class Tool(Generic[ToolAgentDepsT]):
             json_schema: The schema for the function arguments
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info. Defaults to False.
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
@@ -718,7 +718,14 @@ class ToolDefinition:
     """
 
     sequential: bool = False
-    """Whether this tool requires a sequential/serial execution environment."""
+    """Whether this tool acts as a barrier that runs alone, not overlapping with other tool calls.
+
+    A `sequential=True` tool acts as a barrier: it runs alone, with tools the model emitted before it
+    completing first and tools emitted after it starting only once it finishes. Other tools still run
+    in parallel around it. To run an entire run's tools serially, use
+    [`parallel_execution_mode('sequential')`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode]
+    instead.
+    """
 
     kind: ToolKind = field(default='function')
     """The kind of tool:
@@ -734,7 +741,7 @@ class ToolDefinition:
     metadata: dict[str, Any] | None = None
     """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
-    For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
+    For MCP tools, this contains the `meta` and `annotations` fields from the tool definition, as well as a `task` flag indicating whether the server declares support for task-augmented execution.
     """
 
     timeout: float | None = None
@@ -841,6 +848,15 @@ class ToolDefinition:
     [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
     """
 
+    capability_id: str | None = None
+    """The id of the capability that contributed this tool, or `None` if the tool is not owned by a capability.
+
+    Assigned once when the run's capabilities are set up and then carried on the `ToolDefinition`
+    for the rest of that run — it does not change or reset between steps. For a tool owned by a
+    deferred capability it gates visibility: the tool is revealed once that capability's id appears
+    in [`RunContext.loaded_capability_ids`][pydantic_ai.tools.RunContext.loaded_capability_ids].
+    """
+
     @cached_property
     def function_signature(self) -> FunctionSignature:
         """The function signature shape for this tool.
@@ -871,38 +887,4 @@ class ToolDefinition:
         """
         return self.kind in ('external', 'unapproved')
 
-    def __getattr__(self, name: str) -> Any:
-        # Deprecated aliases for read access to the renamed `unless_native` field
-        # (was `prefer_builtin`, then briefly `prefer_native` after #5338).
-        if name in ('prefer_builtin', 'prefer_native'):
-            warnings.warn(
-                f'`ToolDefinition.{name}` is deprecated, use `ToolDefinition.unless_native` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            return self.unless_native
-        raise AttributeError(name)
-
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_builtin', new='unless_native')
-_utils.install_deprecated_kwarg_alias(ToolDefinition, old='prefer_native', new='unless_native')
-
-
-_RENAMED_TYPE_ALIASES: dict[str, str] = {
-    'BuiltinToolFunc': 'NativeToolFunc',
-    'AgentBuiltinTool': 'AgentNativeTool',
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _RENAMED_TYPE_ALIASES:
-        new_name = _RENAMED_TYPE_ALIASES[name]
-        warnings.warn(
-            f'`pydantic_ai.tools.{name}` is deprecated, use `pydantic_ai.tools.{new_name}` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return globals()[new_name]
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
