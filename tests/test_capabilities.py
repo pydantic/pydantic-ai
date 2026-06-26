@@ -528,6 +528,11 @@ def test_model_json_schema_with_capabilities():
                     'properties': {
                         'kind': {'default': 'code_execution', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'files': {
+                            'anyOf': [{'items': {'$ref': '#/$defs/UploadedFile'}, 'type': 'array'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Files',
+                        },
                     },
                     'title': 'CodeExecutionTool',
                     'type': 'object',
@@ -1216,6 +1221,49 @@ def test_model_json_schema_with_capabilities():
                         },
                     },
                     'title': 'ToolSearchTool',
+                    'type': 'object',
+                },
+                'UploadedFile': {
+                    'properties': {
+                        'file_id': {'title': 'File Id', 'type': 'string'},
+                        'provider_name': {
+                            'enum': [
+                                'anthropic',
+                                'openai',
+                                'google',
+                                'google-cloud',
+                                'google-gla',
+                                'google-vertex',
+                                'bedrock',
+                                'xai',
+                            ],
+                            'title': 'Provider Name',
+                            'type': 'string',
+                        },
+                        'vendor_metadata': {
+                            'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Vendor Metadata',
+                        },
+                        'media_type': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Media Type',
+                        },
+                        'identifier': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Identifier',
+                        },
+                        'kind': {
+                            'const': 'uploaded-file',
+                            'default': 'uploaded-file',
+                            'title': 'Kind',
+                            'type': 'string',
+                        },
+                    },
+                    'required': ['file_id', 'provider_name'],
+                    'title': 'UploadedFile',
                     'type': 'object',
                 },
                 'WebFetchTool': {
