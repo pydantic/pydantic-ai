@@ -901,9 +901,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessageTokensCount:
-        if isinstance(self.client, AsyncAnthropicBedrock):
-            raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
-
         # Anthropic docs: https://platform.claude.com/docs/en/api/messages-count-tokens
         # The `count_tokens` endpoint rejects server-side tools (`web_search`, `code_execution`,
         # `web_fetch`, `tool_search`) and the `mcp_servers` param with a 400, so restrict the wire
@@ -936,6 +933,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
+
+            with _map_api_errors(self.model_name):
+                return await count_tokens_via_bedrock(
+                    self.client,
+                    self._model_name,
+                    system=system_prompt or OMIT,
+                    messages=anthropic_messages,
+                    max_tokens=model_settings.get('max_tokens', 4096),
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice or OMIT,
+                    mcp_servers=mcp_servers or OMIT,
+                    betas=sorted(betas) or OMIT,
+                    output_config=output_config or OMIT,
+                    cache_control=auto_cache_control or OMIT,
+                    thinking=self._translate_thinking(model_settings, model_request_parameters),
+                    context_management=context_management or OMIT,
+                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    speed=self._effective_speed(model_settings, anthropic_profile),
+                    extra_headers=extra_headers,
+                    extra_body=model_settings.get('extra_body'),
+                )
+
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
