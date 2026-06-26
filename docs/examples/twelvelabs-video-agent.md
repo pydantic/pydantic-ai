@@ -16,6 +16,9 @@ Pegasus does the actual video understanding.
 You'll need a TwelveLabs API key set via `TWELVELABS_API_KEY`. You can grab a free key at
 [twelvelabs.io](https://twelvelabs.io) — there's a generous free tier.
 
+The example agent runs on `openai:gpt-5-mini`, so you'll also need an OpenAI API key set via
+`OPENAI_API_KEY`.
+
 Optionally set `VIDEO_URL` to point the agent at your own publicly-accessible video;
 otherwise a short public sample clip is used.
 
