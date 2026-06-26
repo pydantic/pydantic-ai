@@ -36,13 +36,23 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr
 
 
-def test_run_provider_name_matches_streaming_path():
+def test_provider_name_consistent_between_run_and_run_stream():
     """Regression test for #6062: agent.run() should set provider_name like run_stream()."""
-    agent = Agent()
-    result = agent.run_sync('Hello', model=TestModel())
-    provider_names = [m.provider_name for m in result.all_messages() if isinstance(m, ModelResponse)]
-    assert provider_names
-    assert all(name == 'test' for name in provider_names)
+    agent = Agent(model=TestModel())
+
+    run_result = agent.run_sync('hello')
+    run_provider_names = [
+        message.provider_name for message in run_result.all_messages() if isinstance(message, ModelResponse)
+    ]
+
+    stream_result = agent.run_stream_sync('hello')
+    list(stream_result.stream_text())
+    stream_provider_names = [
+        message.provider_name for message in stream_result.all_messages() if isinstance(message, ModelResponse)
+    ]
+
+    assert run_provider_names == ['test']
+    assert stream_provider_names == ['test']
 
 
 def test_call_one():
