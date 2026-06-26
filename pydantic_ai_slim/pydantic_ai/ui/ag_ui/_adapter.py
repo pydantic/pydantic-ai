@@ -168,27 +168,6 @@ def _new_message_id() -> str:
     return str(uuid.uuid4())
 
 
-def _flush_user_content(
-    user_content: list[
-        TextInputContent
-        | BinaryInputContent
-        | ImageInputContent
-        | AudioInputContent
-        | VideoInputContent
-        | DocumentInputContent
-    ],
-    target: list[Message],
-) -> None:
-    """Flush buffered user content into target as a UserMessage, then clear the buffer."""
-    if not user_content:
-        return
-    if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-        target.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
-    else:
-        target.append(UserMessage(id=_new_message_id(), content=list(user_content)))
-    user_content.clear()
-
-
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
@@ -602,9 +581,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if converted is not None:
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
-                # Flush buffered user content before tool returns so
-                # messages preserve the original ModelRequest.parts order.
-                _flush_user_content(user_content, result)
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
@@ -630,7 +606,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         messages: list[Message] = []
         if system_content:
             messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
-        _flush_user_content(user_content, messages)
+        if user_content:
+            # Simplify to plain string if only single text item
+            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+                messages.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
+            else:
+                messages.append(UserMessage(id=_new_message_id(), content=user_content))
         messages.extend(result)
         return messages
 
