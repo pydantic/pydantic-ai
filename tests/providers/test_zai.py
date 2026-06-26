@@ -83,6 +83,15 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile.get('thinking_always_enabled', False) is False
     assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
     assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
+    # glm-4.7 only supports thinking on/off, so no per-request reasoning effort.
+    assert profile.get('zai_supports_reasoning_effort', False) is False
+
+    # GLM-5.2+ additionally accepts a per-request reasoning effort level.
+    profile_5_2 = provider.model_profile('glm-5.2')
+    zai_model_profile_mock.assert_called_with('glm-5.2')
+    assert profile_5_2 is not None
+    assert profile_5_2.get('supports_thinking') is True
+    assert profile_5_2.get('zai_supports_reasoning_effort') is True
 
     profile_air = provider.model_profile('glm-4.5-air')
     zai_model_profile_mock.assert_called_with('glm-4.5-air')

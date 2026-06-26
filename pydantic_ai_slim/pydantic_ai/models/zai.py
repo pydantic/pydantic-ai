@@ -8,8 +8,9 @@ from typing import Any, Literal, cast
 from typing_extensions import override
 
 from ..profiles import ModelProfileSpec
+from ..profiles.zai import ZaiModelProfile
 from ..providers import Provider
-from ..settings import ModelSettings, ThinkingLevel
+from ..settings import ModelSettings
 from . import ModelRequestParameters
 
 try:
@@ -114,8 +115,9 @@ class ZaiModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        supports_reasoning_effort = cast(ZaiModelProfile, self.profile).get('zai_supports_reasoning_effort', False)
         new_settings = _zai_settings_to_openai_settings(
-            cast(ZaiModelSettings, merged_settings or {}), customized_parameters, self.model_name
+            cast(ZaiModelSettings, merged_settings or {}), customized_parameters, supports_reasoning_effort
         )
         return new_settings, customized_parameters
 
@@ -134,18 +136,18 @@ class ZaiModel(OpenAIChatModel):
 def _zai_settings_to_openai_settings(
     model_settings: ZaiModelSettings,
     model_request_parameters: ModelRequestParameters,
-    model_name: str,
+    supports_reasoning_effort: bool,
 ) -> OpenAIChatModelSettings:
     """Transforms a 'ZaiModelSettings' object into an 'OpenAIChatModelSettings' object.
 
     Maps the unified `thinking` setting and Z.AI-specific `zai_clear_thinking` into the
-    `extra_body.thinking` payload expected by the Z.AI API's OpenAI-compatible endpoint. On
-    GLM-5.2+ models an explicit effort level is additionally forwarded as `extra_body.reasoning_effort`.
+    `extra_body.thinking` payload expected by the Z.AI API's OpenAI-compatible endpoint. When the model
+    supports it, an explicit effort level is additionally forwarded as `extra_body.reasoning_effort`.
 
     Args:
         model_settings: The 'ZaiModelSettings' object to transform.
         model_request_parameters: The request parameters carrying the resolved unified `thinking` value.
-        model_name: The target model name, used to gate the GLM-5.2+ `reasoning_effort` parameter.
+        supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2+).
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -169,33 +171,13 @@ def _zai_settings_to_openai_settings(
     if thinking_payload:
         extra_body['thinking'] = thinking_payload
 
-    reasoning_effort = _zai_reasoning_effort(thinking_level, model_name)
-    if reasoning_effort is not None:
-        extra_body['reasoning_effort'] = reasoning_effort
+    # An explicit effort level (not a bare `True`/`False`) maps to Z.AI's `reasoning_effort`; a plain
+    # `thinking=True` leaves it unset so Z.AI applies its own default.
+    if supports_reasoning_effort and isinstance(thinking_level, str):
+        extra_body['reasoning_effort'] = thinking_level
 
     filtered = {k: v for k, v in model_settings.items() if not k.startswith('zai_')}
     if extra_body:
         filtered['extra_body'] = extra_body
 
     return cast(OpenAIChatModelSettings, filtered)
-
-
-_REASONING_EFFORT_MODEL_PREFIXES = ('glm-5.2',)
-"""Model name prefixes supporting the GLM-5.2+ `reasoning_effort` parameter.
-
-Earlier GLM models only support thinking on/off, so effort levels collapse to enabled there.
-"""
-
-
-def _zai_reasoning_effort(thinking_level: ThinkingLevel | None, model_name: str) -> str | None:
-    """Maps the unified `thinking` effort level to Z.AI's `reasoning_effort`, for models that support it.
-
-    Returns `None` (no `reasoning_effort` sent) unless `thinking` carries an explicit effort level
-    (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`) and the model is GLM-5.2 or newer. A plain
-    `thinking=True` leaves `reasoning_effort` unset so Z.AI applies its own default.
-    """
-    if not isinstance(thinking_level, str):
-        return None
-    if not model_name.lower().startswith(_REASONING_EFFORT_MODEL_PREFIXES):
-        return None
-    return thinking_level

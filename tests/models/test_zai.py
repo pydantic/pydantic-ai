@@ -266,7 +266,10 @@ def test_zai_settings_transformation(
     if extra_body is not None:
         settings['extra_body'] = extra_body
 
-    transformed = _zai_settings_to_openai_settings(settings, ModelRequestParameters(thinking=thinking), 'glm-4.7')
+    # `supports_reasoning_effort=False`: effort granularity collapses to enabled (e.g. on glm-4.7).
+    transformed = _zai_settings_to_openai_settings(
+        settings, ModelRequestParameters(thinking=thinking), supports_reasoning_effort=False
+    )
     assert transformed == expected
 
 
@@ -328,6 +331,6 @@ def test_zai_reasoning_effort_on_glm_5_2(thinking: ThinkingLevel, expected: dict
     Earlier GLM models collapse effort to thinking on/off (covered by `test_zai_settings_transformation`).
     """
     transformed = _zai_settings_to_openai_settings(
-        ZaiModelSettings(), ModelRequestParameters(thinking=thinking), 'glm-5.2'
+        ZaiModelSettings(), ModelRequestParameters(thinking=thinking), supports_reasoning_effort=True
     )
     assert transformed == expected
