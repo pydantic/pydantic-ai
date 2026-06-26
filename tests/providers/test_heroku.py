@@ -5,7 +5,7 @@ import pytest
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
@@ -58,8 +58,8 @@ def test_heroku_pass_openai_client() -> None:
 def test_heroku_model_profile():
     provider = HerokuProvider(api_key='api-key')
     model = OpenAIChatModel('claude-3-7-sonnet', provider=provider)
-    assert isinstance(model.profile, OpenAIModelProfile)
-    assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert isinstance(model.profile, dict)
+    assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
 async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: None, heroku_inference_key: str):

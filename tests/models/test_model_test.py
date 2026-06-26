@@ -79,6 +79,7 @@ def test_custom_output_args():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -92,6 +93,7 @@ def test_custom_output_args():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -104,6 +106,7 @@ def test_custom_output_args():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -128,6 +131,7 @@ def test_custom_output_args_model():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -141,6 +145,7 @@ def test_custom_output_args_model():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -153,6 +158,7 @@ def test_custom_output_args_model():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -173,6 +179,7 @@ def test_output_type():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -186,6 +193,7 @@ def test_output_type():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -198,6 +206,7 @@ def test_output_type():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -225,6 +234,7 @@ def test_tool_retry():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
@@ -232,6 +242,7 @@ def test_tool_retry():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -244,6 +255,7 @@ def test_tool_retry():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
@@ -251,6 +263,7 @@ def test_tool_retry():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -260,6 +273,7 @@ def test_tool_retry():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"my_ret":"1"}')],
@@ -267,6 +281,7 @@ def test_tool_retry():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -277,17 +292,17 @@ def test_output_tool_retry_error_handled():
         x: int
         y: str
 
-    agent = Agent('test', output_type=OutputModel, retries=2)
+    agent = Agent('test', output_type=OutputModel, retries={'tools': 2, 'output': 2})
 
     call_count = 0
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: OutputModel) -> OutputModel:
+    def validate_output(ctx: RunContext, output: OutputModel) -> OutputModel:
         nonlocal call_count
         call_count += 1
         raise ModelRetry('Fail')
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
         agent.run_sync('Hello', model=TestModel())
 
     assert call_count == 3
@@ -304,7 +319,7 @@ async def test_multiple_concurrent_tool_retries():
         x: int
         y: str
 
-    agent = Agent('test', deps_type=AgentRunDeps, output_type=OutputModel, retries=2)
+    agent = Agent('test', deps_type=AgentRunDeps, output_type=OutputModel, retries={'tools': 2, 'output': 2})
     retried_run_ids = set[int]()
     event = Event()
 
@@ -328,9 +343,9 @@ def test_output_tool_retry_error_handled_with_custom_args():
         x: int
         y: str
 
-    agent = Agent('test', output_type=ResultModel, retries=2)
+    agent = Agent('test', output_type=ResultModel, retries={'tools': 2, 'output': 2})
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(2\) for output validation'):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
         agent.run_sync('Hello', model=TestModel(custom_output_args={'foo': 'a', 'bar': 1}))
 
 
@@ -468,4 +483,4 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     agent = Agent()
     result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))

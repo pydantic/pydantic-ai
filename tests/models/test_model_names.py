@@ -7,7 +7,7 @@ import httpx
 import pytest
 from typing_extensions import TypedDict
 
-from pydantic_ai.models import KnownModelName
+from pydantic_ai.models import KnownModelName, known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
@@ -23,7 +23,6 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
     from pydantic_ai.models.xai import XaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
-    from pydantic_ai.providers.grok import GrokModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
 if not imports_successful():  # pragma: lax no cover
@@ -31,7 +30,7 @@ if not imports_successful():  # pragma: lax no cover
     AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
-    DeepSeekModelName = GrokModelName = XaiModelName = MoonshotAIModelName = None
+    DeepSeekModelName = XaiModelName = MoonshotAIModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -64,29 +63,24 @@ _PROVIDER_TO_MODEL_NAMES = {
     'bedrock': BedrockModelName,
     'cohere': CohereModelName,
     'deepseek': DeepSeekModelName,
-    'google-gla': GoogleModelName,
-    'google-vertex': GoogleModelName,
-    'grok': GrokModelName,
+    'google': GoogleModelName,
+    'google-cloud': GoogleModelName,
     'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,
     'mistral': MistralModelName,
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
+    'openai-chat': OpenAIModelName,
 }
 
 _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
     'openai': DEPRECATED_OPENAI_MODELS,
+    'openai-chat': DEPRECATED_OPENAI_MODELS,
 }
 
 UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
     {
-        'gateway/anthropic:claude-3-5-haiku-20241022',
-        'gateway/anthropic:claude-3-5-haiku-latest',
-        'gateway/anthropic:claude-3-7-sonnet-20250219',
-        'gateway/anthropic:claude-3-7-sonnet-latest',
-        'gateway/anthropic:claude-3-opus-20240229',
-        'gateway/anthropic:claude-3-opus-latest',
         'gateway/bedrock:amazon.titan-text-express-v1',
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',
@@ -139,12 +133,18 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
-        'gateway/google-vertex:gemini-2.0-flash',
-        'gateway/google-vertex:gemini-2.0-flash-lite',
-        'gateway/google-vertex:gemini-2.5-flash-preview-09-2025',
-        'gateway/google-vertex:gemini-3-pro-preview',
-        'gateway/google-vertex:gemini-flash-latest',
-        'gateway/google-vertex:gemini-flash-lite-latest',
+        'gateway/google-cloud:gemini-2.0-flash',
+        'gateway/google-cloud:gemini-2.0-flash-lite',
+        'gateway/google-cloud:gemini-2.5-flash-preview-09-2025',
+        'gateway/google-cloud:gemini-3-pro-preview',
+        'gateway/google-cloud:gemini-flash-latest',
+        'gateway/google-cloud:gemini-flash-lite-latest',
+        'gateway/google:gemini-2.0-flash',
+        'gateway/google:gemini-2.0-flash-lite',
+        'gateway/google:gemini-2.5-flash-preview-09-2025',
+        'gateway/google:gemini-3-pro-preview',
+        'gateway/google:gemini-flash-latest',
+        'gateway/google:gemini-flash-lite-latest',
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
         'gateway/groq:meta-llama/llama-guard-4-12b',
@@ -233,17 +233,22 @@ def test_known_model_names():  # pragma: lax no cover
 
     generated_names = sorted(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
 
-    known_model_names = sorted(get_args(KnownModelName.__value__))
+    known_names = sorted(known_model_names())
 
-    if generated_names != known_model_names:
+    if generated_names != known_names:
         errors: list[str] = []
-        missing_names = set(generated_names) - set(known_model_names)
+        missing_names = set(generated_names) - set(known_names)
         if missing_names:
             errors.append(f'Missing names: {missing_names}')
-        extra_names = set(known_model_names) - set(generated_names)
+        extra_names = set(known_names) - set(generated_names)
         if extra_names:
             errors.append(f'Extra names: {extra_names}')
         raise AssertionError('\n'.join(errors))
+
+
+def test_known_model_names_accessor():
+    """`known_model_names()` exposes exactly the `KnownModelName` members, verbatim."""
+    assert known_model_names() == get_args(KnownModelName.__value__)
 
 
 class HerokuModel(TypedDict):

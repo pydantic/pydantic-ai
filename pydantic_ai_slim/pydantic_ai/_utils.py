@@ -5,9 +5,19 @@ import copy
 import functools
 import inspect
 import re
+import sys
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Iterable,
+    Iterator,
+)
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
@@ -21,33 +31,35 @@ from typing import (
     Generic,
     TypeAlias,
     TypeGuard,
-    TypeVar,
     get_args,
     get_origin,
     overload,
 )
 
+import anyio
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
-from typing_extensions import (
-    ParamSpec,
-    TypeIs,
-    is_typeddict,
-)
+from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
+from pydantic_graph.util import get_callable_name
 
-from . import exceptions
+from .exceptions import UserError
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
+else:
+    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRun, AgentRunResult
-    from pydantic_graph import GraphRun, GraphRunResult
+    from pydantic_graph import GraphRun
 
     from . import messages as _messages
     from .tools import ObjectJsonSchema
@@ -60,7 +72,7 @@ _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', d
 
 
 @contextmanager
-def disable_threads() -> Iterator[None]:
+def disable_threads() -> Generator[None]:
     """Context manager to disable thread-based execution for sync functions.
 
     Inside this context, sync functions will execute inline rather than
@@ -80,7 +92,7 @@ def disable_threads() -> Iterator[None]:
 
 
 @contextmanager
-def using_thread_executor(executor: Executor) -> Iterator[None]:
+def using_thread_executor(executor: Executor) -> Generator[None]:
     """Context manager to use a custom executor for running sync functions in threads.
 
     Inside this context, sync functions will be executed using the provided executor
@@ -117,6 +129,10 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         return await loop.run_in_executor(executor, ctx.run, wrapped_func)
 
     return await run_sync(wrapped_func)
+
+
+def is_async_generator_already_running(exc: RuntimeError) -> bool:
+    return 'asynchronous generator is already running' in str(exc)
 
 
 def is_model_like(type_: Any) -> bool:
@@ -172,6 +188,16 @@ def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
 T = TypeVar('T')
 
 
+def check_tools_prepare_func_result(result: Iterable[T] | None, prepare_func: Any) -> list[T]:
+    """Validate and normalize a tool-prepare callback result."""
+    if result is None:
+        raise UserError(
+            f'Prepare function {get_callable_name(prepare_func)!r} returned `None`; '
+            'return `[]` to expose no tools, or return `tool_defs` to pass them through unchanged.'
+        )
+    return list(result)
+
+
 @dataclass
 class Some(Generic[T]):
     """Analogous to Rust's `Option::Some` type."""
@@ -181,6 +207,57 @@ class Some(Generic[T]):
 
 Option: TypeAlias = Some[T] | None
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
+
+
+async def gather(*coros: Awaitable[T]) -> list[T]:
+    """Run awaitables concurrently via an `anyio` task group and return results in input order.
+
+    Unlike `asyncio.gather`, a failure in one coroutine cancels the rest instead of leaving them
+    as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
+    match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
+    """
+    sentinel = Unset()
+    results: list[T | Unset] = [sentinel] * len(coros)
+
+    async def _run(index: int, coro: Awaitable[T]) -> None:
+        results[index] = await coro
+
+    try:
+        async with anyio.create_task_group() as tg:
+            for i, coro in enumerate(coros):
+                tg.start_soon(_run, i, coro)
+    except BaseExceptionGroup as eg:
+        if len(eg.exceptions) == 1:
+            exc = eg.exceptions[0]
+            exc.__suppress_context__ = True
+            raise exc
+        raise
+
+    final_results: list[T] = []
+    for result in results:
+        assert not isinstance(result, Unset)
+        final_results.append(result)
+    return final_results
+
+
+async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> None:
+    """Cancel any tasks still running and wait for them to finish unwinding.
+
+    Cleanup-only: results and exceptions from `tasks` are intentionally discarded so a
+    cancelled child cannot replace an exception already propagating in the caller.
+    Use after `asyncio.create_task` when an outer cancel/exception means the spawned
+    tasks must be torn down before the caller exits.
+    """
+    for task in tasks:
+        if not task.done():
+            task.cancel(msg=msg)
+
+    # Pydantic Graph runs nodes under AnyIO cancel scopes. Once the outer scope
+    # is cancelled, AnyIO uses level cancellation and can keep re-cancelling at
+    # each await. Shield the drain so child tasks get one explicit cancel above,
+    # then can finish normal async `finally` cleanup before we re-raise.
+    with anyio.CancelScope(shield=True):
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class Unset:
@@ -213,7 +290,7 @@ async def _cleanup_temporal_group(
 @asynccontextmanager
 async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None
-) -> AsyncIterator[AsyncIterable[list[T]]]:
+) -> AsyncGenerator[AsyncIterable[list[T]]]:
     """Group items from an async iterable into lists based on time interval between them.
 
     Effectively, this debounces the iterator.
@@ -330,12 +407,24 @@ def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, conversation_id: str | None) -> None:
+    """Fill in framework-tracked metadata (`timestamp`, `run_id`, `conversation_id`) that's still unset.
+
+    Producer-supplied values are preserved; only unset fields are filled in. Centralizing the field
+    list here means a new framework-tracked field only needs to be handled in one place, rather than
+    every site that materializes a message into the history.
+    """
+    message.timestamp = message.timestamp or now_utc()
+    message.run_id = message.run_id or run_id
+    message.conversation_id = message.conversation_id or conversation_id
+
+
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
     | _messages.RetryPromptPart
-    | _messages.BuiltinToolCallPart
-    | _messages.BuiltinToolReturnPart,
+    | _messages.NativeToolCallPart
+    | _messages.NativeToolReturnPart,
 ) -> str:
     """Type guard that either returns the tool call id or generates a new one if it's None."""
     return t.tool_call_id or generate_tool_call_id()
@@ -358,15 +447,18 @@ def generate_tool_call_id() -> str:
     return f'pyd_ai_{uuid.uuid4().hex}'
 
 
-class PeekableAsyncStream(Generic[T]):
+SourceT = TypeVar('SourceT', bound=AsyncIterable[Any], default=AsyncIterable[T])
+
+
+class PeekableAsyncStream(Generic[T, SourceT]):
     """Wraps an async iterable of type T and allows peeking at the *next* item without consuming it.
 
     We only buffer one item at a time (the next item). Once that item is yielded, it is discarded.
     This is a single-pass stream.
     """
 
-    def __init__(self, source: AsyncIterable[T]):
-        self._source = source
+    def __init__(self, source: SourceT):
+        self.source = source
         self._source_iter: AsyncIterator[T] | None = None
         self._buffer: T | Unset = UNSET
         self._exhausted = False
@@ -385,7 +477,7 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, we need to fetch the next item from the underlying iterator.
         if self._source_iter is None:
-            self._source_iter = aiter(self._source)
+            self._source_iter = aiter(self.source)
 
         try:
             self._buffer = await anext(self._source_iter)
@@ -419,7 +511,7 @@ class PeekableAsyncStream(Generic[T]):
 
         # Otherwise, fetch the next item from the source.
         if self._source_iter is None:
-            self._source_iter = aiter(self._source)
+            self._source_iter = aiter(self.source)
 
         try:
             return await anext(self._source_iter)
@@ -427,8 +519,15 @@ class PeekableAsyncStream(Generic[T]):
             self._exhausted = True
             raise
 
+    async def aclose(self) -> None:
+        self._exhausted = True
+        value = self._source_iter if self._source_iter is not None else self.source
+        aclose: Callable[[], Awaitable[None]] | None = getattr(value, 'aclose', None)
+        if aclose is not None:
+            await aclose()
 
-def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
+
+def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
     return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
 
 
@@ -438,6 +537,19 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
         f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
     )
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
+
+
+def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
+    """Shared utility for typed-part narrowers — preserves base fields when promoting to a typed subclass.
+
+    Construct a new dataclass instance from `src`'s fields, overriding selected ones.
+    Lets typed-part narrowers stay maintainable when fields are added to the base
+    class — base-class field changes flow through automatically instead of needing
+    every narrower to be updated by hand.
+    """
+    field_values: dict[str, Any] = {f.name: getattr(src, f.name) for f in fields(src)}
+    field_values.update(overrides)
+    return dst_cls(**field_values)
 
 
 _datetime_ta = TypeAdapter(datetime)
@@ -650,20 +762,6 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs
-
-
-def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
-    """Validate that no unknown kwargs remain after processing.
-
-    Args:
-        _kwargs: Dictionary of remaining kwargs after specific ones have been processed.
-
-    Raises:
-        UserError: If any unknown kwargs remain.
-    """
-    if _kwargs:
-        unknown_kwargs = ', '.join(f'`{k}`' for k in _kwargs.keys())
-        raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)

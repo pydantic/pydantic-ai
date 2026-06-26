@@ -8,3 +8,7 @@ Currently supported:
 
 - [`pydantic_ai.managed.logfire`][pydantic_ai.managed.logfire]: Logfire managed variables.
 """
+
+from .logfire import ManagedAgentSpec
+
+__all__ = ('ManagedAgentSpec',)

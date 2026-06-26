@@ -35,7 +35,7 @@ There are three ways to run a Pydantic AI agent based on AG-UI run input with st
 
 1. The [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] method, when called on an [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] instantiated with an agent and an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object, will run the agent and return a stream of AG-UI events. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`. Use this if you're using a web framework not based on Starlette (e.g. Django or Flask) or want to modify the input or output some way.
 2. The [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] class method takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user). This is a convenience method that combines [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request], [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream], and [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response].
-3. [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] represents an ASGI application that handles every AG-UI request by running the agent. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`, but these will be the same for each request, with the exception of the AG-UI state that's injected as described under [state management](#state-management). This ASGI app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a given path in an existing FastAPI app.
+3. Build a stand-alone [`Starlette`](https://www.starlette.io/applications/) app with a single `/` route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]. The same Starlette app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a path in an existing FastAPI app.
 
 ### Handle run input and output directly
 
@@ -124,14 +124,25 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 ### Stand-alone ASGI app
 
-This example uses [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] to turn the agent into a stand-alone ASGI application:
+When you don't already have a Starlette/FastAPI app to mount the route on, build a minimal [`Starlette`](https://www.starlette.io/applications/) app whose single `/` route calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
 
-```py {title="ag_ui_app.py" hl_lines="4"}
+```py {title="ag_ui_app.py"}
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
 from pydantic_ai import Agent
-from pydantic_ai.ui.ag_ui.app import AGUIApp
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-app = AGUIApp(agent)
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server:
@@ -169,24 +180,30 @@ The integration provides full support for
 real-time synchronization between agents and frontend applications.
 
 In the example below we have document state which is shared between the UI and
-server using the [`StateDeps`][pydantic_ai.ag_ui.StateDeps] [dependencies type](../dependencies.md) that can be used to automatically
+server using the [`StateDeps`][pydantic_ai.ui.StateDeps] [dependencies type](../dependencies.md) that can be used to automatically
 validate state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput) using a Pydantic `BaseModel` specified as a generic parameter.
 
 !!! note "Custom dependencies type with AG-UI state"
     If you want to use your own dependencies type to hold AG-UI state as well as other things, it needs to implements the
-    [`StateHandler`][pydantic_ai.ag_ui.StateHandler] protocol, meaning it needs to be a [dataclass](https://docs.python.org/3/library/dataclasses.html) with a non-optional `state` field. This lets Pydantic AI ensure that state is properly isolated between requests by building a new dependencies object each time.
+    [`StateHandler`][pydantic_ai.ui.StateHandler] protocol, meaning it needs to be a [dataclass](https://docs.python.org/3/library/dataclasses.html) with a non-optional `state` field. This lets Pydantic AI ensure that state is properly isolated between requests by building a new dependencies object each time.
 
     If the `state` field's type is a Pydantic `BaseModel` subclass, the raw state dictionary on the request is automatically validated. If not, you can validate the raw value yourself in your dependencies dataclass's `__post_init__` method.
 
-    If AG-UI state is provided but your dependencies do not implement [`StateHandler`][pydantic_ai.ag_ui.StateHandler], Pydantic AI will emit a warning and ignore the state. Use [`StateDeps`][pydantic_ai.ag_ui.StateDeps] or a custom [`StateHandler`][pydantic_ai.ag_ui.StateHandler] implementation to receive and validate the incoming state.
+    If AG-UI state is provided but your dependencies do not implement [`StateHandler`][pydantic_ai.ui.StateHandler], Pydantic AI will emit a warning and ignore the state. Use [`StateDeps`][pydantic_ai.ui.StateDeps] or a custom [`StateHandler`][pydantic_ai.ui.StateHandler] implementation to receive and validate the incoming state.
 
 
 ```python {title="ag_ui_state.py"}
+from dataclasses import replace
+
 from pydantic import BaseModel
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
 from pydantic_ai import Agent
 from pydantic_ai.ui import StateDeps
-from pydantic_ai.ui.ag_ui.app import AGUIApp
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 
 class DocumentState(BaseModel):
@@ -200,7 +217,15 @@ agent = Agent(
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
-app = AGUIApp(agent, deps=StateDeps(DocumentState()))
+deps = StateDeps(DocumentState())
+
+
+async def run_agent(request: Request) -> Response:
+    # `dispatch_request` mutates `deps.state` from the request, so give each request its own copy.
+    return await AGUIAdapter.dispatch_request(request, agent=agent, deps=replace(deps))
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server:
@@ -214,6 +239,59 @@ uvicorn ag_ui_state:app --host 0.0.0.0 --port 9000
 AG-UI frontend tools are seamlessly provided to the Pydantic AI agent, enabling rich
 user experiences with frontend user interfaces.
 
+### Tool approval (interrupts)
+
+Tools declared with `requires_approval=True` map onto AG-UI's [interrupt-aware run lifecycle](https://docs.ag-ui.com/concepts/interrupts). When the model proposes such a call, the run pauses and the adapter ends the SSE stream with a `RUN_FINISHED` event whose `outcome.type` is `"interrupt"` and whose `outcome.interrupts[]` describes each pending approval. The client renders an approval UI from that list and POSTs the next `RunAgentInput` with a `resume[]` array of `ResumeEntry` items addressing each interrupt.
+
+The mapping the adapter applies (matching the AG-UI Python SDK field names):
+
+| AG-UI direction         | Pydantic AI source / sink                                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `Interrupt.reason`      | Always `"tool_call"` for `requires_approval=True` tools                                                         |
+| `Interrupt.tool_call_id`| The `ToolCallPart.tool_call_id` of the proposed call                                                            |
+| `Interrupt.id`          | `f"int-{tool_call_id}"` (round-trips back to `tool_call_id` on resume)                                          |
+| `Interrupt.metadata`    | `DeferredToolRequests.metadata.get(tool_call_id)`                                                               |
+| `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`                                                |
+| `payload.approved=True` | [`ToolApproved`][pydantic_ai.tools.ToolApproved]                                                                |
+| `payload.editedArgs`    | [`ToolApproved.override_args`][pydantic_ai.tools.ToolApproved.override_args] (fully replaces the proposed args) |
+| `payload.approved=False`| [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message=payload.reason`                                      |
+| `status="cancelled"`    | [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message="Cancelled by user."` regardless of payload          |
+
+The agent must include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in its `output_type` so the run can pause cleanly instead of erroring on the proposed call:
+
+```python {title="ag_ui_tool_approval.py"}
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
+from pydantic_ai import Agent
+from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    """Delete a file. Pauses on a `RUN_FINISHED` interrupt outcome until the user approves."""
+    return f'deleted {path}'
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
+```
+
+On the resumed turn the agent re-executes the tool against the **original** `tool_call_id`, so only a `TOOL_CALL_RESULT` event is emitted for that id — no fresh `TOOL_CALL_START`. This preserves the audit trail the AG-UI spec requires.
+
+See [Deferred tools and human-in-the-loop tool approval](../deferred-tools.md) for the underlying Pydantic AI primitive that also works outside AG-UI.
+
+!!! note "Version requirement"
+    Interrupts require `ag-ui-protocol >= 0.1.19` ([PR #1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569)). On older installs the adapter silently falls back to emitting a bare `RUN_FINISHED` event without an outcome, and `resume[]` is ignored even if a client sends it.
+
 ### Events
 
 Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by returning a
@@ -222,12 +300,18 @@ Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events
 which allows for custom events and state updates.
 
 ```python {title="ag_ui_tool_events.py"}
+from dataclasses import replace
+
 from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
 from pydantic import BaseModel
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
 
 from pydantic_ai import Agent, RunContext, ToolReturn
 from pydantic_ai.ui import StateDeps
-from pydantic_ai.ui.ag_ui.app import AGUIApp
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 
 class DocumentState(BaseModel):
@@ -241,7 +325,14 @@ agent = Agent(
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
-app = AGUIApp(agent, deps=StateDeps(DocumentState()))
+deps = StateDeps(DocumentState())
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent, deps=replace(deps))
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
 
 
 @agent.tool
@@ -282,9 +373,44 @@ Since `app` is an ASGI application, it can be used with any ASGI server:
 uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 ```
 
+### Trust model
+
+AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview.
+
+### System prompts and instructions
+
+Pydantic AI supports two ways to provide guidance to the model: [`system_prompt`](../agent.md#system-prompts) (stored in the message history as [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s) and [`instructions`](../agent.md#instructions) (injected fresh on every request, never persisted). When you control the server side, `instructions` is the recommended default.
+
+The rest of this section only matters if you use `system_prompt`. If you only use `instructions`, there's nothing to configure — they're always applied regardless of the AG-UI message history.
+
+For `system_prompt`, you choose who owns it with the `manage_system_prompt` parameter on [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter]:
+
+- `'server'` (default): the agent's configured `system_prompt` is authoritative. Any `SystemMessage` sent by the frontend is stripped with a warning (a malicious client could otherwise inject arbitrary instructions via crafted API requests), and the agent's own system prompt is reinjected at the head of the first request via the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
+- `'client'`: the frontend owns the system prompt. Frontend `SystemMessage`s are preserved as-is, and the agent's configured `system_prompt` is not injected — the caller is fully responsible for sending it on every turn if desired. To opt into fallback-to-configured behavior, add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability to your agent.
+
+```python {title="ag_ui_client_managed_system_prompt.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent('openai:gpt-5.2')
+
+app = FastAPI()
+
+
+@app.post('/')
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(
+        request, agent=agent, manage_system_prompt='client'
+    )
+```
+
 ## Examples
 
-For more examples of how to use [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp] see
+For more examples see
 [`pydantic_ai_examples.ag_ui`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/ag_ui),
 which includes a server for use with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo).

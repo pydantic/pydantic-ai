@@ -67,6 +67,7 @@ async def test_instructions_from_variable_default() -> None:
                 instructions='Default instructions.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content="instructions='Default instructions.';settings=None")],
@@ -74,6 +75,7 @@ async def test_instructions_from_variable_default() -> None:
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -92,6 +94,7 @@ async def test_instructions_from_variable_override() -> None:
                 instructions='Overridden instructions.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content="instructions='Overridden instructions.';settings=None")],
@@ -99,6 +102,7 @@ async def test_instructions_from_variable_override() -> None:
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -125,6 +129,7 @@ From variable.\
 """,
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content="instructions='Agent-level instructions.\\nFrom variable.';settings=None")],
@@ -132,6 +137,7 @@ From variable.\
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -151,6 +157,7 @@ async def test_model_settings_from_variable() -> None:
             model_name='function:respond:',
             timestamp=IsDatetime(),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -173,6 +180,7 @@ async def test_model_settings_merged_with_agent_level_settings() -> None:
             model_name='function:respond:',
             timestamp=IsDatetime(),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -187,6 +195,7 @@ async def test_resolves_fresh_per_run() -> None:
             instructions='Default instructions.',
             timestamp=IsDatetime(),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -198,6 +207,7 @@ async def test_resolves_fresh_per_run() -> None:
             instructions='mid-run value',
             timestamp=IsDatetime(),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -208,6 +218,7 @@ async def test_resolves_fresh_per_run() -> None:
             instructions='Default instructions.',
             timestamp=IsDatetime(),
             run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -229,6 +240,7 @@ async def test_no_variables_is_noop() -> None:
                 instructions='Just the agent.',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content="instructions='Just the agent.';settings=None")],
@@ -236,6 +248,7 @@ async def test_no_variables_is_noop() -> None:
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

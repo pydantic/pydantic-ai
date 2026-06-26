@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import os
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -55,20 +55,25 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             'gpt-oss': harmony_model_profile,
         }
 
+        model_name = model_name.lower()
         profile = None
         for prefix, profile_func in prefix_to_profile.items():
-            model_name = model_name.lower()
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
 
-        # As OllamaProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer,
-            openai_chat_thinking_field='reasoning',
-            supports_json_schema_output=True,
-            supports_json_object_output=True,
-        ).update(profile)
+        # `json_schema_transformer` is a fallback (upstream wins if it set one). The other Ollama-specific
+        # overrides win on top of upstream — Ollama's /v1/chat/completions endpoint supports response_format
+        # with json_schema natively, but strict mode is not supported (issue #4116).
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            OpenAIModelProfile(
+                openai_chat_thinking_field='reasoning',
+                openai_supports_strict_tool_definition=False,
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+            ),
+        )
 
     def __init__(
         self,

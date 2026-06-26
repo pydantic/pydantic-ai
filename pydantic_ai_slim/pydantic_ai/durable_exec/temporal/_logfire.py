@@ -53,7 +53,7 @@ class LogfirePlugin(SimplePlugin):
             # for the temporal metrics OTel export, which points at a single project.
             if isinstance(token, list):
                 token = token[0] if token else None
-            if logfire_config.send_to_logfire and token is not None and logfire_config.metrics is not False:
+            if logfire_config.send_to_logfire and isinstance(token, str) and logfire_config.metrics is not False:
                 base_url = logfire_config.advanced.generate_base_url(token)
                 metrics_url = base_url + '/v1/metrics'
                 headers = {'Authorization': f'Bearer {token}'}

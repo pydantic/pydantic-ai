@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import TypeAlias
@@ -238,13 +238,13 @@ Can be:
 
 
 @asynccontextmanager
-async def _null_context() -> AsyncIterator[None]:
+async def _null_context() -> AsyncGenerator[None]:
     """A no-op async context manager."""
     yield
 
 
 @asynccontextmanager
-async def _limiter_context(limiter: AbstractConcurrencyLimiter, source: str) -> AsyncIterator[None]:
+async def _limiter_context(limiter: AbstractConcurrencyLimiter, source: str) -> AsyncGenerator[None]:
     """Context manager that acquires and releases a limiter with the given source."""
     await limiter.acquire(source)
     try:
