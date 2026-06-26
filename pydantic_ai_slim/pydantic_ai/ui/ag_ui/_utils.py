@@ -47,8 +47,8 @@ TOOL_RETURN_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_return_file'
 """Activity type for multimodal `ToolReturnPart` content stored as AG-UI ActivityMessages.
 
 The AG-UI protocol's `ToolMessage.content` is `str` only as of `ag-ui-protocol` 0.1.18; this
-sidecar lets multimodal tool returns round-trip until the protocol gains native support
-(tracked upstream in https://github.com/ag-ui-protocol/ag-ui/issues/126).
+sidecar lets multimodal tool returns round-trip until the protocol gains native multimodal
+agent output (tracked upstream in https://github.com/ag-ui-protocol/ag-ui/issues/2029).
 """
 
 

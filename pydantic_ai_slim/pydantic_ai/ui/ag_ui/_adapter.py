@@ -178,8 +178,8 @@ def _tool_return_file_activity(tool_call_id: str, files: Sequence[MultiModalCont
     """Build the sidecar `ActivityMessage` carrying multimodal items for a `ToolReturnPart`.
 
     AG-UI's `ToolMessage.content` is `str` only as of `ag-ui-protocol` 0.1.18; this sidecar
-    preserves multimodal items across the round trip. Tracked upstream in
-    https://github.com/ag-ui-protocol/ag-ui/issues/126 — replace with native support once available.
+    preserves multimodal items across the round trip. Native multimodal agent output is tracked
+    upstream in https://github.com/ag-ui-protocol/ag-ui/issues/2029 — replace this once available.
     """
     return ActivityMessage(
         id=_new_message_id(),

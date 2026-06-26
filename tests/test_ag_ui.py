@@ -3657,7 +3657,7 @@ def test_dump_load_roundtrip_tool_return_multimodal(
 
     `ag_ui.core.ToolMessage.content` is `str` only as of `ag-ui-protocol` 0.1.18, so multimodal
     items round-trip as a separate `ActivityMessage` paired by `tool_call_id`. Tracking issue
-    for native support: https://github.com/ag-ui-protocol/ag-ui/issues/126.
+    for native multimodal agent output: https://github.com/ag-ui-protocol/ag-ui/issues/2029.
     """
     contents: dict[str, Any] = {
         'single-image': tiny_image,
