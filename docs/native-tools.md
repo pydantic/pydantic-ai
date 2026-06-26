@@ -348,8 +348,6 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import UploadedFile
 
 
-# `test="skip"`: this reads a real local file and makes live Files API + code-execution
-# calls, which the docs test suite cannot replay.
 async def main():
     # Upload a file via the Anthropic Files API
     client = anthropic.AsyncAnthropic()
@@ -384,8 +382,6 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import UploadedFile
 
 
-# `test="skip"`: this reads a real local file and makes live Files API + code-execution
-# calls, which the docs test suite cannot replay.
 async def main():
     # Upload a file via the OpenAI Files API
     client = AsyncOpenAI()
