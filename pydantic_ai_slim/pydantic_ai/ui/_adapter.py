@@ -30,10 +30,10 @@ from pydantic_ai.messages import (
     ModelMessage,
     ToolReturnContent,
     is_multi_modal_content,
-    sanitize_message_history,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
+from pydantic_ai.sanitization import sanitize_message_history
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
@@ -123,7 +123,7 @@ def strip_tool_return_files(content: ToolReturnContent, *, keep_top_level_files:
     Those helpers only see *top-level* files (the content itself, or direct elements of a top-level
     list), so with `preserve_file_data=False` a file nested inside a mapping or a deeper list is
     serialized to the client on dump. This strips exactly those nested files — mirroring the recursion
-    in `pydantic_ai.messages._sanitize_tool_return_content` on the inbound path — while
+    in `pydantic_ai.sanitization._sanitize_tool_return_content` on the inbound path — while
     `keep_top_level_files` leaves top-level files in place for the existing text-collapse / sidecar handling.
     """
     if is_multi_modal_content(content):
@@ -367,7 +367,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         Called on the messages produced from the protocol-specific run input before
         they're passed to the agent. Caller-supplied `message_history` is not passed
         through this method — it is trusted as coming from server-side persistence. Use
-        [`sanitize_message_history`][pydantic_ai.messages.sanitize_message_history] before
+        [`sanitize_message_history`][pydantic_ai.sanitization.sanitize_message_history] before
         passing `message_history` that came from an untrusted client.
 
         Currently strips:

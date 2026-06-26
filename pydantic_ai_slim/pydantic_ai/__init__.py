@@ -107,7 +107,6 @@ from .messages import (
     VideoFormat,
     VideoMediaType,
     VideoUrl,
-    sanitize_message_history,
 )
 from .models import ModelRequestContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
@@ -131,6 +130,7 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
+from .sanitization import sanitize_message_history
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .tools import (
     AgentNativeTool,
