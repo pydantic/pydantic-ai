@@ -3,7 +3,9 @@ from __future__ import annotations as _annotations
 import asyncio
 import contextvars
 import functools
+import importlib
 import os
+import sys
 import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -23,6 +25,7 @@ from pydantic_ai._utils import (
     strip_markdown_fences,
     using_thread_executor,
 )
+import pydantic_ai._utils as utils_module
 
 from ._inline_snapshot import snapshot
 from .models.mock_async_stream import MockAsyncStream
@@ -252,11 +255,7 @@ async def test_disable_threads_takes_priority_over_custom_executor() -> None:
 
 
 async def test_disable_threads_defaults_false_on_non_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
-    import importlib
-
-    import pydantic_ai._utils as utils_module
-
-    monkeypatch.setattr('sys.platform', 'linux')
+    monkeypatch.setattr(sys, 'platform', 'linux')
     importlib.reload(utils_module)
     try:
         main_thread = threading.current_thread()
@@ -271,11 +270,7 @@ async def test_disable_threads_defaults_false_on_non_emscripten(monkeypatch: pyt
 
 
 async def test_run_in_executor_runs_inline_by_default_on_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
-    import importlib
-
-    import pydantic_ai._utils as utils_module
-
-    monkeypatch.setattr('sys.platform', 'emscripten')
+    monkeypatch.setattr(sys, 'platform', 'emscripten')
     importlib.reload(utils_module)
     try:
         main_thread = threading.current_thread()
@@ -286,7 +281,7 @@ async def test_run_in_executor_runs_inline_by_default_on_emscripten(monkeypatch:
         result = await utils_module.run_in_executor(check_thread)
         assert result is main_thread
     finally:
-        monkeypatch.setattr('sys.platform', 'linux')
+        monkeypatch.setattr(sys, 'platform', 'linux')
         importlib.reload(utils_module)
 
 
