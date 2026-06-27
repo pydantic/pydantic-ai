@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -25,11 +25,10 @@ if TYPE_CHECKING:
     from .tools import ToolDefinition
     from .usage import RunUsage
 
-# TODO (v2): Change the default for all typevars like this from `None` to `object`
-AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
+AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
 
-RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=None, covariant=True)
+RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
 
@@ -289,7 +288,7 @@ def get_current_run_context() -> RunContext[Any] | None:
 
 
 @contextmanager
-def set_current_run_context(run_context: RunContext[Any]) -> Iterator[None]:
+def set_current_run_context(run_context: RunContext[Any]) -> Generator[None]:
     """Context manager to set the current run context.
 
     Args:
