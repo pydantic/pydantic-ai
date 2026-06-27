@@ -1121,11 +1121,21 @@ class BedrockConverseModel(Model[BaseClient]):
                 and current_message['role'] == last_message['role']
                 and current_message['role'] == 'user'
             ):
-                # Add the new user content onto the existing user message.
-                last_content = list(last_message['content'])
-                last_content.extend(current_message['content'])
-                last_message['content'] = last_content
-                continue
+                # Don't merge if one contains a tool result and the other contains an attachment (image, document, video)
+                last_has_tool_result = any('toolResult' in block for block in last_message['content'])
+                current_has_attachment = any(any(k in block for k in ('image', 'document', 'video')) for block in current_message['content'])
+                last_has_attachment = any(any(k in block for k in ('image', 'document', 'video')) for block in last_message['content'])
+                current_has_tool_result = any('toolResult' in block for block in current_message['content'])
+
+                if (last_has_tool_result and current_has_attachment) or (last_has_attachment and current_has_tool_result):
+                    # Insert a dummy assistant message to alternate roles
+                    processed_messages.append({'role': 'assistant', 'content': [{'text': ' '}]})
+                else:
+                    # Add the new user content onto the existing user message.
+                    last_content = list(last_message['content'])
+                    last_content.extend(current_message['content'])
+                    last_message['content'] = last_content
+                    continue
 
             # Add the entire message to the list of messages.
             processed_messages.append(current_message)
