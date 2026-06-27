@@ -51,6 +51,7 @@ class FileActivityContent(TypedDict, total=False):
     id: str
     provider_name: str
     provider_details: dict[str, Any]
+    vendor_metadata: Any
 
 
 class UploadedFileActivityContent(TypedDict, total=False):

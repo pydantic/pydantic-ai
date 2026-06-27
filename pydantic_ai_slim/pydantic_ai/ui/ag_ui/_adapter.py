@@ -487,9 +487,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             raise ValueError(
                                 f'ActivityMessage with activity_type={FILE_ACTIVITY_TYPE!r} must have a non-empty url.'
                             )
+                        binary_content = BinaryContent.from_data_uri(url)
+                        vendor_metadata = activity_content.get('vendor_metadata')
+                        if vendor_metadata is not None:
+                            binary_content.vendor_metadata = vendor_metadata
                         builder.add(
                             FilePart(
-                                content=BinaryContent.from_data_uri(url),
+                                content=binary_content,
                                 id=activity_content.get('id'),
                                 provider_name=activity_content.get('provider_name'),
                                 provider_details=activity_content.get('provider_details'),
@@ -708,6 +712,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         file_content['provider_name'] = part.provider_name
                     if part.provider_details is not None:
                         file_content['provider_details'] = part.provider_details
+                    if part.content.vendor_metadata is not None:
+                        file_content['vendor_metadata'] = part.content.vendor_metadata
                     result.append(
                         ActivityMessage(
                             id=_new_message_id(),

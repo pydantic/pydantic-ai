@@ -1679,6 +1679,23 @@ def test_dump_load_roundtrip_binary_content() -> None:
             ],
             id='file-only',
         ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Generate an image')]),
+                ModelResponse(
+                    parts=[
+                        FilePart(
+                            content=BinaryImage(
+                                data=b'generated file content',
+                                media_type='image/png',
+                                vendor_metadata={'detail': 'high'},
+                            ),
+                        ),
+                    ]
+                ),
+            ],
+            id='vendor-metadata',
+        ),
     ],
 )
 def test_dump_load_roundtrip_file_part(original: list[ModelMessage]) -> None:
@@ -3910,6 +3927,45 @@ def test_dump_messages_uploaded_file_without_vendor_metadata() -> None:
             }
         ]
     )
+
+
+def test_dump_messages_file_part_with_vendor_metadata() -> None:
+    """Test dump_messages includes vendor_metadata in the file ActivityMessage when present on a FilePart."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                FilePart(
+                    content=BinaryImage(
+                        data=b'generated file content',
+                        media_type='image/png',
+                        vendor_metadata={'detail': 'high'},
+                    ),
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, preserve_file_data=True)
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert len(activity_msgs) == 1
+    assert activity_msgs[0].activity_type == 'pydantic_ai_file'
+    assert activity_msgs[0].content.get('vendor_metadata') == {'detail': 'high'}
+
+
+def test_dump_messages_file_part_without_vendor_metadata() -> None:
+    """Test dump_messages omits vendor_metadata from the file ActivityMessage when None on a FilePart."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                FilePart(content=BinaryImage(data=b'generated file content', media_type='image/png')),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, preserve_file_data=True)
+    activity_msgs = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
+    assert len(activity_msgs) == 1
+    assert 'vendor_metadata' not in activity_msgs[0].content
 
 
 # endregion
