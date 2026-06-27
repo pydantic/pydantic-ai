@@ -54,6 +54,27 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
         assert groups == expected
 
 
+async def test_group_by_temporal_delayed_first_item():
+    """Regression test: first item delayed past soft_max_interval should still group with following nearby items.
+
+    Without the fix, group_start_time was initialized to time.monotonic() before the first
+    item arrived, so the debounce window had already elapsed by the time the first item came.
+    This caused the first item to be emitted alone.
+    """
+
+    async def yield_groups() -> AsyncIterator[int]:
+        await asyncio.sleep(0.08)  # first item delayed past the window
+        yield 1
+        await asyncio.sleep(0.01)  # second item arrives within the window of the first
+        yield 2
+        await asyncio.sleep(0.2)
+        yield 3
+
+    async with group_by_temporal(yield_groups(), soft_max_interval=0.04) as groups_iter:
+        groups: list[list[int]] = [g async for g in groups_iter]
+        assert groups == [[1, 2], [3]]
+
+
 def test_check_object_json_schema():
     object_schema = {'type': 'object', 'properties': {'a': {'type': 'string'}}}
     assert check_object_json_schema(object_schema) == object_schema
