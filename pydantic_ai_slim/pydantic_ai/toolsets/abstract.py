@@ -10,7 +10,7 @@ from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
-from ..tools import ToolDefinition, ToolsPrepareFunc
+from ..tools import ArgsBeforeValidatorFunc, ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
     from .approval_required import ApprovalRequiredToolset
@@ -61,6 +61,8 @@ class ToolsetTool(Generic[AgentDepsT]):
 
     For example, a [`pydantic.TypeAdapter(...).validator`](https://docs.pydantic.dev/latest/concepts/type_adapter/) or [`pydantic_core.SchemaValidator`](https://docs.pydantic.dev/latest/api/pydantic_core/#pydantic_core.SchemaValidator).
     """
+    args_before_validator_func: ArgsBeforeValidatorFunc[AgentDepsT] | None = None
+    """Custom args validator function that runs before schema validation."""
     args_validator_func: Callable[..., Any] | None = None
     """Custom args validator function that runs after schema validation but before tool execution.
 

@@ -226,6 +226,10 @@ class ToolManager(Generic[AgentDepsT]):
             ModelRetry: If argument validation fails with a retry request.
         """
         raw_args = args_override if args_override is not None else call.args
+        if tool.args_before_validator_func is not None:
+            result = tool.args_before_validator_func(ctx, raw_args if raw_args is not None else {})
+            raw_args = await result if inspect.isawaitable(result) else result
+
         pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
         validator = tool.args_validator
         if isinstance(raw_args, str):

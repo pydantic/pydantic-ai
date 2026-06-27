@@ -3326,6 +3326,139 @@ def test_args_validator_not_configured():
     agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
 
+@pytest.mark.parametrize('use_async_args_before_validator', [False, True])
+def test_args_before_validator_can_fix_raw_tool_args(use_async_args_before_validator: bool):
+    class Command(BaseModel):
+        command: Literal['create']
+        path: str
+        file_text: str
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        'memory',
+                        args={
+                            'command': json.dumps(
+                                {
+                                    'command': 'create',
+                                    'path': 'notes/second_memory.md',
+                                    'file_text': '# Second Memory\n',
+                                }
+                            )
+                        },
+                        tool_call_id='memory_call',
+                    )
+                ]
+            )
+
+        return ModelResponse(parts=[TextPart('done')])
+
+    def decode_command_arg(ctx: RunContext[object], args: str | dict[str, Any]) -> str | dict[str, Any]:
+        assert isinstance(args, dict)
+        assert isinstance(args['command'], str)
+        return {**args, 'command': json.loads(args['command'])}
+
+    async def decode_command_arg_async(ctx: RunContext[object], args: str | dict[str, Any]) -> str | dict[str, Any]:
+        return decode_command_arg(ctx, args)
+
+    args_before_validator = decode_command_arg_async if use_async_args_before_validator else decode_command_arg
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain(args_before_validator=args_before_validator)
+    def memory(command: Command) -> str:
+        return command.path
+
+    result = agent.run_sync('create the memory')
+
+    assert result.output == 'done'
+    assert result.all_messages()[2] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='memory',
+                    content='notes/second_memory.md',
+                    tool_call_id='memory_call',
+                    timestamp=IsDatetime(),
+                )
+            ],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
+def test_args_before_validator_survives_combined_toolsets():
+    class Command(BaseModel):
+        command: Literal['create']
+        path: str
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        'noop',
+                        args={},
+                        tool_call_id='noop_call',
+                    ),
+                    ToolCallPart(
+                        'memory',
+                        args={'command': json.dumps({'command': 'create', 'path': 'notes/second_memory.md'})},
+                        tool_call_id='memory_call',
+                    ),
+                ]
+            )
+
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def decode_command_arg(ctx: RunContext[object], args: str | dict[str, Any]) -> str | dict[str, Any]:
+        assert isinstance(args, dict)
+        assert isinstance(args['command'], str)
+        return {**args, 'command': json.loads(args['command'])}
+
+    memory_toolset = FunctionToolset()
+
+    @memory_toolset.tool_plain(args_before_validator=decode_command_arg)
+    def memory(command: Command) -> str:
+        return command.path
+
+    other_toolset = FunctionToolset()
+
+    @other_toolset.tool_plain
+    def noop() -> str:
+        return 'noop'
+
+    agent = Agent(FunctionModel(model_function), toolsets=[other_toolset, memory_toolset])
+    result = agent.run_sync('create the memory')
+
+    assert result.output == 'done'
+    assert result.all_messages()[2] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='noop',
+                    content='noop',
+                    tool_call_id='noop_call',
+                    timestamp=IsDatetime(),
+                ),
+                ToolReturnPart(
+                    tool_name='memory',
+                    content='notes/second_memory.md',
+                    tool_call_id='memory_call',
+                    timestamp=IsDatetime(),
+                ),
+            ],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
 @pytest.mark.anyio
 async def test_args_validator_async():
     """Test async validator functions work correctly."""

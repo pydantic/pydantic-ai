@@ -20,8 +20,10 @@ from .native_tools import AbstractNativeTool
 
 __all__ = (
     'AgentDepsT',
+    'ArgsBeforeValidatorFunc',
     'ArgsValidatorFunc',
     'DocstringFormat',
+    'RawToolArgs',
     'RunContext',
     'SystemPromptFunc',
     'ToolFuncContext',
@@ -79,6 +81,15 @@ This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] a
 
 Usage `ToolFuncEither[AgentDepsT, ToolParams]`.
 """
+RawToolArgs: TypeAlias = str | dict[str, Any]
+"""Raw tool arguments before schema validation."""
+
+ArgsBeforeValidatorFunc: TypeAlias = (
+    Callable[[RunContext[AgentDepsT], RawToolArgs], Awaitable[RawToolArgs]]
+    | Callable[[RunContext[AgentDepsT], RawToolArgs], RawToolArgs]
+)
+"""A function that can normalize raw tool arguments before schema validation."""
+
 ArgsValidatorFunc: TypeAlias = (
     Callable[Concatenate[RunContext[AgentDepsT], ToolParams], Awaitable[None]]
     | Callable[Concatenate[RunContext[AgentDepsT], ToolParams], None]
@@ -445,6 +456,7 @@ class Tool(Generic[ToolAgentDepsT]):
     name: str
     description: str | None
     prepare: ToolPrepareFunc[ToolAgentDepsT] | None
+    args_before_validator: ArgsBeforeValidatorFunc[ToolAgentDepsT] | None
     args_validator: ArgsValidatorFunc[ToolAgentDepsT, ...] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
@@ -471,6 +483,7 @@ class Tool(Generic[ToolAgentDepsT]):
         name: str | None = None,
         description: str | None = None,
         prepare: ToolPrepareFunc[ToolAgentDepsT] | None = None,
+        args_before_validator: ArgsBeforeValidatorFunc[ToolAgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[ToolAgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -528,6 +541,9 @@ class Tool(Generic[ToolAgentDepsT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
+            args_before_validator: custom method to normalize raw tool arguments before schema validation.
+                The validator receives the raw tool-call arguments and returns the arguments to pass into
+                Pydantic validation.
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
@@ -567,6 +583,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.max_retries = max_retries
         self.description = description or self.function_schema.description
         self.prepare = prepare
+        self.args_before_validator = args_before_validator
         self.args_validator = args_validator
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
@@ -588,6 +605,7 @@ class Tool(Generic[ToolAgentDepsT]):
         takes_ctx: bool = False,
         sequential: bool = False,
         args_validator: ArgsValidatorFunc[Any, ...] | None = None,
+        args_before_validator: ArgsBeforeValidatorFunc[Any] | None = None,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -610,6 +628,7 @@ class Tool(Generic[ToolAgentDepsT]):
                 Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
                 return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
+            args_before_validator: custom method to normalize raw tool arguments before schema validation.
 
         Returns:
             A Pydantic tool that calls the function
@@ -631,6 +650,7 @@ class Tool(Generic[ToolAgentDepsT]):
             description=description,
             function_schema=function_schema,
             sequential=sequential,
+            args_before_validator=args_before_validator,
             args_validator=args_validator,
         )
         return tool
