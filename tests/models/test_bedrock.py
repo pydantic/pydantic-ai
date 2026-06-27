@@ -2512,6 +2512,56 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     )
 
 
+async def test_bedrock_split_tool_result_from_attachment_user_message(bedrock_provider: BedrockProvider):
+    """Tool results and attachment blocks must not share a Bedrock user message."""
+    from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
+
+    model = BedrockConverseModel('us.anthropic.claude-opus-4-6-v1', provider=bedrock_provider)
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get', args={}, tool_call_id='t1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get', content='ok', tool_call_id='t1')]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'what accounts are in this?',
+                        DocumentUrl(url='s3://bucket/file.csv', media_type='text/csv'),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        _clean_message_history(history), ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'show me my expenses'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [{'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'what accounts are in this?'},
+                    {
+                        'document': {
+                            'format': 'csv',
+                            'name': 'Document 1',
+                            'source': {'s3Location': {'uri': 's3://bucket/file.csv'}},
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
 async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-20250514-v1:0',
