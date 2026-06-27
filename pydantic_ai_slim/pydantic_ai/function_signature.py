@@ -504,7 +504,8 @@ def _build_params_from_schema(
     required_params: dict[str, FunctionParam] = {}
     optional_params: dict[str, FunctionParam] = {}
 
-    for prop_name, prop_schema in properties.items():
+    for prop_name, prop_schema_raw in properties.items():
+        prop_schema: dict[str, Any] = {} if isinstance(prop_schema_raw, bool) else prop_schema_raw
         type_expr = _schema_to_type_expr(prop_schema, defs, referenced_types, tool_name, prop_name)
 
         if 'default' in prop_schema:
@@ -536,13 +537,16 @@ def _schema_allows_null(schema: dict[str, Any]) -> bool:
 
 
 def _schema_to_type_expr(
-    schema: dict[str, Any],
+    schema: dict[str, Any] | bool,
     defs: dict[str, dict[str, Any]],
     referenced_types: dict[str, TypeSignature],
     tool_name: str,
     path: str,
 ) -> TypeExpr:
     """Convert a JSON schema to a TypeExpr."""
+    if isinstance(schema, bool):
+        return _ANY
+
     # Handle $ref
     if '$ref' in schema:
         ref = schema['$ref']
