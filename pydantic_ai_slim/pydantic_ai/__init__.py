@@ -1,5 +1,6 @@
 from importlib.metadata import version as _metadata_version
 
+from ._conversions import model_messages_to_openai_format, otel_messages_to_model_messages
 from ._template import TemplateStr
 from .agent import (
     Agent,
@@ -203,6 +204,9 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
+    # conversions
+    'otel_messages_to_model_messages',
+    'model_messages_to_openai_format',
     # messages
     'AgentStreamEvent',
     'AudioFormat',
