@@ -69,6 +69,16 @@ logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)
 ```
 
+Give each agent an explicit `name=` so its spans are reliably labeled in the Logfire agents view:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2', name='support_agent')
+```
+
+Pydantic AI tries to infer the name from the call frame when it is omitted, but that fails for agents created in factories, loops, or comprehensions, leaving them unnamed or mislabeled. A stable name pays off most when several agents run in one app and you need to tell their traces apart.
+
 Good uses:
 
 - tracing tool calls

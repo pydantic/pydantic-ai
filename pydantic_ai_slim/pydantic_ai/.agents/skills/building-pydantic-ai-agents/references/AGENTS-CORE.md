@@ -9,12 +9,15 @@ from pydantic_ai import Agent
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
+    name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
 
 result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
 ```
+
+Pass an explicit `name=` to each agent. Pydantic AI falls back to inferring the name from the call frame, but that breaks for agents built in factories, loops, or comprehensions; a stable name gives you reliably-labeled spans in the Logfire agents view, which matters once more than one agent runs in the same app.
 
 ## Structured Output with Pydantic Models
 
