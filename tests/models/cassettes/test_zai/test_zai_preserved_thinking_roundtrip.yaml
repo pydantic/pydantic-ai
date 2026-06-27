@@ -1,0 +1,220 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '156'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1791'
+      content-type:
+      - application/json; charset=UTF-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 is 4.
+          reasoning_content: |2-
+
+            1.  **Identify the core question:** The user is asking for the sum of 2 and 2. This is a very basic arithmetic question.
+
+            2.  **Retrieve knowledge:** Access the stored knowledge of basic addition facts.
+                *   1 + 1 = 2
+                *   2 + 2 = 4
+                *   10 + 10 = 20
+                *   etc.
+
+            3.  **Verify the answer:**
+                *   "2" represents a quantity of two.
+                *   The "+" symbol represents addition, which is the process of combining quantities.
+                *   Combining two with another two results in a new quantity.
+                *   Counting 1, 2, 3, 4 confirms that the new quantity is "4".
+
+            4.  **Formulate the response:** The answer should be direct, simple, and accurate. No complex explanation is needed unless requested, but a tiny bit of extra info can be helpful to show *why* (e.g., stating the operation).
+
+                *   *Option 1 (simplest):* 4
+                *   *Option 2 (slightly more complete):* 2 + 2 is 4.
+                *   *Option 3 (playful):* The answer is 4.
+
+            5.  **Select the best response:** For a simple, factual question, a direct and concise answer is best. Option 2 ("2 + 2 is 4.") strikes a good balance between being direct and conversational.
+
+            6.  **Final check:** Does "2 + 2 is 4." accurately answer the user's question? Yes. Is it polite? Yes. Is it unambiguous? Yes.
+
+            7.  **Output the answer.**
+          role: assistant
+      created: 1782521846
+      id: 202606270857193d35d6076c074555
+      model: glm-4.7
+      object: chat.completion
+      request_id: 202606270857193d35d6076c074555
+      usage:
+        completion_tokens: 380
+        completion_tokens_details:
+          reasoning_tokens: 370
+        prompt_tokens: 13
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 393
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1598'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      - content: 2 + 2 is 4.
+        reasoning_content: |2-
+
+          1.  **Identify the core question:** The user is asking for the sum of 2 and 2. This is a very basic arithmetic question.
+
+          2.  **Retrieve knowledge:** Access the stored knowledge of basic addition facts.
+              *   1 + 1 = 2
+              *   2 + 2 = 4
+              *   10 + 10 = 20
+              *   etc.
+
+          3.  **Verify the answer:**
+              *   "2" represents a quantity of two.
+              *   The "+" symbol represents addition, which is the process of combining quantities.
+              *   Combining two with another two results in a new quantity.
+              *   Counting 1, 2, 3, 4 confirms that the new quantity is "4".
+
+          4.  **Formulate the response:** The answer should be direct, simple, and accurate. No complex explanation is needed unless requested, but a tiny bit of extra info can be helpful to show *why* (e.g., stating the operation).
+
+              *   *Option 1 (simplest):* 4
+              *   *Option 2 (slightly more complete):* 2 + 2 is 4.
+              *   *Option 3 (playful):* The answer is 4.
+
+          5.  **Select the best response:** For a simple, factual question, a direct and concise answer is best. Option 2 ("2 + 2 is 4.") strikes a good balance between being direct and conversational.
+
+          6.  **Final check:** Does "2 + 2 is 4." accurately answer the user's question? Yes. Is it polite? Yes. Is it unambiguous? Yes.
+
+          7.  **Output the answer.**
+        role: assistant
+      - content: Now multiply that by 3.
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1356'
+      content-type:
+      - application/json; charset=UTF-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 4 multiplied by 3 is **12**.
+          reasoning_content: |2-
+
+            1.  **Analyze the user's request:** The user said, "Now multiply that by 3."
+
+            2.  **Identify the context:** "That" refers to the result of the previous question, which was 2 + 2 = 4.
+
+            3.  **Perform the calculation:**
+                *   "That" = 4.
+                *   Operation: Multiply by 3.
+                *   Calculation: $4 * 3 = 12$.
+
+            4.  **Formulate the response:**
+                *   State the previous number (optional, but good for clarity): "4 multiplied by 3..."
+                *   State the result: "...is 12."
+                *   Alternatively, just state the result directly. "12" is a bit too brief. "4 times 3 is 12" is better.
+
+            5.  **Refine the response:** Keep it simple and direct.
+                *   Draft: "4 multiplied by 3 is 12."
+
+            6.  **Final check:**
+                *   Previous result: 4.
+                *   New instruction: Multiply by 3.
+                *   $4 * 3 = 12$.
+                *   The response is correct.
+          role: assistant
+      created: 1782521851
+      id: 202606270857276d89e33532b94a91
+      model: glm-4.7
+      object: chat.completion
+      request_id: 202606270857276d89e33532b94a91
+      usage:
+        completion_tokens: 267
+        completion_tokens_details:
+          reasoning_tokens: 255
+        prompt_tokens: 401
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 668
+    status:
+      code: 200
+      message: OK
+version: 1

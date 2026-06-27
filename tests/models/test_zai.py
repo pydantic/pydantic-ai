@@ -218,6 +218,30 @@ async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str
     assert request_body['reasoning_effort'] == 'high'
 
 
+async def test_zai_preserved_thinking_roundtrip(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
+    """With `zai_clear_thinking=False`, the prior turn's `reasoning_content` is replayed in the next
+    request's assistant message and the Z.AI API accepts the multi-turn round-trip.
+
+    Recorded against the real API: Z.AI's default `clear_thinking=true` strips prior reasoning (the failure
+    mode fixed for the same GLM family in #5897), so a unit test of the send-back body shape
+    (`test_zai_sends_back_thinking_in_reasoning_content_field`) can't prove the live round-trip is accepted.
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    agent = Agent(model=model, model_settings=ZaiModelSettings(thinking=True, zai_clear_thinking=False))
+
+    first = await agent.run('What is 2 + 2?')
+    second = await agent.run('Now multiply that by 3.', message_history=first.all_messages())
+    assert second.output == snapshot('4 multiplied by 3 is **12**.')
+
+    # The second request must replay the first turn's reasoning back in `reasoning_content`; recording it
+    # against the live API confirms the round-trip is accepted (no 4xx).
+    assert len(vcr.requests) == 2  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    second_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assistant_messages = [m for m in second_body['messages'] if m.get('role') == 'assistant']
+    assert any(m.get('reasoning_content') for m in assistant_messages)
+
+
 async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str):
     provider = ZaiProvider(api_key=zai_api_key)
     model = ZaiModel('glm-4.7', provider=provider)
