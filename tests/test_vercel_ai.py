@@ -4787,6 +4787,33 @@ async def test_adapter_dump_load_roundtrip():
     assert reloaded_messages == original_messages
 
 
+async def test_adapter_dump_load_roundtrip_preserves_text_content_metadata():
+    original_messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Hello',
+                        TextContent(content='World', metadata={'source': 'mcp', 'part_id': 'abc123'}),
+                    ]
+                )
+            ]
+        )
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+
+    [reloaded_request] = reloaded_messages
+    assert isinstance(reloaded_request, ModelRequest)
+    [reloaded_part] = reloaded_request.parts
+    assert isinstance(reloaded_part, UserPromptPart)
+    assert reloaded_part.content[0] == 'Hello'
+    assert isinstance(reloaded_part.content[1], TextContent)
+    assert reloaded_part.content[1].content == 'World'
+    assert reloaded_part.content[1].metadata == {'source': 'mcp', 'part_id': 'abc123'}
+
+
 async def test_adapter_dump_load_roundtrip_without_timestamps():
     """Test that dump_messages and load_messages work when ModelRequest has no timestamp (None)."""
     original_messages: list[ModelRequest | ModelResponse] = [
@@ -5898,7 +5925,14 @@ async def test_convert_user_prompt_part_text_content():
     part = UserPromptPart(content=['Just some text', TextContent(content='More text', metadata={'key': 'value'})])
     ui_parts = _convert_user_prompt_part(part)
     assert ui_parts == snapshot(
-        [TextUIPart(text='Just some text', state='done'), TextUIPart(text='More text', state='done')]
+        [
+            TextUIPart(text='Just some text', state='done'),
+            TextUIPart(
+                text='More text',
+                state='done',
+                provider_metadata={'pydantic_ai': {'text_content_metadata': {'key': 'value'}}},
+            ),
+        ]
     )
 
 
