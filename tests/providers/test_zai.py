@@ -31,14 +31,14 @@ async def test_zai_provider():
     assert isinstance(provider.client, AsyncOpenAI)
     assert provider.client.api_key == 'api-key'
 
-    first_http_client = provider.client._client  # type: ignore[reportPrivateUsage]
+    first_http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
     async with provider:
-        assert provider.client._client == first_http_client  # type: ignore[reportPrivateUsage]
+        assert provider.client._client == first_http_client  # pyright: ignore[reportPrivateUsage]
         assert not first_http_client.is_closed
     assert first_http_client.is_closed
 
     async with provider:
-        second_http_client = provider.client._client  # type: ignore[reportPrivateUsage]
+        second_http_client = provider.client._client  # pyright: ignore[reportPrivateUsage]
         assert second_http_client is not first_http_client
         assert not second_http_client.is_closed
     assert second_http_client.is_closed
@@ -59,7 +59,7 @@ def test_zai_provider_need_api_key(env: TestEnv) -> None:
 def test_zai_provider_pass_http_client() -> None:
     http_client = httpx.AsyncClient()
     provider = ZaiProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
+    assert provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
 
 
 def test_zai_provider_pass_openai_client() -> None:

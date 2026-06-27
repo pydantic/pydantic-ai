@@ -9,6 +9,7 @@ from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
 from pydantic_ai.direct import model_request
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
@@ -120,6 +121,49 @@ async def test_zai_clear_thinking_without_thinking(allow_model_requests: None, z
     assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assert request_body['thinking'] == {'clear_thinking': False}
+
+
+async def test_zai_preserved_thinking_round_trip(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
+    """End-to-end preserved thinking across turns: a prior-turn `ThinkingPart` is replayed to Z.AI in the
+    next request's `reasoning_content` field, and the API accepts the round-trip.
+
+    This is the headline `zai_clear_thinking=False` capability. The send-back transformation is unit-tested
+    in `test_zai_sends_back_thinking_in_reasoning_content_field`, but VCR matchers aren't sensitive to the
+    request body, so a regression there would still replay green; this records the real two-turn exchange to
+    prove the replayed `reasoning_content` reaches the wire and Z.AI accepts it. A live probe confirmed
+    `clear_thinking=False` preserves cross-turn reasoning markedly better than the server default
+    (which clears it), and that neither path errors on the replay.
+    """
+    provider = ZaiProvider(api_key=zai_api_key)
+    model = ZaiModel('glm-4.7', provider=provider)
+    settings = ZaiModelSettings(thinking=True, zai_clear_thinking=False)
+
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is 17 * 19? Think it through.')]
+    first = await model_request(model, messages, model_settings=settings)
+    assert first.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content=IsStr()),
+        ]
+    )
+
+    messages.append(first)
+    messages.append(ModelRequest.user_text_prompt('Now multiply that result by 2.'))
+    second = await model_request(model, messages, model_settings=settings)
+    assert second.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
+            TextPart(content=IsStr()),
+        ]
+    )
+
+    # The prior-turn `ThinkingPart` must be replayed to Z.AI as `reasoning_content` on the second request,
+    # alongside the `clear_thinking=False` payload. VCR matchers aren't sensitive to the body, so assert it.
+    assert len(vcr.requests) == 2  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    second_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert second_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
+    assistant_messages = [m for m in second_body['messages'] if m['role'] == 'assistant']
+    assert assistant_messages == snapshot([{'role': 'assistant', 'reasoning_content': IsStr(), 'content': IsStr()}])
 
 
 async def test_zai_vision_thinking(

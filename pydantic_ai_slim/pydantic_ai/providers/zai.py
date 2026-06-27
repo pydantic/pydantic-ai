@@ -46,13 +46,13 @@ class ZaiProvider(Provider[AsyncOpenAI]):
         profile = zai_model_profile(model_name)
 
         return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
             OpenAIModelProfile(
-                json_schema_transformer=OpenAIJsonSchemaTransformer,
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',
                 openai_chat_send_back_thinking_parts='field',
             ),
-            profile,
         )
 
     @overload
