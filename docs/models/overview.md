@@ -336,10 +336,6 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a native tool reporting failure.
 
-!!! note "Non-streaming only"
-    Response-based fallback currently only works with non-streaming requests (`agent.run()` and `agent.run_sync()`).
-    For streaming requests (`agent.run_stream()`), only exception-based fallback is supported.
-
 The `fallback_on` parameter accepts:
 
 - A tuple of exception types: `(ModelAPIError, ModelHTTPError)`
@@ -458,6 +454,22 @@ fallback_model = FallbackModel(
     ],
 )
 ```
+
+### Streaming
+
+Both exception-based and response-based fallback work with streaming requests
+([`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]). Because streaming events are
+forwarded as they arrive, a consumer may see events from a candidate model that is later rejected
+before fallback moves on to the next model. When that happens, the stream emits a
+[`ModelResponseResetEvent`][pydantic_ai.messages.ModelResponseResetEvent] carrying the discarded
+response, and events from the next candidate follow.
+
+Programmatic text streaming handles this for you: `stream_text` resets its accumulated text on the
+reset, so non-delta chunks reflect the accepted candidate's response rather than the rejected one
+concatenated with it. If you consume the raw event stream via
+[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], handle the
+[`ModelResponseResetEvent`][pydantic_ai.messages.ModelResponseResetEvent] yourself to discard or
+visually separate the rejected candidate's output.
 
 ### Exception Handling in Middleware and Decorators
 
