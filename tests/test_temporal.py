@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import (
+    AbstractToolset,
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -1350,6 +1351,147 @@ async def test_dynamic_toolset_outside_workflow():
         'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
     )
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- DynamicToolset.get_instructions test (issue #5282) ---
+# A dynamic toolset whose resolved toolset implements `get_instructions()` must contribute those
+# instructions under `TemporalAgent`, resolved inside an activity like `get_tools`.
+
+
+def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
+
+
+dynamic_instructions_agent = Agent(FunctionModel(_echo_instructions), name='dynamic_instructions_agent')
+
+
+@dynamic_instructions_agent.toolset(id='dynamic_instruction_toolset', per_run_step=False)
+def dynamic_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+    # A toolset that only contributes instructions, no tools.
+    return FunctionToolset(instructions='SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET', id='instruction-only-toolset')
+
+
+dynamic_instructions_temporal_agent = TemporalAgent(
+    dynamic_instructions_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class DynamicInstructionsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await dynamic_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_in_workflow(allow_model_requests: None, client: Client):
+    """A dynamic toolset's `get_instructions()` reaches the model under `TemporalAgent` (issue #5282).
+
+    The model echoes the request's instructions back as its output, so the sentinel in the output
+    proves the resolved dynamic toolset's instructions were collected via the new activity.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicInstructionsAgentWorkflow],
+        plugins=[AgentPlugin(dynamic_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicInstructionsAgentWorkflow.run,
+            args=['hello'],
+            id='test_dynamic_toolset_instructions_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET')
+
+
+def test_dynamic_toolset_temporal_activities():
+    """`TemporalDynamicToolset` collects instructions inside `get_tools`, so it has no separate `get_instructions` activity."""
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in dynamic_instructions_temporal_agent.temporal_activities
+    }
+    prefix = 'agent__dynamic_instructions_agent__dynamic_toolset__dynamic_instruction_toolset'
+    assert {f'{prefix}__get_tools', f'{prefix}__call_tool'} <= activity_names
+    assert f'{prefix}__get_instructions' not in activity_names
+
+
+# --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
+# The per-run instructions cache is written by `get_tools` and read by `get_instructions` each
+# step; this guards against it serving a stale step-1 value on a later step.
+
+
+def _echo_instructions_after_tool_call(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # First request: call a tool to force a second model-request step.
+    # Second request (carrying the tool return): echo the instructions, which by then must
+    # reflect the current step — proving the cache is repopulated by `get_tools` each step.
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    if any(isinstance(part, ToolReturnPart) for part in request.parts):
+        return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
+    return ModelResponse(parts=[ToolCallPart('noop', {})])
+
+
+multi_step_instructions_agent = Agent(
+    FunctionModel(_echo_instructions_after_tool_call), name='multi_step_instructions_agent'
+)
+
+
+@multi_step_instructions_agent.toolset(id='multi_step_instruction_toolset')
+def multi_step_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+    # Instructions encode the run step, so a stale step-1 cached value read at step 2 would
+    # surface as the wrong sentinel in the model output.
+    toolset = FunctionToolset[object](
+        instructions=f'INSTRUCTIONS_FOR_STEP_{ctx.run_step}', id='step-instruction-toolset'
+    )
+
+    @toolset.tool_plain
+    def noop() -> str:
+        return 'noop'
+
+    return toolset
+
+
+multi_step_instructions_temporal_agent = TemporalAgent(
+    multi_step_instructions_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MultiStepInstructionsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await multi_step_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
+    allow_model_requests: None, client: Client
+):
+    """A dynamic toolset's instructions are refreshed each run step under `TemporalAgent` (issue #5282).
+
+    The toolset encodes the run step in its instructions; the model calls a tool on the first request to
+    force a second step, then echoes the instructions on the second request. The output being the step-2
+    sentinel (not the step-1 one) proves `get_tools` repopulates the per-run instructions cache each step
+    rather than serving a stale step-1 value.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiStepInstructionsAgentWorkflow],
+        plugins=[AgentPlugin(multi_step_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiStepInstructionsAgentWorkflow.run,
+            args=['hello'],
+            id='test_dynamic_toolset_instructions_refresh_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('INSTRUCTIONS_FOR_STEP_2')
 
 
 # --- MCP-based DynamicToolset test ---
