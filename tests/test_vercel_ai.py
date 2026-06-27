@@ -4,7 +4,7 @@ import inspect
 import json
 import uuid
 import warnings
-from collections.abc import AsyncIterator, MutableMapping
+from collections.abc import AsyncIterator, Callable, MutableMapping
 from datetime import datetime, timezone
 from typing import Any, cast
 from unittest.mock import Mock
@@ -4192,7 +4192,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         'media_type': 'image/png',
                         'filename': None,
                         'url': 'https://example.com/file.png',
-                        'provider_metadata': None,
+                        'provider_metadata': {'pydantic_ai': {'tool_metadata_file': True}},
                     },
                     {
                         'type': 'data-valid',
@@ -4785,6 +4785,159 @@ async def test_adapter_dump_load_roundtrip():
     _sync_timestamps(original_messages, reloaded_messages)
 
     assert reloaded_messages == original_messages
+
+
+def _find_tool_return(messages: list[ModelMessage], tool_call_id: str) -> ToolReturnPart | None:
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id:
+                return part
+    return None
+
+
+@pytest.mark.parametrize(
+    'label, make_chunks',
+    [
+        # NOTE: the chunk instances are built by these factories *inside the test body* rather than
+        # eagerly in the parametrize decorator. The chunk types are imported under the
+        # `starlette_import_successful` guard, so referencing them at collection time raises
+        # `NameError` in environments where starlette is not installed (e.g. the
+        # `pydantic-evals`/`pydantic-ai-slim` CI shards), even though `skipif` would skip the test.
+        pytest.param(
+            'DataChunk', lambda: [DataChunk(type='data-sources', id='s1', data={'q': 'pydantic-ai'})], id='data'
+        ),
+        pytest.param(
+            'SourceUrlChunk',
+            lambda: [SourceUrlChunk(source_id='su1', url='https://example.com', title='Example')],
+            id='source-url',
+        ),
+        pytest.param(
+            'SourceDocumentChunk',
+            lambda: [
+                SourceDocumentChunk(source_id='sd1', media_type='application/pdf', title='Doc', filename='doc.pdf')
+            ],
+            id='source-document',
+        ),
+        pytest.param(
+            'FileChunk',
+            lambda: [FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf')],
+            id='file',
+        ),
+        pytest.param(
+            'mixed',
+            lambda: [
+                DataChunk(type='data-sources', id='s1', data={'q': 'pydantic-ai'}),
+                SourceUrlChunk(source_id='su1', url='https://example.com', title='Example'),
+                SourceDocumentChunk(source_id='sd1', media_type='application/pdf', title='Doc', filename='doc.pdf'),
+                FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf'),
+            ],
+            id='mixed',
+        ),
+    ],
+)
+async def test_adapter_dump_load_roundtrip_tool_metadata_chunks(
+    label: str,
+    make_chunks: Callable[[], list[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]],
+):
+    """`ToolReturnPart.metadata` data chunks round-trip through dump_messages -> load_messages.
+
+    Regression test for #5913: the dump path un-bundles the chunks into loose `UIMessagePart`s
+    via `_extract_metadata_ui_parts`, but the load path had no symmetric re-bundler, so the
+    metadata was silently dropped (and `FileChunk` was mis-routed into a brand-new
+    `ModelResponse(FilePart)`, breaking structural equivalence). Fails without the fix.
+    """
+    chunks = make_chunks()
+    tool_return = ToolReturnPart(
+        tool_name='search_docs',
+        content='result text',
+        tool_call_id='tc-1',
+        metadata=list(chunks),
+    )
+    messages_in: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='q')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search_docs', args={}, tool_call_id='tc-1')]),
+        ModelRequest(parts=[tool_return]),
+    ]
+
+    dumped = VercelAIAdapter.dump_messages(messages_in)
+    reloaded = VercelAIAdapter.load_messages(dumped)
+
+    # No spurious extra messages (the FileChunk bug appended a 4th ModelResponse).
+    assert len(reloaded) == len(messages_in), f'{label}: message count changed on round-trip'
+
+    reloaded_tr = _find_tool_return(reloaded, 'tc-1')
+    assert reloaded_tr is not None, f'{label}: tool return lost on round-trip'
+    assert reloaded_tr.metadata == list(chunks), f'{label}: metadata not preserved on round-trip'
+
+    # The reloaded file chunk must NOT have leaked into a separate FilePart.
+    assert not any(isinstance(part, FilePart) for msg in reloaded for part in msg.parts), (
+        f'{label}: tool-metadata file leaked into a model FilePart'
+    )
+
+
+async def test_adapter_load_metadata_chunks_distinct_from_model_file():
+    """A model-generated `FilePart` is preserved as a `FilePart`, not re-bundled into tool metadata.
+
+    The tool-metadata marker (`tool_metadata_file`) on the dumped `FileUIPart` is what lets the
+    load path tell the two apart; a genuine model file has no such marker, so it must still load
+    as a standalone `FilePart`.
+    """
+    pdf = BinaryContent(data=b'fake', media_type='application/pdf')
+    messages_in: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='q')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='search_docs', args={}, tool_call_id='tc-1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search_docs',
+                    content='result text',
+                    tool_call_id='tc-1',
+                    metadata=[FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf')],
+                )
+            ]
+        ),
+        ModelResponse(parts=[FilePart(content=pdf)]),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages_in))
+
+    reloaded_tr = _find_tool_return(reloaded, 'tc-1')
+    assert reloaded_tr is not None
+    assert reloaded_tr.metadata == [FileChunk(url='data:application/pdf;base64,ZmFrZQ==', media_type='application/pdf')]
+
+    file_parts = [part for msg in reloaded for part in msg.parts if isinstance(part, FilePart)]
+    assert len(file_parts) == 1, 'the model-generated FilePart should survive as exactly one FilePart'
+    assert file_parts[0].content == pdf
+
+
+async def test_adapter_load_orphan_tool_metadata_part_is_dropped():
+    """An assistant tool-metadata data part with no preceding tool return is dropped, not re-bundled.
+
+    Covers the `current_tool_return is None` branch of the load-path re-bundler: a `DataUIPart`
+    (a tool-metadata chunk) that arrives without an originating `ToolReturnPart` to attach to is
+    silently dropped, matching the prior "shouldn't be sent to the model" behavior, and never
+    leaks into a spurious message. `_find_tool_return` then returns `None` because no tool
+    return survives.
+    """
+    ui_messages = [
+        UIMessage(
+            id='m1',
+            role='assistant',
+            parts=[
+                DataUIPart(type='data-sources', id='s1', data={'q': 'pydantic-ai'}),
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+
+    # The orphan data part carries no model-bound content, so nothing is emitted for it.
+    assert all(not isinstance(part, ToolReturnPart) for msg in reloaded for part in msg.parts)
+    assert _find_tool_return(reloaded, 's1') is None
 
 
 async def test_adapter_dump_load_roundtrip_without_timestamps():
