@@ -1,0 +1,74 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '159'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-5.2
+      reasoning_effort: high
+      stream: false
+      thinking:
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '677'
+      content-type:
+      - application/json; charset=UTF-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 2 + 2 = 4
+          reasoning_content: |-
+            1.  Identify the core question: The user is asking for the result of the addition of 2 and 2.
+            2.  Perform the calculation: 2 + 2 = 4.
+            3.  Formulate the response: State the answer clearly and concisely.
+          role: assistant
+      created: 1782496770
+      id: 202606270159288dfed7fa001a428f
+      model: glm-5.2
+      object: chat.completion
+      request_id: 202606270159288dfed7fa001a428f
+      usage:
+        completion_tokens: 67
+        completion_tokens_details:
+          reasoning_tokens: 58
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 87
+    status:
+      code: 200
+      message: OK
+version: 1

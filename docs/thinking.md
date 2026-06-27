@@ -286,6 +286,20 @@ agent = Agent(model, model_settings=settings)
 
     [`thinking=False`][pydantic_ai.settings.ModelSettings.thinking] sends `reasoning={'effort': 'none'}` — the [documented OpenRouter disable signal](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) — on routes whose upstream can honor disable (e.g. `anthropic/claude-sonnet-4.5`, `z-ai/glm-4.6`). On routes whose upstream is always-on (e.g. `openai/o3`, `openai/gpt-5`, `mistralai/magistral-medium-*`, `deepseek/deepseek-r1`, `x-ai/grok-3-mini`), `thinking=False` is silently ignored at the model-profile gate, matching the same model's direct-route behavior. Set [`OpenRouterModelSettings.openrouter_reasoning`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_reasoning] directly when you want explicit per-route control.
 
+## Z.AI
+
+To enable thinking, use the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] [model setting](agent.md#model-run-settings). To preserve thinking content across multi-turn conversations, also set [`ZaiModelSettings.zai_clear_thinking`][pydantic_ai.models.zai.ZaiModelSettings.zai_clear_thinking] to `False`.
+
+```python {title="zai_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.zai import ZaiModel, ZaiModelSettings
+
+model = ZaiModel('glm-5')
+settings = ZaiModelSettings(thinking=True, zai_clear_thinking=False)
+agent = Agent(model, model_settings=settings)
+...
+```
+
 ## Mistral
 
 Thinking is supported by the `magistral` family of models. It does not need to be specifically enabled.
