@@ -598,6 +598,9 @@ class BedrockConverseModel(Model[BaseClient]):
         # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
         # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
         tool_config = self._map_tool_config(model_request_parameters, settings)
+        if not tool_config:
+            # Bedrock requires `toolConfig` whenever the history carries tool blocks.
+            tool_config = self._map_history_tool_config(bedrock_messages)
         if tool_config:
             converse['toolConfig'] = tool_config
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
@@ -819,6 +822,9 @@ class BedrockConverseModel(Model[BaseClient]):
         }
 
         tool_config = self._map_tool_config(model_request_parameters, settings)
+        if not tool_config:
+            # Bedrock requires `toolConfig` whenever the history carries tool blocks.
+            tool_config = self._map_history_tool_config(bedrock_messages)
         if tool_config:
             params['toolConfig'] = tool_config
 
@@ -938,6 +944,32 @@ class BedrockConverseModel(Model[BaseClient]):
             tool_config['toolChoice'] = tool_choice
 
         return tool_config
+
+    def _map_history_tool_config(self, bedrock_messages: list[MessageUnionTypeDef]) -> ToolConfigurationTypeDef | None:
+        """Reconstruct a minimal `toolConfig` from the tools referenced in message history.
+
+        Bedrock's Converse API rejects a request whose `messages` contain `toolUse`/`toolResult`
+        content blocks unless `toolConfig` is also defined. This happens when conversation history
+        produced by a tool-using agent is replayed against a request that defines no tools of its own
+        (e.g. continuing the conversation with an agent that has no tools, or `output_type=str`).
+
+        To keep the request valid, we rebuild minimal tool specs for the tool names that already
+        appear in the mapped history. `toolChoice` is omitted so it defaults to `auto`, leaving the
+        model free to respond with text rather than being forced to call a tool.
+        """
+        tool_names: list[str] = []
+        seen: set[str] = set()
+        for message in bedrock_messages:
+            for block in message.get('content', []):
+                if (tool_use := block.get('toolUse')) and (name := tool_use.get('name')) and name not in seen:
+                    seen.add(name)
+                    tool_names.append(name)
+        if not tool_names:
+            return None
+        tools: list[ToolTypeDef] = [
+            {'toolSpec': {'name': name, 'inputSchema': {'json': {'type': 'object'}}}} for name in tool_names
+        ]
+        return {'tools': tools}
 
     async def _map_messages(  # noqa: C901
         self,

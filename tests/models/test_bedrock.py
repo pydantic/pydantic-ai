@@ -837,6 +837,103 @@ async def test_bedrock_unified_service_tier_auto_omits(
     assert 'serviceTier' not in kwargs
 
 
+async def test_bedrock_tool_config_reconstructed_from_history_without_tools(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Replaying tool-using history against a tool-less request still sends `toolConfig`.
+
+    Bedrock rejects a request whose `messages` carry `toolUse`/`toolResult` content blocks unless
+    `toolConfig` is also defined (`The toolConfig field must be defined when using toolUse and
+    toolResult content blocks.`). Regression test for #1966.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Are you a LLM?')]),
+        ModelResponse(parts=[TextPart(content='Yes, I am.')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'response': True}, tool_call_id='tooluse_abc')]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='tooluse_abc')
+            ]
+        ),
+    ]
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'A poem.'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('Create a poem', message_history=message_history)
+
+    _, kwargs = mock_converse.call_args
+    # The mapped history carries tool blocks, so `toolConfig` must be present even though the
+    # current request defines no tools. The tool spec is reconstructed from the history tool name,
+    # and `toolChoice` is omitted so it defaults to `auto`, leaving the model free to answer text.
+    assert kwargs['toolConfig'] == snapshot(
+        {'tools': [{'toolSpec': {'name': 'final_result', 'inputSchema': {'json': {'type': 'object'}}}}]}
+    )
+
+
+async def test_bedrock_no_tool_config_without_history_tools(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """A tool-less request with no tool blocks in history omits `toolConfig` entirely."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('Hello')
+
+    _, kwargs = mock_converse.call_args
+    assert 'toolConfig' not in kwargs
+
+
+async def test_bedrock_count_tokens_tool_config_reconstructed_from_history(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """`count_tokens` also reconstructs `toolConfig` when history carries tool blocks but no tools are defined.
+
+    Mirrors the request path so token counts stay consistent. Regression test for #1966.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Are you a LLM?')]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'response': True}, tool_call_id='tooluse_abc')]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='tooluse_abc')
+            ]
+        ),
+    ]
+
+    mock_count_tokens = mocker.patch.object(model.client, 'count_tokens')
+    mock_count_tokens.return_value = {'inputTokens': 5}
+
+    await model.count_tokens(message_history, None, ModelRequestParameters())
+
+    _, kwargs = mock_count_tokens.call_args
+    assert kwargs['input']['converse']['toolConfig'] == snapshot(
+        {'tools': [{'toolSpec': {'name': 'final_result', 'inputSchema': {'json': {'type': 'object'}}}}]}
+    )
+
+
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_service_tier={'type': 'flex'})
