@@ -62,7 +62,7 @@ print(result.usage)
 3. Call the delegate agent from within a tool of the parent agent.
 4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
 5. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
-6. Passing `name` is optional but recommended when you run more than one agent: it's the label Pydantic AI uses for the agent's spans, so naming both agents lets you tell the parent and delegate apart in the [Logfire](logfire.md) agents view. When omitted, Pydantic AI tries to infer the name from the variable it's assigned to, which doesn't work for agents built inside functions, loops, or comprehensions.
+6. Passing `name` is optional but recommended when you run more than one agent: it labels each agent's run span, so naming both lets you tell the parent and delegate apart in [Logfire](logfire.md). When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict).
 
 _(This example is complete, it can be run "as is")_
 

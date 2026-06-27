@@ -17,7 +17,7 @@ result = agent.run_sync('Where does "hello world" come from?')
 print(result.output)
 ```
 
-Pass an explicit `name=` to each agent. Pydantic AI falls back to inferring the name from the call frame, but that breaks for agents built in factories, loops, or comprehensions; a stable name gives you reliably-labeled spans in the Logfire agents view, which matters once more than one agent runs in the same app.
+Pass an explicit `name=` to each agent: it labels the agent's run span in Logfire. When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict), which matters once more than one agent runs in the same app.
 
 ## Structured Output with Pydantic Models
 

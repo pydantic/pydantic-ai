@@ -80,7 +80,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 1. [`logfire.configure()`][logfire.configure] configures the SDK, by default it will find the write token from the `.logfire` directory, but you can also pass a token directly.
 2. [`logfire.instrument_pydantic_ai()`][logfire.Logfire.instrument_pydantic_ai] enables instrumentation of Pydantic AI.
 3. Since we've enabled instrumentation, a trace will be generated for each run, with spans emitted for models calls and tool function execution
-4. Passing `name` is optional, but recommended: it's the label Pydantic AI uses for the agent's spans, so a stable name keeps the [agents view](https://logfire.pydantic.dev/docs/) readable. When omitted, Pydantic AI tries to infer the name from the variable it's assigned to, which doesn't work for agents built inside functions, loops, or comprehensions. The benefit is biggest when several agents run in one app and you need to tell their traces apart.
+4. Passing `name` is optional but recommended: it labels the agent's run span in Logfire. When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict). This matters most when several agents run in one app and you need to tell their traces apart.
 
 _(This example is complete, it can be run "as is")_
 
