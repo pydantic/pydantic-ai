@@ -1,6 +1,7 @@
 """Utilities for handling Pydantic AI and Vercel data streams."""
 
 from collections.abc import Iterable, Iterator
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -12,7 +13,9 @@ from pydantic_ai.messages import (
     ModelMessage,
     ProviderDetailsDelta,
     ToolReturnPart,
+    tool_return_ta,
 )
+from pydantic_ai.ui._adapter import strip_tool_return_files
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
     DynamicToolApprovalRespondedPart,
@@ -63,14 +66,28 @@ class _PydanticAIMessageMetadata(BaseModel):
     timestamp: datetime | None = None
 
 
-def tool_return_output(part: BaseToolReturnPart) -> Any:
-    """Extract the return value from a tool return part.
+def tool_return_output(part: BaseToolReturnPart, *, preserve_file_data: bool = False) -> Any:
+    """Serialize a tool return's content for `ToolOutputAvailablePart.output`.
 
-    If the model response object contains a 'return_value' key, return its value,
-    otherwise return the entire output dict. This matches the streaming output format.
+    `preserve_file_data` decides whether file data in the return (`BinaryContent`, `ImageUrl`, etc.)
+    is sent to the client:
+
+    - `False` (the default): drop the files and keep only the text (via `model_response_str`). File
+      data stays on the server — the trust-model default from #3971 — and this matches the AG-UI dump path.
+    - `True`: dump the files inline; they're rehydrated on load via `ToolReturnContent`'s discriminator.
+
+    The streaming path (`_tool_return_with_files`) ignores this flag and always replaces files with text
+    placeholders, because event-stream formats can't carry multimodal tool output (#3826). That
+    dump-vs-stream difference is intentional, not a gap to fix.
     """
-    output = part.model_response_object()
-    return output.get('return_value', output)
+    if preserve_file_data:
+        return tool_return_ta.dump_python(part.content, mode='json')
+    # `part.files`/`model_response_str()` only drop top-level files, so strip nested ones too to keep
+    # all file data off the wire with the secure default.
+    part = replace(part, content=strip_tool_return_files(part.content, keep_top_level_files=True))
+    if part.files:
+        return part.model_response_str()
+    return tool_return_ta.dump_python(part.content, mode='json')
 
 
 def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:

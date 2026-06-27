@@ -41,10 +41,12 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
+from .._adapter import narrow_binary_images
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     apply_message_metadata,
@@ -424,11 +426,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     output = _denial_reason(part)
                                     outcome = 'denied'
                                 else:
-                                    output = (
+                                    raw_output = (
                                         part.output
                                         if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart)
                                         else None
                                     )
+                                    output = _validate_tool_output(raw_output)
                                     outcome = 'success'
                                 builder.add(
                                     NativeToolReturnPart(
@@ -454,7 +457,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                             if part.state == 'output-available':
                                 builder.add(
-                                    ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
+                                    ToolReturnPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        content=_validate_tool_output(part.output),
+                                    )
                                 )
                             elif part.state == 'output-error':
                                 builder.add(
@@ -546,6 +553,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         msg: ModelResponse,
         tool_results: dict[str, ToolReturnPart | RetryPromptPart],
         sdk_version: Literal[5, 6] = 5,
+        *,
+        preserve_file_data: bool = False,
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
         ui_parts: list[UIMessagePart] = []
@@ -647,7 +656,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 type=tool_name,
                                 tool_call_id=part.tool_call_id,
                                 input=part.args_as_dict(),
-                                output=tool_return_output(builtin_return),
+                                output=tool_return_output(builtin_return, preserve_file_data=preserve_file_data),
                                 provider_executed=True,
                                 call_provider_metadata=combined_provider_meta,
                             )
@@ -683,7 +692,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
             elif isinstance(part, ToolCallPart):
-                ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
+                ui_parts.extend(
+                    cls._dump_tool_call_part(part, tool_results, sdk_version, preserve_file_data=preserve_file_data)
+                )
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 pass  # Compaction parts are not rendered in the UI
             else:
@@ -696,6 +707,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         part: ToolCallPart,
         tool_results: dict[str, ToolReturnPart | RetryPromptPart],
         sdk_version: Literal[5, 6] = 5,
+        *,
+        preserve_file_data: bool = False,
     ) -> list[UIMessagePart]:
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
@@ -738,7 +751,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        output=tool_return_output(tool_result),
+                        output=tool_return_output(tool_result, preserve_file_data=preserve_file_data),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )
@@ -794,6 +807,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         generate_message_id: Callable[[ModelRequest | ModelResponse, Literal['system', 'user', 'assistant'], int], str]
         | None = None,
         sdk_version: Literal[5, 6] = 5,
+        preserve_file_data: bool = False,
     ) -> list[UIMessage]:
         """Transform Pydantic AI messages into Vercel AI messages.
 
@@ -811,6 +825,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 run_id-based IDs for messages with run_id, or a deterministic UUID5 fallback.
             sdk_version: Vercel AI SDK version to target. Defaults to 5 for backwards compatibility.
                 Set to 6 to emit tool approval parts for deferred tool calls.
+            preserve_file_data: Whether to serialize multimodal file content (`BinaryContent`, `ImageUrl`,
+                etc.) in tool returns. With the default `False`, file content is dropped and only the text
+                survives, mirroring the AG-UI adapter; set to `True` to round-trip the file data.
 
         Returns:
             A list of UIMessage objects in Vercel AI format
@@ -860,7 +877,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(  # pragma: no branch
                 msg, ModelResponse
             ):
-                ui_parts: list[UIMessagePart] = cls._dump_response_message(msg, tool_results, sdk_version)
+                ui_parts: list[UIMessagePart] = cls._dump_response_message(
+                    msg, tool_results, sdk_version, preserve_file_data=preserve_file_data
+                )
                 if ui_parts:  # pragma: no branch
                     result.append(
                         UIMessage(
@@ -918,6 +937,63 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _validate_tool_output(output: Any) -> Any:
+    """Rehydrate `ToolOutputAvailablePart.output` (typed `Any` on the wire) into `ToolReturnContent`.
+
+    `tool_return_content_ta` runs the lifted `Discriminator` on the union, so multimodal items
+    (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
+    `BinaryContent` instances with image media types are narrowed to `BinaryImage`.
+    """
+    validated = tool_return_content_ta.validate_python(_coerce_js_binary_data(output))
+    return narrow_binary_images(validated)
+
+
+def _coerce_js_binary_data(value: Any) -> Any:
+    """Convert `BinaryContent.data` shapes that JavaScript frontends commonly emit into `bytes`.
+
+    `JSON.stringify` produces `{'0': N, '1': N, ...}` for `Uint8Array` and
+    `{'type': 'Buffer', 'data': [N, ...]}` for Node `Buffer`. Pydantic's bytes validator
+    rejects both. We normalize them at the wire boundary so deferred frontend tools that
+    return binary data via the documented `kind: 'binary'` shape work without requiring
+    callers to base64-encode manually.
+    """
+    if isinstance(value, list):
+        return [_coerce_js_binary_data(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    if not isinstance(value, dict):
+        return value
+    coerced: dict[str, Any] = {k: _coerce_js_binary_data(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    # Gate on `media_type` (the type-specific field a real `BinaryContent` carries) so this matches
+    # the core `ToolReturnContent` discriminator: a plain user mapping that merely reuses
+    # `kind: 'binary'` stays untouched instead of having its `data` rewritten to bytes.
+    if coerced.get('kind') == 'binary' and 'media_type' in coerced:
+        coerced['data'] = _js_binary_to_bytes(coerced.get('data'))
+    return coerced
+
+
+def _js_binary_to_bytes(data: Any) -> Any:
+    """Map a JS-serialized `Uint8Array`/`Buffer` shape to `bytes`; pass through other values.
+
+    Any shape that isn't a canonical, in-range byte sequence is passed through unchanged so that
+    `tool_return_content_ta` surfaces a clean `ValidationError`, rather than this helper raising
+    `KeyError`/`ValueError` on malformed client input.
+    """
+    if not isinstance(data, dict):
+        return data
+    mapping: dict[str, Any] = data  # pyright: ignore[reportUnknownVariableType]
+    # Node Buffer: `{'type': 'Buffer', 'data': [N, ...]}`
+    if mapping.get('type') == 'Buffer':
+        buf_data: Any = mapping.get('data')
+        if isinstance(buf_data, list) and all(isinstance(b, int) and 0 <= b <= 255 for b in buf_data):  # pyright: ignore[reportUnknownVariableType]
+            return bytes(buf_data)  # pyright: ignore[reportUnknownArgumentType]
+    # Uint8Array via `JSON.stringify`: `{'0': N, '1': N, ...}`. Require canonical contiguous keys
+    # (`'0'..'n-1'`) so non-canonical keys like `'00'` pass through instead of raising `KeyError`.
+    if mapping and all(str(i) in mapping for i in range(len(mapping))):
+        values: list[Any] = [mapping[str(i)] for i in range(len(mapping))]
+        if all(isinstance(v, int) and 0 <= v <= 255 for v in values):
+            return bytes(values)
+    return data  # pyright: ignore[reportUnknownVariableType]
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:

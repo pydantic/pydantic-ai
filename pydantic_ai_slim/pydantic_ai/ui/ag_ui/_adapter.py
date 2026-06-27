@@ -7,7 +7,7 @@ import uuid
 import warnings
 from base64 import b64decode
 from collections.abc import Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, replace
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -21,6 +21,7 @@ from ... import ExternalToolset, ToolDefinition
 from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
+    BaseToolReturnPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -31,6 +32,7 @@ from ...messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
@@ -44,6 +46,7 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import (
@@ -72,6 +75,7 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
+    from .._adapter import narrow_binary_images, strip_tool_return_files
     from ._event_stream import AGUIEventStream
     from ._interrupt import (
         HAS_INTERRUPTS,
@@ -85,7 +89,9 @@ try:
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
+        TOOL_RETURN_FILE_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
+        multi_modal_content_ta,
         parse_ag_ui_version,
         thinking_encrypted_metadata,
     )
@@ -166,6 +172,74 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
 def _new_message_id() -> str:
     """Generate a new unique message ID."""
     return str(uuid.uuid4())
+
+
+def _tool_return_file_activity(tool_call_id: str, files: Sequence[MultiModalContent]) -> ActivityMessage:
+    """Build the sidecar `ActivityMessage` carrying multimodal items for a `ToolReturnPart`.
+
+    AG-UI's `ToolMessage.content` is `str` only as of `ag-ui-protocol` 0.1.18; this sidecar
+    preserves multimodal items across the round trip. Native multimodal agent output is tracked
+    upstream in https://github.com/ag-ui-protocol/ag-ui/issues/2029 — replace this once available.
+    """
+    return ActivityMessage(
+        id=_new_message_id(),
+        activity_type=TOOL_RETURN_FILE_ACTIVITY_TYPE,
+        content={
+            'tool_call_id': tool_call_id,
+            'files': [multi_modal_content_ta.dump_python(f, mode='json') for f in files],
+        },
+    )
+
+
+def _tool_return_message_content(part: BaseToolReturnPart, *, preserve_file_data: bool) -> str:
+    """Build the `ToolMessage.content` string for a tool return.
+
+    `model_response_str()` already excludes top-level files (sidecar'd when preserved), but it
+    serializes files nested in a mapping or deeper list inline. With `preserve_file_data=False`
+    those are stripped so no file data reaches the client; with it they stay so they round-trip
+    via the JSON content.
+    """
+    if not preserve_file_data:
+        part = replace(part, content=strip_tool_return_files(part.content, keep_top_level_files=True))
+    return part.model_response_str()
+
+
+def _rehydrate_tool_return_content(content: str) -> Any:
+    """Rehydrate a `ToolMessage.content` string into `ToolReturnContent`, restoring multimodal subclasses.
+
+    `ToolMessage.content` is a string on the wire; for structured returns it's our own
+    `model_response_str()` JSON dump. Parsing it back through `tool_return_content_ta` runs the lifted
+    discriminator so multimodal items nested in a mapping or list (`BinaryContent`, `ImageUrl`,
+    `UploadedFile`, ...) come back as their subclasses instead of plain dicts, mirroring the Vercel
+    adapter's `_validate_tool_output`. Image `BinaryContent` is narrowed to `BinaryImage`.
+
+    Used only with `preserve_file_data=True`, where nested file bytes survive the round trip. A non-JSON
+    string (a plain-text return) is left untouched. No JS-binary coercion (unlike Vercel): AG-UI content
+    is always our own base64 dump, never a frontend `Uint8Array`/`Buffer` shape.
+
+    Only a parsed mapping or sequence is run through the discriminator, since nested multimodal items can
+    only live inside those. A parsed JSON scalar (`'123'`, `'true'`, `'null'`) is returned as the original
+    string: AG-UI's `ToolMessage.content` is text-only, so a scalar return is indistinguishable from a
+    string return on the wire, and rehydrating it would silently change `'123'` into `123` on reload.
+    """
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return content
+    if not isinstance(parsed, (dict, list)):
+        return content
+    return narrow_binary_images(tool_return_content_ta.validate_python(parsed))
+
+
+def _merge_tool_files(content: Any, files: list[MultiModalContent]) -> Any:
+    """Combine the text/json `ToolMessage.content` with sidecar files for a `ToolReturnPart`."""
+    if not files:
+        return content
+    if content == '' or content is None:
+        return files[0] if len(files) == 1 else files
+    if isinstance(content, list):
+        return [*content, *files]
+    return [content, *files]
 
 
 def _user_content_to_input(
@@ -346,6 +420,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
+        # Files from `pydantic_ai_tool_return_file` activity messages, keyed by tool_call_id and
+        # consumed by the next matching `ToolMessage`. See TOOL_RETURN_FILE_ACTIVITY_TYPE.
+        pending_tool_files: dict[str, list[MultiModalContent]] = {}
         for msg in messages:
             match msg:
                 case UserMessage(content=content):
@@ -435,10 +512,21 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if tool_name is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
+                    files = pending_tool_files.pop(tool_call_id, [])
+
+                    content: Any = tool_msg.content
+                    if preserve_file_data:
+                        # Rehydrate nested multimodal items (the discriminator runs here, not in a later
+                        # `ModelMessagesTypeAdapter` pass) so `preserve_file_data=True` round-trips files
+                        # at any depth, matching the Vercel adapter. Left untouched on the default secure
+                        # path, where nested files were stripped on dump (`strip_tool_return_files`).
+                        content = _rehydrate_tool_return_content(content)
+
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
                         _, provider_name, original_id = tool_call_id.split('|', 2)
-                        content: Any = tool_msg.content
-                        if isinstance(content, str):
+                        if not preserve_file_data and isinstance(content, str):
+                            # Built-in tool content is JSON-serialized on dump; parse it back so downstream
+                            # model code that checks `isinstance(content, dict)` doesn't drop the result.
                             try:
                                 content = json.loads(content)
                             except json.JSONDecodeError:
@@ -446,7 +534,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         builder.add(
                             NativeToolReturnPart(
                                 tool_name=tool_name,
-                                content=content,
+                                content=_merge_tool_files(content, files),
                                 tool_call_id=original_id,
                                 provider_name=provider_name,
                             )
@@ -455,7 +543,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         builder.add(
                             ToolReturnPart(
                                 tool_name=tool_name,
-                                content=tool_msg.content,
+                                content=_merge_tool_files(content, files),
                                 tool_call_id=tool_call_id,
                             )
                         )
@@ -480,7 +568,28 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
 
                 case ActivityMessage() as activity_msg:
-                    if activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
+                    if activity_msg.activity_type == TOOL_RETURN_FILE_ACTIVITY_TYPE and preserve_file_data:
+                        activity_content = activity_msg.content
+                        sidecar_tool_call_id = activity_content.get('tool_call_id', '')
+                        if not sidecar_tool_call_id:
+                            raise ValueError(
+                                f'ActivityMessage with activity_type={TOOL_RETURN_FILE_ACTIVITY_TYPE!r}'
+                                ' must have a non-empty tool_call_id.'
+                            )
+                        bucket = pending_tool_files.setdefault(sidecar_tool_call_id, [])
+                        # No JS-binary coercion here (unlike the Vercel adapter's `_coerce_js_binary_data`):
+                        # this sidecar only ever carries items produced by our own `multi_modal_content_ta`
+                        # dump, so `BinaryContent.data` is always base64. The Vercel path needs coercion
+                        # because its tool `output` is authored by frontend tools that may emit raw
+                        # `Uint8Array`/`Buffer` JSON shapes.
+                        for raw in activity_content.get('files', []):
+                            item = multi_modal_content_ta.validate_python(raw)
+                            # Narrow `BinaryContent` with an image media type to `BinaryImage` so round
+                            # trips preserve the subclass (matches `BinaryContent.from_data_uri`).
+                            if isinstance(item, BinaryContent):
+                                item = BinaryContent.narrow_type(item)
+                            bucket.append(item)
+                    elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
                         if not url:
@@ -527,10 +636,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         stacklevel=2,
                     )
 
+        # A sidecar is consumed by its matching `ToolMessage` via `pending_tool_files.pop`, which only
+        # sees sidecars that arrived first. A non-empty leftover means a sidecar arrived after its tool
+        # message or had no matching one — fail closed rather than silently drop the files.
+        orphaned_tool_call_ids = sorted(tool_call_id for tool_call_id, files in pending_tool_files.items() if files)
+        if orphaned_tool_call_ids:
+            raise ValueError(
+                f'Tool return file sidecar(s) for tool call ID(s) {orphaned_tool_call_ids} had no matching '
+                'tool message; each sidecar must precede its tool message.'
+            )
+
         return builder.messages
 
     @staticmethod
-    def _dump_request_parts(
+    def _dump_request_parts(  # noqa: C901
         msg: ModelRequest,
         *,
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
@@ -581,10 +700,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if converted is not None:
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
+                if preserve_file_data and part.files:
+                    result.append(_tool_return_file_activity(part.tool_call_id, part.files))
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
-                        content=part.model_response_str(),
+                        content=_tool_return_message_content(part, preserve_file_data=preserve_file_data),
                         tool_call_id=part.tool_call_id,
                     )
                 )
@@ -628,7 +749,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         result: list[Message] = []
         text_content: list[str] = []
         tool_calls_list: list[ToolCall] = []
-        tool_messages: list[ToolMessage] = []
+        tool_messages: list[Message] = []
 
         builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)}
 
@@ -682,10 +803,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
                 )
                 if builtin_return := builtin_returns.get(part.tool_call_id):
+                    if preserve_file_data and builtin_return.files:
+                        tool_messages.append(_tool_return_file_activity(prefixed_id, builtin_return.files))
                     tool_messages.append(
                         ToolMessage(
                             id=_new_message_id(),
-                            content=builtin_return.model_response_str(),
+                            content=_tool_return_message_content(builtin_return, preserve_file_data=preserve_file_data),
                             tool_call_id=prefixed_id,
                         )
                     )
@@ -746,12 +869,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `FilePart` is silently dropped unless `preserve_file_data=True`.
         - `UploadedFile` in a multi-item `UserPromptPart` is split into a separate activity message
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
+        - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` are dropped unless
+          `preserve_file_data=True`. With it, files round-trip via a sidecar `ActivityMessage` and are merged
+          back with any text content: a single file with no text reloads as that file alone, otherwise as a
+          list (text-then-files, `[*content, *files]`; original interleaving order between text and files is lost).
+          This applies to history serialization here; during a live streamed run, multimodal tool returns are
+          emitted as text descriptions (e.g. `[File: image/jpeg]`) without the file payload.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 
         Args:
             messages: A sequence of ModelMessage objects to convert.
             ag_ui_version: AG-UI protocol version controlling `ThinkingPart` emission.
-            preserve_file_data: Whether to include `FilePart` and `UploadedFile` as `ActivityMessage`.
+            preserve_file_data: Whether to include `FilePart`, `UploadedFile`, and multimodal tool-return items
+                as `ActivityMessage`s.
 
         Returns:
             A list of AG-UI Message objects.

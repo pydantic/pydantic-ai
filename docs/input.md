@@ -171,7 +171,7 @@ DocumentUrl(url='https://example.com/doc.pdf', force_download=True)
 
     Don't construct [`ImageUrl`][pydantic_ai.messages.ImageUrl], [`AudioUrl`][pydantic_ai.messages.AudioUrl], [`VideoUrl`][pydantic_ai.messages.VideoUrl], or [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] from untrusted user input without validating the scheme and scope. For frontend-initiated uploads to cloud storage, convert references like `s3://bucket/key` into pre-signed `https://` URLs server-side before constructing the file URL part. `force_download=True` only works for `http(s)://` URLs (it routes through the library's HTTP client and applies SSRF protection); cloud-storage schemes like `s3://` and `gs://` aren't supported by the local download path and are forwarded to the provider as-is. Only use `force_download='allow-local'` for server-authored URLs, since it allows local network access.
 
-    The [UI adapters](ui/overview.md) apply this sanitization automatically to client-submitted messages via [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] and [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
+    The [UI adapters](ui/overview.md) apply this sanitization automatically to client-submitted messages via [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] and [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download]. If you accept serialized `message_history` through a custom client API, use [`sanitize_message_history`][pydantic_ai.sanitization.sanitize_message_history] before passing that history to the agent.
 
 ## Uploaded Files
 

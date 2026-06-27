@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import KW_ONLY, Field, dataclass, replace
+from dataclasses import KW_ONLY, Field, dataclass
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -16,33 +16,24 @@ from typing import (
     cast,
     runtime_checkable,
 )
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError
-from typing_extensions import Self, TypeVar, assert_never
+from typing_extensions import Self, TypeVar
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
-    BaseToolCallPart,
-    BaseToolReturnPart,
-    FileUrl,
+    BinaryContent,
     ForceDownloadMode,
     ModelMessage,
-    ModelRequest,
-    ModelRequestPart,
-    ModelResponse,
-    ModelResponsePart,
-    SystemPromptPart,
     ToolReturnContent,
-    UploadedFile,
-    UserContent,
-    UserPromptPart,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
+from pydantic_ai.sanitization import sanitize_message_history
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
@@ -78,10 +69,6 @@ DispatchDepsT = TypeVar('DispatchDepsT')
 
 DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 """TypeVar for output data to avoid awkwardness with unbound classvar output data."""
-
-FileUrlT = TypeVar('FileUrlT', bound=FileUrl)
-"""TypeVar for a [`FileUrl`][pydantic_ai.messages.FileUrl] subclass, used to preserve the concrete
-subclass (`ImageUrl`, `DocumentUrl`, etc.) when sanitizing a file URL."""
 
 
 @runtime_checkable
@@ -124,6 +111,61 @@ class StateDeps(Generic[StateT]):
     """
 
     state: StateT
+
+
+_FILE_DROPPED = object()
+"""Sentinel marking a file leaf removed by `strip_tool_return_files` so callers can drop it."""
+
+
+def strip_tool_return_files(content: ToolReturnContent, *, keep_top_level_files: bool) -> ToolReturnContent:
+    """Remove multimodal files that `BaseToolReturnPart.files`/`model_response_str()` can't reach.
+
+    Those helpers only see *top-level* files (the content itself, or direct elements of a top-level
+    list), so with `preserve_file_data=False` a file nested inside a mapping or a deeper list is
+    serialized to the client on dump. This strips exactly those nested files — mirroring the recursion
+    in `pydantic_ai.sanitization._sanitize_tool_return_content` on the inbound path — while
+    `keep_top_level_files` leaves top-level files in place for the existing text-collapse / sidecar handling.
+    """
+    if is_multi_modal_content(content):
+        return content if keep_top_level_files else _FILE_DROPPED
+    if isinstance(content, Mapping):
+        mapping: Mapping[str, ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+        stripped_mapping: dict[str, ToolReturnContent] = {}
+        for key, value in mapping.items():
+            stripped_value = strip_tool_return_files(value, keep_top_level_files=False)
+            if stripped_value is not _FILE_DROPPED:
+                stripped_mapping[key] = stripped_value
+        return stripped_mapping
+    if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
+        sequence: Sequence[ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+        stripped_sequence: list[ToolReturnContent] = []
+        for item in sequence:
+            if keep_top_level_files and is_multi_modal_content(item):
+                stripped_sequence.append(item)
+                continue
+            stripped_item = strip_tool_return_files(item, keep_top_level_files=False)
+            if stripped_item is not _FILE_DROPPED:
+                stripped_sequence.append(stripped_item)
+        return stripped_sequence
+    return content
+
+
+def narrow_binary_images(value: ToolReturnContent) -> ToolReturnContent:
+    """Walk a validated `ToolReturnContent` and narrow image `BinaryContent` to `BinaryImage`.
+
+    The inbound counterpart to `strip_tool_return_files`: after `tool_return_content_ta` rehydrates
+    multimodal items from a wire payload they come back as plain `BinaryContent`, so this restores the
+    `BinaryImage` subclass for image media types (matching `BinaryContent.from_data_uri`).
+    """
+    if isinstance(value, BinaryContent):
+        return BinaryContent.narrow_type(value)
+    if isinstance(value, Mapping):
+        mapping: Mapping[str, ToolReturnContent] = value  # pyright: ignore[reportUnknownVariableType]
+        return {key: narrow_binary_images(item) for key, item in mapping.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        sequence: Sequence[ToolReturnContent] = value  # pyright: ignore[reportUnknownVariableType]
+        return [narrow_binary_images(item) for item in sequence]
+    return value
 
 
 @dataclass
@@ -324,7 +366,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         Called on the messages produced from the protocol-specific run input before
         they're passed to the agent. Caller-supplied `message_history` is not passed
-        through this method — it is trusted as coming from server-side persistence.
+        through this method — it is trusted as coming from server-side persistence. Use
+        [`sanitize_message_history`][pydantic_ai.sanitization.sanitize_message_history] before
+        passing `message_history` that came from an untrusted client.
 
         Currently strips:
 
@@ -368,294 +412,14 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             resolved_tool_call_ids.update(deferred_tool_results.approvals)
             resolved_tool_call_ids.update(deferred_tool_results.calls)
 
-        strip_system_prompt = self.manage_system_prompt == 'server'
-        stripped_system_prompt = False
-        disallowed_url_schemes: set[str] = set()
-        reset_force_download_values: set[ForceDownloadMode] = set()
-        dropped_uploaded_file_providers: set[str] = set()
-        dangling_tool_call_names: list[str] = []
-        last_index = len(messages) - 1
-
-        sanitized: list[ModelMessage] = []
-        for index, message in enumerate(messages):
-            if isinstance(message, ModelRequest):
-                new_request_parts, request_stripped_system_prompt = self._sanitize_request_parts(
-                    message.parts,
-                    strip_system_prompt=strip_system_prompt,
-                    disallowed_schemes=disallowed_url_schemes,
-                    reset_force_download_values=reset_force_download_values,
-                    dropped_uploaded_file_providers=dropped_uploaded_file_providers,
-                )
-                stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
-                if new_request_parts:
-                    sanitized.append(replace(message, parts=new_request_parts))
-                # Otherwise drop the request entirely so we don't leave an empty
-                # `ModelRequest(parts=[])` in history.
-            elif isinstance(message, ModelResponse):
-                new_response_parts = self._sanitize_response_parts(
-                    message.parts,
-                    resolved_tool_call_ids=resolved_tool_call_ids,
-                    dangling_names=dangling_tool_call_names if index == last_index else None,
-                    disallowed_schemes=disallowed_url_schemes,
-                    reset_force_download_values=reset_force_download_values,
-                    dropped_uploaded_file_providers=dropped_uploaded_file_providers,
-                )
-                if new_response_parts:
-                    sanitized.append(replace(message, parts=new_response_parts))
-                # Otherwise drop the final response entirely so we don't leave an empty
-                # `ModelResponse(parts=[])` in history.
-            else:
-                assert_never(message)
-
-        if stripped_system_prompt:
-            warnings.warn(
-                "Client-submitted system prompts were stripped because `manage_system_prompt` is `'server'` "
-                "(the default). Set `manage_system_prompt='client'` to let the frontend own the system prompt.",
-                UserWarning,
-                stacklevel=2,
-            )
-
-        if disallowed_url_schemes:
-            warnings.warn(
-                f'Client-submitted file URLs with scheme(s) {sorted(disallowed_url_schemes)!r} '
-                f'were dropped because those schemes are not in `allowed_file_url_schemes` '
-                f'(currently {sorted(self.allowed_file_url_schemes)!r}). Non-HTTP schemes like '
-                f'`s3://` or `gs://` are fetched by the model provider using the server-side IAM role, '
-                f'so they should only be accepted from trusted frontends. To allow a scheme, add it to '
-                f'`allowed_file_url_schemes` on the adapter.',
-                UserWarning,
-                stacklevel=2,
-            )
-
-        if reset_force_download_values:
-            warnings.warn(
-                f'Client-submitted file URLs with `force_download` value(s) '
-                f'{sorted(reset_force_download_values, key=repr)!r} were reset to `False` because '
-                f'those values are not in `allowed_file_url_force_download` '
-                f'(currently {sorted(self.allowed_file_url_force_download, key=repr)!r}). '
-                f"`'allow-local'` opts the URL out of the SSRF private-IP block and `True` makes "
-                f'the server fetch the file itself, so neither should be accepted from untrusted '
-                f'frontends. To allow a value, add it to `allowed_file_url_force_download` on the '
-                f'adapter, or set it on `message_history` passed directly to `Agent.run` instead.',
-                UserWarning,
-                stacklevel=2,
-            )
-
-        if dropped_uploaded_file_providers:
-            warnings.warn(
-                f'Client-submitted uploaded file(s) for provider(s) {sorted(dropped_uploaded_file_providers)!r} '
-                f'were dropped because `preserve_file_data` is `False` (the default). Like a non-HTTP file URL, '
-                f'an uploaded file references an object the model provider fetches using the server-side IAM role '
-                f'or service account, so it should only be accepted from trusted frontends. To keep uploaded files '
-                f'from the client, set `preserve_file_data=True` on the adapter, or pass them on `message_history` '
-                f'directly to `Agent.run` instead.',
-                UserWarning,
-                stacklevel=2,
-            )
-
-        if dangling_tool_call_names:
-            warnings.warn(
-                f'Client-submitted history ended with unresolved tool call(s) '
-                f'{sorted(set(dangling_tool_call_names))!r}, which were stripped. Tool calls are '
-                f'produced by the model on the server side, so an unresolved tool call at the end '
-                f'of client-supplied history does not correspond to a paused agent run. For '
-                f'human-in-the-loop resumption, pass matching `deferred_tool_results` to the run '
-                f'method.',
-                UserWarning,
-                stacklevel=2,
-            )
-
-        return sanitized
-
-    def _sanitize_request_parts(
-        self,
-        parts: Sequence[ModelRequestPart],
-        *,
-        strip_system_prompt: bool,
-        disallowed_schemes: set[str],
-        reset_force_download_values: set[ForceDownloadMode],
-        dropped_uploaded_file_providers: set[str],
-    ) -> tuple[list[ModelRequestPart], bool]:
-        """Sanitize the parts of a client-submitted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
-
-        `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
-        updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
-        uploaded file providers encountered.
-        Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s
-        were stripped.
-        """
-        stripped_system_prompt = False
-        new_parts: list[ModelRequestPart] = []
-        for part in parts:
-            if strip_system_prompt and isinstance(part, SystemPromptPart):
-                stripped_system_prompt = True
-                continue
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                filtered_content = self._filter_user_content(
-                    part.content, disallowed_schemes, reset_force_download_values, dropped_uploaded_file_providers
-                )
-                new_parts.append(replace(part, content=filtered_content))
-            elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
-                # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
-                # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
-                # during sanitization would leave it schema-invalid.
-                keep_content, sanitized_content = self._sanitize_tool_return_content(
-                    part.content, disallowed_schemes, reset_force_download_values, dropped_uploaded_file_providers
-                )
-                new_parts.append(
-                    replace(
-                        part,
-                        content=sanitized_content if keep_content else None,
-                    )
-                )
-            else:
-                new_parts.append(part)
-        return new_parts, stripped_system_prompt
-
-    def _filter_user_content(
-        self,
-        content: Sequence[UserContent],
-        disallowed_schemes: set[str],
-        reset_force_download_values: set[ForceDownloadMode],
-        dropped_uploaded_file_providers: set[str],
-    ) -> list[UserContent]:
-        """Sanitize client-submitted file references (file URLs and uploaded files) in user content.
-
-        Drops file URLs whose scheme isn't in the allowlist, and resets `force_download` values that
-        aren't `False` and aren't in
-        [`allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download]
-        on kept items to `False`. Drops uploaded files unless
-        [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is set.
-
-        `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
-        updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
-        file providers encountered.
-        """
-        filtered: list[UserContent] = []
-        for item in content:
-            if isinstance(item, FileUrl):
-                scheme = urlparse(item.url).scheme.lower()
-                if scheme and scheme not in self.allowed_file_url_schemes:
-                    disallowed_schemes.add(scheme)
-                    continue
-                item = self._sanitize_file_url(item, reset_force_download_values)
-            elif isinstance(item, UploadedFile) and not self.preserve_file_data:
-                dropped_uploaded_file_providers.add(item.provider_name)
-                continue
-            filtered.append(item)
-        return filtered
-
-    def _sanitize_file_url(
-        self,
-        file_url: FileUrlT,
-        reset_force_download_values: set[ForceDownloadMode],
-    ) -> FileUrlT:
-        """Reset a [`FileUrl`][pydantic_ai.messages.FileUrl]'s `force_download` if it's not allowlisted.
-
-        `reset_force_download_values` is updated in place with the original value when it's reset.
-        """
-        if file_url.force_download is not False and file_url.force_download not in self.allowed_file_url_force_download:
-            reset_force_download_values.add(file_url.force_download)
-            return replace(file_url, force_download=False)
-        return file_url
-
-    def _sanitize_tool_return_content(
-        self,
-        content: ToolReturnContent,
-        disallowed_schemes: set[str],
-        reset_force_download_values: set[ForceDownloadMode],
-        dropped_uploaded_file_providers: set[str],
-    ) -> tuple[bool, ToolReturnContent]:
-        """Recursively sanitize file references (file URLs and uploaded files) nested in tool return content.
-
-        Tool return content is an arbitrarily nested structure of files, sequences, and mappings,
-        so any `FileUrl` or `UploadedFile` it contains — including those introduced by multimodal tool
-        returns — is walked and sanitized the same way file references in user content are: file URL
-        schemes and `force_download` are checked, and uploaded files are dropped unless
-        [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is set.
-
-        `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
-        updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
-        file providers encountered.
-        """
-        if isinstance(content, FileUrl):
-            scheme = urlparse(content.url).scheme.lower()
-            if scheme and scheme not in self.allowed_file_url_schemes:
-                disallowed_schemes.add(scheme)
-                return False, content
-            return True, self._sanitize_file_url(content, reset_force_download_values)
-        if isinstance(content, UploadedFile):
-            if not self.preserve_file_data:
-                dropped_uploaded_file_providers.add(content.provider_name)
-                return False, content
-            return True, content
-        # `ToolReturnContent` is a recursive `TypeAliasType` at runtime (for Pydantic validation)
-        # but resolves to `Any` at type-check time, so pyright can't infer the element types.
-        if isinstance(content, Mapping):
-            mapping: Mapping[str, ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
-            sanitized_mapping: dict[str, ToolReturnContent] = {}
-            for key, value in mapping.items():
-                keep, sanitized_value = self._sanitize_tool_return_content(
-                    value, disallowed_schemes, reset_force_download_values, dropped_uploaded_file_providers
-                )
-                if keep:
-                    sanitized_mapping[key] = sanitized_value
-            return True, sanitized_mapping
-        if isinstance(content, Sequence) and not isinstance(content, (str, bytes)):
-            sequence: Sequence[ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
-            sanitized_sequence: list[ToolReturnContent] = []
-            for item in sequence:
-                keep, sanitized_item = self._sanitize_tool_return_content(
-                    item, disallowed_schemes, reset_force_download_values, dropped_uploaded_file_providers
-                )
-                if keep:
-                    sanitized_sequence.append(sanitized_item)
-            return True, sanitized_sequence
-        return True, content
-
-    def _sanitize_response_parts(
-        self,
-        parts: Sequence[ModelResponsePart],
-        *,
-        resolved_tool_call_ids: set[str],
-        dangling_names: list[str] | None,
-        disallowed_schemes: set[str],
-        reset_force_download_values: set[ForceDownloadMode],
-        dropped_uploaded_file_providers: set[str],
-    ) -> list[ModelResponsePart]:
-        """Sanitize the parts of a client-submitted [`ModelResponse`][pydantic_ai.messages.ModelResponse].
-
-        Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on `FileUrl`s
-        nested in tool return parts, and drops `UploadedFile`s nested in tool return parts unless
-        [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is set.
-        When `dangling_names` is not `None` (i.e. this is the trailing response), also drops tool
-        calls that aren't resolved by `deferred_tool_results`, appending their names to it.
-        """
-        new_parts: list[ModelResponsePart] = []
-        for part in parts:
-            if (
-                dangling_names is not None
-                and isinstance(part, BaseToolCallPart)
-                and part.tool_call_id not in resolved_tool_call_ids
-            ):
-                dangling_names.append(part.tool_name)
-                continue
-            if isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
-                # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
-                # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
-                # during sanitization would leave it schema-invalid.
-                keep_content, sanitized_content = self._sanitize_tool_return_content(
-                    part.content, disallowed_schemes, reset_force_download_values, dropped_uploaded_file_providers
-                )
-                new_parts.append(
-                    replace(
-                        part,
-                        content=sanitized_content if keep_content else None,
-                    )
-                )
-            else:
-                new_parts.append(part)
-        return new_parts
+        return sanitize_message_history(
+            messages,
+            strip_system_prompts=self.manage_system_prompt == 'server',
+            allowed_file_url_schemes=self.allowed_file_url_schemes,
+            allowed_file_url_force_download=self.allowed_file_url_force_download,
+            preserve_file_data=self.preserve_file_data,
+            resolved_tool_call_ids=resolved_tool_call_ids,
+        )
 
     def transform_stream(
         self,
