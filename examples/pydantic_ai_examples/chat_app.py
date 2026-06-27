@@ -35,6 +35,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserPromptPart,
 )
+from pydantic_ai.messages import RetryPromptPart, ErrorDetails
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
