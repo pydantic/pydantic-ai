@@ -446,7 +446,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_adaptive_thinking': False,
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
-            'bedrock_send_back_thinking_parts': True,
+            'bedrock_send_back_thinking_parts': 'auto',
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_tool_caching': True,
@@ -468,7 +468,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
-            'bedrock_send_back_thinking_parts': True,
+            'bedrock_send_back_thinking_parts': 'auto',
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_adaptive_thinking': False,
             'bedrock_supports_effort': False,
@@ -494,7 +494,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'thinking_tags': ('<thinking>', '</thinking>'),
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
-            'bedrock_send_back_thinking_parts': True,
+            'bedrock_send_back_thinking_parts': 'auto',
             'bedrock_supports_prompt_caching': True,
             'bedrock_supports_adaptive_thinking': False,
             'bedrock_supports_effort': False,
@@ -584,7 +584,7 @@ def test_bedrock_deepseek_r1():
             'thinking_always_enabled': True,
             'ignore_streamed_leading_whitespace': True,
             'supported_native_tools': frozenset(),
-            'bedrock_send_back_thinking_parts': True,
+            'bedrock_send_back_thinking_parts': 'auto',
         }
     )
 
@@ -594,7 +594,12 @@ def test_bedrock_openai():
     """Bedrock-hosted OpenAI — only has the `openai` thinking variant, no upstream profile."""
     profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
     assert _normalize(profile) == snapshot(
-        {'supports_thinking': True, 'bedrock_thinking_variant': 'openai', 'thinking_always_enabled': True}
+        {
+            'supports_thinking': True,
+            'bedrock_send_back_thinking_parts': 'auto',
+            'bedrock_thinking_variant': 'openai',
+            'thinking_always_enabled': True,
+        }
     )
 
 
@@ -607,6 +612,7 @@ def test_bedrock_qwen_qwq():
             'ignore_streamed_leading_whitespace': True,
             'supported_native_tools': frozenset(),
             'supports_thinking': True,
+            'bedrock_send_back_thinking_parts': 'auto',
             'bedrock_thinking_variant': 'qwen',
             'thinking_always_enabled': True,
             'bedrock_supports_strict_tool_definition': False,

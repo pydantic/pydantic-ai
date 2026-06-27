@@ -106,6 +106,24 @@ class AnthropicModelProfile(ModelProfile, total=False):
     (or an explicit list of tools) raises a `UserError`.
     """
 
+    anthropic_send_back_thinking_parts: Literal['auto', 'tags']
+    """How unsigned or foreign-provider thinking parts in history are sent back to Anthropic. Default: `'auto'`.
+
+    Signed, same-provider thinking parts are always sent back as native `thinking`/`redacted_thinking`
+    blocks. This setting only governs parts that *can't* be sent as native blocks — those without a
+    signature, or produced by a different provider (e.g. another model in a `FallbackModel` chain, or
+    rebuilt by a history processor):
+
+    * `'auto'` (default): such parts are dropped. Anthropic does not re-absorb `<thinking>` tags from
+    history, so re-rendering them as text teaches the model to mimic the format in its user-visible
+    answers, leaking reasoning to end users.
+    * `'tags'`: such parts are re-rendered as text wrapped in the `thinking_tags`, the behavior from
+    before this setting existed.
+
+    Note the `'auto'` default is the *opposite* of `openai_chat_send_back_thinking_parts='auto'`, which
+    falls back to tags for these parts: OpenAI re-absorbs `<thinking>` tags from history so re-rendering
+    doesn't leak, whereas Anthropic does not."""
+
 
 ANTHROPIC_THINKING_BUDGET_MAP: dict[ThinkingLevel, int] = {
     True: 10000,
