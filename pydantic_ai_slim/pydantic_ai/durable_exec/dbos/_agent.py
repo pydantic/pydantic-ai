@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
@@ -81,6 +82,9 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
+        self._run_event_stream_handler: ContextVar[EventStreamHandler[AgentDepsT] | None] = ContextVar(
+            '_run_event_stream_handler', default=None
+        )
         self._parallel_execution_mode = cast(ParallelExecutionMode, parallel_execution_mode)
         if self._name is None:
             raise UserError(
@@ -150,7 +154,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
-            with self._dbos_overrides():
+            with self._dbos_overrides(event_stream_handler=event_stream_handler):
                 return await super(WrapperAgent, self).run(
                     user_prompt,
                     output_type=output_type,
@@ -197,7 +201,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
-            with self._dbos_overrides():
+            with self._dbos_overrides(event_stream_handler=event_stream_handler):
                 return super(DBOSAgent, self).run_sync(
                     user_prompt,
                     output_type=output_type,
@@ -237,7 +241,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
-        handler = self._event_stream_handler or super().event_stream_handler
+        handler = self._effective_event_stream_handler()
         if handler is None:
             return None
         elif DBOS.workflow_id is not None and DBOS.step_id is None:
@@ -249,7 +253,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     async def _call_event_stream_handler_in_workflow(
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
     ) -> None:
-        handler = self._event_stream_handler or super().event_stream_handler
+        handler = self._effective_event_stream_handler()
         assert handler is not None
 
         async def streamed_response(event: _messages.AgentStreamEvent):
@@ -263,15 +267,43 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         with self._dbos_overrides():
             return super().toolsets
 
+    def _effective_event_stream_handler(
+        self, event_stream_handler: EventStreamHandler[AgentDepsT] | None = None
+    ) -> EventStreamHandler[AgentDepsT] | None:
+        return (
+            event_stream_handler
+            or self._run_event_stream_handler.get()
+            or self._event_stream_handler
+            or super().event_stream_handler
+        )
+
     @contextmanager
-    def _dbos_overrides(self) -> Generator[None]:
+    def _dbos_overrides(
+        self,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> Generator[None]:
         # Override with DBOSModel and DBOSMCPToolset in the toolsets.
         # Use the configured parallel execution mode for deterministic event ordering during DBOS replay.
+        assert self._name is not None
+        runtime_handler_override = event_stream_handler is not None or self._run_event_stream_handler.get() is not None
+        handler = self._effective_event_stream_handler(event_stream_handler) if runtime_handler_override else None
+        model = self._model
+        if runtime_handler_override:
+            model = DBOSModel(
+                cast(Model, self.wrapped.model),
+                step_name_prefix=self._name,
+                step_config=self._model_step_config,
+                event_stream_handler=handler,
+            )
+        token = self._run_event_stream_handler.set(handler if runtime_handler_override else None)
         with (
-            super().override(model=self._model, toolsets=self._toolsets, tools=[]),
+            super().override(model=model, toolsets=self._toolsets, tools=[]),
             self.parallel_tool_call_execution_mode(self._parallel_execution_mode),
         ):
-            yield
+            try:
+                yield
+            finally:
+                self._run_event_stream_handler.reset(token)
 
     @overload
     async def run(
@@ -818,6 +850,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
