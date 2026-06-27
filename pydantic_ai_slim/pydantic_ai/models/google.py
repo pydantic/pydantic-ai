@@ -712,11 +712,11 @@ class GoogleModel(Model[Client]):
             tool_config['function_calling_config'] = function_calling_config
 
         # `include_server_side_tool_invocations` makes Gemini emit explicit `tool_call`/`tool_response`
-        # parts for WebSearchTool, WebFetchTool, FileSearchTool. Pre-Gemini-3 models reject the field
-        # ('Tool call context circulation is not enabled'); CodeExecutionTool uses its own
-        # `executable_code`/`code_execution_result` parts; ImageGenerationTool runs through `image_config`.
+        # parts for WebSearchTool, WebFetchTool, FileSearchTool, CodeExecutionTool. Pre-Gemini-3 models
+        # reject the field ('Tool call context circulation is not enabled').
         emits_tool_call_invocations = any(
-            isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool)) for t in model_request_parameters.native_tools
+            isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool, CodeExecutionTool))
+            for t in model_request_parameters.native_tools
         )
         if emits_tool_call_invocations and self.profile.get('google_supports_server_side_tool_invocations', False):
             tool_config['include_server_side_tool_invocations'] = True
