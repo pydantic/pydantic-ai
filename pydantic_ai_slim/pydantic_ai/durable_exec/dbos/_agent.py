@@ -285,16 +285,17 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         # Override with DBOSModel and DBOSMCPToolset in the toolsets.
         # Use the configured parallel execution mode for deterministic event ordering during DBOS replay.
         assert self._name is not None
-        handler = self._effective_event_stream_handler(event_stream_handler)
+        runtime_handler_override = event_stream_handler is not None or self._run_event_stream_handler.get() is not None
+        handler = self._effective_event_stream_handler(event_stream_handler) if runtime_handler_override else None
         model = self._model
-        if event_stream_handler is not None or self._run_event_stream_handler.get() is not None:
+        if runtime_handler_override:
             model = DBOSModel(
                 cast(Model, self.wrapped.model),
                 step_name_prefix=self._name,
                 step_config=self._model_step_config,
                 event_stream_handler=handler,
             )
-        token = self._run_event_stream_handler.set(handler)
+        token = self._run_event_stream_handler.set(handler if runtime_handler_override else None)
         with (
             super().override(model=model, toolsets=self._toolsets, tools=[]),
             self.parallel_tool_call_execution_mode(self._parallel_execution_mode),

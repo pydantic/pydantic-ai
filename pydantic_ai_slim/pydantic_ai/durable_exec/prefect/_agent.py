@@ -188,16 +188,17 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> Generator[None]:
         # Override with PrefectModel and PrefectMCPToolset in the toolsets.
+        runtime_handler_override = event_stream_handler is not None or self._run_event_stream_handler.get() is not None
         model = self._model
-        handler = self._effective_event_stream_handler(event_stream_handler)
-        if event_stream_handler is not None or self._run_event_stream_handler.get() is not None:
+        handler = self._effective_event_stream_handler(event_stream_handler) if runtime_handler_override else None
+        if runtime_handler_override:
             model = PrefectModel(
                 cast(Model, self.wrapped.model),
                 task_config=self._model_task_config,
                 event_stream_handler=handler,
             )
 
-        token = self._run_event_stream_handler.set(handler)
+        token = self._run_event_stream_handler.set(handler if runtime_handler_override else None)
         try:
             with super().override(model=model, toolsets=self._toolsets, tools=[]):
                 yield
