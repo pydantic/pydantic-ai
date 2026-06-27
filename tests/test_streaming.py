@@ -177,6 +177,21 @@ async def test_streamed_text_response():
         )
 
 
+async def test_test_model_run_provider_name_matches_streaming():
+    agent = Agent(TestModel())
+
+    run_result = await agent.run('Hello')
+    async with agent.run_stream('Hello') as stream_result:
+        await stream_result.get_output()
+
+    run_response = run_result.all_messages()[-1]
+    stream_response = stream_result.all_messages()[-1]
+    assert isinstance(run_response, ModelResponse)
+    assert isinstance(stream_response, ModelResponse)
+    assert run_response.provider_name == 'test'
+    assert stream_response.provider_name == 'test'
+
+
 def test_streamed_text_sync_response():
     m = TestModel()
 
