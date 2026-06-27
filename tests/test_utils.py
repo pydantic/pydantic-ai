@@ -13,6 +13,7 @@ from importlib.metadata import distributions
 
 import pytest
 
+import pydantic_ai._utils as utils_module
 from pydantic_ai import UserError
 from pydantic_ai._utils import (
     UNSET,
@@ -25,7 +26,6 @@ from pydantic_ai._utils import (
     strip_markdown_fences,
     using_thread_executor,
 )
-import pydantic_ai._utils as utils_module
 
 from ._inline_snapshot import snapshot
 from .models.mock_async_stream import MockAsyncStream
