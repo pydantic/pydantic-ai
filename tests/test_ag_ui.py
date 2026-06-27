@@ -1693,6 +1693,37 @@ def test_dump_load_roundtrip_file_part(original: list[ModelMessage]) -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_file_part_vendor_metadata() -> None:
+    """Test that `BinaryContent.vendor_metadata` on a `FilePart` survives the dump/load round-trip.
+
+    `vendor_metadata` is a load-bearing provider channel (Gemini video_metadata, OpenAI/xAI/Groq
+    image `detail`), so AG-UI round-trip must preserve it.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Generate a video')]),
+        ModelResponse(
+            parts=[
+                FilePart(
+                    content=BinaryContent(
+                        data=b'fake video bytes',
+                        media_type='video/mp4',
+                        vendor_metadata={'fps': 24, 'start_offset': '12.5s', 'end_offset': '67.0s'},
+                    ),
+                    provider_name='google',
+                    provider_details={'model': 'gemini-2.5-flash'},
+                ),
+            ],
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+    assert reloaded[1].parts[0].content.vendor_metadata == {'fps': 24, 'start_offset': '12.5s', 'end_offset': '67.0s'}
+
+
 def test_dump_load_roundtrip_builtin_tool_return() -> None:
     """Test round-trip for builtin tool calls with their return values.
 

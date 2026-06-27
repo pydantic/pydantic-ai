@@ -557,7 +557,7 @@ class BinaryContent:
             return bc
 
     @classmethod
-    def from_data_uri(cls, data_uri: str) -> BinaryContent:
+    def from_data_uri(cls, data_uri: str, *, vendor_metadata: dict[str, Any] | None = None) -> BinaryContent:
         """Create a `BinaryContent` from a data URI."""
         prefix = 'data:'
         if not data_uri.startswith(prefix):
@@ -566,7 +566,7 @@ class BinaryContent:
         if ';base64,' not in body:
             raise ValueError('Data URI must be base64-encoded (expected ";base64," marker)')
         media_type, data = body.split(';base64,', 1)
-        return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type))
+        return cls.narrow_type(cls(data=base64.b64decode(data), media_type=media_type, vendor_metadata=vendor_metadata))
 
     @classmethod
     def from_path(cls, path: PathLike[str]) -> BinaryContent:

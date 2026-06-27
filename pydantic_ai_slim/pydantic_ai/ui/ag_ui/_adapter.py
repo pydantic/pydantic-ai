@@ -489,7 +489,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         builder.add(
                             FilePart(
-                                content=BinaryContent.from_data_uri(url),
+                                content=BinaryContent.from_data_uri(
+                                    url, vendor_metadata=activity_content.get('vendor_metadata')
+                                ),
                                 id=activity_content.get('id'),
                                 provider_name=activity_content.get('provider_name'),
                                 provider_details=activity_content.get('provider_details'),
@@ -708,6 +710,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         file_content['provider_name'] = part.provider_name
                     if part.provider_details is not None:
                         file_content['provider_details'] = part.provider_details
+                    if part.content.vendor_metadata is not None:
+                        file_content['vendor_metadata'] = part.content.vendor_metadata
                     result.append(
                         ActivityMessage(
                             id=_new_message_id(),
