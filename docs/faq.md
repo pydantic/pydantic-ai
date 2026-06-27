@@ -16,6 +16,16 @@ This is covered in depth, with the per-provider execution modes, under [Tool Sea
 
 For a genuinely open-ended tool universe, route everything through a single, stable tool. The harness [`CodeMode`](harness/code-mode.md) capability collapses many tools into one `run_code` tool whose definition stays byte-stable; newly discovered tools are surfaced as callables inside the sandbox rather than as new tool schemas, keeping the tool-definitions prefix — and its cache — intact across discoveries.
 
+### Seeing it in a trace
+
+With native tool search the deferred catalog never enters the cached prefix, so an identical request prefix is re-read from cache on the next turn — `cache_read_tokens` stays warm even as the model discovers new tools:
+
+/// public-trace | https://logfire-us.pydantic.dev/public-trace/243f9aa5-dd9d-4de4-a36a-5818611892f1?spanId=28a1621e429ce027
+    title: 'Anthropic: cached tool + system prefix re-read from cache, with deferred tools declared'
+///
+
+Change a single tool definition, and the whole prefix is re-created instead — the [same request with one tool's description edited](https://logfire-us.pydantic.dev/public-trace/c3205dc9-6251-40fa-9d0a-ed647be9ba30?spanId=38ef4635ecaf3e0b) records no cache read.
+
 ### Related caching controls
 
 - Restricting the *active* tools with [`tool_choice`](tools-advanced.md#tool-choice) can also invalidate the cache when Pydantic AI has to trim the array client-side — see [Prompt caching implications](tools-advanced.md#tool-choice-caching) for the per-provider breakdown and the cache-preserving alternatives (`allowed_tools`, `allowed_function_names`, `ToolOrOutput`).
