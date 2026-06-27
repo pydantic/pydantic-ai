@@ -441,11 +441,13 @@ class XaiModel(Model[AsyncClient]):
 
     @staticmethod
     def _append_tool_call(messages: list[chat_types.chat_pb2.Message], tool_call: chat_types.chat_pb2.ToolCall) -> None:
-        """Append a tool call to the most recent tool-call assistant message, or create a new one.
+        """Attach a tool call to the most recent assistant message, or create a new one.
 
-        We keep tool calls grouped to avoid generating one assistant message per tool call.
+        Every message in a single `ModelResponse` is an assistant message, so attaching to the
+        preceding one keeps an encrypted reasoning trace grouped with the tool calls it produced,
+        matching `xai_sdk`'s `Chat.append`.
         """
-        if messages and messages[-1].tool_calls:
+        if messages:
             messages[-1].tool_calls.append(tool_call)
         else:
             msg = assistant('')
