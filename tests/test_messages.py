@@ -1,4 +1,5 @@
 import sys
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -723,6 +724,50 @@ def test_model_messages_type_adapter_back_compat_missing_conversation_id():
     ]
     deserialized = ModelMessagesTypeAdapter.validate_python(pre_pr_serialized)
     assert all(m.conversation_id is None for m in deserialized)
+
+
+def test_retry_prompt_round_trip_with_minimal_error_details():
+    """`RetryPromptPart.content` should round-trip even when entries omit `ErrorDetails` keys.
+
+    `pydantic_core.ErrorDetails` marks `type`/`loc`/`msg`/`input` as required, but the dicts that
+    populate `content` (e.g. `ValidationError.errors(include_input=False)`, custom validators, or
+    older persisted history) routinely omit some of them. Previously `dump_json` emitted a
+    `PydanticSerializationUnexpectedValue` warning and `validate_json` raised, making such a history
+    a one-way door. See https://github.com/pydantic/pydantic-ai/issues/5987.
+    """
+    content: list[dict[str, Any]] = [
+        {'type': 'missing', 'loc': ('x',), 'msg': 'Field required'},
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[RetryPromptPart(content=cast(Any, content), tool_name='foo', tool_call_id='call_1')])
+    ]
+
+    with warnings.catch_warnings():
+        # A serialization warning here means the loose schema regressed.
+        warnings.simplefilter('error')
+        serialized = ModelMessagesTypeAdapter.dump_json(messages)
+
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+    retry_part = deserialized[0].parts[0]
+    assert isinstance(retry_part, RetryPromptPart)
+    assert retry_part.content == content
+
+
+def test_retry_prompt_round_trip_preserves_full_error_details():
+    """The canonical 4-key `ErrorDetails` shape must still round-trip unchanged."""
+    content: list[dict[str, Any]] = [
+        {'type': 'greater_than', 'loc': ('a', 'b'), 'msg': 'Input should be greater than 0', 'input': -1},
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[RetryPromptPart(content=cast(Any, content), tool_name='foo', tool_call_id='call_1')])
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+    retry_part = deserialized[0].parts[0]
+    assert isinstance(retry_part, RetryPromptPart)
+    # `loc` is coerced back to a tuple, matching the original.
+    assert retry_part.content == content
 
 
 def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
