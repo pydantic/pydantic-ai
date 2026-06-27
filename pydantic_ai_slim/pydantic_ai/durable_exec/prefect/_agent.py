@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 from prefect import flow, task
 from prefect.context import FlowRunContext
@@ -81,6 +81,9 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
+        self._run_event_stream_handler: ContextVar[EventStreamHandler[AgentDepsT] | None] = ContextVar(
+            '_run_event_stream_handler', default=None
+        )
         if self._name is None:
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with Prefect. The name will be used to identify the agent's flows and tasks."
@@ -138,7 +141,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
-        handler = self._event_stream_handler or super().event_stream_handler
+        handler = self._effective_event_stream_handler()
         if handler is None:
             return None
         elif FlowRunContext.get() is not None:
@@ -150,7 +153,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     async def _call_event_stream_handler_in_flow(
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
     ) -> None:
-        handler = self._event_stream_handler or super().event_stream_handler
+        handler = self._effective_event_stream_handler()
         assert handler is not None
 
         # Create a task to handle each event
@@ -169,11 +172,37 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         with self._prefect_overrides():
             return super().toolsets
 
+    def _effective_event_stream_handler(
+        self, event_stream_handler: EventStreamHandler[AgentDepsT] | None = None
+    ) -> EventStreamHandler[AgentDepsT] | None:
+        return (
+            event_stream_handler
+            or self._run_event_stream_handler.get()
+            or self._event_stream_handler
+            or super().event_stream_handler
+        )
+
     @contextmanager
-    def _prefect_overrides(self) -> Generator[None]:
+    def _prefect_overrides(
+        self,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> Generator[None]:
         # Override with PrefectModel and PrefectMCPToolset in the toolsets.
-        with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
-            yield
+        model = self._model
+        handler = self._effective_event_stream_handler(event_stream_handler)
+        if event_stream_handler is not None or self._run_event_stream_handler.get() is not None:
+            model = PrefectModel(
+                cast(Model, self.wrapped.model),
+                task_config=self._model_task_config,
+                event_stream_handler=handler,
+            )
+
+        token = self._run_event_stream_handler.set(handler)
+        try:
+            with super().override(model=model, toolsets=self._toolsets, tools=[]):
+                yield
+        finally:
+            self._run_event_stream_handler.reset(token)
 
     @overload
     async def run(
@@ -296,7 +325,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
-                with self._prefect_overrides():
+                with self._prefect_overrides(event_stream_handler=event_stream_handler):
                     result = await super(WrapperAgent, self).run(
                         user_prompt,
                         output_type=output_type,
@@ -443,7 +472,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
-                with self._prefect_overrides():
+                with self._prefect_overrides(event_stream_handler=event_stream_handler):
                     # Using `run_coro_as_sync` from Prefect with async `run` to avoid event loop conflicts.
                     result = run_coro_as_sync(
                         super(PrefectAgent, self).run(
