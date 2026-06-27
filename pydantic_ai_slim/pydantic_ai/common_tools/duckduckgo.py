@@ -1,17 +1,25 @@
 import functools
+import warnings
 from dataclasses import KW_ONLY, dataclass
 
 import anyio.to_thread
 from pydantic import TypeAdapter
 from typing_extensions import Any, TypedDict
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.tools import Tool
 
 try:
     try:
         from ddgs.ddgs import DDGS
-    except ImportError:  # Fallback for the legacy `duckduckgo_search` package, which `ddgs` was renamed from.
-        from duckduckgo_search import DDGS
+    except ImportError:  # pragma: no cover
+        # TODO(v3): remove legacy `duckduckgo_search` fallback.
+        warnings.warn(
+            'The `duckduckgo_search` package fallback is deprecated and will be removed in v3. Install `ddgs` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        from duckduckgo_search import DDGS  # pragma: no cover
 except ImportError as _import_error:
     raise ImportError(
         'Please install `ddgs` to use the DuckDuckGo search tool, '

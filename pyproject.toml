@@ -139,7 +139,6 @@ dev = [
     "devtools>=0.12.2",
     "coverage[toml]>=7.10.7",
     "dirty-equals>=0.9.0",
-    "duckduckgo-search>=7.0.0",
     "pydocket>=0.20.2",
     "exa-py>=2.0.0",
     "tavily-python>=0.5.0",
@@ -158,6 +157,8 @@ dev = [
     "pip>=26.1",
     "genai-prices>=0.0.62",
     "brotli>=1.2.0",
+    "ddgs>=9.0.0",
+    "duckduckgo-search>=7.0.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
     # `fastmcp` package alongside.
