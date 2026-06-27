@@ -7,12 +7,17 @@ import functools
 import inspect
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeGuard, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
@@ -49,12 +54,19 @@ from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._template import TemplateStr, validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
-from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
+from ..capabilities import (
+    AbstractCapability,
+    AgentCapability,
+    CombinedCapability,
+    ToolSearch as ToolSearchCap,
+)
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
+from ..native_tools import AbstractNativeTool
+from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -104,6 +116,7 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
+    from ..realtime import RealtimeModel, RealtimeSession
     from ..ui._web import ModelsParam
 
 __all__ = (
@@ -168,6 +181,30 @@ def _normalize_agent_retry_overrides(
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
+
+
+class _RealtimeModelStub(models.Model):
+    """Placeholder [`Model`][pydantic_ai.models.Model] used as `RunContext.model` in realtime sessions.
+
+    Realtime sessions don't issue text-model requests, but `RunContext` requires a model, so tools
+    that read `ctx.model` get this stub when the agent has no text model configured.
+    """
+
+    @property
+    def model_name(self) -> str:
+        return 'realtime-session-stub'
+
+    @property
+    def system(self) -> str:
+        return 'realtime'
+
+    async def request(
+        self,
+        messages: list[_messages.ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: models.ModelRequestParameters,
+    ) -> _messages.ModelResponse:
+        raise NotImplementedError('Text model requests are not available in realtime sessions')
 
 
 @dataclasses.dataclass
@@ -2579,6 +2616,171 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return schema
 
+    @asynccontextmanager
+    async def realtime_session(
+        self,
+        model: RealtimeModel,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        background_tools: set[str] | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime speech-to-speech session backed by the agent's tools.
+
+        The session connects to a realtime `model` and automatically executes tool calls using the
+        agent's registered tools, sending the results back to the model.
+
+        This mirrors [`run`][pydantic_ai.agent.AbstractAgent.run] / [`iter`][pydantic_ai.agent.AbstractAgent.iter]
+        for the parameters that map to a long-lived, bidirectional session. Parameters that are
+        specific to the request-response graph — `output_type`, `message_history`, `conversation_id`
+        (as history), `retries`, `event_stream_handler`, `deferred_tool_results` — do not apply;
+        structured output should be delegated to a normal [`Agent`][pydantic_ai.Agent] (see the
+        realtime docs). Of the `capabilities` lifecycle, only the **tool** hooks (`prepare_tools` and
+        `before`/`after`/`wrap`/`on_error` `tool_execute`) run, since the session executes tools but
+        has no model-request/graph/output stages.
+
+        Example:
+        ```python {test="skip"}
+        from pydantic_ai import Agent
+        from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+        agent = Agent(instructions='You are a helpful voice assistant.')
+
+        @agent.tool_plain
+        def get_weather(city: str) -> str:
+            return f'Sunny in {city}'
+
+        async def main():
+            rt = OpenAIRealtimeModel('gpt-realtime')
+            async with agent.realtime_session(model=rt) as session:
+                await session.send_audio(b'...')
+                async for event in session:
+                    print(event)
+        ```
+
+        Args:
+            model: The realtime model to connect to.
+            deps: Dependencies passed to tool functions.
+            model_settings: Optional settings forwarded to the realtime model.
+            instructions: Additional instructions for this session, combined with the agent's
+                instructions. Dynamic instruction functions (`@agent.instructions`) are evaluated
+                once at connect time (there is no per-request rebuild in a realtime session).
+            toolsets: Optional additional toolsets for this session, on top of the agent's.
+            capabilities: Optional additional capabilities for this session. Only the tool-lifecycle
+                hooks apply (see above); model-request/graph/output hooks are not invoked.
+            usage: Optional [`RunUsage`][pydantic_ai.usage.RunUsage] to accumulate token usage into;
+                exposed as `session.usage`. A fresh one is used when omitted.
+            usage_limits: Optional [`UsageLimits`][pydantic_ai.usage.UsageLimits]. Token and
+                tool-call limits are enforced as usage accrues; on breach the session emits a
+                non-recoverable [`SessionError`][pydantic_ai.realtime.SessionError] and ends.
+            metadata: Optional metadata set on the [`RunContext`][pydantic_ai.tools.RunContext]
+                available to tools and capabilities.
+            conversation_id: Optional conversation id, set on the run context and the telemetry span
+                so a realtime session can be correlated with other runs.
+            background_tools: Names of tools that should run concurrently in the background while the
+                model keeps responding, rather than blocking until they finish. The result is sent
+                back once ready, mirroring firing off a subagent and continuing in the meantime.
+        """
+        from ..realtime import RealtimeSession
+
+        deps = self._get_deps(deps)
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
+            agent=self,
+            model=self._get_model(None) if self._model else _RealtimeModelStub(),
+            usage=usage if usage is not None else _usage.RunUsage(),
+            model_settings=model_settings,
+            conversation_id=conversation_id,
+        )
+
+        # Capabilities: the agent's root + any per-call ones. Only the tool-lifecycle hooks run in a
+        # realtime session (it executes tools but has no model-request/graph/output stages); deferred
+        # loading, capability-contributed toolsets, and spec-based capability override are out of scope.
+        extra_capabilities = wrap_capability_funcs(capabilities)
+        effective_capability = (
+            CombinedCapability([self._root_capability, *extra_capabilities])
+            if extra_capabilities
+            else self._root_capability
+        )
+        run_capability = await effective_capability.for_run(run_context)
+        run_context.capabilities = _build_run_capabilities(run_capability)
+        run_context.metadata = self._get_metadata(run_context, metadata)
+
+        # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Only
+        # concrete tools are forwarded; dynamic native-tool functions aren't resolved for realtime.
+        # The auto-injected optional `ToolSearchTool` is dropped (mirroring the graph) — there's no
+        # tool-search corpus and realtime providers don't support it. `agent.override(native_tools=...)`
+        # replaces the capability-derived set (keeping per-call ones).
+        def _keep_native(tool: AgentNativeTool[AgentDepsT]) -> TypeGuard[AbstractNativeTool]:
+            return isinstance(tool, AbstractNativeTool) and not (isinstance(tool, ToolSearchTool) and tool.optional)
+
+        native_tools = [t for t in run_capability.get_native_tools() if _keep_native(t)]
+        if (override_native := self._override_native_tools.get()) is not None:
+            extra_native = [t for cap in extra_capabilities for t in cap.get_native_tools() if _keep_native(t)]
+            native_tools = [t for t in override_native.value if _keep_native(t)] + extra_native
+
+        toolset = self._get_toolset(output_toolset=None, additional_toolsets=toolsets, run_capability=run_capability)
+        toolset = await toolset.for_run(run_context)
+        async with toolset:
+            toolset = await toolset.for_run_step(run_context)
+            tools_map = await toolset.get_tools(run_context)
+            tool_defs = [t.tool_def for t in tools_map.values()]
+
+            # Evaluate literal + dynamic instructions once, against the run context.
+            literal, instruction_functions = self._get_instructions(additional_instructions=instructions)
+            instruction_parts = [literal, *[await fn.run(run_context) for fn in instruction_functions]]
+            resolved_instructions = '\n'.join(part for part in instruction_parts if part).strip()
+
+            async def tool_runner(name: str, args: dict[str, Any], call_id: str) -> str:
+                tool = tools_map.get(name)
+                if tool is None:
+                    return f'Error: unknown tool {name!r}'
+                ctx = dataclasses.replace(run_context, tool_name=name, tool_call_id=call_id)
+                call = _messages.ToolCallPart(tool_name=name, args=args, tool_call_id=call_id)
+                tool_def = tool.tool_def
+
+                async def execute(call_args: dict[str, Any]) -> Any:
+                    return await toolset.call_tool(name, call_args, ctx, tool)
+
+                # Mirror the graph's execute-stage hook order: before -> wrap (or on-error) -> after.
+                hook_args = await run_capability.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
+                try:
+                    result = await run_capability.wrap_tool_execute(
+                        ctx, call=call, tool_def=tool_def, args=hook_args, handler=execute
+                    )
+                except Exception as e:
+                    result = await run_capability.on_tool_execute_error(
+                        ctx, call=call, tool_def=tool_def, args=hook_args, error=e
+                    )
+                result = await run_capability.after_tool_execute(
+                    ctx, call=call, tool_def=tool_def, args=hook_args, result=result
+                )
+                return str(result)
+
+            async with model.connect(
+                instructions=resolved_instructions,
+                tools=tool_defs,
+                native_tools=native_tools,
+                model_settings=model_settings,
+            ) as connection:
+                yield RealtimeSession(
+                    connection,
+                    tool_runner,
+                    background_tools=background_tools or set(),
+                    instrumentation=self._resolve_instrumentation_settings(),
+                    model_name=model.model_name,
+                    agent_name=self.name,
+                    usage=run_context.usage,
+                    usage_limits=usage_limits,
+                )
+
     async def __aenter__(self) -> Self:
         """Enter the agent context.
 
@@ -2773,7 +2975,9 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     return explicit_ids
 
 
-def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
+def _build_run_capabilities(
+    capability: AbstractCapability[AgentDepsT],
+) -> dict[str, AbstractCapability[AgentDepsT]]:
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 

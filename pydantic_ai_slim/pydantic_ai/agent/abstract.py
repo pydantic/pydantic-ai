@@ -56,6 +56,7 @@ from ..toolsets import AbstractToolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
+    from pydantic_ai.realtime import RealtimeModel, RealtimeSession
 
 
 T = TypeVar('T')
@@ -1431,6 +1432,33 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """
         raise NotImplementedError
         yield
+
+    @asynccontextmanager
+    async def realtime_session(
+        self,
+        model: RealtimeModel,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        background_tools: set[str] | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime speech-to-speech session backed by the agent's tools.
+
+        The realtime sibling of [`run`][pydantic_ai.agent.AbstractAgent.run] /
+        [`iter`][pydantic_ai.agent.AbstractAgent.iter]; see
+        [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] for the parameters and
+        which `run`/`iter` features map to a duplex session. Not all agent implementations support
+        realtime sessions.
+        """
+        raise NotImplementedError
+        yield  # pragma: no cover
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
