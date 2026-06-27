@@ -251,14 +251,23 @@ async def test_disable_threads_takes_priority_over_custom_executor() -> None:
         executor.shutdown(wait=True)
 
 
-def test_disable_threads_defaults_false_on_non_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_disable_threads_defaults_false_on_non_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
     import importlib
 
     import pydantic_ai._utils as utils_module
 
     monkeypatch.setattr('sys.platform', 'linux')
     importlib.reload(utils_module)
-    assert utils_module._disable_threads.get() is False
+    try:
+        main_thread = threading.current_thread()
+
+        def check_thread() -> threading.Thread:
+            return threading.current_thread()
+
+        result = await utils_module.run_in_executor(check_thread)
+        assert result is not main_thread
+    finally:
+        importlib.reload(utils_module)
 
 
 async def test_run_in_executor_runs_inline_by_default_on_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
