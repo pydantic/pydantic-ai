@@ -34,7 +34,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('google:gemini-3-flash-preview', name='city_location_agent', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 ```
@@ -53,7 +53,7 @@ Use `deps_type=...` plus `RunContext[...]` when tools or instructions need app s
 ```python
 from pydantic_ai import Agent, RunContext
 
-agent = Agent('openai:gpt-5.2', deps_type=str)
+agent = Agent('openai:gpt-5.2', name='greeting_agent', deps_type=str)
 
 
 @agent.instructions
@@ -123,7 +123,7 @@ from collections.abc import AsyncIterable
 
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.2', name='streaming_agent')
 
 
 async def stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
@@ -151,7 +151,7 @@ fallback = FallbackModel(
     AnthropicModel('claude-sonnet-4-6'),
 )
 
-agent = Agent(fallback)
+agent = Agent(fallback, name='fallback_agent')
 ```
 
 Good defaults:

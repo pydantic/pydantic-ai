@@ -38,6 +38,7 @@ from pydantic_ai import Agent
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
+    name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
 
@@ -57,6 +58,7 @@ from pydantic_ai import Agent, RunContext
 
 agent = Agent(
     'google:gemini-3-flash-preview',
+    name='dice_game_agent',
     deps_type=str,
     instructions=(
         "You're a dice game, you should roll the die and see if the number "
@@ -96,7 +98,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('google:gemini-3-flash-preview', name='city_location_agent', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
@@ -113,6 +115,7 @@ from pydantic_ai import Agent, RunContext
 
 agent = Agent(
     'openai:gpt-5.2',
+    name='greeting_agent',
     deps_type=str,
     instructions="Use the customer's name while replying to them.",
 )
@@ -139,7 +142,7 @@ print(result.output)
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
-my_agent = Agent('openai:gpt-5.2', instructions='...')
+my_agent = Agent('openai:gpt-5.2', name='my_agent', instructions='...')
 
 
 async def test_my_agent():
@@ -161,6 +164,7 @@ from pydantic_ai.capabilities import Thinking, WebSearch
 
 agent = Agent(
     'anthropic:claude-opus-4-6',
+    name='research_assistant_agent',
     instructions='You are a research assistant. Be thorough and cite sources.',
     capabilities=[
         Thinking(effort='high'),
@@ -187,7 +191,7 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
     return request_context
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[hooks])
+agent = Agent('openai:gpt-5.2', name='hooks_agent', capabilities=[hooks])
 ```
 
 ### Define Agent from YAML Spec
