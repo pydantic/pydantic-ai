@@ -10,8 +10,9 @@ pytest.importorskip('logfire.variables')
 
 import logfire
 
+from pydantic_ai import AgentSpec
 from pydantic_ai.agent import Agent
-from pydantic_ai.managed.logfire import Managed
+from pydantic_ai.managed.logfire import Managed, ManagedAgentSpec
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -52,6 +53,11 @@ _settings_var = logfire.var(
     'pai_test_managed_settings',
     type=dict,
     default={'temperature': 0.2},
+)
+_agent_spec_var = logfire.var(
+    'pai_test_managed_agent_spec',
+    type=AgentSpec,
+    default=AgentSpec.from_dict({'model': 'test'}),
 )
 
 
@@ -221,6 +227,36 @@ async def test_resolves_fresh_per_run() -> None:
             conversation_id=IsStr(),
         )
     )
+
+
+async def test_agent_spec_variable_overrides_model() -> None:
+    """Characterization test: the managed spec's `model` overrides the agent's base model per-run.
+
+    Pins the behavior the current model-swap implementation provides *before* it is refactored
+    into a generic `contribute_run_spec` hook. The base agent uses the echo `FunctionModel`
+    (`model_name == 'function:respond:'`); the managed spec resolves to `'test'` (→ `TestModel`,
+    `model_name == 'test'`). If the swap works, the response's `model_name` flips to `'test'`,
+    and the agent instance must be unchanged across the swap (no rebuild).
+    """
+    agent = Agent(_echo_model(), capabilities=[ManagedAgentSpec(agent_spec=_agent_spec_var)])
+    agent_id_before = id(agent)
+
+    # Default spec drives the model to `'test'`.
+    result_default = await agent.run('hi')
+    response_default = result_default.all_messages()[-1]
+    assert isinstance(response_default, ModelResponse)
+    assert response_default.model_name == 'test'
+
+    # A spec with no `model` falls back to the agent's base model (the echo `FunctionModel`),
+    # proving the swap is per-run and not a one-time rebuild.
+    with _agent_spec_var.override(AgentSpec.from_dict({})):
+        result_fallback = await agent.run('hi')
+    response_fallback = result_fallback.all_messages()[-1]
+    assert isinstance(response_fallback, ModelResponse)
+    assert response_fallback.model_name == 'function:respond:'
+
+    # Same agent object throughout — the spec resolves per-run, the agent is not rebuilt.
+    assert id(agent) == agent_id_before
 
 
 async def test_no_variables_is_noop() -> None:

@@ -6,6 +6,8 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
+from pydantic_ai.agent.spec import AgentSpec
+
 try:
     from logfire.variables import ResolvedVariable, Variable
 except ImportError as e:  # pragma: no cover
@@ -101,6 +103,7 @@ class Managed(AbstractCapability[AgentDepsT]):
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         if self._resolved_model_settings is None:
             return None
+        # TODO: Aditya: Concern here is if the keys coming in from ResolvedVariable are even valid keys in ModelSettings.
         return cast(ModelSettings, self._resolved_model_settings.value)
 
     async def wrap_run(
@@ -115,3 +118,18 @@ class Managed(AbstractCapability[AgentDepsT]):
             if self._resolved_model_settings is not None:
                 stack.enter_context(self._resolved_model_settings)
             return await handler()
+
+
+@dataclass
+class ManagedAgentSpec(AbstractCapability[AgentDepsT]):
+    agent_spec: Variable[AgentSpec] | None = None
+    """ Managed spec contributing the entire spec."""
+
+    def contribute_run_spec(self) -> AgentSpec | None:
+        return self.agent_spec.get().value if self.agent_spec is not None else None
+
+    # TODO(baggage): like `Managed`, this should resolve `agent_spec` once and enter the
+    # `ResolvedVariable` as a context manager around the run (a `wrap_run` override) so child
+    # Logfire spans are tagged with the spec's label/version. Not yet implemented: `contribute_run_spec`
+    # resolves in the pre-model window, but `wrap_run` runs later, so the resolved variable needs to be
+    # stashed where `wrap_run` can re-enter it. See `Managed.wrap_run` for the pattern to mirror.
