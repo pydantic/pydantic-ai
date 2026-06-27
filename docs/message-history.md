@@ -391,6 +391,78 @@ print(result2.all_messages())
 """
 ```
 
+_(This example is complete, it can be run "as is")_
+
+## Sharing messages between agents
+
+Since messages use a model-agnostic format, you can share message history between
+*different agents* — not just between runs of the same agent. This is the foundation
+of [programmatic agent hand-off](multi-agent-applications.md#programmatic-agent-hand-off),
+where application code orchestrates multiple agents in sequence.
+
+```python {title="sharing_messages_between_agents.py" hl_lines="11-12" test="skip"}
+from pydantic_ai import Agent
+
+research_agent = Agent(
+    'openai:gpt-5.2',
+    instructions='You are a research assistant. Find and summarize information concisely.',
+)
+
+writing_agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='You are a writing assistant. Turn the research into engaging prose.',
+)
+
+# First agent: gather research
+result1 = research_agent.run_sync('What are the main causes of the French Revolution?')
+print(result1.output)
+#> The French Revolution (1789-1799) was caused by...
+
+# Second agent: write based on the first agent's research
+result2 = writing_agent.run_sync(
+    'Write a blog post based on this research.',
+    message_history=result1.new_messages(),
+)
+print(result2.output)
+#> # The Storming of Reason: Unpacking the French Revolution...
+```
+
+_(This example is complete, it can be run "as is")_
+
+!!! warning "Tool calls, system prompts, and cross-agent compatibility"
+    When passing `message_history` between different agents, the receiving agent
+    uses its own **system prompt** (`instructions`) and **tools** — it does not
+    inherit these from the originating agent.
+
+    - **System prompt**: The `instructions` field on `ModelRequest` messages records
+      the originating agent's instructions for observability. The receiving agent
+      ignores them and uses its own `instructions` instead.
+
+    - **Tools**: `ToolCallPart` and `ToolReturnPart` in the message history reference
+      tool names defined on the originating agent. If the receiving agent doesn't
+      define tools with those names, the model may error. In programmatic hand-off
+      this is usually fine — each agent runs independently and the shared messages
+      mostly contain user prompts and text responses. It's more of a concern if you
+      forward tool-heavy conversations between agents with different tool sets.
+
+    - **Reinjecting the system prompt**: If you need to ensure a system prompt is always
+      present (e.g. the message history was stored without one, or was compacted), add
+      the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt]
+      capability to the agent:
+
+    ```python {title="reinject_system_prompt_agent.py" test="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import ReinjectSystemPrompt
+
+    agent = Agent(
+        'openai:gpt-5.2',
+        instructions='Be a helpful assistant.',
+        capabilities=[ReinjectSystemPrompt()],
+    )
+    ```
+
+For more complex multi-agent patterns, see the [multi-agent applications](multi-agent-applications.md) documentation.
+
 ## Injecting messages mid-run
 
 Tools, capability hooks, and external code driving an agent run can inject extra content

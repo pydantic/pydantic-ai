@@ -178,6 +178,11 @@ graph TD
 
 Here agents don't need to use the same deps.
 
+!!! tip "Message history between agents"
+    When passing `message_history` between different agents, each agent uses its own
+    `instructions` and tools. See [Sharing messages between agents](message-history.md#sharing-messages-between-agents)
+    for details on tool compatibility and system prompt handling.
+
 Here we show two agents used in succession, the first to find a flight and the second to extract the user's seat preference.
 
 ```python {title="programmatic_handoff.py"}
