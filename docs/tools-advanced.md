@@ -466,11 +466,20 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 
 If preserving cache hits matters, prefer providers/cases marked "Never", or use `ToolOrOutput` (which keeps the full set) instead of a restrictive list.
 
-## Tool Execution and Retries {#tool-retries}
+## Tool Execution, Retries, and Failures {#tool-retries}
 
 When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
 
-Beyond automatic validation errors, the tool's own internal logic can also explicitly request a retry by raising the [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception. This is useful for situations where the parameters were technically valid, but an issue occurred during execution (like a transient network error, or the tool determining the initial attempt needs modification).
+If a tool's own logic cannot produce a normal result, choose the exception based on what you want the model to do next:
+
+- Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should try the tool call again with corrected arguments or a different approach.
+- Raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when the tool call should be reported to the model as a failed result, without consuming the tool's retry budget.
+
+Any other exception propagates out of the agent run and is not sent back to the model.
+
+### Requesting a Tool Retry
+
+Raising `ModelRetry` generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the exception message. That prompt is sent back to the LLM so it can correct the tool call, choose another tool, or try a different approach.
 
 ```python
 from pydantic_ai import ModelRetry
@@ -484,13 +493,38 @@ def my_flaky_tool(query: str) -> str:
     return 'Success!'
 ```
 
-Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(retries={'tools': N})`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence.
+Both `ValidationError` and `ModelRetry` respect the configured retry limit — set per-tool via [`Tool(max_retries=N)`][pydantic_ai.tools.Tool] (or `@agent.tool(retries=N)`), per-toolset via [`FunctionToolset(max_retries=N)`][pydantic_ai.toolsets.FunctionToolset], or agent-wide via [`Agent(retries={'tools': N})`][pydantic_ai.agent.Agent.__init__], applied in that order of precedence.
 
 Tool retries are tracked **per tool**: every function tool has its own counter, with no global 'tool call' budget shared across the run. When a tool raises `ModelRetry` or its arguments fail validation, only that tool's counter advances. Inside a tool function, [`ctx.max_retries`][pydantic_ai.tools.RunContext.max_retries] reflects that tool's enforcement limit and [`ctx.retry`][pydantic_ai.tools.RunContext.retry] is that tool's own counter. When a tool exhausts its counter, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with message `'Tool {name!r} exceeded max retries count of {N}'`. User-provided toolsets inherit `Agent(retries={'tools': ...})` as their default when no per-toolset value is set.
 
+### Reporting a Failed Tool Result {#tool-failed}
+
+Not every tool failure is a correction request. When the call is complete but unsuccessful — the resource doesn't exist, the operation isn't supported, the upstream service returned a definitive error — you usually want the model to *see* the failed result and decide what to do next. Raise `ToolFailed` for this:
+
+```python
+from pathlib import Path
+
+from pydantic_ai import ToolFailed
+
+
+def read_file(path: str) -> str:
+    file_path = Path(path)
+    if not file_path.is_file():
+        raise ToolFailed(f'File not found: {path}')
+    return file_path.read_text()
+```
+
+The exception message is recorded in message history as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'`. Where the model API has a native error or failed-status field for tool results, Pydantic AI uses it; otherwise the failed outcome is still preserved in Pydantic AI message history. The call is traced as an error in telemetry.
+
+Unlike `ModelRetry`, `ToolFailed` does **not** consume the per-tool retry budget; bounding repeated failures is the job of [`UsageLimits`][pydantic_ai.usage.UsageLimits] at the run level.
+
+Rule of thumb: raise `ModelRetry` when you want the model to try again with corrections; raise `ToolFailed` when the call is done and the result is a failure. For MCP server tool errors, the same choice is available as the [`tool_error_behavior`](mcp/client.md#tool-errors) configuration.
+
+You can also raise `ModelRetry` or `ToolFailed` from tool validation and execution hooks. This is useful for converting third-party exceptions without repeating `try`/`except` in every tool; see [Error hooks](hooks.md#error-hooks) and [Tool execution hooks](hooks.md#tool-execution-hooks).
+
 ### Tool Timeout
 
-You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a failure and a retry prompt is sent to the model (counting towards the retry limit).
+You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and a retry prompt is sent to the model (counting towards the retry limit).
 
 ```python
 import asyncio
@@ -518,13 +552,13 @@ async def fast_tool() -> str:
 - **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to all tools.
 - **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
 
-When a timeout occurs, the tool is considered to have failed and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
 ### Custom Args Validator {#args-validator}
 
 The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.
 
-The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, or raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on failure.
+The validator receives [`RunContext`][pydantic_ai.tools.RunContext] as its first argument, followed by the same parameters as the tool function. Return `None` on success, raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should correct the arguments, or raise [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when validation should produce a failed tool result instead of a retry.
 
 ```python {title="args_validator_approval.py"}
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
@@ -555,7 +589,7 @@ print(result.output.approvals[0].args)
 
 _(This example is complete, it can be run "as is")_
 
-When validation fails, the error message is sent back to the LLM as a retry prompt. This respects the `retries` setting on the tool. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred, while failed validation triggers a retry just like regular tools.
+When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model receives a failed tool result instead. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
 
 The `args_validator` parameter is available on [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], [`Tool`][pydantic_ai.tools.Tool], [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema], and [`FunctionToolset`][pydantic_ai.toolsets.function.FunctionToolset]. Validators can be sync or async functions.
 

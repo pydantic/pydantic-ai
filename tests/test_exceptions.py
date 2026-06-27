@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import ModelRetry
+from pydantic_ai import ModelRetry, ToolFailed
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -18,18 +18,20 @@ from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
+    ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import RetryPromptPart
+from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 
 
 @pytest.mark.parametrize(
     'exc_factory',
     [
         lambda: ModelRetry('test'),
+        lambda: ToolFailed('test'),
         lambda: CallDeferred(),
         lambda: ApprovalRequired(),
         lambda: UserError('test'),
@@ -43,6 +45,7 @@ from pydantic_ai.messages import RetryPromptPart
     ],
     ids=[
         'ModelRetry',
+        'ToolFailed',
         'CallDeferred',
         'ApprovalRequired',
         'UserError',
@@ -74,6 +77,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
     'exc_factory,check_attrs',
     [
         (lambda: ModelRetry('retry msg'), {'message': 'retry msg'}),
+        (lambda: ToolFailed('failed msg'), {'message': 'failed msg'}),
         (lambda: CallDeferred(), {'metadata': None}),
         (lambda: CallDeferred({'key': 'value'}), {'metadata': {'key': 'value'}}),
         (lambda: ApprovalRequired(), {'metadata': None}),
@@ -98,6 +102,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
     ],
     ids=[
         'ModelRetry',
+        'ToolFailed',
         'CallDeferred-no-metadata',
         'CallDeferred-with-metadata',
         'ApprovalRequired-no-metadata',
@@ -138,6 +143,32 @@ def test_tool_retry_error_pickle_round_trip():
     assert restored.tool_retry.tool_name == 'my_tool'
     assert restored.tool_retry.tool_call_id == part.tool_call_id
     assert restored.tool_retry.timestamp == part.timestamp
+
+
+def test_tool_failed_error_pickle_round_trip():
+    """Test that ToolFailedError survives pickle round-trip with tool_failed preserved."""
+    part = ToolReturnPart(content='tool failed', tool_name='my_tool', outcome='failed')
+    exc = ToolFailedError(part)
+    restored = pickle.loads(pickle.dumps(exc))
+
+    assert type(restored) is ToolFailedError
+    assert str(restored) == str(exc)
+    assert restored.tool_failed.content == 'tool failed'
+    assert restored.tool_failed.tool_name == 'my_tool'
+    assert restored.tool_failed.tool_call_id == part.tool_call_id
+    assert restored.tool_failed.timestamp == part.timestamp
+    assert restored.tool_failed.outcome == 'failed'
+
+
+def test_tool_failed_error_non_str_content():
+    """ToolFailedError stringifies non-`str` content the same way the failed result is rendered to the model."""
+    part = ToolReturnPart(content={'code': 42, 'reason': 'disk full'}, tool_name='my_tool', outcome='failed')
+    exc = ToolFailedError(part)
+
+    assert str(exc) == part.model_response_str()
+    restored = pickle.loads(pickle.dumps(exc))
+    assert restored.tool_failed.content == {'code': 42, 'reason': 'disk full'}
+    assert str(restored) == str(exc)
 
 
 def test_tool_retry_error_str_with_string_content():

@@ -1132,7 +1132,14 @@ class BaseToolReturnPart:
 
     - `'success'`: The tool executed successfully.
     - `'failed'`: The tool raised an error during execution.
-    - `'denied'`: The tool call was denied by the approval mechanism.
+    - `'denied'`: The tool call was denied — either by the approval mechanism or by a
+      [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler
+      returning [`ToolDenied`][pydantic_ai.tools.ToolDenied].
+
+    Only `'failed'` is mapped to a provider's native error channel (e.g. Anthropic `is_error`,
+    Bedrock `status='error'`). A denial is a deliberate policy decision rather than a runtime error,
+    so it's sent as an ordinary result: routing it to the error channel would wrongly signal a
+    transient failure and nudge the model to re-attempt a call that was blocked on purpose.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:

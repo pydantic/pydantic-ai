@@ -21,7 +21,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
@@ -371,6 +371,12 @@ class Instrumentation(AbstractCapability[Any]):
                     # Tool retries are surfaced as model-visible errors; record the prompt
                     # the model will see as the tool result before re-raising.
                     span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
+                span.record_exception(e, escaped=True)
+                span.set_status(StatusCode.ERROR)
+                raise
+            except ToolFailedError as e:
+                if handle_tool_control_flow and include_content and span.is_recording():
+                    span.set_attribute(names.tool_result_attr, e.tool_failed.model_response_str())
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise

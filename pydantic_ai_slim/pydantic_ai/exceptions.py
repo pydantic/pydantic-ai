@@ -14,7 +14,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import ModelResponse, RetryPromptPart
+    from .messages import ModelResponse, RetryPromptPart, ToolReturnPart
 
 __all__ = (
     'ModelRetry',
@@ -34,6 +34,7 @@ __all__ = (
     'ContentFilterError',
     'IncompleteToolCall',
     'FallbackExceptionGroup',
+    'ToolFailed',
 )
 
 
@@ -72,6 +73,45 @@ class ModelRetry(Exception):
             schema,
             serialization=core_schema.plain_serializer_function_ser_schema(
                 lambda x: {'message': x.message, 'kind': 'model-retry'},
+                return_schema=schema,
+            ),
+        )
+
+
+class ToolFailed(Exception):
+    """Exception to raise to report a failed tool result to the model.
+
+    Can be raised from tool functions, args validators, and tool validation/execution hooks
+    to send a failed tool result back to the model without consuming the tool's retry budget.
+    """
+
+    message: str
+    """The failure message to return to the model."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, self.__class__) and other.message == self.message
+
+    def __hash__(self) -> int:
+        return hash((self.__class__, self.message))
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> core_schema.CoreSchema:
+        """Pydantic core schema to allow `ToolFailed` to be (de)serialized."""
+        schema = core_schema.typed_dict_schema(
+            {
+                'message': core_schema.typed_dict_field(core_schema.str_schema()),
+                'kind': core_schema.typed_dict_field(core_schema.literal_schema(['tool-failed'])),
+            }
+        )
+        return core_schema.no_info_after_validator_function(
+            lambda dct: ToolFailed(dct['message']),
+            schema,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda x: {'message': x.message, 'kind': 'tool-failed'},
                 return_schema=schema,
             ),
         )
@@ -303,6 +343,19 @@ class ToolRetryError(Exception):
             lines.append(loc)
             lines.append(f'  {e["msg"]} [type={e["type"]}, input_value={e["input"]!r}]')
         return '\n'.join(lines)
+
+
+class ToolFailedError(Exception):
+    """Exception used to signal a failed `ToolReturnPart` should be returned to the LLM."""
+
+    def __init__(self, tool_failed: ToolReturnPart):
+        self.tool_failed = tool_failed
+        # `content` may be non-`str` (a structured object or multimodal sequence), so stringify it
+        # the same way the failed result is rendered to the model.
+        super().__init__(tool_failed.model_response_str())
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.tool_failed,)
 
 
 class IncompleteToolCall(UnexpectedModelBehavior):

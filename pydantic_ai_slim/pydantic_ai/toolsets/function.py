@@ -230,8 +230,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should correct
+                the arguments, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when validation should
+                produce a failed tool result. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
@@ -374,8 +375,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with [`RunContext`][pydantic_ai.tools.RunContext] as the first argument — even though the
                 tool function itself does not take `RunContext` when using `tool_plain`.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should correct
+                the arguments, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when validation should
+                produce a failed tool result. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
@@ -501,8 +503,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             args_validator: custom method to validate tool arguments after schema validation has passed,
                 before execution. The validator receives the already-validated and type-converted parameters,
                 with `RunContext` as the first argument.
-                Should raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on validation failure,
-                return `None` on success.
+                Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] when the model should correct
+                the arguments, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] when validation should
+                produce a failed tool result. Return `None` on success.
                 See [`ArgsValidatorFunc`][pydantic_ai.tools.ArgsValidatorFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 If `None`, the default value is determined by the toolset.
