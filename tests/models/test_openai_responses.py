@@ -12321,3 +12321,49 @@ def test_openai_responses_phase_profile_flag():
     assert openai_model_profile('gpt-5.2').get('openai_supports_phase', False) is False
     assert openai_model_profile('gpt-5').get('openai_supports_phase', False) is False
     assert openai_model_profile('gpt-4o').get('openai_supports_phase', False) is False
+
+
+async def test_openai_responses_defer_loading_injects_tool_search(allow_model_requests: None):
+    """Regression: when a deferred-capability function tool (defer_loading=True) is in the
+    request but no ToolSearchTool is in native_tools, OpenAI rejects with
+    'Deferred tools require tools.tool_search'. The adapter must inject tool_search automatically.
+
+    Covers the follow-up request after load_capability: the revealed tool carries
+    with_native='tool_search' (so defer_loading=True on the wire) but ToolSearchTool is no
+    longer explicitly listed in native_tools for that turn.
+    """
+    from pydantic_ai.native_tools._tool_search import ToolSearchTool
+
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_001',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+
+    # A deferred capability tool: with_native='tool_search' causes _map_tool_definition to
+    # set defer_loading=True on the wire. No ToolSearchTool in native_tools this turn.
+    deferred_tool = ToolDefinition(
+        name='my_capability',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        with_native=ToolSearchTool.kind,
+    )
+    mrp = ModelRequestParameters(function_tools=[deferred_tool], allow_text_output=True)
+
+    await model.request([ModelRequest.user_text_prompt('use my_capability')], None, mrp)
+
+    sent_tools = get_mock_responses_kwargs(mock_client)[0]['tools']
+    tool_types = [t.get('type') for t in sent_tools]
+    # tool_search must be present even though it wasn't in native_tools
+    assert 'tool_search' in tool_types
+    # the deferred function tool must also be present with defer_loading=True
+    fn_tools = [t for t in sent_tools if t.get('type') == 'function']
+    assert len(fn_tools) == 1
+    assert fn_tools[0].get('defer_loading') is True

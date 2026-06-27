@@ -2181,6 +2181,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         tools: list[responses.ToolParam] = (
             self._get_native_tools(model_request_parameters) + list(extra_native_tools) + function_tools
         )
+        # OpenAI rejects requests where any function tool carries `defer_loading=True`
+        # but no `tool_search` builtin is present ("Deferred tools require tools.tool_search").
+        # This can happen on the follow-up request after a capability is loaded: the revealed
+        # function tool has `defer_loading=True` but there is no explicit ToolSearchTool in
+        # native_tools for that turn.
+        if any(t.get('defer_loading') for t in function_tools) and not any(
+            t.get('type') == 'tool_search' for t in tools
+        ):
+            tools.insert(0, ToolSearchToolParam(type='tool_search'))
         if not tools:
             tool_choice = None
 
