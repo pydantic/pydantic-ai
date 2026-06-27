@@ -877,6 +877,7 @@ def _map_executed_tool(
         else:
             results = tool.output
 
+        has_prior_call_part = tool_call_id is not None
         tool_call_id = tool_call_id or generate_tool_call_id()
         call_part = NativeToolCallPart(
             tool_name=WebSearchTool.kind,
@@ -893,7 +894,7 @@ def _map_executed_tool(
 
         if streaming:
             if results:
-                return None, return_part
+                return None if has_prior_call_part else call_part, return_part
             else:
                 return call_part, None
         else:

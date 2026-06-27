@@ -1,0 +1,62 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in San Francisco?
+        role: user
+      model: compound-beta
+      n: 1
+      stream: true
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    body:
+      string: "data: {\"id\":\"chatcmpl-single-test\",\"object\":\"chat.completion.chunk\"\
+        ,\"created\":1758144046,\"model\":\"groq/compound\",\"system_fingerprint\"\
+        :null,\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\"\
+        :\"\"},\"logprobs\":null,\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-single-test\"\
+        ,\"object\":\"chat.completion.chunk\",\"created\":1758144046,\"model\":\"\
+        groq/compound\",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"\
+        delta\":{\"executed_tools\":[{\"index\":0,\"type\":\"search\",\"arguments\"\
+        :\"{\\\"query\\\": \\\"weather in San Francisco\\\"}\",\"search_results\"\
+        :{\"results\":[{\"title\":\"SF Weather\",\"url\":\"https://www.weatherapi.com/\"\
+        ,\"content\":\"San Francisco: Sunny, 62\\u00b0F.\",\"score\":0.98}]}}]},\"\
+        logprobs\":null,\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-single-test\"\
+        ,\"object\":\"chat.completion.chunk\",\"created\":1758144046,\"model\":\"\
+        groq/compound\",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"\
+        delta\":{\"content\":\"The weather in San Francisco is sunny and 62\\u00b0F.\"\
+        },\"logprobs\":null,\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-single-test\"\
+        ,\"object\":\"chat.completion.chunk\",\"created\":1758144046,\"model\":\"\
+        groq/compound\",\"system_fingerprint\":null,\"choices\":[{\"index\":0,\"\
+        delta\":{},\"logprobs\":null,\"finish_reason\":\"stop\"}],\"x_groq\":{\"id\"\
+        :\"req_test\",\"usage\":{\"queue_time\":0.05,\"prompt_tokens\":100,\"prompt_time\"\
+        :0.02,\"completion_tokens\":20,\"completion_time\":0.01,\"total_tokens\":120,\"\
+        total_time\":0.08}}}\n\ndata: [DONE]\n\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    status:
+      code: 200
+      message: OK
+version: 1
