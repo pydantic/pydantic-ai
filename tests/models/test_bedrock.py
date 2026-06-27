@@ -2541,7 +2541,10 @@ async def test_bedrock_split_tool_result_from_attachment_user_message(bedrock_pr
         [
             {'role': 'user', 'content': [{'text': 'show me my expenses'}]},
             {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}]},
-            {'role': 'user', 'content': [{'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}}]},
+            {
+                'role': 'user',
+                'content': [{'toolResult': {'toolUseId': 't1', 'content': [{'text': 'ok'}], 'status': 'success'}}],
+            },
             {
                 'role': 'user',
                 'content': [
