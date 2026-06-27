@@ -27,13 +27,14 @@ from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
     'openai:gpt-5.2',
+    name='joke_selection_agent',  # (6)!
     instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
         'You must return just a single joke.'
     ),
 )
 joke_generation_agent = Agent(  # (2)!
-    'google:gemini-3-flash-preview', output_type=list[str]
+    'google:gemini-3-flash-preview', name='joke_generation_agent', output_type=list[str]
 )
 
 
@@ -61,6 +62,7 @@ print(result.usage)
 3. Call the delegate agent from within a tool of the parent agent.
 4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
 5. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
+6. Passing `name` is optional but recommended when you run more than one agent: it's the label Pydantic AI uses for the agent's spans, so naming both agents lets you tell the parent and delegate apart in the [Logfire](logfire.md) agents view. When omitted, Pydantic AI tries to infer the name from the variable it's assigned to, which doesn't work for agents built inside functions, loops, or comprehensions.
 
 _(This example is complete, it can be run "as is")_
 
@@ -99,6 +101,7 @@ class ClientAndKey:  # (1)!
 
 joke_selection_agent = Agent(
     'openai:gpt-5.2',
+    name='joke_selection_agent',
     deps_type=ClientAndKey,  # (2)!
     instructions=(
         'Use the `joke_factory` tool to generate some jokes on the given subject, '
@@ -107,6 +110,7 @@ joke_selection_agent = Agent(
 )
 joke_generation_agent = Agent(
     'google:gemini-3-flash-preview',
+    name='joke_generation_agent',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
     instructions=(
