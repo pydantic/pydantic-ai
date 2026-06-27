@@ -51,10 +51,17 @@ from pydantic_ai import (
     VideoUrl,
     capture_run_messages,
 )
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.capabilities import Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.messages import (
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
+)
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -75,6 +82,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
     ToolDenied,
 )
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsSameStr, IsStr, try_import
@@ -112,7 +120,11 @@ with try_import() as imports_successful:
 
     from pydantic_ai.ui import SSE_CONTENT_TYPE, OnCompleteFunc, StateDeps
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
-    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
+    from pydantic_ai.ui.ag_ui._utils import (
+        BUILTIN_TOOL_CALL_ID_PREFIX,
+        detect_ag_ui_version,
+        parse_ag_ui_version,
+    )
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -1594,6 +1606,293 @@ def test_dump_load_roundtrip_tools() -> None:
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original
+
+
+def test_dump_load_roundtrip_load_capability() -> None:
+    """Typed `load_capability` parts keep their identity through dump/load on >= 0.1.13.
+
+    Without `tool_kind` round-tripping via `encrypted_value`, a resuming agent would
+    forget its loaded capabilities.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
+        ModelRequest(
+            parts=[LoadCapabilityReturnPart(tool_call_id='load-foobar', content={'instructions': '# Foo Bar'})]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+    assert parse_loaded_capabilities(reloaded) == {'foobar'}
+
+
+def test_dump_load_roundtrip_load_capability_invalid_args() -> None:
+    """Invalid `load_capability` args never count as loaded after a roundtrip.
+
+    AG-UI args are JSON strings, which always satisfy the typed part's `str` arm — unlike
+    Vercel's structured args the call still promotes, and invalidity surfaces as
+    `capability_id is None`.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"name": "foobar"}')]),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='load_capability',
+                    tool_call_id='load-foobar',
+                    content='Field required: id',
+                )
+            ]
+        ),
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+
+    reloaded_call = reloaded[0].parts[0]
+    assert isinstance(reloaded_call, LoadCapabilityCallPart)
+    assert reloaded_call.capability_id is None
+    assert parse_loaded_capabilities(reloaded) == set()
+
+
+def test_dump_load_roundtrip_load_capability_old_version() -> None:
+    """On < 0.1.13, `tool_kind` is skipped (no `encrypted_value` field) and typed parts reload as base classes."""
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
+        ModelRequest(
+            parts=[LoadCapabilityReturnPart(tool_call_id='load-foobar', content={'instructions': '# Foo Bar'})]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
+
+    assistant_msg = ag_ui_msgs[0]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.tool_calls is not None
+    assert assistant_msg.tool_calls[0].encrypted_value is None
+    tool_msg = ag_ui_msgs[1]
+    assert isinstance(tool_msg, ToolMessage)
+    assert tool_msg.encrypted_value is None
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    assert type(reloaded[0].parts[0]) is ToolCallPart
+    assert type(reloaded[1].parts[0]) is ToolReturnPart
+    assert parse_loaded_capabilities(reloaded) == set()
+
+
+def test_dump_load_roundtrip_native_tool_search() -> None:
+    """Native tool-search parts keep their typed identity through dump/load on >= 0.1.13."""
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(tool_call_id='search-1', args='{"queries": ["refund"]}'),
+                NativeToolSearchReturnPart(
+                    tool_call_id='search-1',
+                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+
+    assert parse_discovered_tools(reloaded) == {'refund_tool'}
+    # A non-empty result proves the return part kept its typed identity; the call part's
+    # identity matters to Anthropic history replay, so pin it too.
+    assert isinstance(reloaded[0].parts[0], NativeToolSearchCallPart)
+
+
+def test_load_tool_kind_falls_back_to_call_claim() -> None:
+    """A ToolMessage without its own `encrypted_value` narrows via the paired call's claim.
+
+    Streamed results have no metadata slot, so client-assembled histories only carry
+    the claim on the `ToolCall`.
+    """
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id='load-foobar',
+                        function=FunctionCall(name='load_capability', arguments='{"id": "foobar"}'),
+                        encrypted_value='{"tool_kind": "capability-load"}',
+                    )
+                ],
+            ),
+            ToolMessage(id='msg-2', tool_call_id='load-foobar', content='{"instructions": "# Foo Bar"}'),
+        ]
+    )
+
+    assert isinstance(loaded[0].parts[0], LoadCapabilityCallPart)
+    assert isinstance(loaded[1].parts[0], LoadCapabilityReturnPart)
+    assert parse_loaded_capabilities(loaded) == {'foobar'}
+
+
+def test_load_tool_kind_error_result_stays_plain() -> None:
+    """A ToolMessage with `error` set never narrows: typed return parts imply success to their readers."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id='load-foobar',
+                        function=FunctionCall(name='load_capability', arguments='{"name": "foobar"}'),
+                        encrypted_value='{"tool_kind": "capability-load"}',
+                    )
+                ],
+            ),
+            ToolMessage(
+                id='msg-2',
+                tool_call_id='load-foobar',
+                content='Field required: id',
+                error='Field required: id',
+            ),
+        ]
+    )
+
+    assert type(loaded[1].parts[0]) is ToolReturnPart
+    assert parse_loaded_capabilities(loaded) == set()
+
+
+@pytest.mark.parametrize(
+    'encrypted_value',
+    ['not json', '"a string"', '[1]', '{"tool_kind": "unknown-kind"}'],
+)
+def test_load_tool_kind_garbage_encrypted_value(encrypted_value: str) -> None:
+    """`encrypted_value` is client-supplied: anything malformed loads as a plain part."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id='call-1',
+                        function=FunctionCall(name='load_capability', arguments='{"id": "foobar"}'),
+                        encrypted_value=encrypted_value,
+                    )
+                ],
+            ),
+        ]
+    )
+
+    assert type(loaded[0].parts[0]) is ToolCallPart
+
+
+def test_load_tool_kind_unparseable_result_content_stays_plain() -> None:
+    """A claimed return whose content isn't valid JSON degrades to the plain string part."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id='load-foobar',
+                        function=FunctionCall(name='load_capability', arguments='{"id": "foobar"}'),
+                        encrypted_value='{"tool_kind": "capability-load"}',
+                    )
+                ],
+            ),
+            ToolMessage(id='msg-2', tool_call_id='load-foobar', content='not json'),
+        ]
+    )
+
+    return_part = loaded[1].parts[0]
+    assert type(return_part) is ToolReturnPart
+    assert return_part.content == 'not json'
+
+
+def test_load_malformed_builtin_tool_call_id_degrades_to_plain() -> None:
+    """A client-supplied id starting with the builtin prefix but missing its `|` segments
+    degrades to plain tool call/return parts instead of raising on the tuple unpack."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id=BUILTIN_TOOL_CALL_ID_PREFIX,
+                        function=FunctionCall(name='web_search', arguments='{}'),
+                    )
+                ],
+            ),
+            ToolMessage(id='msg-2', tool_call_id=BUILTIN_TOOL_CALL_ID_PREFIX, content='{}'),
+        ]
+    )
+
+    assert type(loaded[0].parts[0]) is ToolCallPart
+    assert type(loaded[1].parts[0]) is ToolReturnPart
+
+
+@pytest.mark.parametrize('ag_ui_version', ['0.1.10', '0.1.13'])
+async def test_run_stream_load_capability_tool_kind_encrypted_value(
+    ag_ui_version: Literal['0.1.10', '0.1.13'],
+) -> None:
+    """Streamed `load_capability` calls carry `tool_kind` via `REASONING_ENCRYPTED_VALUE`.
+
+    Clients build their `ToolCall` history from streamed events, echoing this back as
+    `encrypted_value` — without it, streaming-built histories reload as plain parts.
+    The event doesn't exist before 0.1.13, so it's skipped there.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "refunds"}', tool_call_id='load-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        capabilities=[
+            Capability[object](
+                id='refunds',
+                description='Refund tools.',
+                instructions='Refund instructions.',
+                defer_loading=True,
+            )
+        ],
+    )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Help me with a refund'))
+    events = await run_and_collect_events(agent, run_input, ag_ui_version=ag_ui_version)
+
+    tool_events = [e for e in events if e['type'].startswith('TOOL_CALL') or e['type'] == 'REASONING_ENCRYPTED_VALUE']
+    encrypted_value_event = {
+        'type': 'REASONING_ENCRYPTED_VALUE',
+        'timestamp': IsInt(),
+        'subtype': 'tool-call',
+        'entityId': 'load-1',
+        'encryptedValue': '{"tool_kind": "capability-load"}',
+    }
+    expected: list[dict[str, Any]] = [
+        {
+            'type': 'TOOL_CALL_START',
+            'timestamp': IsInt(),
+            'toolCallId': 'load-1',
+            'toolCallName': 'load_capability',
+            'parentMessageId': IsStr(),
+        },
+        *([encrypted_value_event] if ag_ui_version == '0.1.13' else []),
+        {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': 'load-1', 'delta': '{"id": "refunds"}'},
+        {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': 'load-1'},
+        {
+            'type': 'TOOL_CALL_RESULT',
+            'timestamp': IsInt(),
+            'messageId': IsStr(),
+            'toolCallId': 'load-1',
+            'content': '{"instructions":"Refund instructions."}',
+            'role': 'tool',
+        },
+    ]
+    assert tool_events == expected
 
 
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:

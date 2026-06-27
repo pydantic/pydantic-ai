@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Iterator
 from datetime import datetime
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -11,6 +11,7 @@ from pydantic_ai.messages import (
     BaseToolReturnPart,
     ModelMessage,
     ProviderDetailsDelta,
+    ToolPartKind,
     ToolReturnPart,
 )
 from pydantic_ai.ui.vercel_ai.request_types import (
@@ -42,6 +43,18 @@ from pydantic_ai.ui.vercel_ai.response_types import (
 __all__ = []
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
+
+_TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
+
+
+def parse_tool_kind(value: object) -> ToolPartKind | None:
+    """Validate an untrusted client-supplied `tool_kind` claim against `ToolPartKind`.
+
+    `UIMessage.metadata` is client-controlled, so the claimed kind is checked against the known
+    `ToolPartKind` members before it's trusted to dispatch `narrow_type`; anything else reads as
+    `None`. Mirrors AG-UI's `parse_encrypted_tool_kind`.
+    """
+    return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
 
 
 class _PydanticAIMessageMetadata(BaseModel):

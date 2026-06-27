@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import re
-from typing import Any, Final
+from typing import Any, Final, get_args
 
 from typing_extensions import Required, TypedDict
 
-from ...messages import ThinkingPart
+from ..._utils import is_str_dict
+from ...messages import ThinkingPart, ToolPartKind
 
 REASONING_VERSION = (0, 1, 13)
 """AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
@@ -111,3 +113,55 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
     if part.provider_details is not None:
         encrypted['provider_details'] = part.provider_details
     return encrypted
+
+
+_TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
+
+
+def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
+    """Pack a part's `tool_kind` into an AG-UI `encrypted_value` JSON blob.
+
+    AG-UI has no structured per-tool metadata slot, so we deliberately reuse `encrypted_value`
+    — spec'd for encrypted reasoning, but defined as a free-form, client-echoed opaque string —
+    to carry the `tool_kind` discriminator across a round-trip. The claim is untrusted coming
+    back in (validated by `parse_encrypted_tool_kind`), and a genuine reasoning blob landing in
+    this slot simply fails to parse and degrades to a plain part. A dict rather than a bare
+    string so the format can carry more metadata later.
+
+    Callers gate on `REASONING_VERSION`: the `encrypted_value` field itself landed in 0.1.11,
+    but the streaming carrier (`ReasoningEncryptedValueEvent`) is a `REASONING_*` event, canonical
+    from 0.1.13.
+    """
+    return json.dumps({'tool_kind': tool_kind}) if tool_kind is not None else None
+
+
+def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
+    """Read a `tool_kind` claim from an AG-UI `encrypted_value` blob.
+
+    Client-supplied data: anything but a JSON dict with a known `ToolPartKind` reads as `None`.
+    """
+    if not encrypted_value:
+        return None
+    try:
+        data = json.loads(encrypted_value)
+    except json.JSONDecodeError:
+        return None
+    if not is_str_dict(data):
+        return None
+    kind = data.get('tool_kind')
+    return next((k for k in _TOOL_PART_KINDS if k == kind), None)
+
+
+def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:
+    """Split a builtin tool-call id into its `(provider_name, original_id)`.
+
+    Inverse of the `'|'.join([prefix, provider_name, original_id])` encoding. Returns
+    `None` when `tool_call_id` is not a well-formed builtin id, so a malformed
+    client-supplied id degrades to the plain tool-call path instead of raising on unpack.
+    """
+    if not tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
+        return None
+    parts = tool_call_id.split('|', 2)
+    if len(parts) != 3:
+        return None
+    return parts[1], parts[2]
