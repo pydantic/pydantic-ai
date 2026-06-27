@@ -12321,3 +12321,103 @@ def test_openai_responses_phase_profile_flag():
     assert openai_model_profile('gpt-5.2').get('openai_supports_phase', False) is False
     assert openai_model_profile('gpt-5').get('openai_supports_phase', False) is False
     assert openai_model_profile('gpt-4o').get('openai_supports_phase', False) is False
+
+
+async def test_openai_responses_stray_post_done_args_delta_dropped(allow_model_requests: None):
+    """Regression: a stray ResponseFunctionCallArgumentsDeltaEvent arriving after
+    ResponseFunctionCallArgumentsDoneEvent must not corrupt the final ToolCallPart.args.
+
+    Non-conforming endpoints (e.g. certain proxies) emit an extra arguments delta
+    after the done event. Without the guard the delta is applied to the already-closed
+    part slot, producing invalid JSON in the final ModelResponse.
+    """
+    from openai.types import responses as resp
+    from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    fn_item = ResponseFunctionToolCall(
+        id='call_001',
+        call_id='call_001',
+        name='get_weather',
+        arguments='',
+        type='function_call',
+        status='in_progress',
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=fn_item,
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseFunctionCallArgumentsDeltaEvent(
+            item_id='call_001',
+            output_index=0,
+            delta='{"x":',
+            type='response.function_call_arguments.delta',
+            sequence_number=3,
+        ),
+        resp.ResponseFunctionCallArgumentsDeltaEvent(
+            item_id='call_001',
+            output_index=0,
+            delta='1}',
+            type='response.function_call_arguments.delta',
+            sequence_number=4,
+        ),
+        resp.ResponseFunctionCallArgumentsDoneEvent(
+            item_id='call_001',
+            output_index=0,
+            arguments='{"x":1}',
+            name='get_weather',
+            type='response.function_call_arguments.done',
+            sequence_number=5,
+        ),
+        # Stray delta emitted AFTER the done event by a non-conforming endpoint.
+        resp.ResponseFunctionCallArgumentsDeltaEvent(
+            item_id='call_001',
+            output_index=0,
+            delta='}',
+            type='response.function_call_arguments.delta',
+            sequence_number=6,
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=fn_item.model_copy(update={'arguments': '{"x":1}', 'status': 'completed'}),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=7,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=8,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    mrp = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})],
+        allow_text_output=True,
+    )
+
+    async with model.request_stream([ModelRequest.user_text_prompt('weather?')], None, mrp) as streamed:
+        async for _ in streamed:
+            pass
+        result = streamed.get()
+
+    tool_parts = [p for p in result.parts if isinstance(p, ToolCallPart)]
+    assert len(tool_parts) == 1
+    # The stray post-done '}' must not have been appended — args must be valid JSON.
+    assert tool_parts[0].args == snapshot('{"x":1}')
