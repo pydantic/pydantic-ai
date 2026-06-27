@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelSettings,
     RunContext,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import Instrumentation
@@ -831,6 +832,41 @@ async def test_prefect_agent_override_toolsets(allow_model_requests: None) -> No
 
     output = await override_toolsets_flow()
     assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
+    def request_external_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(request_external_tool),
+        name='runtime_external_toolset_prefect_agent',
+        output_type=[str, DeferredToolRequests],
+    )
+    prefect_agent = PrefectAgent(agent)
+
+    result = await prefect_agent.run(
+        'Call the runtime external tool.',
+        toolsets=[
+            ExternalToolset(
+                tool_defs=[
+                    ToolDefinition(
+                        name='external',
+                        parameters_json_schema={
+                            'type': 'object',
+                            'properties': {'query': {'type': 'string'}},
+                            'required': ['query'],
+                        },
+                    )
+                ],
+                id='external',
+            )
+        ],
+    )
+
+    assert result.output == DeferredToolRequests(
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+    )
 
 
 async def test_prefect_agent_override_tools(allow_model_requests: None) -> None:

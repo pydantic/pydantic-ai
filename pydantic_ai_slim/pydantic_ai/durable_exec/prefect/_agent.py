@@ -170,9 +170,12 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return super().toolsets
 
     @contextmanager
-    def _prefect_overrides(self) -> Generator[None]:
+    def _prefect_overrides(
+        self, additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
+    ) -> Generator[None]:
         # Override with PrefectModel and PrefectMCPToolset in the toolsets.
-        with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
+        merged_toolsets = [*self._toolsets, *(additional_toolsets or ())]
+        with super().override(model=self._model, toolsets=merged_toolsets, tools=[]):
             yield
 
     @overload
@@ -296,7 +299,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
-                with self._prefect_overrides():
+                with self._prefect_overrides(toolsets):
                     result = await super(WrapperAgent, self).run(
                         user_prompt,
                         output_type=output_type,
@@ -443,7 +446,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
-                with self._prefect_overrides():
+                with self._prefect_overrides(toolsets):
                     # Using `run_coro_as_sync` from Prefect with async `run` to avoid event loop conflicts.
                     result = run_coro_as_sync(
                         super(PrefectAgent, self).run(
@@ -945,7 +948,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Non-Prefect model cannot be set at agent run time inside a Prefect flow, it must be set at agent creation time.'
             )
 
-        with self._prefect_overrides():
+        with self._prefect_overrides(toolsets):
             async with super().iter(
                 user_prompt=user_prompt,
                 output_type=output_type,
@@ -961,7 +964,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 retries=retries,
                 infer_name=infer_name,
-                toolsets=toolsets,
+                toolsets=None,
                 capabilities=capabilities,
                 spec=spec,
                 **_deprecated_kwargs,
