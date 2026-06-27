@@ -5898,7 +5898,48 @@ async def test_convert_user_prompt_part_text_content():
     part = UserPromptPart(content=['Just some text', TextContent(content='More text', metadata={'key': 'value'})])
     ui_parts = _convert_user_prompt_part(part)
     assert ui_parts == snapshot(
-        [TextUIPart(text='Just some text', state='done'), TextUIPart(text='More text', state='done')]
+        [
+            TextUIPart(text='Just some text', state='done'),
+            TextUIPart(
+                text='More text',
+                state='done',
+                provider_metadata={'pydantic_ai': {'metadata': {'key': 'value'}}},
+            ),
+        ]
+    )
+
+
+async def test_adapter_text_content_metadata_roundtrip():
+    original_messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Just some text',
+                        TextContent(content='More text', metadata={'key': 'value'}),
+                    ]
+                )
+            ]
+        )
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+
+    assert reloaded_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'Just some text',
+                            TextContent(content='More text', metadata={'key': 'value'}),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
     )
 
 
