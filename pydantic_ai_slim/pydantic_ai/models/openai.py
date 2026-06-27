@@ -2127,6 +2127,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             finish_reason = 'content_filter'
             provider_details.pop('finish_reason', None)
             provider_details['refusal'] = refusal_text
+        elif finish_reason == 'content_filter':
+            # Some models (e.g. OpenAI Responses with Azure web search) report a
+            # content-policy block via `incomplete_details.reason='content_filter'`
+            # and a plain `ResponseOutputText` rather than a structured
+            # `ResponseOutputRefusal`. Clear the parts so the agent loop raises
+            # `ContentFilterError` instead of returning the refusal text as the
+            # model's normal output (#5221).
+            refusal_text = ''.join(part.content for part in items if isinstance(part, TextPart))
+            items = []
+            if refusal_text:
+                provider_details.pop('finish_reason', None)
+                provider_details['refusal'] = refusal_text
 
         return ModelResponse(
             parts=items,
