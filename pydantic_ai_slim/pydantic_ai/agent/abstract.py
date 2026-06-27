@@ -100,9 +100,8 @@ class AgentRetries(TypedDict, total=False):
     - At `Agent(retries=N)` construction time, an `int` sets both `tools` and `output`
       to `N`.
     - At `run()` / `iter()` / `override()` time, an `int` overrides only the `output`
-      budget. Tool retries cannot be overridden per run or via `override()` — passing
-      `retries={'tools': ...}` at those call sites raises a `UserError`, since the tool
-      manager is built once at agent construction.
+      budget. To override the tool-retry budget at those call sites, pass an explicit
+      dict, e.g. `retries={'tools': ...}`.
 
     Keys:
         tools: Default number of retries for tool calls before raising an error.
@@ -344,8 +343,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control, including the
+                tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -533,8 +532,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control, including the
+                tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -685,8 +684,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control, including the
+                tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -983,8 +982,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control, including the
+                tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1151,8 +1150,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control, including the
+                tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1378,8 +1377,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget (`AgentRetries(output=...)` equivalent), or an
-                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control. Tool retries cannot
-                be overridden per run. See
+                [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer control, including the
+                tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1425,8 +1424,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
                 override the output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries]
-                dict for finer control. When set, any per-run `retries` argument is ignored. Tool retries
-                cannot be overridden via `override()`.
+                dict for finer control, including the tool-retry budget (e.g. `retries={'tools': 3}`).
+                When set, any per-run `retries` argument is ignored.
             spec: Optional agent spec providing defaults for override.
         """
         raise NotImplementedError
