@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
@@ -53,6 +53,8 @@ with try_import() as imports_successful:
         ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
+        ImageURL as MistralImageURL,
+        ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
         TextChunk,
         TextChunk as MistralTextChunk,
@@ -91,6 +93,7 @@ class MockMistralAI:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockCompletionEvent] | Sequence[Sequence[MockCompletionEvent]] | None = None
     index: int = 0
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     @cached_property
     def sdk_configuration(self) -> MockSdkConfiguration:
@@ -118,8 +121,9 @@ class MockMistralAI:
         return cast(Mistral, cls(stream=completions_streams))
 
     async def chat_completions_create(  # pragma: lax no cover
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
+        self.chat_completion_kwargs.append(kwargs)
         if stream or self.stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
@@ -2258,6 +2262,34 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
             ),
         ]
     )
+
+
+def get_mock_chat_completion_kwargs(mistral_client: Mistral) -> list[dict[str, Any]]:
+    if isinstance(mistral_client, MockMistralAI):
+        return mistral_client.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockMistralAI instance')
+
+
+async def test_image_detail_vendor_metadata(allow_model_requests: None):
+    """`vendor_metadata['detail']` is forwarded to the Mistral API for image inputs."""
+    c = completion_message(MistralAssistantMessage(content='done', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'high'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'low'})
+
+    await agent.run(['Describe these images.', image_url, binary_image])
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    details = [
+        chunk.image_url.detail
+        for chunk in messages[0].content
+        if isinstance(chunk, MistralImageURLChunk) and isinstance(chunk.image_url, MistralImageURL)
+    ]
+    assert details == snapshot(['high', 'low'])
 
 
 async def test_pdf_url_input(allow_model_requests: None):
