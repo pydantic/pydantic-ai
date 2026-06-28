@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+import re
+
 import pytest
 from pytest_mock import MockerFixture
 
@@ -10,6 +12,7 @@ with try_import() as imports_successful:
     from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GradingOutput,
+        _build_prompt,  # pyright: ignore[reportPrivateUsage]
         _stringify,  # pyright: ignore[reportPrivateUsage]
         judge_input_output,
         judge_input_output_expected,
@@ -67,6 +70,27 @@ def test_stringify():
 
     obj = NonSerializable()
     assert _stringify(obj) == 'NonSerializable()'
+
+
+@pytest.mark.parametrize(
+    'kwargs,expected_tags',
+    [
+        ({'output': 'O', 'rubric': 'R'}, ['Output', 'Rubric']),
+        ({'output': 'O', 'rubric': 'R', 'inputs': 'I'}, ['Input', 'Output', 'Rubric']),
+        ({'output': 'O', 'rubric': 'R', 'expected_output': 'E'}, ['ExpectedOutput', 'Output', 'Rubric']),
+        (
+            {'output': 'O', 'rubric': 'R', 'inputs': 'I', 'expected_output': 'E'},
+            ['Input', 'ExpectedOutput', 'Output', 'Rubric'],
+        ),
+    ],
+)
+def test_build_prompt_section_order_matches_few_shot_examples(kwargs: dict[str, str], expected_tags: list[str]) -> None:
+    """`_build_prompt` must emit sections in the same order the judge system-prompt few-shot
+    examples demonstrate: `Input → ExpectedOutput → Output → Rubric`, with the rubric (the
+    instruction) last, after all the context it applies to. See issue #6110."""
+    prompt = _build_prompt(**kwargs)
+    assert isinstance(prompt, str)
+    assert re.findall(r'<(\w+)>', prompt) == expected_tags
 
 
 @pytest.mark.anyio
@@ -263,15 +287,15 @@ async def test_judge_input_output_expected_mock(mocker: MockerFixture, image_con
 <Input>
 Hello
 </Input>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Output>
 Hello world
 </Output>
 <Rubric>
 Output contains input
-</Rubric>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>\
+</Rubric>\
 """,
         )
     )
@@ -289,15 +313,15 @@ Hello
                 '<Input>',
                 image_content,
                 '</Input>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
                 '<Output>',
                 'Hello world',
                 '</Output>',
                 '<Rubric>',
                 'Output contains input',
                 '</Rubric>',
-                '<ExpectedOutput>',
-                'Hello',
-                '</ExpectedOutput>',
             ],
         )
     )
@@ -333,15 +357,15 @@ async def test_judge_input_output_expected_with_model_settings_mock(
 <Input>
 Hello settings
 </Input>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Output>
 Hello world with settings
 </Output>
 <Rubric>
 Output contains input with settings
-</Rubric>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>\
+</Rubric>\
 """,
         )
     )
@@ -369,15 +393,15 @@ Hello
                 '<Input>',
                 image_content,
                 '</Input>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
                 '<Output>',
                 'Hello world with settings',
                 '</Output>',
                 '<Rubric>',
                 'Output contains input with settings',
                 '</Rubric>',
-                '<ExpectedOutput>',
-                'Hello',
-                '</ExpectedOutput>',
             ],
         )
     )
@@ -406,15 +430,15 @@ Hello
 <Input>
 123
 </Input>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Output>
 Hello world with settings
 </Output>
 <Rubric>
 Output contains input with settings
-</Rubric>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>\
+</Rubric>\
 """,
         )
     )
@@ -440,15 +464,15 @@ Hello
 <Input>
 123
 </Input>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Output>
 Hello world with settings
 </Output>
 <Rubric>
 Output contains input with settings
-</Rubric>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>\
+</Rubric>\
 """,
         )
     )
@@ -522,15 +546,15 @@ async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixt
     assert call_args == snapshot(
         (
             [
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
                 '<Output>',
                 image_content,
                 '</Output>',
                 '<Rubric>',
                 'Output contains input with settings',
                 '</Rubric>',
-                '<ExpectedOutput>',
-                'Hello',
-                '</ExpectedOutput>',
             ],
         )
     )

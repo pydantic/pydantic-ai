@@ -250,16 +250,22 @@ def _build_prompt(
     inputs: Any | None = None,
     expected_output: Any | None = None,
 ) -> str | Sequence[str | UserContent]:
-    """Build a prompt that includes input, output, expected output, and rubric."""
+    """Build a prompt that includes input, expected output, output, and rubric.
+
+    Sections are emitted in the same order the judge agents' system-prompt few-shot
+    examples demonstrate — `Input → ExpectedOutput → Output → Rubric` — so the runtime
+    prompt matches the format the model was primed with and the rubric (the instruction)
+    comes last, after all the context it applies to.
+    """
     sections: list[str | UserContent] = []
     if inputs is not None:
         sections.extend(_make_section(inputs, 'Input'))
 
-    sections.extend(_make_section(output, 'Output'))
-    sections.extend(_make_section(rubric, 'Rubric'))
-
     if expected_output is not None:
         sections.extend(_make_section(expected_output, 'ExpectedOutput'))
+
+    sections.extend(_make_section(output, 'Output'))
+    sections.extend(_make_section(rubric, 'Rubric'))
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections)  # type: ignore[arg-type]
     return sections
