@@ -149,6 +149,9 @@ Instead of constructing `MCPToolset` instances individually, you can load multip
 
 This is particularly useful when you need to manage multiple MCP servers or want to configure servers externally without modifying code.
 
+!!! warning "Only load configuration files you trust"
+    A `command` server entry is spawned as a local process when the toolset connects, and `${VAR}` references are expanded from the current process environment (see [Environment variables](#environment-variables) below). Loading a configuration file from an untrusted or attacker-influenced source can therefore run arbitrary local commands and leak environment variables (such as API keys) into command arguments, headers, or URLs. Only pass [`load_mcp_toolsets()`][pydantic_ai.mcp.load_mcp_toolsets] configuration files from trusted sources, the same way you would treat a shell script or any other executable input.
+
 ### Configuration format
 
 The configuration file should be a JSON file with an `mcpServers` object containing server definitions. Each server is identified by a unique key and contains the configuration for that server:

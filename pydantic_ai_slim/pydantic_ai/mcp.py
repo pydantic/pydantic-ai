@@ -1651,6 +1651,14 @@ def load_mcp_toolsets(config_path: str | Path) -> list[AbstractToolset[Any]]:
     wrapped in a [`PrefixedToolset`][pydantic_ai.toolsets.PrefixedToolset] using the server's name
     as prefix to disambiguate tools across multiple servers.
 
+    !!! warning "Only load configuration files you trust"
+        A `command` server entry is spawned as a local process when the toolset connects, and
+        `${VAR}` references are expanded from the current process environment. Loading a config
+        file from an untrusted or attacker-influenced source can therefore run arbitrary local
+        commands and leak environment variables (e.g. API keys) into command arguments, headers,
+        or URLs. Only call `load_mcp_toolsets` with configuration files from trusted sources, the
+        same way you would treat a shell script or any other executable input.
+
     Environment variables can be referenced in the configuration file using:
 
     - `${VAR_NAME}` syntax — expands to the value of `VAR_NAME`, raises if not defined
