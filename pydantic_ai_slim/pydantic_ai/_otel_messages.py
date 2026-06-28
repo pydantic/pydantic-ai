@@ -73,6 +73,9 @@ class FilePart(TypedDict):
     modality: str
     file_id: NotRequired[str]
     mime_type: NotRequired[str]
+    provider_name: NotRequired[str]
+    """The provider hosting the file. A pydantic-ai extension to the OTel spec, recorded so that
+    `UploadedFile` references can be reconstructed from the trace (file IDs aren't portable across providers)."""
 
 
 class BinaryDataPart(TypedDict):
