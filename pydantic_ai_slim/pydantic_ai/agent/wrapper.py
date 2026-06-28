@@ -29,6 +29,7 @@ from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, AgentRet
 
 if TYPE_CHECKING:
     from ..capabilities import CombinedCapability
+    from ..realtime import RealtimeModel, RealtimeSession
     from .spec import AgentSpec
 
 
@@ -287,6 +288,38 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             spec=spec,
         ) as run:
             yield run
+
+    @asynccontextmanager
+    async def realtime_session(
+        self,
+        model: RealtimeModel,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        background_tools: set[str] | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime session on the wrapped agent. See [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session]."""
+        async with self.wrapped.realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            background_tools=background_tools,
+        ) as session:
+            yield session
 
     @contextmanager
     def override(
