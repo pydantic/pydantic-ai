@@ -91,6 +91,7 @@ def test_custom_output_args():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -143,6 +144,7 @@ def test_custom_output_args_model():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -191,6 +193,7 @@ def test_output_type():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -240,6 +243,7 @@ def test_tool_retry():
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -261,6 +265,7 @@ def test_tool_retry():
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=61, output_tokens=8),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -279,6 +284,7 @@ def test_tool_retry():
                 parts=[TextPart(content='{"my_ret":"1"}')],
                 usage=RequestUsage(input_tokens=62, output_tokens=12),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -484,3 +490,21 @@ def test_different_content_input(content: AudioUrl | VideoUrl | ImageUrl | Binar
     result = agent.run_sync(['x', content], model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=1))
+
+
+@pytest.mark.anyio
+async def test_test_model_metadata_consistency():
+    agent = Agent(model=TestModel())
+
+    # normal run
+    result = await agent.run('hello')
+    for message in result.all_messages():
+        if isinstance(message, ModelResponse):
+            assert message.provider_name == 'test'
+
+    # stream run
+    async with agent.run_stream('hello') as stream:
+        await stream.get_output()
+        for message in stream.all_messages():
+            if isinstance(message, ModelResponse):
+                assert message.provider_name == 'test'
