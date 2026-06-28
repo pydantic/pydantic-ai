@@ -1018,6 +1018,14 @@ class BedrockConverseModel(Model[BaseClient]):
                             else:
                                 tool_result_content.append({'json': item})
 
+                        if not tool_result_content:
+                            # An empty tool return (e.g. a lookup that found no rows) still
+                            # has to produce a non-empty content block: Bedrock Converse
+                            # rejects a toolResult whose `content` is an empty array.
+                            tool_result_content.append(
+                                {'text': str(part.content)} if content_mode == 'str' else {'json': part.content}
+                            )
+
                         user_content: list[ContentBlockUnionTypeDef] = [
                             {
                                 'toolResult': {

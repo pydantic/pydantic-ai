@@ -2648,6 +2648,48 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     )
 
 
+async def test_bedrock_empty_tool_result_content(bedrock_provider: BedrockProvider):
+    """An empty tool return (e.g. a lookup with no rows) must still map to a non-empty
+    toolResult.content — Bedrock Converse rejects `content: []`."""
+    now = datetime.now()
+    req = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='lookup', content=[], tool_call_id='id1', timestamp=now),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    # Text-format model: the empty list is rendered as a text block, never `content: []`.
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'text': '[]'}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+    # JSON-format model (Mistral): the empty list is preserved as a json block.
+    model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': []}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+
 async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     my_tool = ToolDefinition(
         name='my_tool',
