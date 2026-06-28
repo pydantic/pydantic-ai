@@ -58,6 +58,10 @@ dependencies = [
 
 [project.optional-dependencies]
 logfire = ["logfire>=3.14.1"]
+pytest = ["opentelemetry-sdk>=1.28.0", "pytest>=9.0.3"]
+
+[project.entry-points.pytest11]
+pydantic_evals = "pydantic_evals.pytest"
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev/evals"
