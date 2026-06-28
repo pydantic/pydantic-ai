@@ -456,7 +456,8 @@ class XaiModel(Model[AsyncClient]):
         """Map a `ThinkingPart` into a single xAI assistant message.
 
         - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
-        - Non-xAI (or non-native) thinking is preserved by wrapping in the model profile's thinking tags
+        - Non-xAI (or unsignatured) thinking is silently dropped by default; set
+          `GrokModelProfile(grok_send_back_thinking_parts=True)` to re-wrap it in thinking tags instead
         """
         if item.provider_name in _XAI_PROVIDER_NAMES and (item.content or item.signature):
             msg = assistant('')
