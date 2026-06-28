@@ -484,10 +484,14 @@ class CohereStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
 
     async def close_stream(self) -> None:
+        aclose = getattr(self._response, 'aclose', None)
+        if aclose is None:
+            return
         try:
-            await self._response.aclose()  # pyright: ignore[reportAttributeAccessIssue]
-        except (RuntimeError, AttributeError):
-            pass
+            await aclose()
+        except RuntimeError as e:
+            if 'async generator is already running' not in str(e):
+                raise
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         thinking_indices: set[int] = set()

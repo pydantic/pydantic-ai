@@ -71,11 +71,18 @@ with try_import() as imports_successful:
     )
     from cohere.core.api_error import ApiError
 
-    from pydantic_ai.models.cohere import CohereModel, CohereStreamedResponse
+    from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.providers.cohere import CohereProvider
 
     MockChatResponse = ChatResponse | Exception
-    MockStreamEvent = ContentStartV2ChatStreamResponse | ContentDeltaV2ChatStreamResponse | ToolCallStartV2ChatStreamResponse | ToolCallDeltaV2ChatStreamResponse | MessageEndV2ChatStreamResponse | Exception
+    MockStreamEvent = (
+        ContentStartV2ChatStreamResponse
+        | ContentDeltaV2ChatStreamResponse
+        | ToolCallStartV2ChatStreamResponse
+        | ToolCallDeltaV2ChatStreamResponse
+        | MessageEndV2ChatStreamResponse
+        | Exception
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
@@ -887,3 +894,72 @@ async def test_stream_finish_reason(allow_model_requests: None):
     last_response = next(msg for msg in reversed(messages) if isinstance(msg, ModelResponse))
     assert last_response.finish_reason == snapshot('length')
     assert last_response.provider_details == snapshot({'finish_reason': 'MAX_TOKENS'})
+
+
+async def test_stream_thinking(allow_model_requests: None):
+    """Regression: thinking-block streaming (index tracking + handle_thinking_delta)."""
+    thinking_events: list[MockStreamEvent] = [
+        ContentStartV2ChatStreamResponse(
+            index=0,
+            delta=ChatContentStartEventDelta(
+                message=ChatContentStartEventDeltaMessage(
+                    content=ChatContentStartEventDeltaMessageContent(type='thinking')
+                )
+            ),
+        ),
+        ContentDeltaV2ChatStreamResponse(
+            index=0,
+            delta=ChatContentDeltaEventDelta(
+                message=ChatContentDeltaEventDeltaMessage(
+                    content=ChatContentDeltaEventDeltaMessageContent(thinking='I am thinking...')
+                )
+            ),
+        ),
+        ContentDeltaV2ChatStreamResponse(
+            index=0,
+            delta=ChatContentDeltaEventDelta(
+                message=ChatContentDeltaEventDeltaMessage(
+                    content=ChatContentDeltaEventDeltaMessageContent(thinking=' carefully.')
+                )
+            ),
+        ),
+        ContentStartV2ChatStreamResponse(
+            index=1,
+            delta=ChatContentStartEventDelta(
+                message=ChatContentStartEventDeltaMessage(
+                    content=ChatContentStartEventDeltaMessageContent(type='text')
+                )
+            ),
+        ),
+        ContentDeltaV2ChatStreamResponse(
+            index=1,
+            delta=ChatContentDeltaEventDelta(
+                message=ChatContentDeltaEventDeltaMessage(
+                    content=ChatContentDeltaEventDeltaMessageContent(text='The answer is 42.')
+                )
+            ),
+        ),
+        MessageEndV2ChatStreamResponse(
+            delta=ChatMessageEndEventDelta(
+                finish_reason='COMPLETE',
+                usage=Usage(tokens=UsageTokens(input_tokens=5, output_tokens=4)),
+            )
+        ),
+    ]
+    mock_client = MockAsyncClientV2.create_stream_mock(thinking_events)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('think about it') as result:
+        chunks = [c async for c in result.stream_text(debounce_by=None)]
+
+    assert chunks == snapshot(['The answer is 42.'])
+    messages = result.all_messages()
+    last_response = next(msg for msg in reversed(messages) if isinstance(msg, ModelResponse))
+    thinking_parts = [p for p in last_response.parts if isinstance(p, ThinkingPart)]
+    text_parts = [p for p in last_response.parts if isinstance(p, TextPart)]
+    assert len(thinking_parts) == 1
+    assert thinking_parts[0].content == snapshot('I am thinking... carefully.')
+    assert len(text_parts) == 1
+    assert text_parts[0].content == snapshot('The answer is 42.')
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=5, output_tokens=4))
