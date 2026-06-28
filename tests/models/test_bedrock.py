@@ -5110,10 +5110,16 @@ async def test_bedrock_tool_result_and_attachment_alternate(bedrock_provider: Be
         ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
         ModelResponse(parts=[ToolCallPart(tool_name='get', args={}, tool_call_id='t1')]),
         ModelRequest(parts=[ToolReturnPart(tool_name='get', content='ok', tool_call_id='t1')]),
-        ModelRequest(parts=[UserPromptPart(content=[
-            'what accounts are in this?',
-            DocumentUrl(url='s3://bucket/file.csv', media_type='text/csv'),
-        ])]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'what accounts are in this?',
+                        DocumentUrl(url='s3://bucket/file.csv', media_type='text/csv'),
+                    ]
+                )
+            ]
+        ),
     ]
     prepared = model.prepare_messages(messages)
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
@@ -5165,4 +5171,3 @@ async def test_bedrock_tool_result_and_attachment_alternate(bedrock_provider: Be
             ],
         },
     ]
-
