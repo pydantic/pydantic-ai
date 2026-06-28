@@ -108,7 +108,8 @@ class GoogleProvider(BaseGoogleProvider):
 
         Args:
             api_key: The [API key](https://ai.google.dev/gemini-api/docs/api-key) to
-                use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
+                use for authentication. It can also be set via the `GOOGLE_API_KEY` or `GEMINI_API_KEY`
+                environment variable.
             client: A pre-initialized client to use.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Gemini API.
@@ -121,8 +122,8 @@ class GoogleProvider(BaseGoogleProvider):
         api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
         if api_key is None:
             raise UserError(
-                'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
-                ' to use the Gemini API.'
+                'Set the `GOOGLE_API_KEY` or `GEMINI_API_KEY` environment variable '
+                'or pass it via `GoogleProvider(api_key=...)` to use the Gemini API.'
             )
         http_options = self._build_http_options(http_client=http_client, base_url=base_url)
         self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
