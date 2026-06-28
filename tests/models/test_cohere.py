@@ -34,25 +34,47 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     import cohere
     from cohere import (
         AssistantMessageResponse,
         AsyncClientV2,
+        ChatMessageEndEventDelta,
         ChatResponse,
+        ChatContentDeltaEventDelta,
+        ChatContentDeltaEventDeltaMessage,
+        ChatContentDeltaEventDeltaMessageContent,
+        ChatContentStartEventDelta,
+        ChatContentStartEventDeltaMessage,
+        ChatContentStartEventDeltaMessageContent,
+        ChatToolCallDeltaEventDelta,
+        ChatToolCallDeltaEventDeltaMessage,
+        ChatToolCallDeltaEventDeltaMessageToolCalls,
+        ChatToolCallDeltaEventDeltaMessageToolCallsFunction,
+        ChatToolCallStartEventDelta,
+        ChatToolCallStartEventDeltaMessage,
+        ContentDeltaV2ChatStreamResponse,
+        ContentStartV2ChatStreamResponse,
+        MessageEndV2ChatStreamResponse,
         TextAssistantMessageResponseContentItem,
         TextContent as CohereTextContent,
+        ToolCallDeltaV2ChatStreamResponse,
+        ToolCallStartV2ChatStreamResponse,
         ToolCallV2,
         ToolCallV2Function,
+        Usage,
+        UsageTokens,
         UserChatMessageV2,
     )
     from cohere.core.api_error import ApiError
 
-    from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.models.cohere import CohereModel, CohereStreamedResponse
     from pydantic_ai.providers.cohere import CohereProvider
 
     MockChatResponse = ChatResponse | Exception
+    MockStreamEvent = ContentStartV2ChatStreamResponse | ContentDeltaV2ChatStreamResponse | ToolCallStartV2ChatStreamResponse | ToolCallDeltaV2ChatStreamResponse | MessageEndV2ChatStreamResponse | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
@@ -78,7 +100,8 @@ class MockClientWrapper:
 @dataclass
 class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
-    index = 0
+    stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]] | None = None
+    index: int = 0
     chat_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     _client_wrapper: MockClientWrapper = None  # type: ignore
 
@@ -89,6 +112,10 @@ class MockAsyncClientV2:
     def create_mock(cls, completions: MockChatResponse | Sequence[MockChatResponse]) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
+    @classmethod
+    def create_stream_mock(cls, stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]]) -> AsyncClientV2:
+        return cast(AsyncClientV2, cls(stream=stream))
+
     async def chat(self, *_args: Any, **kwargs: Any) -> ChatResponse:
         self.chat_kwargs.append(kwargs)
         assert self.completions is not None
@@ -98,6 +125,16 @@ class MockAsyncClientV2:
         else:
             raise_if_exception(self.completions)
             response = cast(ChatResponse, self.completions)
+        self.index += 1
+        return response
+
+    def chat_stream(self, *_args: Any, **kwargs: Any) -> MockAsyncStream[MockStreamEvent]:
+        self.chat_kwargs.append(kwargs)
+        assert self.stream is not None
+        if isinstance(self.stream[0], Sequence):
+            response = MockAsyncStream(iter(cast(list[MockStreamEvent], self.stream[self.index])))
+        else:
+            response = MockAsyncStream(iter(cast(list[MockStreamEvent], self.stream)))
         self.index += 1
         return response
 
@@ -673,3 +710,138 @@ async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())])
     with pytest.raises(UserError, match=r"Native tool\(s\) \['WebSearchTool'\] not supported by this model"):
         await agent.run('Hello')
+
+
+def _text_stream_events(chunks: list[str], *, finish_reason: str = 'COMPLETE') -> list[MockStreamEvent]:
+    events: list[MockStreamEvent] = [
+        ContentStartV2ChatStreamResponse(
+            index=0,
+            delta=ChatContentStartEventDelta(
+                message=ChatContentStartEventDeltaMessage(
+                    content=ChatContentStartEventDeltaMessageContent(type='text')
+                )
+            ),
+        )
+    ]
+    for chunk in chunks:
+        events.append(
+            ContentDeltaV2ChatStreamResponse(
+                index=0,
+                delta=ChatContentDeltaEventDelta(
+                    message=ChatContentDeltaEventDeltaMessage(
+                        content=ChatContentDeltaEventDeltaMessageContent(text=chunk)
+                    )
+                ),
+            )
+        )
+    events.append(
+        MessageEndV2ChatStreamResponse(
+            delta=ChatMessageEndEventDelta(
+                finish_reason=finish_reason,
+                usage=Usage(tokens=UsageTokens(input_tokens=10, output_tokens=len(chunks))),
+            )
+        )
+    )
+    return events
+
+
+async def test_stream_text(allow_model_requests: None):
+    mock_client = MockAsyncClientV2.create_stream_mock(_text_stream_events(['hello ', 'world']))
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('hi') as result:
+        chunks = [c async for c in result.stream_text(debounce_by=None)]
+
+    assert chunks == snapshot(['hello ', 'hello world'])
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=2))
+
+
+async def test_stream_text_multiple_calls(allow_model_requests: None):
+    mock_client = MockAsyncClientV2.create_stream_mock(
+        [
+            _text_stream_events(['first ', 'call']),
+            _text_stream_events(['second ', 'call']),
+        ]
+    )
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('first') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['first ', 'first call'])
+
+    async with agent.run_stream('second') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['second ', 'second call'])
+
+
+async def test_stream_tool_call(allow_model_requests: None):
+    tool_call_events: list[MockStreamEvent] = [
+        ToolCallStartV2ChatStreamResponse(
+            index=0,
+            delta=ChatToolCallStartEventDelta(
+                message=ChatToolCallStartEventDeltaMessage(
+                    tool_calls=ToolCallV2(
+                        id='tc-1',
+                        type='function',
+                        function=ToolCallV2Function(name='get_weather', arguments=None),
+                    )
+                )
+            ),
+        ),
+        ToolCallDeltaV2ChatStreamResponse(
+            index=0,
+            delta=ChatToolCallDeltaEventDelta(
+                message=ChatToolCallDeltaEventDeltaMessage(
+                    tool_calls=ChatToolCallDeltaEventDeltaMessageToolCalls(
+                        function=ChatToolCallDeltaEventDeltaMessageToolCallsFunction(arguments='{"city"')
+                    )
+                )
+            ),
+        ),
+        ToolCallDeltaV2ChatStreamResponse(
+            index=0,
+            delta=ChatToolCallDeltaEventDelta(
+                message=ChatToolCallDeltaEventDeltaMessage(
+                    tool_calls=ChatToolCallDeltaEventDeltaMessageToolCalls(
+                        function=ChatToolCallDeltaEventDeltaMessageToolCallsFunction(arguments=': "London"}')
+                    )
+                )
+            ),
+        ),
+        MessageEndV2ChatStreamResponse(
+            delta=ChatMessageEndEventDelta(
+                finish_reason='TOOL_CALL',
+                usage=Usage(tokens=UsageTokens(input_tokens=5, output_tokens=8)),
+            )
+        ),
+    ]
+    mock_client = MockAsyncClientV2.create_stream_mock(
+        [tool_call_events, _text_stream_events(['Sunny in London'])]
+    )
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+
+    agent = Agent(m, output_type=str)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'Sunny in {city}'
+
+    async with agent.run_stream('Weather in London?') as result:
+        output = await result.get_output()
+
+    assert output == snapshot('Sunny in London')
+    assert result.usage == snapshot(RunUsage(requests=2, input_tokens=15, output_tokens=9, tool_calls=1))
+
+
+async def test_stream_finish_reason(allow_model_requests: None):
+    mock_client = MockAsyncClientV2.create_stream_mock(_text_stream_events(['done'], finish_reason='MAX_TOKENS'))
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('hi') as result:
+        _ = [c async for c in result.stream_text(debounce_by=None)]
+
+    messages = result.all_messages()
+    last_response = next(msg for msg in reversed(messages) if isinstance(msg, ModelResponse))
+    assert last_response.finish_reason == snapshot('length')
+    assert last_response.provider_details == snapshot({'finish_reason': 'MAX_TOKENS'})
