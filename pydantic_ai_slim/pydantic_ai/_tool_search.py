@@ -368,10 +368,17 @@ _TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent] = 
 )
 
 
-def _narrow_native_tool_search_call(part: NativeToolCallPart) -> NativeToolSearchCallPart:
+def _narrow_native_tool_search_call(part: NativeToolCallPart) -> NativeToolCallPart:
     if isinstance(part, NativeToolSearchCallPart):
         return part
-    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    try:
+        validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    except pydantic.ValidationError:
+        # A model can emit the wrong arg shape (e.g. singular `query` instead of `queries`, or a
+        # bare string where a `list[str]` is expected). Leaving the part un-narrowed keeps it a base
+        # call part so the normal tool-arg validation recovers it with a `ModelRetry`, rather than the
+        # `ValidationError` propagating out of response assembly and crashing the run (see #6106).
+        return part
     return copy_dataclass_fields(part, NativeToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 
@@ -382,10 +389,15 @@ def _narrow_native_tool_search_return(part: NativeToolReturnPart) -> NativeToolS
     return copy_dataclass_fields(part, NativeToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
 
 
-def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
+def _narrow_tool_search_call(part: ToolCallPart) -> ToolCallPart:
     if isinstance(part, ToolSearchCallPart):
         return part
-    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    try:
+        validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    except pydantic.ValidationError:
+        # See `_narrow_native_tool_search_call`: malformed `search_tools` args stay un-narrowed so the
+        # regular tool-arg validation surfaces a `ModelRetry` instead of crashing the run (see #6106).
+        return part
     return copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 

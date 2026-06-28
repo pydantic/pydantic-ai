@@ -50,6 +50,7 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
+    RetryPromptPart,
     TextPart,
     ToolPartKind,
     ToolReturnPart,
@@ -3473,6 +3474,50 @@ async def test_tool_search_keywords_agent_run_falls_back_on_unsupported_model():
     assert result.output
 
 
+async def test_malformed_search_tools_call_recovers_via_model_retry():
+    """A model that emits the wrong `search_tools` arg shape (singular `query` instead of
+    `queries: list[str]`) must recover via the normal `ModelRetry` path rather than crashing
+    the run with an uncaught `ValidationError` during response assembly (see #6106).
+
+    The first response carries a malformed call; the agent should answer it with a
+    `RetryPromptPart` and let the model correct itself, so the run completes normally.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        retries = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        if not retries:
+            # Malformed: singular `query` where `queries: list[str]` is required.
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'query': 'mortgage'}, tool_call_id='bad-1')]
+            )
+        return ModelResponse(parts=[TextPart(content='recovered')])
+
+    agent = Agent(NoNativeToolSearchModel(model_fn), capabilities=[ToolSearch(strategy='keywords')])
+
+    @agent.tool_plain(defer_loading=True)
+    def calculate_mortgage(principal: float, rate: float, years: int) -> str:  # pragma: no cover
+        """Calculate monthly mortgage payment for a loan."""
+        return 'Mortgage calculated'
+
+    result = await agent.run('calculate my mortgage')
+
+    assert result.output == 'recovered'
+    retry_prompts = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, RetryPromptPart) and part.tool_name == _SEARCH_TOOLS_NAME
+    ]
+    assert len(retry_prompts) == 1
+
+
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
 async def test_tool_search_named_strategy_skips_local_search_tools_emission(strategy: str):
     """Named-native strategies (`'bm25'`/`'regex'`) construct the toolset with
@@ -3662,6 +3707,26 @@ def test_narrow_type_no_tool_kind_returns_input_unchanged() -> None:
     local_collision = ToolCallPart(tool_name='search_tools', args={'query': 'x'}, tool_call_id='c2')
     assert local_collision.tool_kind is None
     assert ToolCallPart.narrow_type(local_collision) is local_collision
+
+
+@pytest.mark.parametrize('args', [{'query': 'find a tool'}, {'queries': 'noop'}, {}])
+def test_narrow_type_malformed_tool_search_call_args_left_unnarrowed(args: dict[str, Any]) -> None:
+    """A malformed `search_tools` call (wrong arg shape) must not raise during narrowing.
+
+    Narrowing runs while the model response is assembled — before tool execution — so a
+    `ValidationError` here would crash the run and bypass the `ModelRetry` recovery that handles
+    bad arguments for ordinary tools. Instead the part is left as a base call part so the normal
+    tool-arg validation path engages (see #6106).
+    """
+    local = ToolCallPart(tool_name='search_tools', args=args, tool_call_id='c1')
+    narrowed_local = ToolCallPart.narrow_type(local, tool_kind='tool-search')
+    assert not isinstance(narrowed_local, ToolSearchCallPart)
+    assert narrowed_local.args == args
+
+    builtin = NativeToolCallPart(tool_name='tool_search', args=args, tool_call_id='c2')
+    narrowed_builtin = NativeToolCallPart.narrow_type(builtin, tool_kind='tool-search')
+    assert not isinstance(narrowed_builtin, NativeToolSearchCallPart)
+    assert narrowed_builtin.args == args
 
 
 def test_model_response_dict_round_trip_promotes_typed_subclasses() -> None:
