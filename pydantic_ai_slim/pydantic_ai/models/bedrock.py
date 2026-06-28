@@ -1127,11 +1127,17 @@ class BedrockConverseModel(Model[BaseClient]):
             ):
                 # Don't merge if one contains a tool result and the other contains an attachment (image, document, video)
                 last_has_tool_result = any('toolResult' in block for block in last_message['content'])
-                current_has_attachment = any(any(k in block for k in ('image', 'document', 'video')) for block in current_message['content'])
-                last_has_attachment = any(any(k in block for k in ('image', 'document', 'video')) for block in last_message['content'])
+                current_has_attachment = any(
+                    any(k in block for k in ('image', 'document', 'video')) for block in current_message['content']
+                )
+                last_has_attachment = any(
+                    any(k in block for k in ('image', 'document', 'video')) for block in last_message['content']
+                )
                 current_has_tool_result = any('toolResult' in block for block in current_message['content'])
 
-                if (last_has_tool_result and current_has_attachment) or (last_has_attachment and current_has_tool_result):
+                if (last_has_tool_result and current_has_attachment) or (
+                    last_has_attachment and current_has_tool_result
+                ):
                     # Insert a dummy assistant message to alternate roles
                     processed_messages.append({'role': 'assistant', 'content': [{'text': ' '}]})
                 else:
