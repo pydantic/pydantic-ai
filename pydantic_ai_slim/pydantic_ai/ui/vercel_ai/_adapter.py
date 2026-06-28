@@ -348,6 +348,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 'Vercel AI integration can currently only handle assistant file parts with data URIs.'
                             ) from e
                         provider_meta = load_provider_metadata(part.provider_metadata)
+                        vendor_metadata = provider_meta.get('vendor_metadata')
+                        if vendor_metadata is not None:
+                            file.vendor_metadata = vendor_metadata
                         builder.add(
                             FilePart(
                                 content=file,
@@ -581,7 +584,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         url=part.content.data_uri,
                         media_type=part.content.media_type,
                         provider_metadata=dump_provider_metadata(
-                            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                            id=part.id,
+                            provider_name=part.provider_name,
+                            provider_details=part.provider_details,
+                            vendor_metadata=part.content.vendor_metadata,
                         ),
                     )
                 )
