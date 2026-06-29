@@ -908,29 +908,10 @@ def _run_inline_pytest(tmp_path: Path, source: str, *pytest_args: str) -> subpro
     test_file = tmp_path / 'test_eval_marker.py'
     test_file.write_text(textwrap.dedent(source), encoding='utf-8')
     args = [sys.executable, '-m', 'pytest', str(test_file), '-q', *pytest_args]
-    try:
-        return subprocess.run(
-            args,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=_INLINE_PYTEST_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired as exc:
-        stderr = _subprocess_output(exc.stderr)
-        if stderr:
-            stderr = f'\n{stderr}'
-        return subprocess.CompletedProcess(
-            args=args,
-            returncode=124,
-            stdout=_subprocess_output(exc.stdout),
-            stderr=f'pytest timed out after {_INLINE_PYTEST_TIMEOUT}s{stderr}',
-        )
-
-
-def _subprocess_output(output: bytes | str | None) -> str:
-    if output is None:
-        return ''
-    if isinstance(output, bytes):
-        return output.decode(errors='replace')
-    return output
+    return subprocess.run(
+        args,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=_INLINE_PYTEST_TIMEOUT,
+    )
