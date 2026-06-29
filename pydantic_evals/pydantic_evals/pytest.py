@@ -519,8 +519,6 @@ def _pluralize(count: int, singular: str) -> str:
 
 def _get_eval_mark(obj: object) -> pytest.Mark | None:
     marks = getattr(obj, 'pytestmark', ())
-    if isinstance(marks, pytest.Mark):  # pragma: no cover
-        marks = (marks,)
     eval_marks = [mark for mark in marks if isinstance(mark, pytest.Mark) and mark.name == 'eval']
     if len(eval_marks) > 1:
         raise pytest.UsageError('Only one `pytest.mark.eval` marker can be applied to a test.')
