@@ -139,6 +139,9 @@ agent = Agent(model)
 !!! note "Tool search on the legacy `AsyncAnthropicBedrock` client"
     The legacy `InvokeModel` API doesn't support the `bm25` [tool search](../tools-advanced.md#tool-search) variant, so [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] defaults to `'regex'` on the `AsyncAnthropicBedrock` client (instead of `'bm25'`), and passing `ToolSearch(strategy='bm25')` raises a `UserError`.
 
+!!! note "Token counting on the legacy `AsyncAnthropicBedrock` client"
+    The Anthropic SDK blocks its high-level token-counting method on Bedrock, so `count_tokens()` (and `count_tokens_before_request`) instead call Bedrock's own `/model/{model}/count-tokens` endpoint. That endpoint only accepts **base** foundation-model IDs (e.g. `anthropic.claude-sonnet-4-20250514-v1:0`); cross-region inference profile IDs (`us.`/`eu.`/`global.` prefixes) and end-of-life model versions are rejected by Bedrock.
+
 ### Google Cloud
 
 To use Claude models via [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude), follow the [Anthropic documentation](https://docs.anthropic.com/en/api/claude-on-vertex-ai) on how to set up an `AsyncAnthropicVertex` client and then pass it to `AnthropicProvider`:
