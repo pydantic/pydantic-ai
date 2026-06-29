@@ -203,6 +203,7 @@ class Failed(BaseModel):
 
 flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
     'openai:gpt-5.2',
+    name='flight_search_agent',
     output_type=FlightDetails | Failed,  # type: ignore
     instructions=(
         'Use the "flight_search" tool to find a flight '
@@ -251,6 +252,7 @@ class SeatPreference(BaseModel):
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[object, SeatPreference | Failed](  # (5)!
     'openai:gpt-5.2',
+    name='seat_preference_agent',
     output_type=SeatPreference | Failed,  # type: ignore
     instructions=(
         "Extract the user's seat preference. "
