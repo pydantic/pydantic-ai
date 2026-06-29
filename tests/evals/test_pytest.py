@@ -21,6 +21,22 @@ with try_import() as imports_successful:
     from pydantic_evals.reporting import EvaluationReport
     from pydantic_evals.reporting.analyses import ReportAnalysis
 
+    @dataclass
+    class _RaisingEvaluator(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext[Any, Any, Any]) -> bool:
+            raise RuntimeError('evaluator boom')
+
+    @dataclass
+    class _RaisingReportEvaluator(ReportEvaluator[Any, Any, Any]):
+        def evaluate(self, ctx: ReportEvaluatorContext[Any, Any, Any]) -> ReportAnalysis:
+            raise RuntimeError('report evaluator boom')
+
+    @dataclass
+    class _FailWithReason(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext[Any, Any, Any]) -> EvaluationReason:
+            return EvaluationReason(value=False, reason='because reasons')
+
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
@@ -37,24 +53,6 @@ def _module_exists(name: str) -> bool:
 
 _INLINE_PYTEST_TIMEOUT = 120
 _OTEL_SDK_INSTALLED = _module_exists('opentelemetry.sdk.trace')
-
-
-@dataclass
-class _RaisingEvaluator(Evaluator[Any, Any, Any]):
-    def evaluate(self, ctx: EvaluatorContext[Any, Any, Any]) -> bool:
-        raise RuntimeError('evaluator boom')
-
-
-@dataclass
-class _RaisingReportEvaluator(ReportEvaluator[Any, Any, Any]):
-    def evaluate(self, ctx: ReportEvaluatorContext[Any, Any, Any]) -> ReportAnalysis:
-        raise RuntimeError('report evaluator boom')
-
-
-@dataclass
-class _FailWithReason(Evaluator[Any, Any, Any]):
-    def evaluate(self, ctx: EvaluatorContext[Any, Any, Any]) -> EvaluationReason:
-        return EvaluationReason(value=False, reason='because reasons')
 
 
 def _passing_dataset() -> Dataset[str, str, None]:
