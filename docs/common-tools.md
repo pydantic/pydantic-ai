@@ -290,3 +290,69 @@ agent = Agent(
 result = agent.run_sync('Find recent AI research papers and summarize the key findings.')
 print(result.output)
 ```
+
+## Scavio Search Tool
+
+!!! info
+    Scavio is a paid service, but new accounts get free credits to explore the product.
+
+    You need to [sign up for an account](https://dashboard.scavio.dev) and get an API key to use the Scavio search tool.
+
+The Scavio search tool allows you to run real-time Google searches and return the organic results. It is built on top of the [Scavio API](https://scavio.dev), a multi-platform search API for AI agents.
+
+### Installation
+
+To use [`scavio_search_tool`][pydantic_ai.common_tools.scavio.scavio_search_tool], you need to install
+[`pydantic-ai-slim`](install.md#slim-install) with the `scavio` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[scavio]"
+```
+
+### Usage
+
+Here's an example of how you can use the Scavio search tool with an agent:
+
+```py {title="scavio_search.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.scavio import scavio_search_tool
+
+api_key = os.getenv('SCAVIO_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[scavio_search_tool(api_key)],
+    instructions='Search Scavio for the given query and return the results.',
+)
+
+result = agent.run_sync('Tell me the top news in the GenAI world, give me links.')
+print(result.output)
+```
+
+### Configuring Parameters
+
+The `scavio_search_tool` factory accepts optional parameters that control search behavior. `light_request` is always developer-controlled and never appears in the LLM tool schema. Other parameters, when provided, are fixed for all searches and hidden from the LLM's tool schema. Parameters left unset remain available for the LLM to set per-call.
+
+For example, you can lock in `country_code` and `language` at tool creation time while still letting the LLM control the query:
+
+```py {title="scavio_localized_search.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.scavio import scavio_search_tool
+
+api_key = os.getenv('SCAVIO_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[scavio_search_tool(api_key, country_code='us', language='en')],
+    instructions='Search for information and return the results.',
+)
+
+result = agent.run_sync('Find recent papers about transformer architectures')
+print(result.output)
+```

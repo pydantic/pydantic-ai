@@ -1,0 +1,329 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '122'
+      content-type:
+      - application/json
+      host:
+      - api.scavio.dev
+    method: POST
+    parsed_body:
+      country_code: us
+      language: en
+      light_request: true
+      query: attention mechanisms
+      search_type: classic
+    uri: https://api.scavio.dev/api/v1/google
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      alt-svc:
+      - h3=":443"; ma=2592000
+      content-length:
+      - '12969'
+      content-type:
+      - application/json
+      vary:
+      - Origin
+    parsed_body:
+      ai_overviews:
+      - answer_text:
+        - fragments:
+          - text: An attention mechanism is an artificial intelligence technique that allows a model to selectively focus
+              on specific, relevant parts of input data. By assigning varying importance weights to different elements (like
+              words in a sentence), it dynamically adjusts their influence on the output, greatly improving context, translation,
+              and long-term memory. GeeksforGeeks +2
+          pos: 1
+          text:
+          - An attention mechanism is an artificial intelligence technique that allows a model to selectively focus on specific,
+            relevant parts of input data. By assigning varying importance weights to different elements (like words in a sentence),
+            it dynamically adjusts their influence on the output, greatly improving context, translation, and long-term memory.
+            GeeksforGeeks +2
+        bullet_list:
+        - list_title: 'At its core, the most popular form of attention (scaled dot-product attention, popularized by Transformer
+            models) determines how much "attention" one piece of data should pay to another. It breaks this down into three
+            core components: Sebastian Raschka, PhD'
+          points:
+          - text: 'Query (Q): Represents the current token/item you are evaluating or trying to find context for.'
+          - text: 'Key (K): Represents the available tokens/items in the sequence, acting as a searchable label.'
+          - references:
+            - source: IBM
+              url: https://www.ibm.com/think/topics/attention-mechanism
+            - url: https://www.geeksforgeeks.org/artificial-intelligence/ml-attention-mechanism/
+            text: 'Value (V): The actual content or information associated with the Key, which is extracted and combined into
+              the output. IBM +1'
+          pos: 1
+        - list_title: Common Variations of Attention
+          points:
+          - references:
+            - url: https://www.geeksforgeeks.org/artificial-intelligence/ml-attention-mechanism/
+            - url: https://sebastianraschka.com/blog/2023/self-attention-from-scratch.html
+            - source: Medium
+              url: https://medium.com/@balachandharsriram.m/the-magic-of-transformers-how-attention-mechanisms-revolutionized-nlp-675d5e979095
+            text: 'Self-Attention: Allows each element in an input sequence to calculate its relationship with all other elements
+              in the exact same sequence. This is essential for understanding what a word refers to in a long paragraph. GeeksforGeeks
+              +1'
+          - references:
+            - url: https://www.geeksforgeeks.org/artificial-intelligence/ml-attention-mechanism/
+            text: 'Cross-Attention: Usually found in encoder-decoder architectures (like older machine translation systems)
+              where the Query comes from the target sequence (decoder) while the Keys and Values come from the source sequence
+              (encoder). GeeksforGeeks'
+          - references:
+            - url: https://www.geeksforgeeks.org/artificial-intelligence/ml-attention-mechanism/
+            text: 'Multi-Head Attention: Runs the attention mechanism multiple times in parallel, allowing the model to focus
+              on different types of relationships (e.g., grammatical structure vs. character identity) simultaneously. GeeksforGeeks'
+          pos: 2
+        pos_overall: 1
+        source_panel:
+          items:
+          - pos: 1
+            source: geeksforgeeks.org
+            url: https://www.geeksforgeeks.org/artificial-intelligence/ml-attention-mechanism/
+          - pos: 2
+            source: h2o.ai
+            url: https://h2o.ai/wiki/attention-mechanism/
+          - pos: 3
+            source: coursera.org
+            url: https://www.coursera.org/articles/what-is-attention-mechanism
+          - pos: 4
+            source: sebastianraschka.com
+            url: https://sebastianraschka.com/blog/2023/self-attention-from-scratch.html
+          - pos: 5
+            source: ibm.com
+            url: https://www.ibm.com/think/topics/attention-mechanism
+          - pos: 6
+            source: reddit.com
+            url: https://www.reddit.com/r/MachineLearning/comments/qidpqx/d_how_to_truly_understand_attention_mechanism_in/
+          - pos: 7
+            source: machinelearningmastery.com
+            url: https://machinelearningmastery.com/the-transformer-attention-mechanism/
+          - pos: 8
+            source: jeremyjordan.me
+            url: https://www.jeremyjordan.me/attention/
+          - pos: 9
+            source: en.wikipedia.org
+            url: https://en.wikipedia.org/wiki/Attention_(machine_learning)
+          - pos: 10
+            source: ultralytics.com
+            url: https://www.ultralytics.com/glossary/attention-mechanism
+          - pos: 11
+            source: medium.com
+            url: https://medium.com/rectlabs/transformers-2-c052036adf30
+          - pos: 12
+            source: link.springer.com
+            url: https://link.springer.com/chapter/10.1007/978-3-031-84300-6_12
+          - pos: 13
+            source: arxiv.org
+            url: https://arxiv.org/pdf/2604.00199
+          - pos: 14
+            source: medium.com
+            url: https://medium.com/@balachandharsriram.m/the-magic-of-transformers-how-attention-mechanisms-revolutionized-nlp-675d5e979095
+      bottom_ads: []
+      country_code: us
+      credits_remaining: 5269
+      credits_used: 1
+      hotel_results: []
+      knowledge_graph: {}
+      language: en
+      local_results: []
+      meta_data:
+        location: null
+        number_of_ads: 0
+        number_of_organic_results: 7
+        number_of_page: 10
+        number_of_results: 130
+        url: https://www.google.com/search?q=attention+mechanisms&hl=en&gl=us
+        zero_results_for_original_query: false
+      news_results: []
+      page: 1
+      query: attention mechanisms
+      questions:
+      - answer: 'Step 1: Input Encoding: The input sequence is first encoded using an encoder like RNN, LSTM, GRU or Transformer
+          to generate hidden states representing the input context. Step 2: Query, Key and Value Vectors: Each input is transformed
+          into: Query (Q): Represents what we''re looking for.May 11, 2026'
+        position: 1
+        text: What are the two main steps of the attention mechanism?
+      - answer: 'The attention mechanism''s primary function is to weight the importance of the query-key pairings between
+          each token. For each token x in an input sequence, the transformer model computes (and then applies) attention weights
+          as follows: Token x''s query vector Q x is multiplied by each other token''s key vector K .'
+        position: 2
+        text: What is the attention mechanism in simplified?
+      - answer: Attention mechanisms in neuroscience refer to the brain's ability to selectively focus on specific stimuli
+          while ignoring others. This process is essential for efficient cognitive functioning, allowing individuals to prioritize
+          tasks, respond to environmental changes, and make informed decisions.
+        position: 3
+        text: What are attention mechanisms in the brain?
+      - answer: Today most of the commercial large models use the attention mechanism in their architecture whether it be
+          vision or language. The reason attention is so widely integrated in modern deep learning architecture is because
+          of its ability to put importance on the major part of the input.Jul 13, 2024
+        position: 4
+        text: Is the attention mechanism still relevant?
+      related_queries:
+      - link: Attention mechanisms python
+        position: 0
+        title: Attention mechanisms python
+      - link: Attention mechanism example
+        position: 1
+        title: Attention mechanism example
+      - link: Attention mechanisms in ai
+        position: 2
+        title: Attention mechanisms in ai
+      - link: Self-attention mechanism
+        position: 3
+        title: Self-attention mechanism
+      - link: Attention mechanism in NLP
+        position: 4
+        title: Attention mechanism in NLP
+      - link: Types of attention mechanism
+        position: 5
+        title: Types of attention mechanism
+      - link: Attention mechanism in Transformers
+        position: 6
+        title: Attention mechanism in Transformers
+      - link: Attention mechanism diagram
+        position: 7
+        title: Attention mechanism diagram
+      related_searches:
+      - link: null
+        position: 0
+        query: Attention mechanisms python
+        type: null
+      - link: null
+        position: 1
+        query: Attention mechanism example
+        type: null
+      - link: null
+        position: 2
+        query: Attention mechanisms in ai
+        type: null
+      - link: null
+        position: 3
+        query: Self-attention mechanism
+        type: null
+      - link: null
+        position: 4
+        query: Attention mechanism in NLP
+        type: null
+      - link: null
+        position: 5
+        query: Types of attention mechanism
+        type: null
+      - link: null
+        position: 6
+        query: Attention mechanism in Transformers
+        type: null
+      - link: null
+        position: 7
+        query: Attention mechanism diagram
+        type: null
+      response_time: 3750
+      results:
+      - content: In machine learning, attention is a method that determines the importance of each component in a sequence
+          relative to the other components in that sequence.Read more
+        date: null
+        date_utc: null
+        displayed_url: https://en.wikipedia.org› wiki › Attention_(machine_le...
+        domain: en.wikipedia.org
+        position: 1
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: Attention (machine learning)
+        url: https://en.wikipedia.org/wiki/Attention_(machine_learning)
+      - content: An attention mechanism is a machine learning technique that directs deep learning models to prioritize (or
+          attend to) the most relevant parts of input data.Read more
+        date: null
+        date_utc: null
+        displayed_url: https://www.ibm.com› think › topics › attention-mecha...
+        domain: www.ibm.com
+        position: 2
+        rich_snippet: {}
+        sitelinks:
+        - title: What is an attention mechanism?
+          url: https://www.ibm.com/think/topics/attention-mechanism#What+is+an+attention+mechanism%3F
+        - title: Why are attention mechanisms...
+          url: https://www.ibm.com/think/topics/attention-mechanism#Why+are+attention+mechanisms+important%3F
+        thumbnail_url: null
+        title: What is an attention mechanism?
+        url: https://www.ibm.com/think/topics/attention-mechanism
+      - content: May 11, 2026 -- The attention mechanism allows models to focus on the most important parts of input data
+          by assigning different weights to different elements.
+        date: May 11, 2026
+        date_utc: '2026-05-11T00:00:00Z'
+        displayed_url: https://www.geeksforgeeks.org› artificial-intelligence
+        domain: www.geeksforgeeks.org
+        position: 3
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: Attention Mechanism in ML
+        url: https://www.geeksforgeeks.org/artificial-intelligence/ml-attention-mechanism/
+      - content: The core idea behind the Transformer model is the attention mechanism, an innovation that was originally
+          envisioned as an enhancement for encoder-decoder RNNs.Read more
+        date: null
+        date_utc: null
+        displayed_url: http://www.d2l.ai› chapter_attention-mechanisms-and-tr...
+        domain: www.d2l.ai
+        position: 4
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: 11. Attention Mechanisms and Transformers
+        url: http://www.d2l.ai/chapter_attention-mechanisms-and-transformers/index.html
+      - content: Attention mechanisms enable neural networks to mimic human-like selective focus, improving their ability
+          to process and understand complex data.Read more
+        date: null
+        date_utc: null
+        displayed_url: 2 years ago
+        domain: medium.com
+        position: 5
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: 'Attention Mechanisms in Deep Learning: Enhancing Model ...'
+        url: https://medium.com/@zhonghong9998/attention-mechanisms-in-deep-learning-enhancing-model-performance-32a91006092a
+      - content: Attention seems to be a core concept for language modeling these days. However it is not that easy to fully
+          understand, and in my opinion, somewhat unintuitive. ...
+        date: null
+        date_utc: null
+        displayed_url: 30+ comments  ·  4 years ago
+        domain: www.reddit.com
+        position: 6
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: '[D] How to truly understand attention mechanism in ...'
+        url: https://www.reddit.com/r/MachineLearning/comments/qidpqx/d_how_to_truly_understand_attention_mechanism_in/
+      - content: Feb 9, 2023 -- In this article, we are going to understand how self-attention works from scratch. This means
+          we will code it ourselves one step at a time.Read more
+        date: Feb 9, 2023
+        date_utc: '2023-02-09T00:00:00Z'
+        displayed_url: https://sebastianraschka.com› blog › self-attention-from-...
+        domain: sebastianraschka.com
+        position: 7
+        rich_snippet: {}
+        sitelinks:
+        - title: Self-Attention
+          url: https://sebastianraschka.com/blog/2023/self-attention-from-scratch.html#:~:text=Self%2DAttention,-The%20concept%20of%20%60%60attention
+        - title: Multi-Head Attention
+          url: https://sebastianraschka.com/blog/2023/self-attention-from-scratch.html#:~:text=Multi%2DHead%20Attention,-In%20the%20very%20first%20figure
+        - title: Cross-Attention
+          url: https://sebastianraschka.com/blog/2023/self-attention-from-scratch.html#:~:text=Cross%2DAttention,-In%20the%20code%20walkthrough%20above
+        thumbnail_url: null
+        title: Coding Self-Attention From Scratch
+        url: https://sebastianraschka.com/blog/2023/self-attention-from-scratch.html
+      shopping_ads: []
+      top_ads: []
+      top_stories: []
+    status:
+      code: 200
+      message: OK
+version: 1

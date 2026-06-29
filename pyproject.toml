@@ -72,6 +72,7 @@ ui = ["pydantic-ai-slim[ui]=={{ version }}"]
 duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
 tavily = ["pydantic-ai-slim[tavily]=={{ version }}"]
 exa = ["pydantic-ai-slim[exa]=={{ version }}"]
+scavio = ["pydantic-ai-slim[scavio]=={{ version }}"]
 web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
@@ -143,6 +144,7 @@ dev = [
     "pydocket>=0.20.2",
     "exa-py>=2.0.0",
     "tavily-python>=0.5.0",
+    "scavio>=0.2.1",
     "markdownify>=1.2",
     "inline-snapshot>=0.32.5",
     "pytest>=9.0.3",

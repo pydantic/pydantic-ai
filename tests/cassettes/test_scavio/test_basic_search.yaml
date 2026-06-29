@@ -1,0 +1,341 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - application/json
+      host:
+      - api.scavio.dev
+    method: POST
+    parsed_body:
+      light_request: true
+      query: What is Pydantic AI?
+      search_type: classic
+    uri: https://api.scavio.dev/api/v1/google
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      alt-svc:
+      - h3=":443"; ma=2592000
+      content-length:
+      - '11904'
+      content-type:
+      - application/json
+      vary:
+      - Origin
+    parsed_body:
+      ai_overviews:
+      - answer_text:
+        - fragments:
+          - references:
+            - source: GitHub
+              url: https://github.com/pydantic/pydantic-ai
+            - source: PyPI
+              url: https://pypi.org/project/pydantic-ai/
+            - source: ProjectPro
+              url: https://www.projectpro.io/article/pydantic-ai/1088
+            text: Pydantic AI is a Python agent framework designed to help developers quickly build production-grade Generative
+              AI applications. Created by the team behind the wildly popular Pydantic data validation library, its main goal
+              is to bring the ergonomic, intuitive developer experience of FastAPI to AI agent development. GitHub +2
+          pos: 1
+          text:
+          - Pydantic AI is a Python agent framework designed to help developers quickly build production-grade Generative
+            AI applications. Created by the team behind the wildly popular Pydantic data validation library, its main goal
+            is to bring the ergonomic, intuitive developer experience of FastAPI to AI agent development. GitHub +2
+        - fragments:
+          - references:
+            - source: Pydantic
+              url: https://pydantic.dev/
+            - url: https://realpython.com/pydantic-ai/
+            - source: Appunite
+              url: https://tech.appunite.com/posts/understanding-pydantic-ai-a-powerful-alternative-to-lang-chain-and-llama-index
+            text: Rather than dealing with raw, unstructured strings from a language model, Pydantic AI treats agents as standard
+              software. You define exactly what the AI's output or tool-usage should look like using standard BaseModel classes,
+              and the framework forces the LLM to adhere to those schemas. Pydantic +1
+          pos: 2
+          text:
+          - Rather than dealing with raw, unstructured strings from a language model, Pydantic AI treats agents as standard
+            software. You define exactly what the AI's output or tool-usage should look like using standard BaseModel classes,
+            and the framework forces the LLM to adhere to those schemas. Pydantic +1
+        - fragments:
+          - text: 'For a hands-on crash course on how to structure outputs and build production-ready agents using this framework:29sPydantic
+              AI Crash Course: Agentic Framework For ProductionNeuralNineYouTube · Feb 27, 2026'
+          pos: 3
+          text:
+          - 'For a hands-on crash course on how to structure outputs and build production-ready agents using this framework:29sPydantic
+            AI Crash Course: Agentic Framework For ProductionNeuralNineYouTube · Feb 27, 2026'
+        bullet_list:
+        - list_title: Core Features & Benefits
+          points:
+          - references:
+            - url: https://github.com/pydantic/pydantic-ai
+            - url: https://pypi.org/project/pydantic-ai/
+            - url: https://www.projectpro.io/article/pydantic-ai/1088
+            - source: Real Python Tutorials
+              url: https://realpython.com/pydantic-ai/
+            - source: YouTube
+              url: https://www.youtube.com/watch?v=pXktHVUpXUc
+            text: 'Type-Safe Agents: It leverages Python''s type hints and Pydantic schemas to ensure data validation at every
+              step. This means agents return reliable, structured, and predictable data. GitHub +3'
+          - references:
+            - url: https://github.com/pydantic/pydantic-ai
+            - url: https://realpython.com/pydantic-ai/
+            text: 'Model-Agnostic: It supports virtually all major LLM providers, including OpenAI, Anthropic, Google (Gemini),
+              DeepSeek, and local models via Ollama. GitHub +1'
+          - references:
+            - url: https://realpython.com/pydantic-ai/
+            text: 'Built-in Validation Retries: If an LLM returns unexpected data, Pydantic AI automatically catches the error
+              and retries the prompt with immediate validation feedback. Real Python Tutorials'
+          - references:
+            - url: https://github.com/pydantic/pydantic-ai
+            - source: www.reddit.com
+              url: https://www.reddit.com/r/LLMDevs/comments/1iih8az/pydantic_ai/
+            text: 'Seamless Observability: It tightly integrates with Pydantic Logfire, allowing developers to trace agent
+              behavior, monitor API costs, and track function calls in real-time. GitHub +1'
+          - references:
+            - source: Pydantic
+              url: https://pydantic.dev/docs/ai/overview/
+            - url: https://realpython.com/pydantic-ai/
+            text: 'Extensible Tools & Context: Developers can easily inject runtime dependencies (like database connections)
+              and wrap Python functions in tools that the LLM can invoke. Pydantic +1'
+          pos: 1
+        pos_overall: 1
+        source_panel:
+          items:
+          - pos: 1
+            source: github.com
+            url: https://github.com/pydantic/pydantic-ai
+          - pos: 2
+            source: pypi.org
+            url: https://pypi.org/project/pydantic-ai/
+          - pos: 3
+            source: projectpro.io
+            url: https://www.projectpro.io/article/pydantic-ai/1088
+          - pos: 4
+            source: realpython.com
+            url: https://realpython.com/pydantic-ai/
+          - pos: 5
+            source: reddit.com
+            url: https://www.reddit.com/r/LLMDevs/comments/1iih8az/pydantic_ai/
+          - pos: 6
+            source: pydantic.dev
+            url: https://pydantic.dev/docs/ai/overview/
+          - pos: 7
+            source: pydantic.dev
+            url: https://pydantic.dev/
+          - pos: 8
+            source: youtube.com
+            url: https://www.youtube.com/watch?v=pXktHVUpXUc
+          - pos: 9
+            source: tech.appunite.com
+            url: https://tech.appunite.com/posts/understanding-pydantic-ai-a-powerful-alternative-to-lang-chain-and-llama-index
+      bottom_ads: []
+      country_code: us
+      credits_remaining: 5270
+      credits_used: 1
+      hotel_results: []
+      knowledge_graph: {}
+      language: en
+      local_results: []
+      meta_data:
+        location: null
+        number_of_ads: 0
+        number_of_organic_results: 8
+        number_of_page: 10
+        number_of_results: 102
+        url: https://www.google.com/search?q=What+is+Pydantic+AI?&hl=en&gl=us
+        zero_results_for_original_query: false
+      news_results: []
+      page: 1
+      query: What is Pydantic AI?
+      questions:
+      - answer: Pydantic AI's system of dependency injection provides a type-safe way to customise the behavior of your agents,
+          and can be especially useful when running unit tests and evals. Static instructions can be registered with the instructions
+          keyword argument to the agent.
+        position: 1
+        text: What is the use of Pydantic AI?
+      - answer: null
+        position: 2
+        text: What is Pydantic used for?
+      - answer: null
+        position: 3
+        text: What is the difference between Pydantic and Pydantic AI?
+      - answer: null
+        position: 4
+        text: Is Pydantic AI a good framework?
+      related_queries:
+      - link: What is pydantic ai used for
+        position: 0
+        title: What is pydantic ai used for
+      - link: What is pydantic ai agent
+        position: 1
+        title: What is pydantic ai agent
+      - link: What is pydantic ai reddit
+        position: 2
+        title: What is pydantic ai reddit
+      - link: What is pydantic ai in python
+        position: 3
+        title: What is pydantic ai in python
+      - link: What is pydantic ai example
+        position: 4
+        title: What is pydantic ai example
+      - link: Pydantic AI vs LangChain
+        position: 5
+        title: Pydantic AI vs LangChain
+      - link: Pydantic-ai github
+        position: 6
+        title: Pydantic-ai github
+      - link: Pydantic AI harness
+        position: 7
+        title: Pydantic AI harness
+      related_searches:
+      - link: null
+        position: 0
+        query: What is pydantic ai used for
+        type: null
+      - link: null
+        position: 1
+        query: What is pydantic ai agent
+        type: null
+      - link: null
+        position: 2
+        query: What is pydantic ai reddit
+        type: null
+      - link: null
+        position: 3
+        query: What is pydantic ai in python
+        type: null
+      - link: null
+        position: 4
+        query: What is pydantic ai example
+        type: null
+      - link: null
+        position: 5
+        query: Pydantic AI vs LangChain
+        type: null
+      - link: null
+        position: 6
+        query: Pydantic-ai github
+        type: null
+      - link: null
+        position: 7
+        query: Pydantic AI harness
+        type: null
+      response_time: 2409
+      results:
+      - content: Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production
+          grade applications and workflows with ...Read more
+        date: null
+        date_utc: null
+        displayed_url: https://pydantic.dev› docs › ai › overview
+        domain: pydantic.dev
+        position: 1
+        rich_snippet: {}
+        sitelinks:
+        - title: Why use Pydantic AI
+          url: https://pydantic.dev/docs/ai/overview/#why-use-pydantic-ai
+        - title: Hello World Example
+          url: https://pydantic.dev/docs/ai/overview/#hello-world-example
+        - title: Instrumentation with Pydantic...
+          url: https://pydantic.dev/docs/ai/overview/#instrumentation-with-pydantic-logfire
+        thumbnail_url: null
+        title: Pydantic AI | Pydantic Docs
+        url: https://pydantic.dev/docs/ai/overview/
+      - content: 3 days ago -- Pydantic is an end-to-end AI engineering stack, focused on developer experience. Build in Python,
+          TypeScript, Rust, and Go. Monitor on the ...
+        date: null
+        date_utc: null
+        displayed_url: https://pydantic.dev
+        domain: pydantic.dev
+        position: 2
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: Pydantic | The end-to-end AI engineering stack
+        url: https://pydantic.dev/
+      - content: Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production
+          grade applications and workflows with ...Read more
+        date: null
+        date_utc: null
+        displayed_url: https://github.com› pydantic › pydantic-ai
+        domain: github.com
+        position: 3
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: AI Agent Framework, the Pydantic way
+        url: https://github.com/pydantic/pydantic-ai
+      - content: Pydantic AI to build some basic agents and multi agents how to build powerful python tools. Pydantic ai is
+          free,except
+        date: null
+        date_utc: null
+        displayed_url: 20+ comments  ·  1 year ago
+        domain: www.reddit.com
+        position: 4
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: 'Pydantic AI : r/LLMDevs'
+        url: https://www.reddit.com/r/LLMDevs/comments/1iih8az/pydantic_ai/
+      - content: PydanticAI is a Python Agent Framework designed to make building production-grade applications with Generative
+          AI less painful.
+        date: null
+        date_utc: null
+        displayed_url: 120+ likes  ·  1 year ago
+        domain: medium.com
+        position: 5
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: 'Pydantic AI: Agent Framework'
+        url: https://medium.com/ai-agent-insider/pydantic-ai-agent-framework-02b138e8db71
+      - content: Sep 3, 2025 -- Pydantic AI is a Python agent framework that brings structure and type safety to LLM applications.
+        date: Sep 3, 2025
+        date_utc: '2025-09-03T00:00:00Z'
+        displayed_url: https://www.datacamp.com› ... › Artificial Intelligence
+        domain: www.datacamp.com
+        position: 6
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: 'Pydantic AI: A Beginner''s Guide With Practical Examples'
+        url: https://www.datacamp.com/tutorial/pydantic-ai-guide
+      - content: Dec 16, 2024 -- Pydantic AI is a new agent framework by the company behind Pydantic, the popular data validation
+          library. developers define workflows wherein ...
+        date: Dec 16, 2024
+        date_utc: '2024-12-16T00:00:00Z'
+        displayed_url: https://simmering.dev› blog › pydantic-ai
+        domain: simmering.dev
+        position: 7
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: Type-safe LLM agents with PydanticAI
+        url: https://simmering.dev/blog/pydantic-ai/
+      - content: Build production-grade AI applications with Pydantic AI - a model-agnostic Python framework featuring type
+          safety, structured outputs, validation, ...
+        date: null
+        date_utc: null
+        displayed_url: https://pydantic.dev› pydantic-ai
+        domain: pydantic.dev
+        position: 8
+        rich_snippet: {}
+        sitelinks: []
+        thumbnail_url: null
+        title: 'Pydantic AI: Type-Safe Python Framework for AI Agents & ...'
+        url: https://pydantic.dev/pydantic-ai
+      shopping_ads: []
+      top_ads: []
+      top_stories: []
+    status:
+      code: 200
+      message: OK
+version: 1
