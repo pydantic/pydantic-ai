@@ -785,6 +785,10 @@ class StreamedResponse(ABC):
         if self.cancelled:
             return
         self._cancelled = True
+        # A stream that finished naturally stays 'complete': get() checks _finished
+        # before _cancelled, and there's no live connection left to tear down.
+        if self._finished:
+            return
         await self.close_stream()
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
@@ -827,10 +831,10 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
-        if self._cancelled:
-            state: ModelResponseState = 'interrupted'
-        elif self._finished:
-            state = 'complete'
+        if self._finished:
+            state: ModelResponseState = 'complete'
+        elif self._cancelled:
+            state = 'interrupted'
         else:
             state = 'incomplete'
         return ModelResponse(
