@@ -90,11 +90,12 @@ async def test_basic_search(scavio_api_key: str):
 @pytest.mark.vcr()
 async def test_factory_with_bound_params(scavio_api_key: str):
     """Test factory-bound params are forwarded through FunctionSchema.call and hidden from the schema."""
-    tool = scavio_search_tool(scavio_api_key, country_code='us', language='en')
+    tool = scavio_search_tool(scavio_api_key, country_code='us', language='en', search_type='classic')
     # Developer-fixed params must not appear in the LLM tool schema.
     assert 'query' in tool.function_schema.json_schema['properties']
     assert 'country_code' not in tool.function_schema.json_schema['properties']
     assert 'language' not in tool.function_schema.json_schema['properties']
+    assert 'search_type' not in tool.function_schema.json_schema['properties']
 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     results = await tool.function_schema.call({'query': 'attention mechanisms'}, ctx)
@@ -158,3 +159,16 @@ async def test_factory_with_bound_params(scavio_api_key: str):
             },
         ]
     )
+
+
+def test_factory_requires_api_key_or_client():
+    """Test that scavio_search_tool raises when neither api_key nor client is provided."""
+    with pytest.raises(ValueError, match='Either api_key or client must be provided'):
+        scavio_search_tool()  # pyright: ignore[reportCallIssue]
+
+
+def test_factory_with_client():
+    """Test that scavio_search_tool accepts a pre-built client."""
+    client = AsyncScavioClient(api_key='test-key')
+    tool = scavio_search_tool(client=client)
+    assert tool.name == 'scavio_search'
