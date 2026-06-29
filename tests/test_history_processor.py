@@ -1672,13 +1672,13 @@ async def test_history_processor_rebuild_resuming_without_prompt(
     assert result.new_messages() == result.all_messages()[-1:]
 
 
-async def test_history_processor_replace_resumed_request_falls_through(
+async def test_history_processor_replace_resumed_request_excluded(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """
     When a history processor replaces the resumed request with completely
-    different content, new_messages() falls back to run_id-based detection
-    to determine which messages belong to the current run.
+    different content, new_messages() should still exclude the resumed request
+    because its position was captured before the processor replaced it.
     """
 
     def replace_all_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1744,9 +1744,9 @@ async def test_history_processor_replace_resumed_request_falls_through(
         ]
     )
 
-    # Falls back to run_id-based detection: the replaced request got run_id from
-    # the framework, so new_messages includes both it and the model response
-    assert result.new_messages() == result.all_messages()[-2:]
+    # The resumed request's original position is the boundary, so only the
+    # model response is considered new.
+    assert result.new_messages() == result.all_messages()[-1:]
 
 
 def test_takes_ctx_returns_false_for_untyped_processor():
