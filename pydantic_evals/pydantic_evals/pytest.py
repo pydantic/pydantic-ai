@@ -419,7 +419,7 @@ def _task_factory_kwargs(pyfuncitem: pytest.Function) -> dict[str, Any]:
             inspect.Parameter.KEYWORD_ONLY,
         ):
             continue
-        if name in pyfuncitem.funcargs:
+        if name in pyfuncitem.funcargs:  # pragma: no branch
             kwargs[name] = pyfuncitem.funcargs[name]
     return kwargs
 
@@ -451,7 +451,7 @@ def _collect_report_problems(report: EvaluationReport[Any, Any, Any], config: _E
             problems.append(
                 f'assertion pass rate {assertion_pass_rate:.2f} is below required {config.min_assertion_pass_rate:.2f}'
             )
-            if n_failed_assertions:
+            if n_failed_assertions:  # pragma: no branch
                 problems.append(_pluralize(n_failed_assertions, 'failed assertion'))
 
     n_evaluator_failures = sum(len(case.evaluator_failures) for case in report.cases)
@@ -519,7 +519,7 @@ def _pluralize(count: int, singular: str) -> str:
 
 def _get_eval_mark(obj: object) -> pytest.Mark | None:
     marks = getattr(obj, 'pytestmark', ())
-    if isinstance(marks, pytest.Mark):
+    if isinstance(marks, pytest.Mark):  # pragma: no cover
         marks = (marks,)
     eval_marks = [mark for mark in marks if isinstance(mark, pytest.Mark) and mark.name == 'eval']
     if len(eval_marks) > 1:
