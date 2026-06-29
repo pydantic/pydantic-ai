@@ -19,6 +19,7 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -1688,6 +1689,52 @@ def test_dump_load_roundtrip_file_part(original: list[ModelMessage]) -> None:
     """
     ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+@pytest.mark.parametrize(
+    'original',
+    [
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Hello')]),
+                ModelResponse(
+                    parts=[
+                        CompactionPart(
+                            content=None,
+                            id='cmp-1',
+                            provider_name='openai',
+                            provider_details={'encrypted_content': 'opaque-chain-token'},
+                        )
+                    ]
+                ),
+            ],
+            id='openai-encrypted',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Hello')]),
+                ModelResponse(
+                    parts=[
+                        CompactionPart(content='Readable summary of prior messages.', provider_name='anthropic'),
+                        TextPart(content='Continuing the conversation.'),
+                    ]
+                ),
+            ],
+            id='anthropic-text-plus-following-part',
+        ),
+    ],
+)
+def test_dump_load_roundtrip_compaction_part(original: list[ModelMessage]) -> None:
+    """`CompactionPart` survives dump_messages -> load_messages intact.
+
+    Regression test for the UI-adapter layer silently dropping `CompactionPart`
+    (and with it OpenAI's `provider_details['encrypted_content']` chain token).
+    """
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
     assert reloaded == original

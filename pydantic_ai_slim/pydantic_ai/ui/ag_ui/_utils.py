@@ -42,6 +42,14 @@ FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
 
+COMPACTION_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_compaction'
+"""Activity type for `CompactionPart`s stored as AG-UI ActivityMessages.
+
+Compaction data must be round-tripped back to the same provider in subsequent
+requests (e.g. the OpenAI Responses-API `encrypted_content` chain token), so it is
+preserved as a reserved `pydantic_ai_*` ActivityMessage rather than dropped.
+"""
+
 
 class FileActivityContent(TypedDict, total=False):
     """Content schema for `ActivityMessage` with `activity_type=pydantic_ai_file`."""
@@ -61,6 +69,15 @@ class UploadedFileActivityContent(TypedDict, total=False):
     media_type: str
     identifier: str
     vendor_metadata: Any
+
+
+class CompactionActivityContent(TypedDict, total=False):
+    """Content schema for `ActivityMessage` with `activity_type=pydantic_ai_compaction`."""
+
+    content: str
+    id: str
+    provider_name: str
+    provider_details: dict[str, Any]
 
 
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')

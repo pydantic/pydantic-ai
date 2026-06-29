@@ -81,6 +81,7 @@ try:
     )
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
+        COMPACTION_ACTIVITY_TYPE,
         DEFAULT_AG_UI_VERSION,
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
@@ -517,6 +518,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 ]
                             )
                         )
+                    elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
+                        activity_content = activity_msg.content
+                        builder.add(
+                            CompactionPart(
+                                content=activity_content.get('content'),
+                                id=activity_content.get('id'),
+                                provider_name=activity_content.get('provider_name'),
+                                provider_details=activity_content.get('provider_details'),
+                            )
+                        )
 
                 case _:
                     if TYPE_CHECKING:
@@ -715,8 +726,28 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             content=file_content,
                         )
                     )
-            elif isinstance(part, CompactionPart):  # pragma: no cover
-                pass  # Compaction parts are not rendered in AG-UI
+            elif isinstance(part, CompactionPart):
+                # AG-UI has no native compaction message type, but compaction data must be
+                # round-tripped back to the same provider (e.g. OpenAI's `encrypted_content`
+                # chain token), so we repurpose ActivityMessage with a reserved
+                # `pydantic_ai_*` activity_type for round-trip fidelity. See CompactionActivityContent.
+                flush()
+                compaction_content: dict[str, Any] = {}
+                if part.content is not None:
+                    compaction_content['content'] = part.content
+                if part.id is not None:
+                    compaction_content['id'] = part.id
+                if part.provider_name is not None:
+                    compaction_content['provider_name'] = part.provider_name
+                if part.provider_details is not None:
+                    compaction_content['provider_details'] = part.provider_details
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=COMPACTION_ACTIVITY_TYPE,
+                        content=compaction_content,
+                    )
+                )
             else:
                 assert_never(part)
 
