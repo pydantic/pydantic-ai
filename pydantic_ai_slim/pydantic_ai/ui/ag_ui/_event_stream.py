@@ -13,9 +13,9 @@ from uuid import uuid4
 
 from ..._utils import now_utc
 from ...messages import (
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     FunctionToolResultEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     OutputToolResultEvent,
     RetryPromptPart,
     TextPart,
@@ -27,10 +27,22 @@ from ...messages import (
     ToolReturnPart,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
 from .._event_stream import describe_file
-from ._utils import BUILTIN_TOOL_CALL_ID_PREFIX, DEFAULT_AG_UI_VERSION, REASONING_VERSION, parse_ag_ui_version
+from ._interrupt import (
+    HAS_INTERRUPTS,
+    RunFinishedInterruptOutcome,
+    RunFinishedSuccessOutcome,
+    approval_to_interrupt,
+)
+from ._utils import (
+    BUILTIN_TOOL_CALL_ID_PREFIX,
+    DEFAULT_AG_UI_VERSION,
+    INTERRUPTS_VERSION,
+    REASONING_VERSION,
+    parse_ag_ui_version,
+)
 
 try:
     from ag_ui.core import (
@@ -55,6 +67,7 @@ except ImportError as e:  # pragma: no cover
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
+
 
 __all__ = [
     'AGUIEventStream',
@@ -118,12 +131,43 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield  # Make this an async generator
 
     async def after_stream(self) -> AsyncIterator[BaseEvent]:
-        if not self._error:
+        if self._error:
+            return
+
+        # The `outcome` field on `RunFinishedEvent` only exists in ag-ui-protocol >= 0.1.19,
+        # and `ConfiguredBaseModel` forbids extra fields. So we branch instead of passing
+        # `outcome=None` on the old path.
+        if HAS_INTERRUPTS:
+            yield RunFinishedEvent(
+                thread_id=self.run_input.thread_id,
+                run_id=self.run_input.run_id,
+                outcome=self._build_outcome(),
+                timestamp=self._get_timestamp(),
+            )
+        else:
             yield RunFinishedEvent(
                 thread_id=self.run_input.thread_id,
                 run_id=self.run_input.run_id,
                 timestamp=self._get_timestamp(),
             )
+
+    def _build_outcome(self) -> RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None:
+        """Build the `RunFinishedEvent.outcome` from the final agent result.
+
+        Returns `None` when the negotiated AG-UI version predates interrupts, so an old
+        client doesn't receive a field it doesn't understand even if the server SDK
+        does.
+        """
+        if parse_ag_ui_version(self.ag_ui_version) < INTERRUPTS_VERSION:
+            # `outcome=None` only reaches an old client as a bare `RUN_FINISHED` because the SDK's
+            # `EventEncoder` serializes with `exclude_none=True`; the field is valid on this SDK.
+            return None
+        output = self._result.output if self._result else None
+        if isinstance(output, DeferredToolRequests) and output.approvals:
+            return RunFinishedInterruptOutcome(
+                interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
+            )
+        return RunFinishedSuccessOutcome()
 
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         self._error = True
@@ -187,10 +231,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         async for event in _impl(self, part):
             yield event
 
-    def handle_tool_call_start(self, part: ToolCallPart | BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    def handle_tool_call_start(self, part: ToolCallPart | NativeToolCallPart) -> AsyncIterator[BaseEvent]:
         return self._handle_tool_call_start(part)
 
-    def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = part.tool_call_id
         builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
         self._builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
@@ -199,7 +243,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         return self._handle_tool_call_start(part, tool_call_id)
 
     async def _handle_tool_call_start(
-        self, part: ToolCallPart | BuiltinToolCallPart, tool_call_id: str | None = None
+        self, part: ToolCallPart | NativeToolCallPart, tool_call_id: str | None = None
     ) -> AsyncIterator[BaseEvent]:
         tool_call_id = tool_call_id or part.tool_call_id
         parent_message_id = self.message_id
@@ -223,11 +267,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
         yield ToolCallEndEvent(tool_call_id=part.tool_call_id)
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[BaseEvent]:
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[BaseEvent]:
         builtin_id = self._builtin_tool_call_ids[part.tool_call_id]
         yield ToolCallEndEvent(tool_call_id=builtin_id)
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[BaseEvent]:
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[BaseEvent]:
         tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
         # Use a one-off message ID instead of `self.new_message_id()` to avoid
         # mutating `self.message_id`, which is used as `parent_message_id` for
@@ -278,7 +322,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                         yield item
 
 
-def _tool_return_content(part: BuiltinToolReturnPart | ToolReturnPart) -> str:
+def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:
     """Return tool output string with file descriptions if present."""
     output = part.model_response_str()
     if file_descriptions := [describe_file(f) for f in part.files]:

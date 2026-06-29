@@ -15,6 +15,7 @@ from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
 from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints
+from pydantic_ai.agent.abstract import AgentRetries
 from pydantic_ai.settings import ModelSettings
 
 if TYPE_CHECKING:
@@ -40,19 +41,9 @@ class AgentSpec(BaseModel):
     deps_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
-    tool_retries: int | None = None
-    retries: int | None = Field(
-        default=None,
-        deprecated=(
-            '`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead. '
-            'In 1.x, setting `retries` on a spec still cascades to `output_retries` '
-            'when the latter is unset, matching `Agent(retries=...)` behavior.'
-        ),
-    )
-    output_retries: int | None = None
-    end_strategy: EndStrategy = 'early'
+    retries: int | AgentRetries | None = None
+    end_strategy: EndStrategy = 'graceful'
     tool_timeout: float | None = None
-    instrument: bool | None = None
     metadata: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
 
@@ -204,15 +195,9 @@ class AgentSpec(BaseModel):
             deps_schema: dict[str, Any] | None = None
             output_schema: dict[str, Any] | None = None
             model_settings: ModelSettings | None = None
-            tool_retries: int | None = None
-            retries: int | None = Field(
-                default=None,
-                deprecated='`retries` is deprecated. Use `tool_retries` and/or `output_retries` instead.',
-            )
-            output_retries: int | None = None
-            end_strategy: EndStrategy = 'early'
+            retries: int | AgentRetries | None = None
+            end_strategy: EndStrategy = 'graceful'
             tool_timeout: float | None = None
-            instrument: bool | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
                 capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007

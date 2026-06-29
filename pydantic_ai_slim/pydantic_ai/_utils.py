@@ -8,7 +8,16 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Iterable,
+    Iterator,
+)
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
@@ -37,8 +46,9 @@ from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
 from pydantic_graph._utils import AbstractSpan
+from pydantic_graph.util import get_callable_name
 
-from . import exceptions
+from .exceptions import UserError
 
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
@@ -49,7 +59,7 @@ AbstractSpan = AbstractSpan
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRun, AgentRunResult
-    from pydantic_graph import GraphRun, GraphRunResult
+    from pydantic_graph import GraphRun
 
     from . import messages as _messages
     from .tools import ObjectJsonSchema
@@ -57,19 +67,21 @@ if TYPE_CHECKING:
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
-_disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
+_disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
 
 
 @contextmanager
-def disable_threads() -> Iterator[None]:
+def disable_threads() -> Generator[None]:
     """Context manager to disable thread-based execution for sync functions.
 
     Inside this context, sync functions will execute inline rather than
     being sent to a thread pool via [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
 
     This is useful in environments where threading is restricted, such as
-    Temporal workflows which use a sandboxed event loop.
+    Temporal workflows which use a sandboxed event loop. On emscripten,
+    sync callbacks already run inline by default because Python threads are
+    unavailable there.
 
     Yields:
         None
@@ -82,7 +94,7 @@ def disable_threads() -> Iterator[None]:
 
 
 @contextmanager
-def using_thread_executor(executor: Executor) -> Iterator[None]:
+def using_thread_executor(executor: Executor) -> Generator[None]:
     """Context manager to use a custom executor for running sync functions in threads.
 
     Inside this context, sync functions will be executed using the provided executor
@@ -178,6 +190,16 @@ def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
 T = TypeVar('T')
 
 
+def check_tools_prepare_func_result(result: Iterable[T] | None, prepare_func: Any) -> list[T]:
+    """Validate and normalize a tool-prepare callback result."""
+    if result is None:
+        raise UserError(
+            f'Prepare function {get_callable_name(prepare_func)!r} returned `None`; '
+            'return `[]` to expose no tools, or return `tool_defs` to pass them through unchanged.'
+        )
+    return list(result)
+
+
 @dataclass
 class Some(Generic[T]):
     """Analogous to Rust's `Option::Some` type."""
@@ -270,7 +292,7 @@ async def _cleanup_temporal_group(
 @asynccontextmanager
 async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None
-) -> AsyncIterator[AsyncIterable[list[T]]]:
+) -> AsyncGenerator[AsyncIterable[list[T]]]:
     """Group items from an async iterable into lists based on time interval between them.
 
     Effectively, this debounces the iterator.
@@ -314,7 +336,7 @@ async def group_by_temporal(
                 'soft_max_interval must be a positive number'
             )
             buffer: list[T] = []
-            group_start_time = time.monotonic()
+            group_start_time: float | None = None
 
             while True:
                 if group_start_time is None:
@@ -387,12 +409,24 @@ def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, conversation_id: str | None) -> None:
+    """Fill in framework-tracked metadata (`timestamp`, `run_id`, `conversation_id`) that's still unset.
+
+    Producer-supplied values are preserved; only unset fields are filled in. Centralizing the field
+    list here means a new framework-tracked field only needs to be handled in one place, rather than
+    every site that materializes a message into the history.
+    """
+    message.timestamp = message.timestamp or now_utc()
+    message.run_id = message.run_id or run_id
+    message.conversation_id = message.conversation_id or conversation_id
+
+
 def guard_tool_call_id(
     t: _messages.ToolCallPart
     | _messages.ToolReturnPart
     | _messages.RetryPromptPart
-    | _messages.BuiltinToolCallPart
-    | _messages.BuiltinToolReturnPart,
+    | _messages.NativeToolCallPart
+    | _messages.NativeToolReturnPart,
 ) -> str:
     """Type guard that either returns the tool call id or generates a new one if it's None."""
     return t.tool_call_id or generate_tool_call_id()
@@ -495,7 +529,7 @@ class PeekableAsyncStream(Generic[T, SourceT]):
             await aclose()
 
 
-def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
+def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
     return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
 
 
@@ -505,6 +539,19 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
         f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr and getattr(self, f.name) != f.default
     )
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
+
+
+def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
+    """Shared utility for typed-part narrowers — preserves base fields when promoting to a typed subclass.
+
+    Construct a new dataclass instance from `src`'s fields, overriding selected ones.
+    Lets typed-part narrowers stay maintainable when fields are added to the base
+    class — base-class field changes flow through automatically instead of needing
+    every narrower to be updated by hand.
+    """
+    field_values: dict[str, Any] = {f.name: getattr(src, f.name) for f in fields(src)}
+    field_values.update(overrides)
+    return dst_cls(**field_values)
 
 
 _datetime_ta = TypeAdapter(datetime)
@@ -717,20 +764,6 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs
-
-
-def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
-    """Validate that no unknown kwargs remain after processing.
-
-    Args:
-        _kwargs: Dictionary of remaining kwargs after specific ones have been processed.
-
-    Raises:
-        UserError: If any unknown kwargs remain.
-    """
-    if _kwargs:
-        unknown_kwargs = ', '.join(f'`{k}`' for k in _kwargs.keys())
-        raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)

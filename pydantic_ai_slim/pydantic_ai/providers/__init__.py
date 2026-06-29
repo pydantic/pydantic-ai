@@ -48,7 +48,13 @@ class Provider(ABC, Generic[InterfaceClient]):
     @property
     @abstractmethod
     def name(self) -> str:
-        """The provider name."""
+        """The provider name.
+
+        The returned value flows into [`ModelMessage.provider_name`][pydantic_ai.messages.ModelMessage]
+        on every part. Thinking-tag detection and native-tool detection check this value when
+        the model class loads history, so silently renaming a concrete `name` value breaks
+        replay of any message history captured against the old name.
+        """
         raise NotImplementedError()
 
     @property
@@ -105,17 +111,13 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
-    # Normalize gateway-prefixed providers (e.g. 'gateway/openai' -> 'openai')
+    # Strip the `gateway/` prefix to get the canonical class-lookup name. The
+    # Gateway URL route value (e.g. `google-vertex`) is a separate concern
+    # handled by `_gateway_route` in `providers/gateway.py`.
     if provider.startswith('gateway/'):
         from .gateway import normalize_gateway_provider
 
         provider = normalize_gateway_provider(provider)
-
-    # Normalize deprecated/alias provider names
-    if provider == 'vertexai':
-        provider = 'google-vertex'
-    elif provider == 'google':
-        provider = 'google-gla'
 
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
@@ -137,10 +139,14 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .azure import AzureProvider
 
         return AzureProvider
-    elif provider in ('google-vertex', 'google-gla'):
+    elif provider == 'google':
         from .google import GoogleProvider
 
         return GoogleProvider
+    elif provider == 'google-cloud':
+        from .google_cloud import GoogleCloudProvider
+
+        return GoogleCloudProvider
     elif provider == 'bedrock':
         from .bedrock import BedrockProvider
 
@@ -165,10 +171,6 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .cohere import CohereProvider
 
         return CohereProvider
-    elif provider == 'grok':
-        from .grok import GrokProvider  # pyright: ignore[reportDeprecated]
-
-        return GrokProvider  # pyright: ignore[reportDeprecated]
     elif provider == 'xai':
         from .xai import XaiProvider
 
@@ -221,10 +223,6 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .sambanova import SambaNovaProvider
 
         return SambaNovaProvider
-    elif provider == 'outlines':
-        from .outlines import OutlinesProvider
-
-        return OutlinesProvider
     elif provider == 'sentence-transformers':
         from .sentence_transformers import SentenceTransformersProvider
 
@@ -244,10 +242,6 @@ def infer_provider(provider: str) -> Provider[Any]:
 
         upstream_provider = provider.removeprefix('gateway/')
         return gateway_provider(upstream_provider)
-    elif provider in ('google-vertex', 'google-gla', 'vertexai'):
-        from .google import GoogleProvider
 
-        return GoogleProvider(vertexai=provider in ('google-vertex', 'vertexai'))
-    else:
-        provider_class = infer_provider_class(provider)
-        return provider_class()
+    provider_class = infer_provider_class(provider)
+    return provider_class()

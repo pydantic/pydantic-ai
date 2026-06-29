@@ -31,7 +31,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google-gla:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('google:gemini-3-flash-preview', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 ```
@@ -98,7 +98,7 @@ Examples:
 
 - `openai:gpt-5.2`
 - `anthropic:claude-sonnet-4-6`
-- `google-gla:gemini-3-pro-preview`
+- `google:gemini-3-pro-preview`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
@@ -123,7 +123,7 @@ from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunConte
 agent = Agent('openai:gpt-5.2')
 
 
-async def stream_handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]):
+async def stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
     async for event in events:
         if isinstance(event, FunctionToolCallEvent):
             print(f'Calling {event.part.tool_name}...')

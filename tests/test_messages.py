@@ -1,17 +1,16 @@
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import get_args
+from typing import Any, cast, get_args
 
 import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -22,6 +21,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RequestUsage,
     RetryPromptPart,
     TextContent,
@@ -35,6 +36,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -341,6 +343,17 @@ def test_binary_content_base64():
     assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
 
 
+def test_from_data_uri_base64():
+    bc = BinaryContent.from_data_uri('data:image/png;base64,SGVsbG8sIHdvcmxkIQ==')
+    assert bc.data == b'Hello, world!'
+    assert bc.media_type == 'image/png'
+
+
+def test_from_data_uri_non_base64():
+    with pytest.raises(ValueError, match='must be base64-encoded'):
+        BinaryContent.from_data_uri('data:text/plain,Hello%20World')
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
@@ -509,6 +522,43 @@ def test_pre_usage_refactor_messages_deserializable():
     )
 
 
+@pytest.mark.anyio
+async def test_legacy_vendor_message_history_replays_through_agent():
+    """1.x message history serialized with `vendor_details` / `vendor_id` keys still routes through `agent.run(message_history=...)`.
+
+    Backstop for the V2-RULES rule 4 (cross-history-replay): the deprecated `vendor_*` read properties
+    are gone in v2, but the validation aliases on `provider_details` / `provider_response_id` stay so
+    stored histories load.
+    """
+    legacy_history: list[dict[str, Any]] = [
+        {
+            'parts': [{'content': 'Hi', 'part_kind': 'user-prompt'}],
+            'kind': 'request',
+        },
+        {
+            'parts': [{'content': 'Hello!', 'part_kind': 'text'}],
+            'kind': 'response',
+            'model_name': 'gpt-5',
+            'provider_name': 'openai',
+            'vendor_details': {'finish_reason': 'stop'},
+            'vendor_id': 'chatcmpl-legacy',
+        },
+    ]
+    message_history = ModelMessagesTypeAdapter.validate_python(legacy_history)
+    response = next(m for m in message_history if isinstance(m, ModelResponse))
+    assert response.provider_details == {'finish_reason': 'stop'}
+    assert response.provider_response_id == 'chatcmpl-legacy'
+
+    agent = Agent(TestModel())
+    result = await agent.run('And now?', message_history=message_history)
+
+    replayed_response = next(
+        m for m in result.all_messages() if isinstance(m, ModelResponse) and m.model_name == 'gpt-5'
+    )
+    assert replayed_response.provider_details == {'finish_reason': 'stop'}
+    assert replayed_response.provider_response_id == 'chatcmpl-legacy'
+
+
 def test_file_part_has_content():
     filepart = FilePart(content=BinaryContent(data=b'', media_type='application/pdf'))
     assert not filepart.has_content()
@@ -557,7 +607,7 @@ def test_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
     ],
 )
 def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None):
-    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    part = NativeToolCallPart(tool_name='web_search', args=args)
     assert part.has_content()
 
 
@@ -569,7 +619,7 @@ def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None
     ],
 )
 def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
-    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    part = NativeToolCallPart(tool_name='web_search', args=args)
     assert not part.has_content()
 
 
@@ -702,7 +752,7 @@ def test_model_response_convenience_methods():
     assert response.files == snapshot([])
     assert response.images == snapshot([])
     assert response.tool_calls == snapshot([])
-    assert response.builtin_tool_calls == snapshot([])
+    assert response.native_tool_calls == snapshot([])
 
     response = ModelResponse(
         parts=[
@@ -710,9 +760,9 @@ def test_model_response_convenience_methods():
             ThinkingPart(content="And then, call the 'hello_world' tool"),
             TextPart(content="I'm going to"),
             TextPart(content=' generate an image'),
-            BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+            NativeToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
             FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg')),
-            BuiltinToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
+            NativeToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
             TextPart(content="I'm going to call"),
             TextPart(content=" the 'hello_world' tool"),
             ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123'),
@@ -731,11 +781,11 @@ And then, call the 'hello_world' tool\
     assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
-    assert response.builtin_tool_calls == snapshot(
+    assert response.native_tool_calls == snapshot(
         [
             (
-                BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+                NativeToolReturnPart(
                     tool_name='image_generation',
                     content={},
                     tool_call_id='123',
@@ -879,7 +929,7 @@ def test_uploaded_file_identifier_property():
     # Test with URL file_id (should still be hashed)
     uploaded_file_url = UploadedFile(
         file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
-        provider_name='google-gla',
+        provider_name='google',
     )
     assert uploaded_file_url.identifier == snapshot('d8d637')
 
@@ -940,7 +990,7 @@ def test_uploaded_file_in_otel_message_parts():
             'analyze this',
             UploadedFile(
                 file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
-                provider_name='google-gla',
+                provider_name='google',
             ),
         ]
     )
@@ -1198,7 +1248,9 @@ def test_tool_return_content_nested_multimodal():
     tool_return_part = deserialized[0].parts[0]
     assert isinstance(tool_return_part, ToolReturnPart)
 
-    content = tool_return_part.content
+    # `ToolReturnPart`'s typed `ToolSearchReturnPart` subclass narrows `content` to a
+    # `TypedDict`; cast back to a plain dict so we can probe arbitrary keys here.
+    content = cast('dict[str, Any]', tool_return_part.content)
     assert isinstance(content, dict)
 
     # Items with kind: "image-url" should be ImageUrl
@@ -1216,7 +1268,7 @@ def test_tool_return_content_nested_multimodal():
     reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
     reloaded_tool_return = reloaded[0].parts[0]
     assert isinstance(reloaded_tool_return, ToolReturnPart)
-    reloaded_content = reloaded_tool_return.content
+    reloaded_content = cast('dict[str, Any]', reloaded_tool_return.content)
     assert isinstance(reloaded_content, dict)
 
     assert isinstance(reloaded_content['images'][0], ImageUrl)

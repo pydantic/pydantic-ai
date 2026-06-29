@@ -14,10 +14,6 @@ from pydantic_ai import _utils
 from ..messages import (
     AgentStreamEvent,
     BinaryContent,
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolCallPart,
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolReturnPart,
     CompactionPart,
     FilePart,
     FileUrl,
@@ -25,6 +21,8 @@ from ..messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -98,14 +96,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     _final_result_event: FinalResultEvent | None = None
     _pending_tool_calls: dict[str, _PendingToolCall] = field(default_factory=dict[str, '_PendingToolCall'])
     """Tool calls dispatched but not yet completed, indexed by `tool_call_id`."""
-    _handled_tool_calls: set[str] = field(default_factory=set[str])
-    """Tool call IDs whose call event has already been dispatched.
-
-    Used to dedupe the dual emission of `OutputToolCallEvent` + `FunctionToolCallEvent`
-    that fires on output-tool failure paths during the v2 transition.
-    """
-    _handled_tool_results: set[str] = field(default_factory=set[str])
-    """Tool call IDs whose result event has already been dispatched."""
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
@@ -182,10 +172,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         yield e
                 elif isinstance(event, ToolCallEvent):
                     tool_call_id = event.part.tool_call_id
-                    if tool_call_id in self._handled_tool_calls:
-                        # Dual emission for an output-tool failure path; the new event already handled it.
-                        continue
-                    self._handled_tool_calls.add(tool_call_id)
                     kind: Literal['function', 'output'] = (
                         'output' if isinstance(event, OutputToolCallEvent) else 'function'
                     )
@@ -217,14 +203,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 elif isinstance(event, ToolResultEvent):
                     tool_call_id = event.part.tool_call_id
                     self._pending_tool_calls.pop(tool_call_id, None)
-                    if tool_call_id in self._handled_tool_results:
-                        # Dual emission for an output-tool failure path; the new event already handled it.
-                        continue
-                    self._handled_tool_results.add(tool_call_id)
-
-                elif isinstance(event, BuiltinToolCallEvent | BuiltinToolResultEvent):  # pyright: ignore[reportDeprecated]
-                    # These events were deprecated before this feature was introduced
-                    continue
 
                 async for e in self.handle_event(event):
                     yield e
@@ -346,8 +324,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`TextPart`][pydantic_ai.messages.TextPart] -> [`handle_text_start()`][pydantic_ai.ui.UIEventStream.handle_text_start]
         - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] -> [`handle_thinking_start()`][pydantic_ai.ui.UIEventStream.handle_thinking_start]
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] -> [`handle_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_tool_call_start]
-        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_start]
-        - [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
+        - [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] -> [`handle_builtin_tool_call_start()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_start]
+        - [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] -> [`handle_builtin_tool_return()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_return]
         - [`FilePart`][pydantic_ai.messages.FilePart] -> [`handle_file()`][pydantic_ai.ui.UIEventStream.handle_file]
         - [`CompactionPart`][pydantic_ai.messages.CompactionPart] -> [`handle_compaction()`][pydantic_ai.ui.UIEventStream.handle_compaction]
 
@@ -369,10 +347,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ToolCallPart():
                 async for e in self.handle_tool_call_start(part):
                     yield e
-            case BuiltinToolCallPart():
+            case NativeToolCallPart():
                 async for e in self.handle_builtin_tool_call_start(part):
                     yield e
-            case BuiltinToolReturnPart():
+            case NativeToolReturnPart():
                 async for e in self.handle_builtin_tool_return(part):
                     yield e
             case FilePart():
@@ -417,7 +395,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`TextPart`][pydantic_ai.messages.TextPart] -> [`handle_text_end()`][pydantic_ai.ui.UIEventStream.handle_text_end]
         - [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] -> [`handle_thinking_end()`][pydantic_ai.ui.UIEventStream.handle_thinking_end]
         - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] -> [`handle_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_tool_call_end]
-        - [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] -> [`handle_builtin_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_end]
+        - [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] -> [`handle_builtin_tool_call_end()`][pydantic_ai.ui.UIEventStream.handle_builtin_tool_call_end]
 
         Subclasses are encouraged to override the individual `handle_*_end` methods rather than this one.
         If you need specific behavior for all part end events, make sure you call the super method.
@@ -437,10 +415,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ToolCallPart():
                 async for e in self.handle_tool_call_end(part):
                     yield e
-            case BuiltinToolCallPart():
+            case NativeToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
-            case BuiltinToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
+            case NativeToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
                 # These don't have deltas, so they don't need to be ended.
                 pass
 
@@ -590,8 +568,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_call_start(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
-        """Handle a `BuiltinToolCallPart` at start.
+    async def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[EventT]:
+        """Handle a `NativeToolCallPart` at start.
 
         Args:
             part: The builtin tool call part.
@@ -599,8 +577,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_call_end(self, part: BuiltinToolCallPart) -> AsyncIterator[EventT]:
-        """Handle the end of a `BuiltinToolCallPart`.
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[EventT]:
+        """Handle the end of a `NativeToolCallPart`.
 
         Args:
             part: The builtin tool call part.
@@ -608,8 +586,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return  # pragma: no cover
         yield  # Make this an async generator
 
-    async def handle_builtin_tool_return(self, part: BuiltinToolReturnPart) -> AsyncIterator[EventT]:
-        """Handle a `BuiltinToolReturnPart`.
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[EventT]:
+        """Handle a `NativeToolReturnPart`.
 
         Args:
             part: The builtin tool return part.

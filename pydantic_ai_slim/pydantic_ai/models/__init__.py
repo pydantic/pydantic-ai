@@ -10,7 +10,7 @@ import base64
 import json
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -19,14 +19,15 @@ from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
+from typing_extensions import Self, TypeAliasType, TypedDict
+from typing_inspection.introspection import get_literal_values
 
-from .. import _utils
+from .. import _deferred_capabilities, _utils
 from .._json_schema import JsonSchemaTransformer
-from .._output import OutputObjectDefinition, StructuredTextOutputSchema
+from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from ..builtin_tools import AbstractBuiltinTool
+from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -40,20 +41,27 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartEndEvent,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    UploadedFile,
+    UserPromptPart,
     VideoUrl,
 )
-from ..output import OutputMode, StructuredOutputMode
-from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..native_tools._tool_search import ToolSearchTool
+from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
+from ..profiles import DEFAULT_PROFILE, DEFAULT_PROMPTED_OUTPUT_TEMPLATE, ModelProfile, ModelProfileSpec, merge_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._known_model_names import KnownModelName as KnownModelName
 
 DEFAULT_HTTP_TIMEOUT: int = 600
 """Default HTTP timeout in seconds for API requests.
@@ -62,403 +70,17 @@ This matches the default timeout used by OpenAI's Python client.
 See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
 """
 
-KnownModelName = TypeAliasType(
-    'KnownModelName',
-    Literal[
-        'anthropic:claude-3-haiku-20240307',
-        'anthropic:claude-haiku-4-5-20251001',
-        'anthropic:claude-mythos-preview',
-        'anthropic:claude-haiku-4-5',
-        'anthropic:claude-opus-4-0',
-        'anthropic:claude-opus-4-1',
-        'anthropic:claude-opus-4-1-20250805',
-        'anthropic:claude-opus-4-20250514',
-        'anthropic:claude-opus-4-5-20251101',
-        'anthropic:claude-opus-4-5',
-        'anthropic:claude-opus-4-6',
-        'anthropic:claude-opus-4-7',
-        'anthropic:claude-sonnet-4-0',
-        'anthropic:claude-sonnet-4-20250514',
-        'anthropic:claude-sonnet-4-5-20250929',
-        'anthropic:claude-sonnet-4-5',
-        'anthropic:claude-sonnet-4-6',
-        'bedrock:amazon.titan-text-express-v1',
-        'bedrock:amazon.titan-text-lite-v1',
-        'bedrock:amazon.titan-tg1-large',
-        'bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
-        'bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
-        'bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
-        'bedrock:anthropic.claude-3-haiku-20240307-v1:0',
-        'bedrock:anthropic.claude-3-opus-20240229-v1:0',
-        'bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
-        'bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
-        'bedrock:anthropic.claude-instant-v1',
-        'bedrock:anthropic.claude-opus-4-20250514-v1:0',
-        'bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
-        'bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'bedrock:anthropic.claude-sonnet-4-6',
-        'bedrock:anthropic.claude-v2:1',
-        'bedrock:anthropic.claude-v2',
-        'bedrock:cohere.command-light-text-v14',
-        'bedrock:cohere.command-r-plus-v1:0',
-        'bedrock:cohere.command-r-v1:0',
-        'bedrock:cohere.command-text-v14',
-        'bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
-        'bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
-        'bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'bedrock:eu.anthropic.claude-sonnet-4-6',
-        'bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-        'bedrock:meta.llama3-1-405b-instruct-v1:0',
-        'bedrock:meta.llama3-1-70b-instruct-v1:0',
-        'bedrock:meta.llama3-1-8b-instruct-v1:0',
-        'bedrock:meta.llama3-70b-instruct-v1:0',
-        'bedrock:meta.llama3-8b-instruct-v1:0',
-        'bedrock:mistral.mistral-7b-instruct-v0:2',
-        'bedrock:mistral.mistral-large-2402-v1:0',
-        'bedrock:mistral.mistral-large-2407-v1:0',
-        'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
-        'bedrock:us.amazon.nova-2-lite-v1:0',
-        'bedrock:us.amazon.nova-lite-v1:0',
-        'bedrock:us.amazon.nova-micro-v1:0',
-        'bedrock:us.amazon.nova-pro-v1:0',
-        'bedrock:us.anthropic.claude-3-5-haiku-20241022-v1:0',
-        'bedrock:us.anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'bedrock:us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-        'bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
-        'bedrock:us.anthropic.claude-3-haiku-20240307-v1:0',
-        'bedrock:us.anthropic.claude-3-opus-20240229-v1:0',
-        'bedrock:us.anthropic.claude-3-sonnet-20240229-v1:0',
-        'bedrock:us.anthropic.claude-haiku-4-5-20251001-v1:0',
-        'bedrock:us.anthropic.claude-opus-4-20250514-v1:0',
-        'bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
-        'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'bedrock:us.anthropic.claude-sonnet-4-6',
-        'bedrock:us.meta.llama3-1-70b-instruct-v1:0',
-        'bedrock:us.meta.llama3-1-8b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-11b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-1b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-3b-instruct-v1:0',
-        'bedrock:us.meta.llama3-2-90b-instruct-v1:0',
-        'bedrock:us.meta.llama3-3-70b-instruct-v1:0',
-        'cerebras:gpt-oss-120b',
-        'cerebras:llama3.1-8b',
-        'cerebras:qwen-3-235b-a22b-instruct-2507',
-        'cerebras:zai-glm-4.7',
-        'cohere:c4ai-aya-expanse-32b',
-        'cohere:c4ai-aya-expanse-8b',
-        'cohere:command-nightly',
-        'cohere:command-r-08-2024',
-        'cohere:command-r-plus-08-2024',
-        'cohere:command-r7b-12-2024',
-        'deepseek:deepseek-chat',
-        'deepseek:deepseek-reasoner',
-        'deepseek:deepseek-v4-flash',
-        'deepseek:deepseek-v4-pro',
-        'gateway/anthropic:claude-3-haiku-20240307',
-        'gateway/anthropic:claude-haiku-4-5-20251001',
-        'gateway/anthropic:claude-mythos-preview',
-        'gateway/anthropic:claude-haiku-4-5',
-        'gateway/anthropic:claude-opus-4-0',
-        'gateway/anthropic:claude-opus-4-1',
-        'gateway/anthropic:claude-opus-4-1-20250805',
-        'gateway/anthropic:claude-opus-4-20250514',
-        'gateway/anthropic:claude-opus-4-5-20251101',
-        'gateway/anthropic:claude-opus-4-5',
-        'gateway/anthropic:claude-opus-4-6',
-        'gateway/anthropic:claude-opus-4-7',
-        'gateway/anthropic:claude-sonnet-4-0',
-        'gateway/anthropic:claude-sonnet-4-20250514',
-        'gateway/anthropic:claude-sonnet-4-5-20250929',
-        'gateway/anthropic:claude-sonnet-4-5',
-        'gateway/anthropic:claude-sonnet-4-6',
-        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
-        'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
-        'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
-        'gateway/bedrock:eu.anthropic.claude-sonnet-4-20250514-v1:0',
-        'gateway/bedrock:eu.anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'gateway/bedrock:eu.anthropic.claude-sonnet-4-6',
-        'gateway/bedrock:global.anthropic.claude-opus-4-5-20251101-v1:0',
-        'gateway/google-vertex:gemini-2.5-flash-image',
-        'gateway/google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'gateway/google-vertex:gemini-2.5-flash-lite',
-        'gateway/google-vertex:gemini-2.5-flash',
-        'gateway/google-vertex:gemini-2.5-pro',
-        'gateway/google-vertex:gemini-3-flash-preview',
-        'gateway/google-vertex:gemini-3-pro-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-image-preview',
-        'gateway/google-vertex:gemini-3.1-flash-lite-preview',
-        'gateway/google-vertex:gemini-3.1-pro-preview',
-        'gateway/groq:llama-3.1-8b-instant',
-        'gateway/groq:llama-3.3-70b-versatile',
-        'gateway/groq:meta-llama/llama-4-scout-17b-16e-instruct',
-        'gateway/groq:moonshotai/kimi-k2-instruct-0905',
-        'gateway/groq:openai/gpt-oss-120b',
-        'gateway/groq:openai/gpt-oss-20b',
-        'gateway/groq:openai/gpt-oss-safeguard-20b',
-        'gateway/openai:gpt-3.5-turbo-0125',
-        'gateway/openai:gpt-3.5-turbo-1106',
-        'gateway/openai:gpt-3.5-turbo-16k',
-        'gateway/openai:gpt-3.5-turbo',
-        'gateway/openai:gpt-4-0613',
-        'gateway/openai:gpt-4-turbo-2024-04-09',
-        'gateway/openai:gpt-4-turbo',
-        'gateway/openai:gpt-4.1-2025-04-14',
-        'gateway/openai:gpt-4.1-mini-2025-04-14',
-        'gateway/openai:gpt-4.1-mini',
-        'gateway/openai:gpt-4.1-nano-2025-04-14',
-        'gateway/openai:gpt-4.1-nano',
-        'gateway/openai:gpt-4.1',
-        'gateway/openai:gpt-4',
-        'gateway/openai:gpt-4o-2024-05-13',
-        'gateway/openai:gpt-4o-2024-08-06',
-        'gateway/openai:gpt-4o-2024-11-20',
-        'gateway/openai:gpt-4o-mini-2024-07-18',
-        'gateway/openai:gpt-4o-mini-search-preview-2025-03-11',
-        'gateway/openai:gpt-4o-mini-search-preview',
-        'gateway/openai:gpt-4o-mini',
-        'gateway/openai:gpt-4o-search-preview-2025-03-11',
-        'gateway/openai:gpt-4o-search-preview',
-        'gateway/openai:gpt-4o',
-        'gateway/openai:gpt-5-2025-08-07',
-        'gateway/openai:gpt-5-chat-latest',
-        'gateway/openai:gpt-5-mini-2025-08-07',
-        'gateway/openai:gpt-5-mini',
-        'gateway/openai:gpt-5-nano-2025-08-07',
-        'gateway/openai:gpt-5-nano',
-        'gateway/openai:gpt-5.1-2025-11-13',
-        'gateway/openai:gpt-5.1-chat-latest',
-        'gateway/openai:gpt-5.1',
-        'gateway/openai:gpt-5.2-2025-12-11',
-        'gateway/openai:gpt-5.2-chat-latest',
-        'gateway/openai:gpt-5.2',
-        'gateway/openai:gpt-5.4-mini-2026-03-17',
-        'gateway/openai:gpt-5.4-mini',
-        'gateway/openai:gpt-5.4-nano-2026-03-17',
-        'gateway/openai:gpt-5.4-nano',
-        'gateway/openai:gpt-5.4',
-        'gateway/openai:gpt-5',
-        'gateway/openai:o1-2024-12-17',
-        'gateway/openai:o1',
-        'gateway/openai:o3-2025-04-16',
-        'gateway/openai:o3-mini-2025-01-31',
-        'gateway/openai:o3-mini',
-        'gateway/openai:o3',
-        'gateway/openai:o4-mini-2025-04-16',
-        'gateway/openai:o4-mini',
-        'google-gla:gemini-2.0-flash-lite',
-        'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.5-flash-image',
-        'google-gla:gemini-2.5-flash-lite-preview-09-2025',
-        'google-gla:gemini-2.5-flash-lite',
-        'google-gla:gemini-2.5-flash-preview-09-2025',
-        'google-gla:gemini-2.5-flash',
-        'google-gla:gemini-2.5-pro',
-        'google-gla:gemini-3-flash-preview',
-        'google-gla:gemini-3-pro-image-preview',
-        'google-gla:gemini-3-pro-preview',
-        'google-gla:gemini-3.1-flash-image-preview',
-        'google-gla:gemini-3.1-flash-lite-preview',
-        'google-gla:gemini-3.1-pro-preview',
-        'google-gla:gemini-flash-latest',
-        'google-gla:gemini-flash-lite-latest',
-        'google-vertex:gemini-2.0-flash-lite',
-        'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.5-flash-image',
-        'google-vertex:gemini-2.5-flash-lite-preview-09-2025',
-        'google-vertex:gemini-2.5-flash-lite',
-        'google-vertex:gemini-2.5-flash-preview-09-2025',
-        'google-vertex:gemini-2.5-flash',
-        'google-vertex:gemini-2.5-pro',
-        'google-vertex:gemini-3-flash-preview',
-        'google-vertex:gemini-3-pro-image-preview',
-        'google-vertex:gemini-3-pro-preview',
-        'google-vertex:gemini-3.1-flash-image-preview',
-        'google-vertex:gemini-3.1-flash-lite-preview',
-        'google-vertex:gemini-3.1-pro-preview',
-        'google-vertex:gemini-flash-latest',
-        'google-vertex:gemini-flash-lite-latest',
-        'grok:grok-2-image-1212',
-        'grok:grok-2-vision-1212',
-        'grok:grok-3-fast',
-        'grok:grok-3-mini-fast',
-        'grok:grok-3-mini',
-        'grok:grok-3',
-        'grok:grok-4-0709',
-        'grok:grok-4-latest',
-        'grok:grok-4-1-fast-non-reasoning',
-        'grok:grok-4-1-fast-reasoning',
-        'grok:grok-4-1-fast',
-        'grok:grok-4-fast-non-reasoning',
-        'grok:grok-4-fast-reasoning',
-        'grok:grok-4-fast',
-        'grok:grok-4',
-        'grok:grok-code-fast-1',
-        'xai:grok-3',
-        'xai:grok-3-fast',
-        'xai:grok-3-fast-latest',
-        'xai:grok-3-latest',
-        'xai:grok-3-mini',
-        'xai:grok-3-mini-fast',
-        'xai:grok-3-mini-fast-latest',
-        'xai:grok-4',
-        'xai:grok-4-0709',
-        'xai:grok-4-1-fast',
-        'xai:grok-4-1-fast-non-reasoning',
-        'xai:grok-4-1-fast-non-reasoning-latest',
-        'xai:grok-4-1-fast-reasoning',
-        'xai:grok-4-1-fast-reasoning-latest',
-        'xai:grok-4-fast',
-        'xai:grok-4-fast-non-reasoning',
-        'xai:grok-4-fast-non-reasoning-latest',
-        'xai:grok-4-fast-reasoning',
-        'xai:grok-4-fast-reasoning-latest',
-        'xai:grok-4-latest',
-        'xai:grok-code-fast-1',
-        'groq:llama-3.1-8b-instant',
-        'groq:llama-3.3-70b-versatile',
-        'groq:meta-llama/llama-guard-4-12b',
-        'groq:openai/gpt-oss-120b',
-        'groq:openai/gpt-oss-20b',
-        'groq:whisper-large-v3',
-        'groq:whisper-large-v3-turbo',
-        'groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-        'groq:meta-llama/llama-4-scout-17b-16e-instruct',
-        'groq:meta-llama/llama-prompt-guard-2-22m',
-        'groq:meta-llama/llama-prompt-guard-2-86m',
-        'groq:moonshotai/kimi-k2-instruct-0905',
-        'groq:openai/gpt-oss-safeguard-20b',
-        'groq:playai-tts',
-        'groq:playai-tts-arabic',
-        'groq:qwen/qwen-3-32b',
-        'heroku:claude-3-5-haiku',
-        'heroku:claude-3-5-sonnet-latest',
-        'heroku:claude-3-7-sonnet',
-        'heroku:claude-3-haiku',
-        'heroku:claude-4-5-haiku',
-        'heroku:claude-4-5-sonnet',
-        'heroku:claude-4-6-sonnet',
-        'heroku:claude-4-sonnet',
-        'heroku:claude-opus-4-5',
-        'heroku:claude-opus-4-6',
-        'heroku:deepseek-v3-2',
-        'heroku:glm-4-7',
-        'heroku:glm-4-7-flash',
-        'heroku:gpt-oss-120b',
-        'heroku:kimi-k2-5',
-        'heroku:kimi-k2-thinking',
-        'heroku:minimax-m2',
-        'heroku:minimax-m2-1',
-        'heroku:qwen3-235b',
-        'heroku:qwen3-coder-480b',
-        'heroku:nova-2-lite',
-        'heroku:nova-lite',
-        'heroku:nova-pro',
-        'huggingface:deepseek-ai/DeepSeek-R1',
-        'huggingface:meta-llama/Llama-3.3-70B-Instruct',
-        'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
-        'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
-        'huggingface:Qwen/Qwen2.5-72B-Instruct',
-        'huggingface:Qwen/Qwen3-235B-A22B',
-        'huggingface:Qwen/Qwen3-32B',
-        'huggingface:Qwen/QwQ-32B',
-        'mistral:codestral-latest',
-        'mistral:mistral-large-latest',
-        'mistral:mistral-moderation-latest',
-        'mistral:mistral-small-latest',
-        'moonshotai:kimi-k2-0711-preview',
-        'moonshotai:kimi-latest',
-        'moonshotai:kimi-thinking-preview',
-        'moonshotai:moonshot-v1-128k-vision-preview',
-        'moonshotai:moonshot-v1-128k',
-        'moonshotai:moonshot-v1-32k-vision-preview',
-        'moonshotai:moonshot-v1-32k',
-        'moonshotai:moonshot-v1-8k-vision-preview',
-        'moonshotai:moonshot-v1-8k',
-        'openai:computer-use-preview-2025-03-11',
-        'openai:computer-use-preview',
-        'openai:gpt-3.5-turbo-0125',
-        'openai:gpt-3.5-turbo-0301',
-        'openai:gpt-3.5-turbo-0613',
-        'openai:gpt-3.5-turbo-1106',
-        'openai:gpt-3.5-turbo-16k-0613',
-        'openai:gpt-3.5-turbo-16k',
-        'openai:gpt-3.5-turbo',
-        'openai:gpt-4-0314',
-        'openai:gpt-4-0613',
-        'openai:gpt-4-turbo-2024-04-09',
-        'openai:gpt-4-turbo',
-        'openai:gpt-4.1-2025-04-14',
-        'openai:gpt-4.1-mini-2025-04-14',
-        'openai:gpt-4.1-mini',
-        'openai:gpt-4.1-nano-2025-04-14',
-        'openai:gpt-4.1-nano',
-        'openai:gpt-4.1',
-        'openai:gpt-4',
-        'openai:gpt-4o-2024-05-13',
-        'openai:gpt-4o-2024-08-06',
-        'openai:gpt-4o-2024-11-20',
-        'openai:gpt-4o-audio-preview-2024-12-17',
-        'openai:gpt-4o-audio-preview-2025-06-03',
-        'openai:gpt-4o-audio-preview',
-        'openai:gpt-4o-mini-2024-07-18',
-        'openai:gpt-4o-mini-audio-preview-2024-12-17',
-        'openai:gpt-4o-mini-audio-preview',
-        'openai:gpt-4o-mini-search-preview-2025-03-11',
-        'openai:gpt-4o-mini-search-preview',
-        'openai:gpt-4o-mini',
-        'openai:gpt-4o-search-preview-2025-03-11',
-        'openai:gpt-4o-search-preview',
-        'openai:gpt-4o',
-        'openai:gpt-5-2025-08-07',
-        'openai:gpt-5-chat-latest',
-        'openai:gpt-5-codex',
-        'openai:gpt-5-mini-2025-08-07',
-        'openai:gpt-5-mini',
-        'openai:gpt-5-nano-2025-08-07',
-        'openai:gpt-5-nano',
-        'openai:gpt-5-pro-2025-10-06',
-        'openai:gpt-5-pro',
-        'openai:gpt-5.1-2025-11-13',
-        'openai:gpt-5.1-chat-latest',
-        'openai:gpt-5.1-codex-max',
-        'openai:gpt-5.1-codex',
-        'openai:gpt-5.1',
-        'openai:gpt-5.2-2025-12-11',
-        'openai:gpt-5.2-chat-latest',
-        'openai:gpt-5.2-pro-2025-12-11',
-        'openai:gpt-5.2-pro',
-        'openai:gpt-5.2',
-        'openai:gpt-5.3-chat-latest',
-        'openai:gpt-5.4-mini-2026-03-17',
-        'openai:gpt-5.4-mini',
-        'openai:gpt-5.4-nano-2026-03-17',
-        'openai:gpt-5.4-nano',
-        'openai:gpt-5.4',
-        'openai:gpt-5',
-        'openai:o1-2024-12-17',
-        'openai:o1-pro-2025-03-19',
-        'openai:o1-pro',
-        'openai:o1',
-        'openai:o3-2025-04-16',
-        'openai:o3-deep-research-2025-06-26',
-        'openai:o3-deep-research',
-        'openai:o3-mini-2025-01-31',
-        'openai:o3-mini',
-        'openai:o3-pro-2025-06-10',
-        'openai:o3-pro',
-        'openai:o3',
-        'openai:o4-mini-2025-04-16',
-        'openai:o4-mini-deep-research-2025-06-26',
-        'openai:o4-mini-deep-research',
-        'openai:o4-mini',
-        'test',
-    ],
-)
-"""Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
 
-`KnownModelName` is provided as a concise way to specify a model.
-"""
+@cache
+def known_model_names() -> tuple[str, ...]:
+    """Return every model name known to [`KnownModelName`][pydantic_ai.models.KnownModelName].
+
+    This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
+    the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
+    not part of the public API and would break if the alias were ever recomposed.
+    """
+    return tuple(get_literal_values(KnownModelName.__value__, unpack_type_aliases='eager'))
+
 
 OpenAIChatCompatibleProvider = TypeAliasType(
     'OpenAIChatCompatibleProvider',
@@ -469,7 +91,6 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'deepseek',
         'fireworks',
         'github',
-        'grok',
         'heroku',
         'litellm',
         'moonshotai',
@@ -488,7 +109,6 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'azure',
         'deepseek',
         'fireworks',
-        'grok',
         'nebius',
         'openrouter',
         'ovhcloud',
@@ -503,7 +123,7 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list[AbstractBuiltinTool])
+    native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
@@ -594,7 +214,7 @@ class Model(ABC, Generic[InterfaceClient]):
     @property
     def provider(self) -> Provider[InterfaceClient] | None:
         """The provider for this model, if any."""
-        return self._provider
+        return getattr(self, '_provider', None)
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
@@ -661,7 +281,7 @@ class Model(ABC, Generic[InterfaceClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
         # This method is not required, but you need to implement it if you want to support streamed responses
         raise NotImplementedError(f'Streamed requests not supported by this {self.__class__.__name__}')
@@ -676,7 +296,7 @@ class Model(ABC, Generic[InterfaceClient]):
         In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
         for vendor/model-specific reasons.
         """
-        if transformer := self.profile.json_schema_transformer:
+        if transformer := self.profile.get('json_schema_transformer'):
             model_request_parameters = replace(
                 model_request_parameters,
                 function_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.function_tools],
@@ -711,20 +331,22 @@ class Model(ABC, Generic[InterfaceClient]):
         # Resolve unified thinking setting and strip from model_settings
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
-            if self.profile.supports_thinking or self.profile.thinking_always_enabled:
-                if not (thinking_value is False and self.profile.thinking_always_enabled):
+            supports_thinking = self.profile.get('supports_thinking', False)
+            thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
+            if supports_thinking or thinking_always_enabled:
+                if not (thinking_value is False and thinking_always_enabled):
                     params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
-        if builtin_tools := params.builtin_tools:
-            # Deduplicate builtin tools
+        if native_tools := params.native_tools:
+            # Deduplicate native tools
             params = replace(
                 params,
-                builtin_tools=list({tool.unique_id: tool for tool in builtin_tools}.values()),
+                native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
-        params = params.with_default_output_mode(self.profile.default_structured_output_mode)
+        params = params.with_default_output_mode(self.profile.get('default_structured_output_mode', 'tool'))
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
@@ -737,9 +359,15 @@ class Model(ABC, Generic[InterfaceClient]):
         # Set default prompted output template
         if (
             params.output_mode == 'prompted'
-            or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
+            or (
+                params.output_mode == 'native'
+                and self.profile.get('native_output_requires_schema_in_instructions', False)
+            )
         ) and params.prompted_output_template is None:
-            params = replace(params, prompted_output_template=self.profile.prompted_output_template)
+            params = replace(
+                params,
+                prompted_output_template=self.profile.get('prompted_output_template', DEFAULT_PROMPTED_OUTPUT_TEMPLATE),
+            )
 
         # Append prompted_output_instructions to instruction_parts so models that use structured
         # instruction parts (for per-part system messages or cache placement) also get them.
@@ -749,45 +377,131 @@ class Model(ABC, Generic[InterfaceClient]):
             params = replace(params, instruction_parts=InstructionPart.sorted(parts))
 
         # Check if output mode is supported
-        if params.output_mode == 'native' and not self.profile.supports_json_schema_output:
+        if params.output_mode == 'native' and not self.profile.get('supports_json_schema_output', False):
             raise UserError('Native structured output is not supported by this model.')
-        if params.output_mode == 'tool' and not self.profile.supports_tools:
+        if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
             raise UserError('Tool output is not supported by this model.')
-        if params.allow_image_output and not self.profile.supports_image_output:
+        if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
-        # Check builtin tools and handle fallback swap
-        if params.builtin_tools or any(t.prefer_builtin for t in params.function_tools):
-            supported_types = self.profile.supported_builtin_tools
-
-            supported_builtins = [t for t in params.builtin_tools if isinstance(t, tuple(supported_types))]
-            unsupported_builtins = [t for t in params.builtin_tools if not isinstance(t, tuple(supported_types))]
-
-            supported_ids = {t.unique_id for t in supported_builtins}
-            unsupported_ids = {t.unique_id for t in unsupported_builtins}
-            fallback_ids = {t.prefer_builtin for t in params.function_tools if t.prefer_builtin}
-
-            # Error only for unsupported builtins that have no local fallback
-            without_fallback = unsupported_ids - fallback_ids
-            if without_fallback:
-                unsupported_names = [type(t).__name__ for t in unsupported_builtins if t.unique_id in without_fallback]
-                supported_names = [t.__name__ for t in supported_types]
-                raise UserError(
-                    f'Builtin tool(s) {unsupported_names} not supported by this model. '
-                    f'Supported: {supported_names}. '
-                    f'To use these tools with this model, provide a local fallback via '
-                    f'BuiltinOrLocalTool(builtin=..., local=...) or the `local` parameter '
-                    f'of the capability (e.g. ImageGeneration(local=my_func)).'
-                )
-
-            # Remove local fallback tools whose preferred builtin IS supported (model handles natively)
-            # Remove unsupported builtins (their local fallbacks stay)
-            function_tools = [
-                t for t in params.function_tools if not t.prefer_builtin or t.prefer_builtin not in supported_ids
-            ]
-            params = replace(params, builtin_tools=supported_builtins, function_tools=function_tools)
+        # Check native tools and handle fallback swap
+        if params.native_tools or any(t.unless_native or t.with_native for t in params.function_tools):
+            params = self._resolve_native_tool_swap(params)
 
         return model_settings, params
+
+    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Pre-process the message history before it's handed to the adapter's message-prep step.
+
+        Currently translates any typed `NativeToolSearch*Part` instances carried over from a
+        prior native turn (e.g. Anthropic / OpenAI Responses) into the local-shape
+        `ToolSearch*Part` instances when the active model's profile doesn't support
+        `ToolSearchTool` — splitting the single `ModelResponse(call+return)` carrying the
+        inline server-side result into `ModelResponse(call) + ModelRequest(return)` so the
+        adapter sees a normal function-call exchange against `search_tools`.
+
+        Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
+        the profile's `supports_inline_system_prompts` is `False`.
+
+        Subclasses normally don't need to override this; the framework calls it on the
+        agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
+        sees a homogeneous shape regardless of which provider produced the prior turn.
+        """
+        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+            from .._tool_search import synthesize_local_tool_search_messages
+
+            messages = synthesize_local_tool_search_messages(messages)
+
+        if not self.profile.get('supports_inline_system_prompts', False):
+            messages = _wrap_non_leading_system_prompts(messages)
+
+        return messages
+
+    def _resolve_native_tool_swap(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """Swap native tools and function-tool fallbacks/corpus based on profile support.
+
+        Four rules drive the per-tool filter:
+
+        1. `unless_native` matches a supported native tool → drop from wire.
+        2. `with_native` matches a supported native tool → keep on wire; the adapter
+           applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
+           `defer_loading` flag for `ToolSearchTool`).
+        3. `with_native` matches an *unsupported* native tool AND `defer_loading=True`
+           → drop from wire (the corpus member is currently undiscovered, so the model has
+           no way to call it on this provider).
+        4. Otherwise → keep.
+
+        On top of the four-rule filter, two narrower drops apply, kept independent:
+
+        * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
+          optional native tool is silently dropped (no error raised). It does NOT govern the
+          corpus-empty drop below.
+        * The corpus-empty drop is specific to the framework-managed tool-search native tool's
+          corpus-management role: an *optional* `ToolSearchTool` is dropped when its
+          corpus ends up empty after filtering, since sending it with no deferred tools
+          to discover would waste a tool slot. A non-optional `ToolSearchTool` stays —
+          the user asked explicitly. Other native tools don't have a corpus and aren't subject
+          to this drop, so making `optional` a base-class field doesn't accidentally cause
+          e.g. `WebSearchTool(optional=True)` to be dropped here.
+        """
+        supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+
+        supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
+        unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
+
+        supported_ids = {t.unique_id for t in supported_natives}
+        unsupported_ids = {t.unique_id for t in unsupported_natives}
+        optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
+        fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+
+        without_fallback = unsupported_ids - fallback_ids - optional_ids
+        if without_fallback:
+            unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
+            supported_names = [t.__name__ for t in supported_types]
+            raise UserError(
+                f'Native tool(s) {unsupported_names} not supported by this model. '
+                f'Supported: {supported_names}. '
+                f'To use these tools with this model, provide a local fallback via '
+                f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
+                f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+                f'MCP(local=True), ImageGeneration(local=my_func)). '
+                f'Some capabilities require an optional install group for the local fallback '
+                f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+            )
+
+        tool_search_resolution = _resolve_tool_search_native_for_capability_owned_corpus(
+            supported_natives, params.function_tools
+        )
+        supported_natives = tool_search_resolution.native_tools
+        tool_search_kept_local = tool_search_resolution.keep_search_tools_local
+
+        function_tools: list[ToolDefinition] = []
+        for t in params.function_tools:
+            # Rule 1: drop local fallback when the native tool is supported — except for
+            # `search_tools` when tool search was kept local for capability visibility,
+            # where the local function tool is the callback the client-executed native
+            # surface dispatches to.
+            if t.unless_native and t.unless_native in supported_ids:
+                if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
+                    continue
+            # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
+            if t.with_native and t.with_native not in supported_ids and t.defer_loading:
+                continue
+            # Rules 2 + 4: keep.
+            function_tools.append(t)
+
+        # Drop optional `ToolSearchTool` whose managed corpus is empty after filtering —
+        # nothing to discover, sending it would waste a tool slot. The `isinstance` check
+        # confines this to ToolSearchTool specifically: other native tools don't carry a corpus,
+        # so making `optional` a base-class field doesn't accidentally drop e.g.
+        # `WebSearchTool(optional=True)` here on absence of dependents.
+        remaining_corpus_ids = {t.with_native for t in function_tools if t.with_native}
+        supported_natives = [
+            t
+            for t in supported_natives
+            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in remaining_corpus_ids
+        ]
+        return replace(params, native_tools=supported_natives, function_tools=function_tools)
 
     @property
     @abstractmethod
@@ -832,8 +546,8 @@ class Model(ABC, Generic[InterfaceClient]):
         return ' '.join(result)
 
     @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractBuiltinTool]]:
-        """Return the set of builtin tool types this model class can handle.
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Return the set of native tool types this model class can handle.
 
         Subclasses should override this to reflect their actual capabilities.
         Default is empty set - subclasses must explicitly declare support.
@@ -844,26 +558,42 @@ class Model(ABC, Generic[InterfaceClient]):
     def profile(self) -> ModelProfile:
         """The model profile.
 
-        We use this to compute the intersection of the profile's supported_builtin_tools
-        and the model's implemented tools, ensuring model.profile.supported_builtin_tools
-        is the single source of truth for what builtin tools are actually usable.
+        Resolution order (later layers override earlier ones):
+          1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
+          2. The provider's `model_profile(model_name)` result — provider-specific defaults
+             for this model.
+          3. The user's `profile=` argument — partial dict merged on top, OR a callable
+             `(default) -> profile` for full control.
+
+        After resolution we compute the intersection of the profile's `supported_native_tools`
+        and the model class's implemented tools, ensuring `model.profile['supported_native_tools']`
+        is the single source of truth for what's actually usable.
         """
-        _profile = self._profile
-        if callable(_profile):
-            _profile = _profile(self.model_name)
+        # Step 1+2: provider default merged with base default
+        provider_profile: ModelProfile = {}
+        if (provider := self.provider) is not None:
+            provider_profile = provider.model_profile(self.model_name) or {}
+        resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
-        if _profile is None:
-            _profile = DEFAULT_PROFILE
+        # Step 3: user override
+        user = self._profile
+        if user is None:
+            pass
+        elif callable(user):
+            # New v2 form: (default profile) -> final profile
+            resolved = user(resolved)
+        else:
+            # Partial dict — merge on top
+            resolved = merge_profile(resolved, user)
 
-        # Compute intersection: profile's allowed tools & model's implemented tools
-        model_supported = self.__class__.supported_builtin_tools()
-        profile_supported = _profile.supported_builtin_tools
+        # Step 4: native tools intersection — profile's allowed tools & model's implemented tools
+        model_supported = self.__class__.supported_native_tools()
+        profile_supported = resolved.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         effective_tools = profile_supported & model_supported
-
         if effective_tools != profile_supported:
-            _profile = replace(_profile, supported_builtin_tools=effective_tools)
+            resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
-        return _profile
+        return resolved
 
     @property
     @abstractmethod
@@ -882,65 +612,13 @@ class Model(ABC, Generic[InterfaceClient]):
         """The base URL for the provider API, if available."""
         return None
 
-    @staticmethod
-    def _get_instructions(
-        messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
-    ) -> str | None:
-        """Get the joined instructions string for the current request.
-
-        When `model_request_parameters` is provided (normal model request flow), returns
-        the joined content of `instruction_parts` which already includes prompted output
-        instructions and is properly sorted.
-
-        Falls back to reading `ModelRequest.instructions` from message history when
-        `model_request_parameters` is not available (e.g. OTel span attributes).
-        """
-        if model_request_parameters:
-            parts = Model._get_instruction_parts(messages, model_request_parameters)
-            if parts:
-                return InstructionPart.join(parts)
-
-        # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)
-        #
-        # Get instructions from the first ModelRequest found when iterating messages in reverse.
-        # In the case that a "mock" request was generated to include a tool-return part for a result tool,
-        # we want to use the instructions from the second-to-most-recent request (which should correspond to the
-        # original request that generated the response that resulted in the tool-return part).
-        instructions = None
-
-        last_two_requests: list[ModelRequest] = []
-        for message in reversed(messages):
-            if isinstance(message, ModelRequest):
-                last_two_requests.append(message)
-                if len(last_two_requests) == 2:
-                    break
-                if message.instructions is not None:
-                    instructions = message.instructions
-                    break
-
-        # If we don't have two requests, and we didn't already return instructions, there are definitely not any:
-        if instructions is None and len(last_two_requests) == 2:
-            most_recent_request = last_two_requests[0]
-            second_most_recent_request = last_two_requests[1]
-
-            # If we've gotten this far and the most recent request consists of only tool-return parts or retry-prompt
-            # parts, we use the instructions from the second-to-most-recent request. This is necessary because when
-            # handling result tools, we generate a "mock" ModelRequest with a tool-return part for it, and that
-            # ModelRequest will not have the relevant instructions from the agent.
-
-            # While it's possible that you could have a message history where the most recent request has only tool
-            # returns, I believe there is no way to achieve that would _change_ the instructions without manually
-            # crafting the most recent message. That might make sense in principle for some usage pattern, but it's
-            # enough of an edge case that I think it's not worth worrying about, since you can work around this by
-            # inserting another ModelRequest with no parts at all immediately before the request that has the tool
-            # calls (that works because we only look at the two most recent ModelRequests here).
-
-            # If you have a use case where this causes pain, please open a GitHub issue and we can discuss alternatives.
-
-            if all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent_request.parts):
-                instructions = second_most_recent_request.instructions
-
-        return instructions
+    def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
+        """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
+        if item.provider_name != self.system:
+            raise UserError(
+                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '
+                f'Expected `provider_name` to be `{self.system!r}`.'
+            )
 
     @staticmethod
     def _get_instruction_parts(
@@ -956,9 +634,9 @@ class Model(ABC, Generic[InterfaceClient]):
             return model_request_parameters.instruction_parts or None
 
         # Fallback: synthesize from message history for direct model.request() callers.
-        # Mirrors the last-two-requests logic from _get_instructions: if the most recent
-        # request only has tool-return/retry-prompt parts (a "mock" request for result tools),
-        # use the instructions from the second-to-most-recent request.
+        # Mirrors the last-two-requests logic from `pydantic_ai._instrumentation.get_instructions`:
+        # if the most recent request only has tool-return/retry-prompt parts (a "mock" request
+        # for result tools), use the instructions from the second-to-most-recent request.
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -992,10 +670,19 @@ class StreamedResponse(ABC):
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
 
-    _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
     _cancelled: bool = field(default=False, init=False)
+    _finished: bool = field(default=False, init=False)
+
+    @cached_property
+    def _parts_manager(self) -> ModelResponsePartsManager:
+        # Built lazily so subclasses don't need to remember `super().__post_init__()`.
+        # `model_request_parameters` is handed in so streamed `ToolCallPart`s auto-promote
+        # to their typed subclasses (via `ToolDefinition.tool_kind`) from the first
+        # `PartStartEvent` — consumers see typed parts throughout the stream rather than
+        # only after a post-stream pass.
+        return ModelResponsePartsManager(model_request_parameters=self.model_request_parameters)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -1073,6 +760,14 @@ class StreamedResponse(ABC):
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
                         raise
+                else:
+                    # Only natural `StopAsyncIteration` flips `_finished`. Early
+                    # `break` / `aclose()` (raising `GeneratorExit` at the suspended
+                    # `yield`) and any in-flight exception leave `_finished=False`
+                    # so `get()` reports the truncated response as `'incomplete'`
+                    # rather than silently stamping it `'complete'`. The cancel
+                    # branch above explicitly sets `_cancelled` (→ `'interrupted'`).
+                    self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(
                 iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
@@ -1090,6 +785,10 @@ class StreamedResponse(ABC):
         if self.cancelled:
             return
         self._cancelled = True
+        # A stream that finished naturally stays 'complete': get() checks _finished
+        # before _cancelled, and there's no live connection left to tear down.
+        if self._finished:
+            return
         await self.close_stream()
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
@@ -1116,7 +815,7 @@ class StreamedResponse(ABC):
             'This model class must override `close_stream()` to support streaming cancellation.'
         )
 
-    # TODO: (v2) We should not have public private methods which need to be overwritten.
+    # TODO: We should not have public private methods which need to be overwritten.
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -1132,20 +831,26 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
+        if self._finished:
+            state: ModelResponseState = 'complete'
+        elif self._cancelled:
+            state = 'interrupted'
+        else:
+            state = 'incomplete'
         return ModelResponse(
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
-            usage=self.usage(),
+            usage=self._usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
-            state='interrupted' if self._cancelled else 'complete',
+            state=state,
         )
 
-    # TODO (v2): Make this a property
+    @property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
@@ -1205,7 +910,7 @@ def check_allow_model_requests() -> None:
 
 
 @contextmanager
-def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
+def override_allow_model_requests(allow_model_requests: bool) -> Generator[None]:
     """Context manager to temporarily override [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS].
 
     Args:
@@ -1220,48 +925,21 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-_LEGACY_MODEL_PREFIXES: dict[str, str] = {
-    'gpt': 'openai',
-    'o1': 'openai',
-    'o3': 'openai',
-    'claude': 'anthropic',
-    'gemini': 'google-gla',
-}
-"""Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
-
-
 def parse_model_id(model: str) -> tuple[str | None, str]:
     """Parse a model id string into its provider and model name components.
 
-    Handles both the modern `provider:model` format and legacy model names
-    that start with known prefixes (e.g., `gpt-4`, `claude-3`).
-
-    Emits a `DeprecationWarning` when a legacy prefix-based model name is used.
-
     Args:
-        model: A model identifier string, either `provider:model_name` or a legacy
-            prefix-based name.
+        model: A model identifier string in the form `provider:model_name`.
 
     Returns:
-        A tuple of `(provider_name, model_name)`. If the provider can't be inferred,
-        returns `(None, model)` so callers can decide how to handle unknown providers.
+        A tuple of `(provider_name, model_name)`. If the model string contains no
+        `provider:` prefix, returns `(None, model)` so callers can decide how to
+        handle the unknown provider.
     """
     if ':' in model:
         provider_name, model_name = model.split(':', maxsplit=1)
         return provider_name, model_name
 
-    # Legacy model names without provider prefix
-    for prefix, provider_name in _LEGACY_MODEL_PREFIXES.items():
-        if model.startswith(prefix):
-            warnings.warn(
-                f'Specifying a model name without a provider prefix is deprecated. '
-                f"Instead of {model!r}, use '{provider_name}:{model}'.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return provider_name, model
-
-    # Unknown prefix: let callers decide how to handle this case.
     return None, model
 
 
@@ -1272,8 +950,8 @@ def infer_model_profile(model: str) -> ModelProfile:
     Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
 
     Note: This returns the raw provider profile **without** intersecting with
-    `Model.supported_builtin_tools()`, unlike `Model.profile`. This means the returned
-    profile may claim support for builtin tools that a specific `Model` subclass doesn't
+    `Model.supported_native_tools()`, unlike `Model.profile`. This means the returned
+    profile may claim support for native tools that a specific `Model` subclass doesn't
     implement. This is acceptable for best-effort scenarios (e.g. `TemporalModel` with
     unregistered model strings) where the actual `Model` class isn't available.
 
@@ -1320,13 +998,6 @@ def infer_model(  # noqa: C901
     if provider_name is None:
         raise UserError(f'Unknown model: {model}')
 
-    if provider_name == 'vertexai':  # pragma: no cover
-        warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
-            DeprecationWarning,
-        )
-        provider_name = 'google-vertex'
-
     provider = provider_factory(provider_name)
 
     model_kind = provider_name
@@ -1349,15 +1020,15 @@ def infer_model(  # noqa: C901
         from .ollama import OllamaModel
 
         return OllamaModel(model_name, provider=provider)
-    elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
-        from .openai import OpenAIChatModel
-
-        return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind == 'openai-responses':
+    elif model_kind in ('openai', 'openai-responses'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex'):
+    elif model_kind in ('openai-chat', *get_args(OpenAIChatCompatibleProvider.__value__)):
+        from .openai import OpenAIChatModel
+
+        return OpenAIChatModel(model_name, provider=provider)
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
@@ -1406,14 +1077,6 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
-
-
-@deprecated('`cached_async_http_client` is deprecated, use `create_async_http_client` instead.')
-def cached_async_http_client(
-    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
-    """Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
-    return create_async_http_client(timeout=timeout, connect=connect)
 
 
 DataT = TypeVar('DataT', str, bytes)
@@ -1542,6 +1205,62 @@ def _customize_output_object(transformer: type[JsonSchemaTransformer], output_ob
     )
 
 
+@dataclass
+class _ToolSearchNativeResolution:
+    native_tools: list[AbstractNativeTool]
+    keep_search_tools_local: bool
+
+
+def _resolve_tool_search_native_for_capability_owned_corpus(
+    supported_natives: Sequence[AbstractNativeTool], function_tools: Sequence[ToolDefinition]
+) -> _ToolSearchNativeResolution:
+    """Resolve tool search's native mode when a deferred capability owns a corpus tool.
+
+    Provider-side tool search (Anthropic `bm25`/`regex`, OpenAI server-managed `tool_search`)
+    is a black box: it indexes whatever we send and returns matches. It can't honor "this tool
+    is only visible after its owning capability has been loaded." Our local search loop in
+    `ToolSearchToolset._search_tools` *can* — it filters the corpus by
+    `ctx.available_capability_ids`. So whenever a capability-owned tool sits in the corpus,
+    search must run client-side or hidden tools will leak.
+
+    Two switches make that happen: (1) flip `ToolSearchTool(strategy=None)` to `'custom'` so
+    the adapter wires the client-executed native surface (Anthropic tool-reference blocks,
+    OpenAI `execution='client'`) which dispatches into our local `search_tools` callback;
+    (2) the caller keeps `search_tools` in the request parameters — that callback is what
+    the client-executed surface invokes. Adapters may still render that callback as a
+    native client-executed tool-search item rather than as a regular function tool on the
+    provider wire. Named-native strategies (`'bm25'`/`'regex'`) have no client-executed
+    equivalent, so we raise rather than silently substitute a different algorithm.
+    """
+    capability_owns_corpus = any(
+        t.with_native == ToolSearchTool.kind
+        and (t.metadata or {}).get(_deferred_capabilities.DEFERRED_CAPABILITY_TOOL_METADATA_KEY) is True
+        for t in function_tools
+    )
+    if not capability_owns_corpus:
+        return _ToolSearchNativeResolution(list(supported_natives), keep_search_tools_local=False)
+
+    resolved_natives: list[AbstractNativeTool] = []
+    keep_search_tools_local = False
+    for t in supported_natives:
+        if not isinstance(t, ToolSearchTool):
+            resolved_natives.append(t)
+            continue
+        if t.strategy not in (None, 'custom'):
+            raise UserError(
+                f'`ToolSearch(strategy={t.strategy!r})` is incompatible with deferred-loading '
+                "capabilities. Server-side strategies can't "
+                "honor capability gating and would reveal tools whose owning capability hasn't "
+                'been loaded yet. Use `strategy=None` (auto: client-executed local search when a '
+                "deferred capability is present), `strategy='keywords'`, or a custom callable."
+            )
+        keep_search_tools_local = True
+        if t.strategy is None:
+            t = replace(t, strategy='custom')
+        resolved_natives.append(t)
+    return _ToolSearchNativeResolution(resolved_natives, keep_search_tools_local=keep_search_tools_local)
+
+
 def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
     """Resolve return schemas: clear on tools that haven't opted in, inject into descriptions for non-native models.
 
@@ -1549,7 +1268,7 @@ def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfil
     return schemas keep the schema as-is; other models get it injected into the tool description.
     Tools that haven't opted in have their `return_schema` cleared.
     """
-    inject = not profile.supports_tool_return_schema
+    inject = not profile.get('supports_tool_return_schema', False)
     resolved: list[ToolDefinition] = []
     changed = False
     for td in params.function_tools:
@@ -1592,3 +1311,35 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
+
+
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Wrap `SystemPromptPart`s outside the first `ModelRequest` as `<system>`-tagged `UserPromptPart`s.
+
+    `SystemPromptPart`s in the first `ModelRequest` aren't transformed; the provider's `_map_messages` hoists them.
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    first_request_idx = next(
+        (i for i, m in enumerate(messages) if isinstance(m, ModelRequest)),
+        None,
+    )
+    if first_request_idx is None:
+        return messages
+
+    new_messages: list[ModelMessage] = list(messages[: first_request_idx + 1])
+    changed = False
+    for msg in messages[first_request_idx + 1 :]:
+        if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts):
+            new_parts = [
+                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
+                if isinstance(part, SystemPromptPart)
+                else part
+                for part in msg.parts
+            ]
+            new_messages.append(replace(msg, parts=new_parts))
+            changed = True
+        else:
+            new_messages.append(msg)
+
+    return new_messages if changed else messages

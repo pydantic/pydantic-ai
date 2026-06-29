@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import inspect
-import json
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
-from opentelemetry.trace import StatusCode, Tracer
 from pydantic import ValidationError
-from typing_extensions import deprecated
 
 from . import messages as _messages
-from ._instrumentation import InstrumentationNames, get_agent_run_baggage_attributes
 from ._output import (
     OutputSchema,
     OutputToolset,
@@ -88,7 +84,8 @@ class ToolManager(Generic[AgentDepsT]):
     ctx: RunContext[AgentDepsT] | None = None
     """The agent run context for a specific run step."""
     tools: dict[str, ToolsetTool[AgentDepsT]] | None = None
-    """The cached tools for this run step."""
+    """The cached tools for this run step. Keyed by the name the model calls the tool
+    by (`tool_def.name`)."""
     failed_tools: set[str] = field(default_factory=set[str])
     """Names of tools that failed in this run step."""
     default_max_retries: int = 1
@@ -96,7 +93,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     @classmethod
     @contextmanager
-    def parallel_execution_mode(cls, mode: ParallelExecutionMode = 'parallel') -> Iterator[None]:
+    def parallel_execution_mode(cls, mode: ParallelExecutionMode = 'parallel') -> Generator[None]:
         """Set the parallel execution mode during the context.
 
         Args:
@@ -110,14 +107,6 @@ class ToolManager(Generic[AgentDepsT]):
             yield
         finally:
             _parallel_execution_mode_ctx_var.reset(token)
-
-    @classmethod
-    @contextmanager
-    @deprecated('Use `parallel_execution_mode("sequential")` instead.')
-    def sequential_tool_calls(cls) -> Iterator[None]:
-        """Run tool calls sequentially during the context."""
-        with cls.parallel_execution_mode('sequential'):
-            yield
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
@@ -154,30 +143,31 @@ class ToolManager(Generic[AgentDepsT]):
 
         return [tool.tool_def for tool in self.tools.values()]
 
-    def get_parallel_execution_mode(self, calls: list[ToolCallPart]) -> ParallelExecutionMode:
-        """Get the effective parallel execution mode for a list of tool calls.
+    def get_parallel_execution_mode(self) -> ParallelExecutionMode:
+        """Get the run-scoped parallel execution mode set via [`parallel_execution_mode`][pydantic_ai.tool_manager.ToolManager.parallel_execution_mode].
 
-        This takes into account both the context variable and whether any tool
-        has `sequential=True` set. If any tool requires sequential execution,
-        returns `'sequential'` regardless of the context variable.
+        Per-tool `sequential=True` barriers are applied separately during execution and don't
+        affect this run-scoped mode: a single barrier tool no longer forces the whole batch
+        serial (the v1 behavior). Use `parallel_execution_mode('sequential')` to opt the entire
+        run into serial execution.
         """
-        # Check if any tool requires sequential execution
-        if any(tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))):
-            return 'sequential'
+        return _parallel_execution_mode_ctx_var.get()
 
-        mode = _parallel_execution_mode_ctx_var.get()
+    def is_sequential(self, call: ToolCallPart) -> bool:
+        """Whether a tool call must run as a barrier (`sequential=True`), executing alone.
 
-        return mode
+        Tools emitted before a barrier complete first; the barrier runs by itself; tools emitted
+        after it start only once it finishes. Other tools parallelize around it.
+        """
+        tool_def = self.get_tool_def(call.tool_name)
+        return tool_def is not None and tool_def.sequential
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
         if self.tools is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
-
-        try:
-            return self.tools[name].tool_def
-        except KeyError:
-            return None
+        tool = self.tools.get(name)
+        return tool.tool_def if tool is not None else None
 
     def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
         """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
@@ -367,7 +357,8 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
         if tool is None:
             if self.tools:
-                msg = f'Available tools: {", ".join(f"{n!r}" for n in self.tools)}'
+                available = sorted(self.tools.keys())
+                msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
             else:
                 msg = 'No tools available.'
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
@@ -474,7 +465,10 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Execute a validated tool call, within a trace span for function tools.
+        """Execute a validated tool call via capability hooks.
+
+        The Instrumentation capability (if present) creates trace spans via its
+        wrap_tool_execute hook.
 
         Args:
             validated: The validation result from validate_tool_call().
@@ -497,13 +491,8 @@ class ToolManager(Generic[AgentDepsT]):
         if self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
-        return await self._execute_function_tool_call(
-            validated,
-            tracer=self.ctx.tracer,
-            include_content=self.ctx.trace_include_content,
-            instrumentation_version=self.ctx.instrumentation_version,
-            usage=self.ctx.usage,
-            wrap_validation_errors=wrap_validation_errors,
+        return await self._execute_tool_call_impl(
+            validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors
         )
 
     # --- Output tool methods (output hooks, no tool hooks) ---
@@ -771,94 +760,6 @@ class ToolManager(Generic[AgentDepsT]):
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 
         usage.tool_calls += 1
-
-        return tool_result
-
-    async def _execute_function_tool_call(
-        self,
-        validated: ValidatedToolCall[AgentDepsT],
-        *,
-        tracer: Tracer,
-        include_content: bool,
-        instrumentation_version: int,
-        usage: RunUsage,
-        wrap_validation_errors: bool = True,
-    ) -> Any:
-        """Execute a validated function tool call within a trace span.
-
-        See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>.
-        """
-        instrumentation_names = InstrumentationNames.for_version(instrumentation_version)
-        call = validated.call
-
-        span_attributes = {
-            'gen_ai.operation.name': 'execute_tool',
-            'gen_ai.tool.name': call.tool_name,
-            # NOTE: this means `gen_ai.tool.call.id` will be included even if it was generated by pydantic-ai
-            'gen_ai.tool.call.id': call.tool_call_id,
-            **({instrumentation_names.tool_arguments_attr: call.args_as_json_str()} if include_content else {}),
-            **get_agent_run_baggage_attributes(),
-            'logfire.msg': f'running tool: {call.tool_name}',
-            # add the JSON schema so these attributes are formatted nicely in Logfire
-            'logfire.json_schema': json.dumps(
-                {
-                    'type': 'object',
-                    'properties': {
-                        **(
-                            {
-                                instrumentation_names.tool_arguments_attr: {'type': 'object'},
-                                instrumentation_names.tool_result_attr: {'type': 'object'},
-                            }
-                            if include_content
-                            else {}
-                        ),
-                        'gen_ai.tool.name': {},
-                        'gen_ai.tool.call.id': {},
-                    },
-                }
-            ),
-        }
-
-        with tracer.start_as_current_span(
-            instrumentation_names.get_tool_span_name(call.tool_name),
-            attributes=span_attributes,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span:
-            try:
-                tool_result = await self._execute_tool_call_impl(
-                    validated, usage=usage, wrap_validation_errors=wrap_validation_errors
-                )
-                if include_content and span.is_recording():
-                    span.set_attribute(
-                        instrumentation_names.tool_result_attr,
-                        tool_result
-                        if isinstance(tool_result, str)
-                        else _messages.tool_return_ta.dump_json(tool_result).decode(),
-                    )
-            except (CallDeferred, ApprovalRequired) as exc:
-                span.set_attribute(instrumentation_names.tool_deferral_name_attr, type(exc).__name__)
-                if include_content and span.is_recording() and exc.metadata is not None:
-                    try:
-                        metadata_str = json.dumps(exc.metadata)
-                    except (TypeError, ValueError):
-                        metadata_str = repr(exc.metadata)
-                    span.set_attribute(instrumentation_names.tool_deferral_metadata_attr, metadata_str)
-                if instrumentation_version < 5:
-                    span.record_exception(exc, escaped=True)
-                    span.set_status(StatusCode.ERROR)
-                raise
-            except ToolRetryError as e:
-                part = e.tool_retry
-                if include_content and span.is_recording():
-                    span.set_attribute(instrumentation_names.tool_result_attr, part.model_response())
-                span.record_exception(e, escaped=True)
-                span.set_status(StatusCode.ERROR)
-                raise
-            except BaseException as e:
-                span.record_exception(e, escaped=True)
-                span.set_status(StatusCode.ERROR)
-                raise
 
         return tool_result
 

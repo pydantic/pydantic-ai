@@ -80,6 +80,28 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'anyio',
             'sniffio',
             'httpcore',
+            # `certifi` is imported lazily by `httpx`/`ssl` when a client builds its TLS context. A
+            # model constructed inside the workflow (e.g. a `gateway/` model resolved via
+            # `infer_model`) creates its own HTTP client there, so without passing `certifi` through
+            # alongside the rest of the HTTP stack Temporal warns that it was "imported after initial
+            # workflow load" (a hard error under `filterwarnings=error`).
+            'certifi',
+            # `fastmcp` (and the `mcp` SDK it transitively imports) calls `Path.expanduser` at
+            # import time when resolving its config directory — restricted by the workflow
+            # sandbox. Safe to pass through: the call only happens once at module init.
+            'fastmcp',
+            'mcp',
+            # The `anthropic` SDK (>=0.99.0) calls `Path.home()` during client construction to
+            # resolve its credentials/profile config directory (`~/.config/anthropic`) — restricted
+            # by the workflow sandbox. This trips when a model is constructed inside the workflow,
+            # e.g. a `gateway/anthropic:` or `anthropic:` model resolved lazily via `infer_model`.
+            # Safe to pass through: a deterministic, read-only config lookup.
+            'anthropic',
+            # The `google-genai` SDK lazily imports `google.auth` submodules (e.g.
+            # `google.auth.aio.credentials`) while constructing its client, which Temporal flags as
+            # "imported after initial workflow load" when a `gateway/google-cloud:` (or `google-*:`)
+            # model is built inside the workflow.
+            'google.auth',
             # Used by fastmcp via py-key-value-aio
             'beartype',
             # Imported inside `logfire._internal.json_encoder` when running `logfire.info` inside an activity with attributes to serialize
@@ -94,7 +116,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
 class PydanticAIPlugin(SimplePlugin):
     """Temporal client and worker plugin for Pydantic AI."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='PydanticAIPlugin',
             data_converter=_data_converter,
