@@ -458,6 +458,7 @@ def test_logfire(
             'gen_ai.tool.definitions': '[{"type":"function","name":"my_ret","parameters":{"additionalProperties":false,"properties":{"x":{"type":"integer"}},"required":["x"],"type":"object"}}]',
             'logfire.json_schema': IsJson(),
             'gen_ai.conversation.id': IsStr(),
+            'gen_ai.turn.index': 0,
             'logfire.span_type': 'span',
             'gen_ai.agent.name': 'my_agent',
             'gen_ai.agent.call.id': IsStr(),
@@ -3368,6 +3369,32 @@ def test_instrumentation_capability_explicit(
             }
         ]
     )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_instrumentation_model_request_spans_include_turn_index(capfire: CaptureLogfire) -> None:
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    async def my_ret(x: int) -> str:
+        return str(x + 1)
+
+    agent = Agent(
+        model=TestModel(),
+        toolsets=[toolset],
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('{"my_ret":"1"}')
+
+    chat_spans = [
+        span
+        for span in capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+        if span['name'] == 'chat test'
+    ]
+    assert [span['name'] for span in chat_spans] == ['chat test', 'chat test']
+    assert [span['attributes']['gen_ai.turn.index'] for span in chat_spans] == [0, 1]
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

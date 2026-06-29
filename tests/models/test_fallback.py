@@ -202,6 +202,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     },
                     'logfire.span_type': 'span',
                     'gen_ai.conversation.id': IsStr(),
+                    'gen_ai.turn.index': 0,
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
