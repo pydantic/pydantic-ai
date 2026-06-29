@@ -2194,6 +2194,7 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
 
 
 _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
+_FIRST_CLASS_USAGE_DETAIL_KEYS = frozenset(_COMPACTION_TOKEN_KEYS)
 
 
 def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
@@ -2227,6 +2228,37 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
     return details
 
 
+def _details_from_existing_usage(existing_usage: usage.RequestUsage) -> dict[str, int]:
+    """Reconstruct Anthropic raw usage keys from a filtered `RequestUsage`.
+
+    Streaming deltas can omit fields that were reported by `message_start`, so `_map_usage`
+    needs those raw keys internally even though they are no longer exposed in `details`.
+    """
+    details = existing_usage.details.copy()
+
+    def add_detail(key: str, value: int) -> None:
+        if key not in details and value > 0:
+            details[key] = value
+
+    add_detail(
+        'input_tokens',
+        existing_usage.input_tokens
+        - existing_usage.cache_write_tokens
+        - existing_usage.cache_read_tokens
+        - details.get('compaction_input_tokens', 0),
+    )
+    add_detail('output_tokens', existing_usage.output_tokens - details.get('compaction_output_tokens', 0))
+    add_detail(
+        'cache_creation_input_tokens',
+        existing_usage.cache_write_tokens - details.get('compaction_cache_creation_input_tokens', 0),
+    )
+    add_detail(
+        'cache_read_input_tokens',
+        existing_usage.cache_read_tokens - details.get('compaction_cache_read_input_tokens', 0),
+    )
+    return details
+
+
 def _map_usage(
     message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent,
     provider: str,
@@ -2252,7 +2284,9 @@ def _map_usage(
 
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
-    details = (existing_usage.details if existing_usage else {}) | _extract_usage_details(response_usage)
+    details = (_details_from_existing_usage(existing_usage) if existing_usage else {}) | _extract_usage_details(
+        response_usage
+    )
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
@@ -2268,7 +2302,7 @@ def _map_usage(
         provider=provider,
         provider_url=provider_url,
         provider_fallback='anthropic',
-        details=details,
+        details={k: v for k, v in details.items() if k not in _FIRST_CLASS_USAGE_DETAIL_KEYS},
     )
 
 
