@@ -55,25 +55,26 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
         assert groups == expected
 
 
-async def test_group_by_temporal_delayed_first_item():
-    """Regression test: first item delayed past soft_max_interval should still group with following nearby items.
+async def test_group_by_temporal_first_window_starts_on_first_item():
+    """The debounce window must start when the first item arrives, not when iteration begins.
 
-    Without the fix, group_start_time was initialized to time.monotonic() before the first
-    item arrived, so the debounce window had already elapsed by the time the first item came.
-    This caused the first item to be emitted alone.
+    Regression test for #5946. A slow first item — e.g. the latency before a model's first
+    streamed token — used to have its window measured from iteration start, so the window
+    elapsed before the item arrived and it was emitted in a group of its own. Here the first
+    item is delayed well past the window, yet must still group with a second item that arrives
+    within the window of the first: correct output is `[[1, 2]]`, the bug produced `[[1], [2]]`.
     """
+    interval = 0.05
 
     async def yield_groups() -> AsyncIterator[int]:
-        await asyncio.sleep(0.08)  # first item delayed past the window
+        await asyncio.sleep(interval * 3)  # first item arrives long after iteration started
         yield 1
-        await asyncio.sleep(0.01)  # second item arrives within the window of the first
+        await asyncio.sleep(interval / 5)  # second item arrives well within the first item's window
         yield 2
-        await asyncio.sleep(0.2)
-        yield 3
 
-    async with group_by_temporal(yield_groups(), soft_max_interval=0.04) as groups_iter:
+    async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
         groups: list[list[int]] = [g async for g in groups_iter]
-        assert groups == [[1, 2], [3]]
+        assert groups == [[1, 2]]
 
 
 def test_check_object_json_schema():
