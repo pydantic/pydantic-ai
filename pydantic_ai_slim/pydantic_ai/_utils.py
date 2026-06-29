@@ -67,7 +67,7 @@ if TYPE_CHECKING:
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
-_disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=False)
+_disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
 
 
@@ -79,7 +79,9 @@ def disable_threads() -> Generator[None]:
     being sent to a thread pool via [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync].
 
     This is useful in environments where threading is restricted, such as
-    Temporal workflows which use a sandboxed event loop.
+    Temporal workflows which use a sandboxed event loop. On emscripten,
+    sync callbacks already run inline by default because Python threads are
+    unavailable there.
 
     Yields:
         None
