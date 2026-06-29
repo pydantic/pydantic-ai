@@ -57,6 +57,28 @@ async def test_group_by_temporal(interval: float | None, expected: list[list[int
         assert groups == expected
 
 
+async def test_group_by_temporal_first_window_starts_on_first_item():
+    """The debounce window must start when the first item arrives, not when iteration begins.
+
+    Regression test for #5946. A slow first item — e.g. the latency before a model's first
+    streamed token — used to have its window measured from iteration start, so the window
+    elapsed before the item arrived and it was emitted in a group of its own. Here the first
+    item is delayed well past the window, yet must still group with a second item that arrives
+    within the window of the first: correct output is `[[1, 2]]`, the bug produced `[[1], [2]]`.
+    """
+    interval = 0.05
+
+    async def yield_groups() -> AsyncIterator[int]:
+        await asyncio.sleep(interval * 3)  # first item arrives long after iteration started
+        yield 1
+        await asyncio.sleep(interval / 5)  # second item arrives well within the first item's window
+        yield 2
+
+    async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
+        groups: list[list[int]] = [g async for g in groups_iter]
+        assert groups == [[1, 2]]
+
+
 def test_check_object_json_schema():
     object_schema = {'type': 'object', 'properties': {'a': {'type': 'string'}}}
     assert check_object_json_schema(object_schema) == object_schema
