@@ -3809,6 +3809,11 @@ async def test_adapter_load_messages_with_data_ui_part_in_user_message():
                         text='Hello',
                         state='streaming',
                     ),
+                    DataUIPart(
+                        id='custom-assistant-data',
+                        type='data-custom',
+                        data={'key': 'value'},
+                    ),
                 ],
             ),
         ],
@@ -3917,6 +3922,13 @@ async def test_adapter_dump_messages():
             ],
             id='anthropic-text-plus-following-part',
         ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Hello')]),
+                ModelResponse(parts=[CompactionPart(content='Summary only, no provider metadata.')]),
+            ],
+            id='content-only-no-provider-metadata',
+        ),
     ],
 )
 async def test_adapter_round_trips_compaction_part(original: list[ModelMessage]) -> None:
@@ -3935,7 +3947,7 @@ async def test_adapter_round_trips_compaction_part(original: list[ModelMessage])
         for original_part, reloaded_part in zip(original_msg.parts, reloaded_msg.parts):
             original_ts = getattr(original_part, 'timestamp', None)
             if original_ts is not None and hasattr(reloaded_part, 'timestamp'):
-                reloaded_part.timestamp = original_ts
+                setattr(reloaded_part, 'timestamp', original_ts)
 
     assert reloaded == original
 

@@ -1725,6 +1725,13 @@ def test_dump_load_roundtrip_file_part(original: list[ModelMessage]) -> None:
             ],
             id='anthropic-text-plus-following-part',
         ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Hello')]),
+                ModelResponse(parts=[CompactionPart(content='Summary only, no provider metadata.')]),
+            ],
+            id='content-only-no-provider-metadata',
+        ),
     ],
 )
 def test_dump_load_roundtrip_compaction_part(original: list[ModelMessage]) -> None:
