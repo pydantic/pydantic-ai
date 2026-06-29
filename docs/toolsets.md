@@ -911,6 +911,12 @@ Toolsets for sandboxed code execution help agents run code in a sandboxed enviro
 
 * [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
 
+### Memory
+
+Toolsets that give agents persistent memory across runs:
+
+* [`pydantic-ai-mimir`](https://pypi.org/project/pydantic-ai-mimir/) - `MimirToolset` (an `MCPToolset` subclass) wires up [Mimir](https://github.com/Perseus-Computing-LLC/pydantic-ai-mimir), a local-first, encrypted, MIT-licensed persistent-memory MCP server, as a one-line toolset. `MimirToolset(db_path=...)` spawns `mimir serve` over an MCP `StdioTransport` and exposes Mimir's memory tools (`mimir_remember`, `mimir_recall`, etc.) to the agent.
+
 ### LangChain Tools {#langchain-tools}
 
 If you'd like to use tools or a [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits) from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] which takes a list of LangChain tools. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
