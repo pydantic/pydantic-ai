@@ -215,32 +215,14 @@ def temporalize_toolset(
         )
 
     try:
-        from pydantic_ai.mcp import MCPServer
+        from pydantic_ai.mcp import MCPToolset
 
-        from ._mcp_server import TemporalMCPServer
+        from ._mcp_toolset import TemporalMCPToolset
     except ImportError:
         pass
     else:
-        if isinstance(toolset, MCPServer):
-            return TemporalMCPServer(
-                toolset,
-                activity_name_prefix=activity_name_prefix,
-                activity_config=activity_config,
-                tool_activity_config=tool_activity_config,
-                deps_type=deps_type,
-                run_context_type=run_context_type,
-                agent=agent,
-            )
-
-    try:
-        from pydantic_ai.toolsets.fastmcp import FastMCPToolset
-
-        from ._fastmcp_toolset import TemporalFastMCPToolset
-    except ImportError:
-        pass
-    else:
-        if isinstance(toolset, FastMCPToolset):
-            return TemporalFastMCPToolset(
+        if isinstance(toolset, MCPToolset):
+            return TemporalMCPToolset(
                 toolset,
                 activity_name_prefix=activity_name_prefix,
                 activity_config=activity_config,

@@ -1,0 +1,101 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1485'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - cache_control:
+            ttl: 5m
+            type: ephemeral
+          text: You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+            You are a helpful assistant that specializes in caching. You are a helpful assistant that specializes in caching.
+          type: text
+        role: system
+      - content: The current focus is distributed systems.
+        role: system
+      - content: What do you specialize in? Answer in one sentence.
+        role: user
+      model: anthropic/claude-sonnet-4.6
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '950'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: I specialize in caching, with a current focus on distributed systems.
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: end_turn
+      created: 1780687934
+      id: gen-1780687934-GWHmd1bBqn8IOfPqmybu
+      model: anthropic/claude-4.6-sonnet-20260217
+      object: chat.completion
+      provider: Anthropic
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 18
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0.001071
+        cost_details:
+          upstream_inference_completions_cost: 0.00027
+          upstream_inference_cost: 0.001071
+          upstream_inference_prompt_cost: 0.000801
+        is_byok: false
+        prompt_tokens: 267
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 285
+    status:
+      code: 200
+      message: OK
+version: 1

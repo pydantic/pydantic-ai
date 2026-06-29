@@ -53,19 +53,25 @@ In this case, unless the user appears to be uniquely well-suited to build a feat
 
 Pydantic AI is meant to be a light-weight library that any Python developer who wants to work with LLMs and agents (whether simple or complex) should feel no hesitation to pull into their project. It's not meant to be everything to everyone, but it should enable people to build just about anything.
 
-As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "every single possible battery included" solutions that make the library unnecessarily bloated.
+As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "every single possible battery included" solutions that make the library unnecessarily bloated. This preference is about shaping designs, new public APIs, and extension points -- it is not a license to widen a bug fix beyond the defect you reproduced (see "Requirements of all contributions").
 
 # Requirements of all contributions
 
 All changes need to:
 
 - be thoughtful and deliberate about new abstractions, public APIs, and behaviors, as every wrong-in-retrospect choice (made in a rush or with insufficient context) makes life harder for hundreds of thousands of users (and agents), and is much more difficult to change later than to do right the first time
+- be scoped to the problem you are solving: for a bug fix, make the narrowest change that resolves the reported, reproduced behavior -- often one line plus one regression test -- and stop. The preference for general primitives and powerful abstractions (see Philosophy) is for shaping designs and new public surface, not for widening a bug fix. Extend a fix to sibling fields, providers, or models only after confirming, by reproducing, that they share the same defect; an "others might also be affected" *hunch* is unacceptable: if a concern is verified, it can be included in the same PR if it doesn't explode scope or delays an already mergeable PR, otherwise it should be filed as an issue with enough context and guidance for someone to file a PR for it. Do not refactor a shared protocol, helper, or abstraction to fix one caller unless the narrow fix is unavailable or the refactor is itself the confirmed fix
 - be backward compatible as laid out in the [version policy](docs/version-policy.md), so that users can upgrade with confidence
 - be fully type-safe (both internally and in public API) without unnecessary `cast`s or `Any`s, so that users don't need `isinstance` checks and can trust that code that typechecks will work at runtime
 - have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking
 - update/add all relevant documentation, following the existing voice and patterns
+- update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), while repository workflow skills live under [.claude/skills/](.claude/skills/)
 
 When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged. The "AI generated code" checkbox should always be checked manually by the user in the UI, not by the agent.
+
+PR titles feed directly into the release changelog — wrap code identifiers (class names, keyword arguments, module paths, CLI flags, env vars) in backticks, matching the style of recent release notes (e.g. `git log main --oneline -10`).
+
+Never add yourself (Claude) as a co-author on commits. Commits should be authored as the user only, with no `Co-Authored-By` trailer referencing Claude.
 
 ## Repository structure
 
@@ -97,6 +103,15 @@ The project uses:
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
 
+## When to verify
+
+Pre-commit runs `make lint`, `make format`, and `make typecheck` automatically on every commit; CI additionally runs the full test suite. While iterating, only run targeted checks on the files/tests you have a specific reason to suspect:
+
+- typecheck a single file: `PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py`
+- run a single test: `uv run pytest path/to/test.py::test_name`
+
+Avoid `make typecheck` and `make test` between edits — both are slow and the pre-commit/CI gates cover them at the right time.
+
 # Coding Guidelines
 
 When generating or reviewing code anywhere in this repo, always read [agent_docs/index.md](agent_docs/index.md) and follow/enforce those guidelines. Don't forget to read the linked "topic guides" when appropriate.
@@ -105,5 +120,12 @@ Additionally, always read the directory-specific instructions when working in th
 
 - [docs/AGENTS.md](docs/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/AGENTS.md](pydantic_ai_slim/pydantic_ai/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md](pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md](pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md)
 - [pydantic_ai_slim/pydantic_ai/models/AGENTS.md](pydantic_ai_slim/pydantic_ai/models/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md](pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/profiles/AGENTS.md](pydantic_ai_slim/pydantic_ai/profiles/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/providers/AGENTS.md](pydantic_ai_slim/pydantic_ai/providers/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/toolsets/AGENTS.md](pydantic_ai_slim/pydantic_ai/toolsets/AGENTS.md)
+- [pydantic_ai_slim/pydantic_ai/ui/AGENTS.md](pydantic_ai_slim/pydantic_ai/ui/AGENTS.md)
 - [tests/AGENTS.md](tests/AGENTS.md)

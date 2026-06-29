@@ -24,6 +24,7 @@ __all__ = (
     'SkipToolValidation',
     'SkipToolExecution',
     'UserError',
+    'UndrainedPendingMessagesError',
     'AgentRunError',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
@@ -166,6 +167,17 @@ class UserError(RuntimeError):
         super().__init__(message)
 
 
+class UndrainedPendingMessagesError(UserError):
+    """Error raised when an agent run ends with messages still queued via `enqueue`.
+
+    A bare `async for node in agent_run` loop only drains `'asap'` messages (in
+    `before_model_request`); `'when_idle'` messages and end-of-run redirects drain in
+    `after_node_run`, which bare iteration skips. Reaching the run's `End` with a non-empty
+    queue means those messages were stranded — drive the run with `agent.run()` or
+    `AgentRun.next()` instead.
+    """
+
+
 class AgentRunError(RuntimeError):
     """Base class for errors occurring during an agent run."""
 
@@ -236,7 +248,7 @@ class ModelAPIError(AgentRunError):
 
 
 class ModelHTTPError(ModelAPIError):
-    """Raised when an model provider response has a status code of 4xx or 5xx."""
+    """Raised when a model provider response has a status code of 4xx or 5xx."""
 
     status_code: int
     """The HTTP status code returned by the API."""

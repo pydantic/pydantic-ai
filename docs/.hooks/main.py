@@ -127,22 +127,25 @@ def create_gateway_toggle(markdown: str, relative_path: Path) -> str:
     # The closing fence must match the same indentation via backreference \1.
     # Annotation definitions are numbered list items like "1. Some text" that follow the code block.
     return re.sub(
-        r'^( *)```py(?:thon)?(?: *\{?([^}\n]*)\}?)?\n(.*?)\n\1```(\n\n(?:[ \t]*\d+\..+?\n)+?\n)?',
+        r'^( *)```py(?:thon)?(?: *\{?([^}\n]*)\}?)?\n(.*?)\n\1```(\n\n(?:[ \t]*\d+\.[^\n]+\n)+\n)?',
         lambda m: transform_gateway_code_block(m, relative_path),
         markdown,
         flags=re.MULTILINE | re.DOTALL,
     )
 
 
-# Mapping of provider names to their canonical gateway form
+# Mapping of user-facing provider prefixes in docs to the form shown in the Gateway tab.
+# 1-to-1 identity: the toggle shows `Agent('openai:')` ↔ `Agent('gateway/openai:')`.
+# Wire-value translation (e.g. `openai` -> `openai-responses` on the Gateway URL) is the
+# runtime's concern and lives in `providers/gateway.py::_GATEWAY_ROUTE_REMAP`.
 GATEWAY_MODEL_MAP = {
     'anthropic': 'anthropic',
     'openai': 'openai',
     'openai-responses': 'openai-responses',
-    'openai-chat': 'openai',
+    'openai-chat': 'openai-chat',
     'bedrock': 'bedrock',
-    'google-gla': 'gemini',
-    'google-vertex': 'google-vertex',
+    'google': 'google',
+    'google-cloud': 'google-cloud',
     'groq': 'groq',
 }
 # Models that should get gateway transformation

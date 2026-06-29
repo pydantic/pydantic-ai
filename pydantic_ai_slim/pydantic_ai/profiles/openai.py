@@ -1,15 +1,29 @@
 from __future__ import annotations as _annotations
 
 import re
-import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
+from ..native_tools import (
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    WebSearchTool,
+)
+from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+_OPENAI_BASE_BUILTINS = frozenset(
+    {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
+)
+"""Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
+`OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
+profile below."""
 
 OPENAI_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     True: 'medium',
@@ -40,15 +54,14 @@ See https://platform.openai.com/docs/guides/reasoning for details.
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
-@dataclass(kw_only=True)
-class OpenAIModelProfile(ModelProfile):
+class OpenAIModelProfile(ModelProfile, total=False):
     """Profile for models used with `OpenAIChatModel`.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    openai_chat_thinking_field: str | None = None
-    """Non-standard field name used by some providers for model thinking content in Chat Completions API responses.
+    openai_chat_thinking_field: str | None
+    """Non-standard field name used by some providers for model thinking content in Chat Completions API responses. Default: `None`.
 
     Plenty of providers use custom field names for thinking content. Ollama and newer versions of vLLM use `reasoning`,
     while DeepSeek, older vLLM and some others use `reasoning_content`.
@@ -57,8 +70,8 @@ class OpenAIModelProfile(ModelProfile):
 
     If `openai_chat_send_back_thinking_parts` is set to `'field'`, this field must be set to a non-None value."""
 
-    openai_chat_send_back_thinking_parts: Literal['auto', 'tags', 'field', False] = 'auto'
-    """Whether the model includes thinking content in requests.
+    openai_chat_send_back_thinking_parts: Literal['auto', 'tags', 'field', False]
+    """Whether the model includes thinking content in requests. Default: `'auto'`.
 
     This can be:
     * `'auto'` (default): Automatically detects how to send thinking content. If thinking was received in a custom field
@@ -73,86 +86,118 @@ class OpenAIModelProfile(ModelProfile):
 
     Defaults to `'auto'` to ensure thinking is sent back in the format expected by the model/provider."""
 
-    openai_supports_strict_tool_definition: bool = True
-    """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
+    openai_supports_strict_tool_definition: bool
+    """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions. Default: `True`."""
 
-    openai_supports_sampling_settings: bool = True
-    """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
-
-    openai_unsupported_model_settings: Sequence[str] = ()
-    """A list of model settings that are not supported by this model."""
+    openai_unsupported_model_settings: Sequence[str]
+    """A list of model settings that are not supported by this model. Default: `()`."""
 
     # Some OpenAI-compatible providers (e.g. MoonshotAI) currently do **not** accept
     # `tool_choice="required"`.  This flag lets the calling model know whether it's
     # safe to pass that value along.  Default is `True` to preserve existing
     # behaviour for OpenAI itself and most providers.
-    openai_supports_tool_choice_required: bool = True
-    """Whether the provider accepts the value `tool_choice='required'` in the request payload."""
+    openai_supports_tool_choice_required: bool
+    """Whether the provider accepts the value `tool_choice='required'` in the request payload. Default: `True`."""
 
-    openai_system_prompt_role: OpenAISystemPromptRole | None = None
+    openai_system_prompt_role: OpenAISystemPromptRole | None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
-    openai_chat_supports_web_search: bool = False
-    """Whether the model supports web search in Chat Completions API."""
+    openai_chat_supports_multiple_system_messages: bool
+    """Whether the Chat Completions API accepts more than one system-role message at the start of the conversation. Default: `True`.
 
-    openai_chat_audio_input_encoding: Literal['base64', 'uri'] = 'base64'
-    """The encoding to use for audio input in Chat Completions requests.
+    OpenAI itself and most compatible providers accept multiple system messages, so this defaults to `True`.
+    Set to `False` for strict OpenAI-compatible backends (e.g. some LiteLLM/vLLM deployments) that require
+    exactly one initial system message; consecutive system messages at the start will be merged into one
+    (joined with two newlines) before being sent."""
+
+    openai_chat_supports_web_search: bool
+    """Whether the model supports web search in Chat Completions API. Default: `False`."""
+
+    openai_chat_audio_input_encoding: Literal['base64', 'uri']
+    """The encoding to use for audio input in Chat Completions requests. Default: `'base64'`.
 
     - `'base64'`: Raw base64 encoded string. (Default, used by OpenAI)
     - `'uri'`: Data URI (e.g. `data:audio/wav;base64,...`).
     """
 
-    openai_chat_supports_file_urls: bool = False
-    """Whether the Chat API supports file URLs directly in the `file_data` field.
+    openai_chat_supports_file_urls: bool
+    """Whether the Chat API supports file URLs directly in the `file_data` field. Default: `False`.
 
     OpenAI's native Chat API only supports base64-encoded data, but some providers
     like OpenRouter support passing URLs directly.
     """
 
-    openai_supports_encrypted_reasoning_content: bool = False
-    """Whether the model supports including encrypted reasoning content in the response."""
+    openai_supports_encrypted_reasoning_content: bool
+    """Whether the model supports including encrypted reasoning content in the response. Default: `False`."""
 
-    openai_supports_reasoning: bool = False
-    """Whether the model supports reasoning (o-series, GPT-5+).
+    openai_supports_reasoning: bool
+    """Whether the model supports reasoning (o-series, GPT-5+). Default: `False`.
 
     When True, sampling parameters may need to be dropped depending on reasoning_effort setting."""
 
-    openai_supports_reasoning_effort_none: bool = False
-    """Whether the model supports sampling parameters (temperature, top_p, etc.) when reasoning_effort='none'.
+    openai_supports_reasoning_effort_none: bool
+    """Whether the model supports sampling parameters (temperature, top_p, etc.) when reasoning_effort='none'. Default: `False`.
 
     Models like GPT-5.1 and GPT-5.2 default to reasoning_effort='none' and support sampling params in that mode.
     When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported."""
 
-    openai_responses_requires_function_call_status_none: bool = False
-    """Whether the Responses API requires the `status` field on function tool calls to be `None`.
+    openai_responses_requires_function_call_status_none: bool
+    """Whether the Responses API requires the `status` field on function tool calls to be `None`. Default: `False`.
 
     This is required by vLLM Responses API versions before https://github.com/vllm-project/vllm/pull/26706.
     See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
     """
 
-    def __post_init__(self):  # pragma: no cover
-        if not self.openai_supports_sampling_settings:
-            warnings.warn(
-                'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
-                'Use `openai_unsupported_model_settings` instead.',
-                DeprecationWarning,
-            )
-        if self.openai_chat_send_back_thinking_parts == 'field' and not self.openai_chat_thinking_field:
-            raise UserError(
-                'If `openai_chat_send_back_thinking_parts` is "field", '
-                '`openai_chat_thinking_field` must be set to a non-None value.'
-            )
-        # Note: 'auto' mode doesn't require openai_chat_thinking_field since it detects dynamically
+    openai_supports_phase: bool
+    """Whether the Responses API supports the `phase` field on assistant messages. Default: `False`.
+
+    `phase` labels an assistant message as intermediate `commentary` or the `final_answer`. When the model
+    supports it, OpenAI recommends preserving and sending it back unchanged on every assistant message in
+    follow-up requests; dropping it can cause preambles to be interpreted as final answers and degrade
+    behavior in long-running or tool-heavy flows.
+
+    Supported by `gpt-5.3-codex`, `gpt-5.4` and later mainline models. The official OpenAI Responses API
+    silently ignores the field on older models, but defaults to `False` so we don't risk sending an
+    unrecognized field to OpenAI-compatible APIs (vLLM, Bifrost, ...) that haven't been verified to accept it.
+    """
+
+    openai_chat_supports_document_input: bool
+    """Whether the Chat Completions API supports document content parts (`type='file'`). Default: `True`.
+
+    Some OpenAI-compatible providers (e.g. Azure) do not support document input via the Chat Completions API.
+    """
+
+    openai_chat_supports_max_completion_tokens: bool
+    """Whether the Chat Completions API accepts the `max_completion_tokens` field for the `max_tokens` setting. Default: `True`.
+
+    OpenAI itself (including the o-series reasoning models) uses `max_completion_tokens`, the field that caps
+    visible output plus reasoning tokens, so this defaults to `True`. Many OpenAI-compatible providers (e.g.
+    OpenRouter) only accept the older `max_tokens` field; set this to `False` for those so the `max_tokens`
+    setting is sent as `max_tokens` instead.
+    """
+
+
+def validate_openai_profile(profile: ModelProfile) -> None:
+    """Validate an OpenAI-compatible profile after resolution. Called from `OpenAIChatModel.__init__`."""
+    if profile.get('openai_chat_send_back_thinking_parts') == 'field' and not profile.get('openai_chat_thinking_field'):
+        raise UserError(
+            'If `openai_chat_send_back_thinking_parts` is "field", '
+            '`openai_chat_thinking_field` must be set to a non-None value.'
+        )
 
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     # GPT-5.1+ models use `reasoning={"effort": "none"}` by default, which allows sampling params.
-    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4'))
+    is_gpt_5_1_plus = model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5'))
 
     # doesn't support `reasoning={"effort": "none"}` -  default is set at 'medium'
     # see https://platform.openai.com/docs/guides/reasoning
     is_gpt_5 = model_name.startswith('gpt-5') and not is_gpt_5_1_plus
+
+    # `phase` is supported by gpt-5.3-codex, gpt-5.4 and later mainline models.
+    # See https://developers.openai.com/api/docs/guides/prompt-guidance.
+    supports_phase = model_name.startswith(('gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5'))
 
     # always reasoning
     is_o_series = model_name.startswith('o')
@@ -174,6 +219,13 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         is_gpt_5 or is_gpt_5_1_plus or 'o3' in model_name or '4.1' in model_name or '4o' in model_name
     )
 
+    # OpenAI's native `tool_search` tool with `defer_loading` is available on the
+    # GPT-5.4 and GPT-5.5 mainline families. Like the other gates in this function, this
+    # enumerates known versions rather than matching open-endedly, so a future family
+    # (e.g. GPT-5.6) must be added here explicitly; until then it falls back to local search.
+    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5'))
+    supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -183,6 +235,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
+        supports_inline_system_prompts=True,
         supports_thinking=supports_reasoning,
         thinking_always_enabled=thinking_always_enabled,
         openai_system_prompt_role=openai_system_prompt_role,
@@ -190,6 +243,8 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_encrypted_reasoning_content=supports_reasoning,
         openai_supports_reasoning=supports_reasoning,
         openai_supports_reasoning_effort_none=is_gpt_5_1_plus and not is_gpt_5_3_chat,
+        openai_supports_phase=supports_phase,
+        supported_native_tools=supported_native_tools,
     )
 
 
@@ -220,7 +275,23 @@ _STRICT_COMPATIBLE_STRING_FORMATS = [
     'uuid',
 ]
 
+_REGEX_LOOKAROUND_TOKENS = ('(?=', '(?!', '(?<=', '(?<!')
+
 _sentinel = object()
+
+
+def _regex_contains_lookaround(pattern: str) -> bool:
+    escaped = False
+    for i, char in enumerate(pattern):
+        if escaped:
+            escaped = False
+            continue
+        if char == '\\':
+            escaped = True
+            continue
+        if pattern.startswith(_REGEX_LOOKAROUND_TOKENS, i):
+            return True
+    return False
 
 
 @dataclass(init=False)
@@ -284,6 +355,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if format := schema.get('format'):
             if format not in _STRICT_COMPATIBLE_STRING_FORMATS:
                 incompatible_values['format'] = format
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_contains_lookaround(pattern):
+            incompatible_values['pattern'] = pattern
         description = schema.get('description')
         if incompatible_values:
             if self.strict is True:
