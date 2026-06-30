@@ -504,6 +504,12 @@ class Model(ABC, Generic[InterfaceClient]):
             # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
             if t.with_native and t.with_native not in supported_ids and t.defer_loading:
                 continue
+            # A discovered corpus member (Rule 3 kept it) whose native tool is unsupported must
+            # shed `with_native`: with no native tool on the wire, an adapter that derives a
+            # native flag from it (e.g. OpenAI's `defer_loading`) would emit it unpaired and the
+            # provider would reject the request. It stays callable as a plain function tool.
+            if t.with_native and t.with_native not in supported_ids:
+                t = replace(t, with_native=None)
             # Rules 2 + 4: keep.
             function_tools.append(t)
 

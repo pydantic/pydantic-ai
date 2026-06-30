@@ -2230,6 +2230,125 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
     assert replay_outputs and all(item.get('execution') == 'client' for item in replay_outputs)
 
 
+async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loading(
+    allow_model_requests: None,
+):
+    """A discovered tool-search tool must NOT carry the wire-side `defer_loading` flag on a
+    model without native `tool_search` (e.g. `gpt-5.2`).
+
+    `defer_loading` is the native-tool-search knob: it only travels alongside a `tool_search`
+    tool, which the provider then uses to reveal the deferred tool. Without native support,
+    pydantic-ai falls back to local search — undiscovered tools are simply omitted and revealed
+    via a plain `search_tools` function — so there is no `tool_search` tool to pair with, and
+    OpenAI rejects a lone `defer_loading`:
+
+        Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.
+
+    This is the minimal form of #5938: a plain `ToolSearch()` corpus tool that was discovered in
+    a prior turn (so `defer_loading` flipped to `False`, but `with_native='tool_search'` stuck).
+    Deferred capabilities reach the same defect through `load_capability` — see
+    `test_openai_deferred_capability_reveal_without_native_tool_search_omits_defer_loading`. The
+    native-supported path (`defer_loading` + `tool_search` together) is covered on `gpt-5.4` by
+    `test_openai_promotes_local_search_history_round_trip`.
+    """
+    pytest.importorskip('openai')
+
+    final = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_done',
+                content=[ResponseOutputText(text='Sunny.', type='output_text', annotations=[])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(final)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Look up the weather for a city."""
+        return f'Weather in {city}.'
+
+    # Prior turn already discovered `get_weather` via local tool search, so on the next request
+    # it rides along as a now-callable tool (`defer_loading=False`, `with_native='tool_search'`).
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='I might want the weather later.')]),
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='loc_1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
+                    tool_call_id='loc_1',
+                )
+            ]
+        ),
+    ]
+
+    result = await agent.run('Weather in Paris?', message_history=history)
+    assert result.output == 'Sunny.'
+
+    [request] = get_mock_responses_kwargs(mock_client)
+    request_tools = cast(list[dict[str, Any]], request['tools'])
+    # gpt-5.2 has no native tool search: the corpus is searched locally via `search_tools`.
+    assert not any(tool['type'] == 'tool_search' for tool in request_tools)
+    # The discovered tool is still sent (callable), but as a plain function — no `defer_loading`.
+    [weather_tool] = [tool for tool in request_tools if tool.get('name') == 'get_weather']
+    assert 'defer_loading' not in weather_tool
+
+
+@pytest.mark.vcr
+async def test_openai_deferred_capability_runs_on_model_without_native_tool_search(
+    allow_model_requests: None, openai_api_key: str, vcr: Any
+) -> None:
+    """The #5938 repro end-to-end against live `gpt-5.2`, which has no native `tool_search`:
+    loading a deferred `Capability` and calling its tool must complete, not 400.
+
+    `Capability(defer_loading=True)` is built on the tool-search corpus, so after `load_capability`
+    reveals `bar` it carries `with_native='tool_search'`. Before the fix, the revealed tool shipped
+    with `defer_loading: true` and no `tool_search` tool, and OpenAI rejected the request:
+    `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.` Here we
+    confirm the live model accepts the request the fix produces; the wire contract itself is pinned
+    by the mock `test_openai_discovered_tool_without_native_tool_search_omits_defer_loading`, since
+    the cassette matcher isn't sensitive to the request body.
+    """
+    foo = Capability[None](
+        id='foo',
+        description='Use this capability when the user asks for foo.',
+        defer_loading=True,
+    )
+
+    @foo.tool_plain
+    def bar(x: int) -> int:
+        """Return x."""
+        return x
+
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(
+        model, instructions="First load capability id 'foo', then call bar.", capabilities=[foo]
+    )
+
+    result = await agent.run('Use foo with x=1.')
+
+    # The capability loaded, so the follow-up request — the one carrying the revealed `bar`, which
+    # used to 400 — was actually sent and accepted, and the revealed tool was usable.
+    assert any(isinstance(p, LoadCapabilityReturnPart) for m in result.all_messages() for p in m.parts)
+    bar_returns = [
+        p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == 'bar'
+    ]
+    assert [p.content for p in bar_returns] == [1]
+
+    # Wire-level: gpt-5.2 runs the local fallback, so no request may carry the native-only
+    # `defer_loading` flag or a `tool_search` tool.
+    for request in vcr.requests:
+        request_tools = cast(list[dict[str, Any]], json.loads(request.body).get('tools', []))
+        assert not any(tool.get('type') == 'tool_search' for tool in request_tools)
+        assert not any('defer_loading' in tool for tool in request_tools)
+
+
 async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_requests: None):
     """A model switch between turns (Anthropic → OpenAI) should replay cleanly: the
     provider-specific Builtin* tool search parts are skipped by the mismatched provider,
