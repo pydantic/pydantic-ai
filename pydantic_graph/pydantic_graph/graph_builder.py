@@ -874,10 +874,10 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
             except (BrokenResourceError, ClosedResourceError):
                 # Can happen when an asyncio task is cancelled mid-send: the run's
-                # cleanup closes ``iter_stream_sender`` in another task while this
-                # task is still in-flight on ``send``. Closing the sender raises
-                # ``ClosedResourceError`` (closing the receiver would raise
-                # ``BrokenResourceError``); both are benign here — the result/error
+                # cleanup closes `iter_stream_sender` in another task while this
+                # task is still in-flight on `send`. Closing the sender raises
+                # `ClosedResourceError` (closing the receiver would raise
+                # `BrokenResourceError`); both are benign here — the result/error
                 # is no longer needed because the run is being torn down.
                 pass
 
