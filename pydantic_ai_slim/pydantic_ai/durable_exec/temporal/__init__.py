@@ -116,7 +116,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
 class PydanticAIPlugin(SimplePlugin):
     """Temporal client and worker plugin for Pydantic AI."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='PydanticAIPlugin',
             data_converter=_data_converter,
