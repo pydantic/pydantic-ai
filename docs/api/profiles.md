@@ -24,6 +24,10 @@
 
 ::: pydantic_ai.profiles.grok
 
+::: pydantic_ai.profiles.groq
+
+::: pydantic_ai.profiles.huggingface
+
 ::: pydantic_ai.profiles.mistral
 
 ::: pydantic_ai.profiles.qwen
