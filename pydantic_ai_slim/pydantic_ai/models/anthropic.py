@@ -1704,7 +1704,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
                 for file_id in pending_container_uploads
             ]
-            for msg in reversed(anthropic_messages):
+            # Inject the uploads into the *first* user message, not the last. The blocks are
+            # recomputed from the static `CodeExecutionTool.files` config on every request, so
+            # pinning them to the first message keeps that message byte-identical as history grows,
+            # which keeps the cacheable prefix stable across steps. Injecting at the tail instead
+            # would move the insertion point every turn and silently bust the prompt cache.
+            for msg in anthropic_messages:
                 if msg['role'] == 'user':
                     existing = msg['content']
                     assert not isinstance(existing, str)
