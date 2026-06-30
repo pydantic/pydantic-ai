@@ -17,8 +17,8 @@ from ag_ui.core import (
     InputContentUrlSource,
     VideoInputContent,
 )
-from pydantic import TypeAdapter
 
+from ..._utils import is_str_dict
 from ...messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
 
 _URL_TYPE_MAP: dict[type, type] = {
@@ -32,11 +32,6 @@ _URL_TYPE_MAP: dict[type, type] = {
 # `metadata` field, mirroring the `vendor_metadata` key the `UploadedFile` round-trip already
 # uses, so we only ever read back our own value and ignore unrelated client metadata.
 _VENDOR_METADATA_KEY = 'vendor_metadata'
-
-# The `metadata` field is typed as `Any`; coerce a client-supplied value to a known `dict` shape
-# (mirroring how the Vercel adapter reads from the typed `load_provider_metadata` result) so the
-# extracted `vendor_metadata` is statically typed rather than `Unknown`.
-_METADATA_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
 
 def _dump_vendor_metadata(
@@ -74,14 +69,13 @@ def multimodal_input_to_content(
 ) -> ImageUrl | AudioUrl | VideoUrl | DocumentUrl | BinaryContent:
     """Convert a typed multimodal AG-UI input content back to a Pydantic AI content type."""
     source = part.source
-    # `metadata` is client-controlled and typed as `Any`; the value is passed to the validating
-    # constructors below, so a malformed (non-`dict`) `vendor_metadata` is rejected there, matching
-    # the Vercel adapter. The adapter coerces the `Any` value to a statically-typed `dict` rather
-    # than relying on `isinstance` narrowing.
+    # `metadata` is client-controlled and typed as `Any`; a non-`dict` value is ignored, and a
+    # malformed (non-`dict`) `vendor_metadata` inside it is rejected by the validating constructors
+    # below, matching the Vercel adapter.
     metadata = part.metadata
     vendor_metadata: dict[str, Any] | None = None
-    if isinstance(metadata, dict):
-        vendor_metadata = _METADATA_ADAPTER.validate_python(metadata).get(_VENDOR_METADATA_KEY)
+    if is_str_dict(metadata):
+        vendor_metadata = metadata.get(_VENDOR_METADATA_KEY)
     if isinstance(source, InputContentUrlSource):
         media_type = source.mime_type or None
         if isinstance(part, ImageInputContent):

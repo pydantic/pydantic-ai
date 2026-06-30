@@ -8745,6 +8745,13 @@ async def test_adapter_roundtrip_preserves_file_vendor_metadata():
                             media_type='application/pdf',
                             vendor_metadata={'detail': 'low'},
                         ),
+                        # Image data-URI: must round-trip back to `BinaryImage` (the narrowed type
+                        # `from_data_uri` produces), not plain `BinaryContent`.
+                        BinaryContent(
+                            data=b'fake_image',
+                            media_type='image/png',
+                            vendor_metadata={'detail': 'auto'},
+                        ),
                     ]
                 )
             ]
@@ -8764,31 +8771,58 @@ async def test_adapter_roundtrip_preserves_file_vendor_metadata():
         {'pydantic_ai': {'vendor_metadata': {'fps': 5}}},
         {'pydantic_ai': {'vendor_metadata': {'foo': 'baz'}}},
         {'pydantic_ai': {'vendor_metadata': {'detail': 'low'}}},
+        {'pydantic_ai': {'vendor_metadata': {'detail': 'auto'}}},
     ]
 
     loaded = VercelAIAdapter.load_messages(ui_messages)
-
-    assert len(loaded) == 1
-    request = loaded[0]
-    assert isinstance(request, ModelRequest)
-    user_part = request.parts[0]
-    assert isinstance(user_part, UserPromptPart)
-    assert isinstance(user_part.content, list)
-
-    image = next(item for item in user_part.content if isinstance(item, ImageUrl))
-    assert image.vendor_metadata == {'detail': 'high'}
-
-    audio = next(item for item in user_part.content if isinstance(item, AudioUrl))
-    assert audio.vendor_metadata == {'foo': 'bar'}
-
-    video = next(item for item in user_part.content if isinstance(item, VideoUrl))
-    assert video.vendor_metadata == {'fps': 5}
-
-    document = next(item for item in user_part.content if isinstance(item, DocumentUrl))
-    assert document.vendor_metadata == {'foo': 'baz'}
-
-    binary = next(item for item in user_part.content if isinstance(item, BinaryContent))
-    assert binary.vendor_metadata == {'detail': 'low'}
+    assert loaded == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                identifier='01a7df',
+                                vendor_metadata={'detail': 'high'},
+                            ),
+                            AudioUrl(
+                                url='https://example.com/audio.mp3',
+                                vendor_metadata={'foo': 'bar'},
+                                _media_type='audio/mpeg',
+                            ),
+                            VideoUrl(
+                                url='https://example.com/video.mp4',
+                                media_type='video/mp4',
+                                identifier='8cb95e',
+                                vendor_metadata={'fps': 5},
+                            ),
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                identifier='e3337d',
+                                vendor_metadata={'foo': 'baz'},
+                            ),
+                            BinaryContent(
+                                data=b'fake_doc',
+                                media_type='application/pdf',
+                                identifier='42a9bb',
+                                vendor_metadata={'detail': 'low'},
+                            ),
+                            BinaryImage(
+                                data=b'fake_image',
+                                media_type='image/png',
+                                identifier='3d738c',
+                                vendor_metadata={'detail': 'auto'},
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
 
 
 async def test_adapter_roundtrip_file_without_vendor_metadata_stays_none():

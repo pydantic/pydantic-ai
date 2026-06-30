@@ -317,13 +317,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
                             # Reconstruct through the constructor so a malformed client value is rejected
                             # here (matching the URL constructor path) instead of being stored unvalidated
-                            # and crashing a provider model later.
+                            # and crashing a provider model later. Re-narrow afterwards so an image
+                            # round-trips back to `BinaryImage` (as `from_data_uri` returned it), not
+                            # plain `BinaryContent`.
                             if vendor_metadata is not None:
-                                file = BinaryContent(
-                                    data=file.data,
-                                    media_type=file.media_type,
-                                    identifier=file.identifier,
-                                    vendor_metadata=vendor_metadata,
+                                file = BinaryContent.narrow_type(
+                                    BinaryContent(
+                                        data=file.data,
+                                        media_type=file.media_type,
+                                        identifier=file.identifier,
+                                        vendor_metadata=vendor_metadata,
+                                    )
                                 )
                         user_prompt_content.append(file)
                     elif isinstance(part, DataUIPart):
