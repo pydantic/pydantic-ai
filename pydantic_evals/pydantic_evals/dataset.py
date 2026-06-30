@@ -903,7 +903,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return nxt(self)
 
 
-def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:  # pragma: no cover
+def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:
     """Get a relative path reference from source to target.
 
     Recursively resolve a relative path to target from source, adding '..' as needed.
