@@ -68,6 +68,7 @@ try:
     from groq.types.chat.chat_completion_message import ExecutedTool
     from groq.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
     from groq.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
+    from groq.types.chat.completion_create_params import SearchSettings
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
@@ -366,6 +367,20 @@ class GroqModel(Model[AsyncGroq]):
             merged_extra_body['reasoning_effort'] = effort
             extra_body = merged_extra_body
 
+        search_settings: SearchSettings | NotGiven = NOT_GIVEN
+        web_search = next(
+            (t for t in model_request_parameters.native_tools if isinstance(t, WebSearchTool)),
+            None,
+        )
+        if web_search is not None:
+            ss: SearchSettings = {}
+            if web_search.allowed_domains:
+                ss['include_domains'] = web_search.allowed_domains
+            if web_search.blocked_domains:
+                ss['exclude_domains'] = web_search.blocked_domains
+            if ss:
+                search_settings = ss
+
         with _map_api_errors(self.model_name):
             return await self.client.chat.completions.create(
                 model=self._model_name,
@@ -388,6 +403,7 @@ class GroqModel(Model[AsyncGroq]):
                 logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=extra_body,
+                search_settings=search_settings,
             )
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
