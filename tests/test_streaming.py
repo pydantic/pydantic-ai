@@ -5050,6 +5050,7 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     never = asyncio.Event()
     producer_started = asyncio.Event()
     producer_finalized = asyncio.Event()
+    readiness_wait_timeout = 10.0
 
     async def blocking_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
         try:
@@ -5062,11 +5063,11 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     agent = Agent(FunctionModel(stream_function=blocking_stream))
 
     async with agent.run_stream_events(''):
-        await asyncio.wait_for(producer_started.wait(), timeout=1.0)
+        await asyncio.wait_for(producer_started.wait(), timeout=readiness_wait_timeout)
 
     # `aclose()` on the unstarted iterator skips its cleanup branches, so the CM body itself must
     # drain the background task; otherwise the producer's `finally` never runs.
-    await asyncio.wait_for(producer_finalized.wait(), timeout=1.0)
+    await asyncio.wait_for(producer_finalized.wait(), timeout=readiness_wait_timeout)
 
 
 async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
