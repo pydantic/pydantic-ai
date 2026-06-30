@@ -173,23 +173,20 @@ _CACHE_INSTRUCTIONS = (
 ) + ' '.join(f'Guideline {i}: prefer exact arithmetic over estimation when analyzing tabular data.' for i in range(120))
 
 
+# `mode` (not a built `AnthropicModelSettings`) so this list stays import-safe when anthropic isn't
+# installed — the slim test job collects this module with the `try_import` symbols undefined.
 @dataclass(frozen=True)
 class _CacheCase:
     id: str
     model: str
-    settings: AnthropicModelSettings
     mode: Literal['messages', 'automatic']
 
 
 _CACHE_CASES = [
-    _CacheCase(
-        'messages-sonnet-4-6', 'claude-sonnet-4-6', AnthropicModelSettings(anthropic_cache_messages=True), 'messages'
-    ),
-    _CacheCase(
-        'messages-sonnet-5', 'claude-sonnet-5', AnthropicModelSettings(anthropic_cache_messages=True), 'messages'
-    ),
-    _CacheCase('automatic-sonnet-4-6', 'claude-sonnet-4-6', AnthropicModelSettings(anthropic_cache=True), 'automatic'),
-    _CacheCase('automatic-sonnet-5', 'claude-sonnet-5', AnthropicModelSettings(anthropic_cache=True), 'automatic'),
+    _CacheCase('messages-sonnet-4-6', 'claude-sonnet-4-6', 'messages'),
+    _CacheCase('messages-sonnet-5', 'claude-sonnet-5', 'messages'),
+    _CacheCase('automatic-sonnet-4-6', 'claude-sonnet-4-6', 'automatic'),
+    _CacheCase('automatic-sonnet-5', 'claude-sonnet-5', 'automatic'),
 ]
 
 
@@ -219,6 +216,11 @@ async def test_anthropic_code_execution_files_cache_prefix_stable(
         betas=['files-api-2025-04-14'],
     )
 
+    settings = (
+        AnthropicModelSettings(anthropic_cache_messages=True)
+        if case.mode == 'messages'
+        else AnthropicModelSettings(anthropic_cache=True)
+    )
     try:
         model = AnthropicModel(case.model, provider=AnthropicProvider(anthropic_client=client))
         agent = Agent(
@@ -227,7 +229,7 @@ async def test_anthropic_code_execution_files_cache_prefix_stable(
                 NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
             ],
             instructions=_CACHE_INSTRUCTIONS,
-            model_settings=case.settings,
+            model_settings=settings,
         )
 
         first = await agent.run(_PROMPT)
