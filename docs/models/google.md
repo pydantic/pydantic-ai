@@ -256,6 +256,32 @@ agent = Agent(model)
 ...
 ```
 
+## HTTP Retries
+
+By default, the `google-genai` SDK does not retry requests that fail with a transient HTTP error. You can enable retries by passing a [`HttpRetryOptions`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpRetryOptions) instance to the `retry_options` argument of `GoogleProvider` or `GoogleCloudProvider`:
+
+```python
+from google.genai.types import HttpRetryOptions
+
+from pydantic_ai import Agent
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
+
+retry_options = HttpRetryOptions(
+    attempts=4,
+    initial_delay=1.0,
+    max_delay=60.0,
+    http_status_codes=[408, 429, 500, 502, 503, 504],
+)
+model = GoogleModel(
+    'gemini-3-pro-preview',
+    provider=GoogleProvider(api_key='your-api-key', retry_options=retry_options),
+)
+agent = Agent(model)
+...
+```
+
+This passes the options through to the SDK's [`HttpOptions.retry_options`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions.retry_options). See the [Vertex AI retry strategy documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy) for guidance on choosing values.
 
 ## Document, Image, Audio, and Video Input
 
