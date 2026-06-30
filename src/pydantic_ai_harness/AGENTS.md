@@ -138,6 +138,14 @@ need.
 - Prefer tests through `Agent(..., capabilities=[...])` when that is the public
   behavior. Use direct `Toolset`/`RunContext` tests for lower-level lifecycle,
   schema, retry, or wrapper behavior that is hard to isolate through `Agent`.
+- Don't import private (`_`-prefixed) helpers into tests. Exercise them through
+  the capability's public surface so tests survive internal refactors: drive the
+  behavior through `Agent(..., capabilities=[...])`, or import the public class
+  re-exported from the capability package's `__init__.py` (e.g.
+  `from pydantic_ai_harness.filesystem import FileSystemToolset`, not
+  `from pydantic_ai_harness.filesystem._toolset import _content_hash`). When a
+  branch is only reachable by calling a private helper directly, mark it
+  `# pragma: no cover` rather than reaching into the helper from a test.
 
 ## Contributing rules for AICAs
 
