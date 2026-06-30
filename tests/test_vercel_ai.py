@@ -4868,17 +4868,12 @@ async def test_adapter_dump_load_roundtrip_tool_metadata_chunks(
     dumped = VercelAIAdapter.dump_messages(messages_in)
     reloaded = VercelAIAdapter.load_messages(dumped)
 
-    # No spurious extra messages (the FileChunk bug appended a 4th ModelResponse).
-    assert len(reloaded) == len(messages_in), f'{label}: message count changed on round-trip'
-
-    reloaded_tr = _find_tool_return(reloaded, 'tc-1')
-    assert reloaded_tr is not None, f'{label}: tool return lost on round-trip'
-    assert reloaded_tr.metadata == list(chunks), f'{label}: metadata not preserved on round-trip'
-
-    # The reloaded file chunk must NOT have leaked into a separate FilePart.
-    assert not any(isinstance(part, FilePart) for msg in reloaded for part in msg.parts), (
-        f'{label}: tool-metadata file leaked into a model FilePart'
-    )
+    # Full structural equality is the lossless-round-trip bar (matches the rest of this file's
+    # dump->load tests). It subsumes the bespoke checks: message count unchanged (the FileChunk
+    # bug appended a 4th ModelResponse), tool-return metadata preserved, and no tool-metadata file
+    # leaking into a separate model FilePart. Fails without the fix.
+    _sync_timestamps(messages_in, reloaded)
+    assert reloaded == messages_in, f'{label}: messages not preserved on round-trip'
 
 
 async def test_adapter_load_metadata_chunks_distinct_from_model_file():

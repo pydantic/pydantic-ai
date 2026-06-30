@@ -1005,5 +1005,7 @@ def _load_metadata_chunk(
             filename=part.filename,
             provider_metadata=part.provider_metadata,
         )
-    else:
+    elif isinstance(part, FileUIPart):
         return FileChunk(url=part.url, media_type=part.media_type)
+    else:
+        assert_never(part)
