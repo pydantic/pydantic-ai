@@ -76,6 +76,9 @@ You can connect to [MCP servers](mcp/index.md) using the `--mcp-config` flag wit
 clai --mcp-config mcp_servers.json
 ```
 
+!!! warning "Treat configuration files as trusted input"
+    A configuration file specifies executables and arguments to spawn as subprocesses, so anyone who can write it can run arbitrary commands. `${VAR}` references are expanded against the full process environment without an allowlist, so a config file can also read any environment variable. Only load configuration files you control; never load them from untrusted sources.
+
 ```json title="mcp_servers.json"
 {
   "mcpServers": {
