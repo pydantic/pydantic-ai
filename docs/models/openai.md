@@ -367,12 +367,28 @@ model = OpenAIChatModel(
     profile=OpenAIModelProfile(
         json_schema_transformer=InlineDefsJsonSchemaTransformer,  # Supported by any model class via the base ModelProfile
         openai_supports_strict_tool_definition=False,  # Supported by OpenAIChatModel and OpenAIResponsesModel
-        openai_chat_supports_multiple_system_messages=False,  # Supported by OpenAIChatModel only — for strict providers (e.g. some vLLM/LiteLLM setups) that require exactly one initial system message
+        openai_chat_supports_multiple_system_messages=False,  # Supported by OpenAIChatModel only — for models whose chat template accepts only one leading system message (see note below)
         openai_chat_supports_max_completion_tokens=False,  # Supported by OpenAIChatModel only — for providers (e.g. OpenRouter) that only accept the older `max_tokens` field instead of `max_completion_tokens`
     )
 )
 agent = Agent(model)
 ```
+
+!!! note "Backends that accept only one leading system message"
+    Some models are served with a chat template (applied server-side, for example by
+    [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single
+    system message at the start of the conversation and rejects additional ones. Sending more
+    than one fails with a `400` error such as `System message must be at the beginning.` or
+    `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and
+    Command-R models. It is easy to hit without intending to: combining agent `instructions`
+    with [`PromptedOutput`][pydantic_ai.output.PromptedOutput] can produce two consecutive
+    leading system messages.
+
+    Set `openai_chat_supports_multiple_system_messages=False` on the model's
+    [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (as shown above) to
+    merge the leading run of system messages into one, joined with two newlines, before the
+    request is sent. The merge is lossless, so it is safe to enable whenever a backend rejects
+    multiple system messages.
 
 ### DeepSeek
 
@@ -768,6 +784,12 @@ print(result.output)
 #> The capital of France is Paris.
 ...
 ```
+
+!!! note
+    If your model rejects requests with more than one leading system message (for example, you
+    see `System message must be at the beginning.`), set
+    `openai_chat_supports_multiple_system_messages=False` on its profile. See the
+    [Model Profile](#model-profile) section above for details.
 
 ### Nebius AI Studio
 
