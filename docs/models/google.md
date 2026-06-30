@@ -313,6 +313,7 @@ from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 settings = GoogleModelSettings(
     temperature=0.2,
     max_tokens=1024,
+    top_k=40,
     google_safety_settings=[
         {
             'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
