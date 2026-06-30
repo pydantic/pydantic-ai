@@ -2195,13 +2195,12 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
 
 
 _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
-# Raw Anthropic token fields that map onto first-class `RequestUsage` fields, so they're excluded from the
-# exposed `RequestUsage.details` to stop OTel consumers double-counting them against the `gen_ai.usage.*`
-# attributes (see `_map_usage` and <https://github.com/pydantic/pydantic-ai/issues/6131>). Kept as its own
-# literal rather than `frozenset(_COMPACTION_TOKEN_KEYS)`: the two sets share these four keys only because the
-# compaction iteration totals happen to cover exactly the first-class token fields today, but they answer
-# independent questions ("which keys need compaction summing" vs "which keys duplicate a first-class field")
-# and must be free to diverge if Anthropic's usage schema grows.
+# Raw Anthropic token fields that a consumer normalizes onto a first-class `RequestUsage` metric (input,
+# output, cache read/write). Excluded from the exposed `RequestUsage.details` so consumers don't add them
+# on top of the canonical `gen_ai.usage.*` totals and double-count (see `_map_usage` and #6131). Kept as
+# its own literal rather than `frozenset(_COMPACTION_TOKEN_KEYS)`: the two sets answer independent questions
+# ("which keys need compaction summing" vs "which keys duplicate a first-class metric") and must be free to
+# diverge if Anthropic's usage schema grows.
 _FIRST_CLASS_TOKEN_KEYS = frozenset(
     {'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'}
 )
@@ -2283,15 +2282,13 @@ def _map_usage(
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens.
-    # The raw token counts are summed into the first-class `RequestUsage` fields above and are excluded
-    # from `details` because their detail keys share the first-class attribute names: e.g.
-    # `gen_ai.usage.details.output_tokens` collides with `gen_ai.usage.output_tokens`, so a consumer
-    # records both against the same metric and double-counts it (#6131).
-    # The `compaction_*` token sub-totals are also folded into the first-class totals, but they are kept:
-    # their `gen_ai.usage.details.compaction_*` attribute names do not collide with any first-class
-    # `gen_ai.usage.*` attribute, so a consumer records them as their own usage-breakdown metric rather
-    # than adding them onto `input_tokens`/`output_tokens` (no double-count of the canonical totals). The
-    # `compaction_iterations`/`message_iterations` counts likewise stay as they're genuinely supplementary.
+    # The raw token counts are summed into the first-class `RequestUsage` fields above and excluded from
+    # `details`: consumers (e.g. Langfuse) map a detail key like `output_tokens`, or the well-known Anthropic
+    # cache field names, back onto the canonical usage metric and add them on top of `gen_ai.usage.*`,
+    # double-counting (#6131). The `compaction_*` sub-totals are also folded into the first-class totals but
+    # kept, because their key names have no canonical metric to collide with — a consumer records them as
+    # their own breakdown rather than re-adding them. `compaction_iterations`/`message_iterations` stay too,
+    # as genuinely supplementary counts.
     request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_for_extraction),
         provider=provider,
