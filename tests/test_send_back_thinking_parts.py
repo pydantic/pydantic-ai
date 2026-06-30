@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import merge_profile
 
-from ..conftest import try_import
+from .conftest import try_import
 
 with try_import() as xai_imports:
     from google.protobuf.json_format import MessageToDict
