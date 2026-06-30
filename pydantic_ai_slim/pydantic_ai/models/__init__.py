@@ -1060,6 +1060,12 @@ def infer_model(  # noqa: C901
         from .xai import XaiModel
 
         return XaiModel(model_name, provider=provider)
+    elif model_kind in ('snowflake-cortex', 'snowflake'):
+        from .snowflake import SnowflakeCortexModel
+
+        # SnowflakeCortexModel handles its own provider routing (OpenAI vs Anthropic)
+        # based on model name, so we don't pass the provider from provider_factory.
+        return SnowflakeCortexModel(model_name)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 

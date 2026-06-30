@@ -10,12 +10,14 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    import anthropic
     import openai
 
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.snowflake import SnowflakeCortexProvider
+    from pydantic_ai.providers.snowflake import SnowflakeCortexAnthropicProvider, SnowflakeCortexProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai or anthropic not installed')
 
 
 # ---------------------------------------------------------------------------
@@ -149,3 +151,134 @@ def test_provider_repr() -> None:
     provider = SnowflakeCortexProvider(account='myorg-myacct', token='pat')
     assert 'snowflake-cortex' in repr(provider)
     assert 'snowflakecomputing.com' in repr(provider)
+
+
+# ---------------------------------------------------------------------------
+# SnowflakeCortexAnthropicProvider
+# ---------------------------------------------------------------------------
+
+
+def test_anthropic_provider_from_explicit_args() -> None:
+    provider = SnowflakeCortexAnthropicProvider(account='myorg-myacct', token='pat-secret')
+    assert provider.name == 'snowflake-cortex-anthropic'
+    assert provider.base_url == 'https://myorg-myacct.snowflakecomputing.com/api/v2/cortex/v1'
+    assert isinstance(provider.client, anthropic.AsyncAnthropic)
+
+
+def test_anthropic_provider_uses_auth_token_not_api_key() -> None:
+    """Cortex /messages requires Authorization: Bearer — auth_token, not api_key."""
+    provider = SnowflakeCortexAnthropicProvider(account='myorg-myacct', token='my-pat')
+    # auth_token sets Authorization: Bearer, api_key sets X-Api-Key
+    assert provider.client.auth_token == 'my-pat'
+    assert provider.client.api_key is None
+
+
+def test_anthropic_provider_from_env(env: TestEnv) -> None:
+    env.set('SNOWFLAKE_ACCOUNT', 'myorg-envacct')
+    env.set('SNOWFLAKE_TOKEN', 'env-pat')
+    provider = SnowflakeCortexAnthropicProvider()
+    assert 'myorg-envacct.snowflakecomputing.com' in provider.base_url
+
+
+def test_anthropic_provider_requires_account(env: TestEnv) -> None:
+    env.remove('SNOWFLAKE_ACCOUNT')
+    env.remove('SNOWFLAKE_TOKEN')
+    with pytest.raises(UserError, match='SNOWFLAKE_ACCOUNT'):
+        SnowflakeCortexAnthropicProvider()
+
+
+def test_anthropic_provider_requires_token(env: TestEnv) -> None:
+    env.set('SNOWFLAKE_ACCOUNT', 'myorg-myacct')
+    env.remove('SNOWFLAKE_TOKEN')
+    with pytest.raises(UserError, match='SNOWFLAKE_TOKEN'):
+        SnowflakeCortexAnthropicProvider()
+
+
+def test_anthropic_provider_with_http_client() -> None:
+    http_client = httpx.AsyncClient()
+    provider = SnowflakeCortexAnthropicProvider(account='myorg-myacct', token='pat', http_client=http_client)
+    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
+
+
+def test_anthropic_provider_with_anthropic_client() -> None:
+    client = anthropic.AsyncAnthropic(
+        auth_token='pat',
+        base_url='https://myorg-myacct.snowflakecomputing.com/api/v2/cortex/v1',
+    )
+    provider = SnowflakeCortexAnthropicProvider(anthropic_client=client)
+    assert provider.client is client
+    assert 'myorg-myacct' in provider.base_url
+
+
+def test_anthropic_provider_model_profile_claude() -> None:
+    profile = SnowflakeCortexAnthropicProvider.model_profile('claude-sonnet-4-6')
+    assert profile is not None
+
+
+def test_anthropic_model_uses_cortex_anthropic_provider() -> None:
+    provider = SnowflakeCortexAnthropicProvider(account='myorg-myacct', token='pat')
+    model = AnthropicModel('claude-sonnet-4-6', provider=provider)
+    assert model.system == 'snowflake-cortex-anthropic'
+    assert 'myorg-myacct.snowflakecomputing.com' in model.base_url
+
+
+# ---------------------------------------------------------------------------
+# SnowflakeCortexModel — unified auto-routing model
+# ---------------------------------------------------------------------------
+
+
+def test_cortex_model_routes_llama_to_openai_path(env: TestEnv) -> None:
+    env.set('SNOWFLAKE_ACCOUNT', 'myorg-myacct')
+    env.set('SNOWFLAKE_TOKEN', 'tok')
+    from pydantic_ai.models.snowflake import SnowflakeCortexModel
+
+    m = SnowflakeCortexModel('llama4-maverick')
+    assert m.system == 'snowflake-cortex'
+    assert m.model_name == 'llama4-maverick'
+    assert 'snowflakecomputing.com' in m.wrapped.base_url  # type: ignore[union-attr]
+
+
+def test_cortex_model_routes_claude_to_anthropic_path(env: TestEnv) -> None:
+    env.set('SNOWFLAKE_ACCOUNT', 'myorg-myacct')
+    env.set('SNOWFLAKE_TOKEN', 'tok')
+    from pydantic_ai.models.snowflake import SnowflakeCortexModel
+
+    m = SnowflakeCortexModel('claude-sonnet-4-6')
+    assert m.system == 'snowflake-cortex-anthropic'
+    assert m.model_name == 'claude-sonnet-4-6'
+
+
+def test_cortex_model_string_shorthand_llama(env: TestEnv) -> None:
+    env.set('SNOWFLAKE_ACCOUNT', 'myorg-myacct')
+    env.set('SNOWFLAKE_TOKEN', 'tok')
+    from pydantic_ai.models import infer_model
+
+    m = infer_model('snowflake-cortex:llama4-maverick')
+    assert m.system == 'snowflake-cortex'
+    assert m.model_name == 'llama4-maverick'
+
+
+def test_cortex_model_string_shorthand_claude(env: TestEnv) -> None:
+    env.set('SNOWFLAKE_ACCOUNT', 'myorg-myacct')
+    env.set('SNOWFLAKE_TOKEN', 'tok')
+    from pydantic_ai.models import infer_model
+
+    m = infer_model('snowflake-cortex:claude-sonnet-4-6')
+    assert m.system == 'snowflake-cortex-anthropic'
+    assert m.model_name == 'claude-sonnet-4-6'
+
+
+def test_cortex_model_explicit_account_token() -> None:
+    from pydantic_ai.models.snowflake import SnowflakeCortexModel
+
+    m = SnowflakeCortexModel('llama4-maverick', account='myorg-myacct', token='my-tok')
+    assert m.system == 'snowflake-cortex'
+
+
+def test_cortex_model_mistral_routes_to_openai_path(env: TestEnv) -> None:
+    env.set('SNOWFLAKE_ACCOUNT', 'myorg-myacct')
+    env.set('SNOWFLAKE_TOKEN', 'tok')
+    from pydantic_ai.models.snowflake import SnowflakeCortexModel
+
+    m = SnowflakeCortexModel('mistral-large2')
+    assert m.system == 'snowflake-cortex'
