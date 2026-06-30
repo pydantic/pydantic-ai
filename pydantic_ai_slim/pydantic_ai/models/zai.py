@@ -67,8 +67,9 @@ class ZaiModelSettings(ModelSettings, total=False):
     zai_clear_thinking: bool
     """Whether to clear historical thinking content from prior turns.
 
-    Set to `False` for preserved thinking, which retains reasoning content from prior
-    assistant responses for improved multi-turn coherence. Defaults to `True` (clear) when not set.
+    Defaults to `False` (preserved thinking) on thinking-capable models, retaining reasoning content
+    from prior assistant responses for improved multi-turn coherence and consistency with other
+    providers. Set to `True` to clear it instead.
 
     Only affects cross-turn historical thinking blocks; it does not change whether the model
     generates thinking in the current turn (controlled by the unified `thinking` setting).
@@ -115,9 +116,12 @@ class ZaiModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
-        supports_reasoning_effort = cast(ZaiModelProfile, self.profile).get('zai_supports_reasoning_effort', False)
+        profile = cast(ZaiModelProfile, self.profile)
         new_settings = _zai_settings_to_openai_settings(
-            cast(ZaiModelSettings, merged_settings or {}), customized_parameters, supports_reasoning_effort
+            cast(ZaiModelSettings, merged_settings or {}),
+            customized_parameters,
+            supports_thinking=profile.get('supports_thinking', False),
+            supports_reasoning_effort=profile.get('zai_supports_reasoning_effort', False),
         )
         return new_settings, customized_parameters
 
@@ -136,6 +140,8 @@ class ZaiModel(OpenAIChatModel):
 def _zai_settings_to_openai_settings(
     model_settings: ZaiModelSettings,
     model_request_parameters: ModelRequestParameters,
+    *,
+    supports_thinking: bool,
     supports_reasoning_effort: bool,
 ) -> OpenAIChatModelSettings:
     """Transforms a 'ZaiModelSettings' object into an 'OpenAIChatModelSettings' object.
@@ -147,6 +153,7 @@ def _zai_settings_to_openai_settings(
     Args:
         model_settings: The 'ZaiModelSettings' object to transform.
         model_request_parameters: The request parameters carrying the resolved unified `thinking` value.
+        supports_thinking: Whether the model supports thinking, gating the default `clear_thinking`.
         supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2).
 
     Returns:
@@ -165,6 +172,11 @@ def _zai_settings_to_openai_settings(
         thinking_payload['type'] = 'enabled'
 
     clear_thinking = model_settings.get('zai_clear_thinking')
+    if clear_thinking is None and supports_thinking:
+        # Preserve cross-turn reasoning by default on thinking-capable models, for consistency with other
+        # providers (e.g. Cerebras for GLM). Independent of this turn's `type`; set `zai_clear_thinking=True`
+        # to clear. Left unset on non-thinking models so they receive no thinking payload.
+        clear_thinking = False
     if clear_thinking is not None:
         thinking_payload['clear_thinking'] = clear_thinking
 

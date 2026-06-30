@@ -93,7 +93,7 @@ async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str, v
     # VCR cassette matchers aren't sensitive to the request body, so assert it explicitly.
     assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    assert request_body['thinking'] == {'type': 'enabled'}
+    assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
     assert 'reasoning_effort' not in request_body
 
 
@@ -190,7 +190,7 @@ async def test_zai_vision_thinking(
     # even if `thinking` stopped reaching the request.
     assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    assert request_body['thinking'] == {'type': 'enabled'}
+    assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
 
 
 async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
@@ -214,7 +214,7 @@ async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str
 
     assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    assert request_body['thinking'] == {'type': 'enabled'}
+    assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
     assert request_body['reasoning_effort'] == 'high'
 
 
@@ -269,33 +269,73 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
 
 
 @pytest.mark.parametrize(
-    'thinking,clear_thinking,extra_body,expected',
+    'thinking,clear_thinking,supports_thinking,extra_body,expected',
     [
-        pytest.param(True, None, None, {'extra_body': {'thinking': {'type': 'enabled'}}}, id='enabled'),
-        pytest.param(False, None, None, {'extra_body': {'thinking': {'type': 'disabled'}}}, id='disabled'),
+        # On thinking-capable models, cross-turn reasoning is preserved by default (`clear_thinking=False`),
+        # independent of this turn's `type`.
+        pytest.param(
+            True,
+            None,
+            True,
+            None,
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}},
+            id='enabled',
+        ),
+        pytest.param(
+            False,
+            None,
+            True,
+            None,
+            {'extra_body': {'thinking': {'type': 'disabled', 'clear_thinking': False}}},
+            id='disabled',
+        ),
         # `True` and every effort level collapse to `enabled` — Z.AI has no effort granularity.
-        pytest.param('high', None, None, {'extra_body': {'thinking': {'type': 'enabled'}}}, id='effort-collapses'),
-        pytest.param(None, None, None, {}, id='no-thinking'),
+        pytest.param(
+            'high',
+            None,
+            True,
+            None,
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}},
+            id='effort-collapses',
+        ),
+        # No explicit `thinking`: the model thinks by default and prior reasoning is preserved.
+        pytest.param(
+            None, None, True, None, {'extra_body': {'thinking': {'clear_thinking': False}}}, id='model-default-thinking'
+        ),
+        # Non-thinking models receive no thinking payload at all.
+        pytest.param(None, None, False, None, {}, id='non-thinking-model'),
+        # An explicit `zai_clear_thinking` always wins over the default.
+        pytest.param(
+            True,
+            True,
+            True,
+            None,
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': True}}},
+            id='explicit-clear',
+        ),
         pytest.param(
             True,
             False,
+            True,
             None,
             {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}},
-            id='preserved-thinking',
+            id='explicit-preserve',
         ),
+        # An explicit setting is honored even on a non-thinking model; only the *default* is gated.
         pytest.param(
-            True, True, None, {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': True}}}, id='clear'
-        ),
-        # `zai_clear_thinking` is independent of `type`: it tunes cross-turn thinking preservation even when the
-        # current turn's thinking is left to the model's default, so it is emitted on its own.
-        pytest.param(
-            None, False, None, {'extra_body': {'thinking': {'clear_thinking': False}}}, id='clear-without-thinking'
+            None,
+            False,
+            False,
+            None,
+            {'extra_body': {'thinking': {'clear_thinking': False}}},
+            id='explicit-on-non-thinking',
         ),
         pytest.param(
             True,
             None,
+            True,
             {'custom_key': 'value'},
-            {'extra_body': {'custom_key': 'value', 'thinking': {'type': 'enabled'}}},
+            {'extra_body': {'custom_key': 'value', 'thinking': {'type': 'enabled', 'clear_thinking': False}}},
             id='preserves-existing-extra-body',
         ),
     ],
@@ -303,6 +343,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
 def test_zai_settings_transformation(
     thinking: ThinkingLevel | None,
     clear_thinking: bool | None,
+    supports_thinking: bool,
     extra_body: dict[str, Any] | None,
     expected: dict[str, Any],
 ):
@@ -321,7 +362,10 @@ def test_zai_settings_transformation(
 
     # `supports_reasoning_effort=False`: effort granularity collapses to enabled (e.g. on glm-4.7).
     transformed = _zai_settings_to_openai_settings(
-        settings, ModelRequestParameters(thinking=thinking), supports_reasoning_effort=False
+        settings,
+        ModelRequestParameters(thinking=thinking),
+        supports_thinking=supports_thinking,
+        supports_reasoning_effort=False,
     )
     assert transformed == expected
 
@@ -362,31 +406,49 @@ def test_zai_sends_back_thinking_in_reasoning_content_field(zai_api_key: str):
     [
         pytest.param(
             'minimal',
-            {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'minimal'}},
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'minimal'}},
             id='minimal',
         ),
-        pytest.param('low', {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'low'}}, id='low'),
         pytest.param(
-            'medium', {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'medium'}}, id='medium'
+            'low',
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'low'}},
+            id='low',
         ),
-        pytest.param('high', {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'high'}}, id='high'),
         pytest.param(
-            'xhigh', {'extra_body': {'thinking': {'type': 'enabled'}, 'reasoning_effort': 'xhigh'}}, id='xhigh'
+            'medium',
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'medium'}},
+            id='medium',
+        ),
+        pytest.param(
+            'high',
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'high'}},
+            id='high',
+        ),
+        pytest.param(
+            'xhigh',
+            {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoning_effort': 'xhigh'}},
+            id='xhigh',
         ),
         # A bare `thinking=True` enables thinking but sends no effort, so Z.AI applies its own default.
-        pytest.param(True, {'extra_body': {'thinking': {'type': 'enabled'}}}, id='enabled-no-effort'),
-        pytest.param(False, {'extra_body': {'thinking': {'type': 'disabled'}}}, id='disabled'),
+        pytest.param(
+            True, {'extra_body': {'thinking': {'type': 'enabled', 'clear_thinking': False}}}, id='enabled-no-effort'
+        ),
+        pytest.param(False, {'extra_body': {'thinking': {'type': 'disabled', 'clear_thinking': False}}}, id='disabled'),
     ],
 )
 def test_zai_reasoning_effort_forwarded_when_supported(thinking: ThinkingLevel, expected: dict[str, Any]):
     """When the model supports reasoning effort, an explicit unified effort level is forwarded as
     `extra_body.reasoning_effort`, while a bare `thinking=True`/`False` adds none.
 
-    Exercises the transform with `supports_reasoning_effort=True`; the model-name -> flag mapping that
-    produces it (GLM-5.2) is covered by `test_zai_provider_model_profile`. Models without effort support
-    collapse the level to thinking on/off (covered by `test_zai_settings_transformation`).
+    Exercises the transform with `supports_reasoning_effort=True` (GLM-5.2, which also supports thinking, so
+    cross-turn reasoning is preserved by default); the model-name -> flag mapping is covered by
+    `test_zai_provider_model_profile`. Models without effort support collapse the level to thinking on/off
+    (covered by `test_zai_settings_transformation`).
     """
     transformed = _zai_settings_to_openai_settings(
-        ZaiModelSettings(), ModelRequestParameters(thinking=thinking), supports_reasoning_effort=True
+        ZaiModelSettings(),
+        ModelRequestParameters(thinking=thinking),
+        supports_thinking=True,
+        supports_reasoning_effort=True,
     )
     assert transformed == expected

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '131678'
+      - '131703'
       content-type:
       - application/json
       host:
@@ -26,6 +26,7 @@ interactions:
       model: glm-4.6v
       stream: false
       thinking:
+        clear_thinking: false
         type: enabled
     uri: https://api.z.ai/api/paas/v4/chat/completions
   response:
@@ -33,7 +34,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '745'
+      - '733'
       content-type:
       - application/json; charset=UTF-8
       strict-transport-security:
@@ -56,23 +57,23 @@ interactions:
           content: |2-
 
             The fruit in the image is a kiwi.
-          reasoning_content: Got it, let's see. The image shows a cross-section of a fruit with green flesh, a white center,
-            and black seeds arranged in a circular pattern. The outer skin has a fuzzy texture. That's definitely a kiwi.
-            So the fruit in the image is a kiwi.
+          reasoning_content: Got it, let's see. The image shows a sliced fruit with green flesh, a white center, and black
+            seeds arranged in a circular pattern. The outer skin has a fuzzy texture. That's definitely a kiwi. So the fruit
+            in the image is a kiwi.
           role: assistant
-      created: 1782496205
-      id: 2026062701500466a7b05257e14e9f
+      created: 1782860825
+      id: 20260701070702302806407fe142a0
       model: glm-4.6v
       object: chat.completion
-      request_id: 2026062701500466a7b05257e14e9f
+      request_id: 20260701070702302806407fe142a0
       usage:
-        completion_tokens: 76
+        completion_tokens: 73
         completion_tokens_details:
-          reasoning_tokens: 59
+          reasoning_tokens: 56
         prompt_tokens: 435
         prompt_tokens_details:
           cached_tokens: 4
-        total_tokens: 511
+        total_tokens: 508
     status:
       code: 200
       message: OK

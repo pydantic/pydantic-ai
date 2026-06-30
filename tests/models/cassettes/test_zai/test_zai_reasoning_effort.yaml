@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '159'
+      - '184'
       content-type:
       - application/json
       host:
@@ -22,6 +22,7 @@ interactions:
       reasoning_effort: high
       stream: false
       thinking:
+        clear_thinking: false
         type: enabled
     uri: https://api.z.ai/api/paas/v4/chat/completions
   response:
@@ -29,7 +30,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '677'
+      - '691'
       content-type:
       - application/json; charset=UTF-8
       strict-transport-security:
@@ -51,15 +52,15 @@ interactions:
         message:
           content: 2 + 2 = 4
           reasoning_content: |-
-            1.  Identify the core question: The user is asking for the result of the addition of 2 and 2.
+            1.  Identify the core question: The user is asking for the result of the mathematical expression "2 + 2".
             2.  Perform the calculation: 2 + 2 = 4.
             3.  Formulate the response: State the answer clearly and concisely.
           role: assistant
-      created: 1782496770
-      id: 202606270159288dfed7fa001a428f
+      created: 1782860828
+      id: 202607010707065a46740249494b23
       model: glm-5.2
       object: chat.completion
-      request_id: 202606270159288dfed7fa001a428f
+      request_id: 202607010707065a46740249494b23
       usage:
         completion_tokens: 67
         completion_tokens_details:

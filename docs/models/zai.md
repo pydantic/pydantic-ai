@@ -61,7 +61,9 @@ agent = Agent(
 
 ### Preserved thinking
 
-For multi-turn conversations, you can enable preserved thinking to retain reasoning content from prior assistant responses. This improves coherence across turns. Use [`ZaiModelSettings`][pydantic_ai.models.zai.ZaiModelSettings] for the Z.AI-specific `zai_clear_thinking` knob:
+On thinking-capable models, reasoning content from prior assistant responses is **preserved by default** for better multi-turn coherence and consistency with other providers — the complete, unmodified `reasoning_content` from prior turns is automatically sent back to the API by Pydantic AI.
+
+To clear prior reasoning instead, set `zai_clear_thinking=True` via the Z.AI-specific [`ZaiModelSettings`][pydantic_ai.models.zai.ZaiModelSettings]:
 
 ```python
 from pydantic_ai import Agent
@@ -69,12 +71,10 @@ from pydantic_ai.models.zai import ZaiModelSettings
 
 agent = Agent(
     'zai:glm-5',
-    model_settings=ZaiModelSettings(thinking=True, zai_clear_thinking=False),
+    model_settings=ZaiModelSettings(thinking=True, zai_clear_thinking=True),
 )
 ...
 ```
-
-When using preserved thinking, the complete and unmodified `reasoning_content` from prior turns is automatically sent back to the API by Pydantic AI.
 
 See the [Z.AI thinking mode documentation](https://docs.z.ai/guides/capabilities/thinking-mode#preserved-thinking) for more details.
 
