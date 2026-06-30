@@ -1469,7 +1469,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         elif send_back_thinking_parts == 'tags' and response_part.content:
                             # Anthropic does not re-absorb `<thinking>` tags from history, so re-rendering an
                             # unsigned/foreign part as text teaches the model to mimic the format in its
-                            # user-visible output (#5869). `'auto'` drops these; `'tags'` opts back in.
+                            # user-visible output. `'auto'` drops these; `'tags'` opts back in.
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             assistant_content_params.append(
                                 BetaTextBlockParam(

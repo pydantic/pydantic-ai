@@ -133,7 +133,10 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Default: `False`."""
     bedrock_tool_result_format: Literal['text', 'json']
     """Default: `'text'`."""
-    bedrock_send_back_thinking_parts: Literal['auto', 'tags', False]
+    # TODO(v3): drop the `True`/`False` members; this field used to be a `bool` and both are deprecated
+    # aliases kept so custom profiles built against the old type keep type-checking (`True` -> `'auto'`,
+    # `False` warns and drops signed parts). See `BedrockConverseModel._map_messages`.
+    bedrock_send_back_thinking_parts: Literal['auto', 'tags', True, False]
     """How thinking parts in history are sent back to Bedrock. Default: `False`.
 
     For models that round-trip native `reasoningContent` (Anthropic and DeepSeek R1 via Bedrock), signed
@@ -146,7 +149,8 @@ class BedrockModelProfile(ModelProfile, total=False):
     reasoning model drops signed thinking blocks, which Anthropic-via-Bedrock rejects on tool-use turns with a
     `ValidationException`. Use `'auto'` instead.
 
-    This field used to be a `bool`; the old `True` maps to `'auto'`."""
+    This field used to be a `bool`. Both bool values are **deprecated**: the old `True` is equivalent to
+    `'auto'` and warns; `False` is the (deprecated) default described above."""
     bedrock_supports_prompt_caching: bool
     """Default: `False`."""
     bedrock_supports_tool_caching: bool

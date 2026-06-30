@@ -576,7 +576,7 @@ def test_bedrock_meta_llama3():
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_deepseek_r1():
-    """`bedrock_send_back_thinking_parts=True` applied for `r1` models via separate function."""
+    """`bedrock_send_back_thinking_parts='auto'` applied for `r1` models via separate function."""
     profile = BedrockProvider.model_profile('deepseek.deepseek-r1-v1:0')
     assert _normalize(profile) == snapshot(
         {

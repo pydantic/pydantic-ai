@@ -952,6 +952,16 @@ class BedrockConverseModel(Model[BaseClient]):
         """
         settings = model_settings or BedrockModelSettings()
         profile = self.profile
+        send_back_thinking_parts = profile.get('bedrock_send_back_thinking_parts', False)
+        if send_back_thinking_parts is True:
+            # TODO(v3): remove the `True` alias for `bedrock_send_back_thinking_parts`. It predates the
+            # `'auto'`/`'tags'` values and is equivalent to `'auto'`; kept so custom profiles built against
+            # the old `bool` field keep type-checking.
+            warnings.warn(
+                "`bedrock_send_back_thinking_parts=True` is deprecated and will be removed in v3; use 'auto' instead.",
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
@@ -1057,7 +1067,6 @@ class BedrockConverseModel(Model[BaseClient]):
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
-                        send_back_thinking_parts = profile.get('bedrock_send_back_thinking_parts', False)
                         if (
                             item.provider_name == self.system
                             and item.signature
@@ -1079,14 +1088,14 @@ class BedrockConverseModel(Model[BaseClient]):
                         elif send_back_thinking_parts == 'tags' and item.content:
                             # Bedrock (like Anthropic) does not re-absorb `<thinking>` tags from history, so
                             # re-rendering an unsigned/foreign part as text teaches the model to mimic the
-                            # format in its user-visible output (#5869). `'auto'` drops these; `'tags'` opts back in.
+                            # format in its user-visible output. `'auto'` drops these; `'tags'` opts back in.
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
                         elif send_back_thinking_parts is False and item.provider_name == self.system and item.signature:
                             # TODO(v3): remove `bedrock_send_back_thinking_parts=False`. It drops signed
                             # `reasoningContent` blocks, which Anthropic-via-Bedrock rejects on tool-use turns with a
                             # `ValidationException`, and is redundant with the `item.signature` guard for non-reasoning
-                            # families (which never produce signed parts). Kept for back-compat; `'auto'` is safe (#5869, #5920).
+                            # families (which never produce signed parts). Kept for back-compat; `'auto'` is safe.
                             warnings.warn(
                                 '`bedrock_send_back_thinking_parts=False` is deprecated and will be removed in v3. '
                                 'It drops signed thinking blocks, which Anthropic-via-Bedrock rejects on tool-use turns '
