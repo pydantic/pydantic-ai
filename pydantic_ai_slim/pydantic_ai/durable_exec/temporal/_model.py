@@ -350,7 +350,7 @@ class TemporalModel(WrapperModel):
         Mirrors `prepare_request`: when `using_model()` overrides the runtime model, we
         delegate to that model's profile (or to the grandparent default for unregistered
         model strings) so cross-provider history shapes are translated against the right
-        `supported_builtin_tools`.
+        `supported_native_tools`.
         """
         current = self._current_model()
         if isinstance(current, str):
