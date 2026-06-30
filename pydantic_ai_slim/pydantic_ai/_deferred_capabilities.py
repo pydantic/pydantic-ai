@@ -113,23 +113,15 @@ _LOAD_CAPABILITY_RETURN_CONTENT_TA: pydantic.TypeAdapter[LoadCapabilityReturn] =
 )
 
 
-# A genuine typed part always carries the framework tool name, since the emitter derives `tool_kind`
-# from the tool name. A `tool_kind` arriving (e.g. via a UI adapter) on a part with a different
-# `tool_name` is inconsistent client input: leave it un-narrowed rather than build a typed part whose
-# `tool_name` violates its own `Literal` (which would then fail to reload via `ModelMessagesTypeAdapter`).
-def _narrow_load_capability_call(part: ToolCallPart) -> ToolCallPart:
+def _narrow_load_capability_call(part: ToolCallPart) -> LoadCapabilityCallPart:
     if isinstance(part, LoadCapabilityCallPart):
-        return part
-    if part.tool_name != 'load_capability':
         return part
     validated_args = _LOAD_CAPABILITY_CALL_ARGS_TA.validate_python(part.args)
     return copy_dataclass_fields(part, LoadCapabilityCallPart, args=validated_args, tool_kind='capability-load')
 
 
-def _narrow_load_capability_return(part: ToolReturnPart) -> ToolReturnPart:
+def _narrow_load_capability_return(part: ToolReturnPart) -> LoadCapabilityReturnPart:
     if isinstance(part, LoadCapabilityReturnPart):
-        return part
-    if part.tool_name != 'load_capability':
         return part
     validated_content = _LOAD_CAPABILITY_RETURN_CONTENT_TA.validate_python(part.content)
     return copy_dataclass_fields(part, LoadCapabilityReturnPart, content=validated_content, tool_kind='capability-load')

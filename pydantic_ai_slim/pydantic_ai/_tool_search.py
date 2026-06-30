@@ -368,41 +368,29 @@ _TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent] = 
 )
 
 
-# Like the capability-load narrowers, only promote when `tool_name` also matches the typed subclass:
-# the emitter derives `tool_kind` from the tool name, so a real part always carries it. A `tool_kind`
-# arriving (e.g. via a UI adapter) on a part with a different `tool_name` is inconsistent client input,
-# left un-narrowed rather than building a typed part whose `tool_name` violates its own `Literal`.
-def _narrow_native_tool_search_call(part: NativeToolCallPart) -> NativeToolCallPart:
+def _narrow_native_tool_search_call(part: NativeToolCallPart) -> NativeToolSearchCallPart:
     if isinstance(part, NativeToolSearchCallPart):
-        return part
-    if part.tool_name != 'tool_search':
         return part
     validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
     return copy_dataclass_fields(part, NativeToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 
-def _narrow_native_tool_search_return(part: NativeToolReturnPart) -> NativeToolReturnPart:
+def _narrow_native_tool_search_return(part: NativeToolReturnPart) -> NativeToolSearchReturnPart:
     if isinstance(part, NativeToolSearchReturnPart):
-        return part
-    if part.tool_name != 'tool_search':
         return part
     validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
     return copy_dataclass_fields(part, NativeToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
 
 
-def _narrow_tool_search_call(part: ToolCallPart) -> ToolCallPart:
+def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
     if isinstance(part, ToolSearchCallPart):
-        return part
-    if part.tool_name != 'search_tools':
         return part
     validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
     return copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 
-def _narrow_tool_search_return(part: ToolReturnPart) -> ToolReturnPart:
+def _narrow_tool_search_return(part: ToolReturnPart) -> ToolSearchReturnPart:
     if isinstance(part, ToolSearchReturnPart):
-        return part
-    if part.tool_name != 'search_tools':
         return part
     validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
     return copy_dataclass_fields(part, ToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
