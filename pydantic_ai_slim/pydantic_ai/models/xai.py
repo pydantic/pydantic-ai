@@ -395,6 +395,7 @@ class XaiModel(Model[AsyncClient]):
     def _map_response_parts(self, parts: Sequence[ModelResponsePart]) -> list[chat_types.chat_pb2.Message]:
         """Map ModelResponse parts to xAI assistant messages (one message per part)."""
         messages: list[chat_types.chat_pb2.Message] = []
+        send_back_thinking_parts = self.profile.get('grok_send_back_thinking_parts', 'auto')
 
         # Track builtin tool calls by tool_call_id to update their status with return parts
         builtin_calls: dict[str, chat_types.chat_pb2.ToolCall] = {}
@@ -403,7 +404,7 @@ class XaiModel(Model[AsyncClient]):
             if isinstance(item, TextPart):
                 messages.append(assistant(item.content))
             elif isinstance(item, ThinkingPart):
-                if (thinking_msg := self._map_thinking_part(item)) is not None:
+                if (thinking_msg := self._map_thinking_part(item, send_back_thinking_parts)) is not None:
                     messages.append(thinking_msg)
             elif isinstance(item, ToolCallPart):
                 client_side_tool_call = self._map_tool_call(item)
@@ -452,11 +453,13 @@ class XaiModel(Model[AsyncClient]):
             msg.tool_calls.append(tool_call)
             messages.append(msg)
 
-    def _map_thinking_part(self, item: ThinkingPart) -> chat_types.chat_pb2.Message | None:
+    def _map_thinking_part(
+        self, item: ThinkingPart, send_back_thinking_parts: Literal['auto', 'tags']
+    ) -> chat_types.chat_pb2.Message | None:
         """Map a `ThinkingPart` into a single xAI assistant message.
 
         - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
-        - Non-xAI (or non-native) thinking is preserved by wrapping in the model profile's thinking tags
+        - Foreign/non-native thinking is dropped (`'auto'`) or re-rendered as `thinking_tags` text (`'tags'`)
         """
         if item.provider_name in _XAI_PROVIDER_NAMES and (item.content or item.signature):
             msg = assistant('')
@@ -465,7 +468,10 @@ class XaiModel(Model[AsyncClient]):
             if item.signature:
                 msg.encrypted_content = item.signature
             return msg
-        elif item.content:
+        elif send_back_thinking_parts == 'tags' and item.content:
+            # xAI does not re-absorb `<think>` tags from history, so re-rendering an unsigned/foreign part as
+            # text teaches the model to mimic the format in its user-visible output. `'auto'` drops these;
+            # `'tags'` opts back in.
             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
             return assistant('\n'.join([start_tag, item.content, end_tag]))
         else:
