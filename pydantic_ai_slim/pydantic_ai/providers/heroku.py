@@ -112,8 +112,9 @@ class HerokuProvider(Provider[AsyncOpenAI]):
                     ' to use the Heroku provider.'
                 )
 
-            base_url = base_url or os.getenv('HEROKU_INFERENCE_URL', 'https://us.inference.heroku.com')
-            base_url = base_url.rstrip('/') + '/v1'
+            base_url = (base_url or os.getenv('HEROKU_INFERENCE_URL', 'https://us.inference.heroku.com')).rstrip('/')
+            if not base_url.endswith('/v1'):
+                base_url += '/v1'
 
             if http_client is not None:
                 self._client = AsyncOpenAI(api_key=api_key, http_client=http_client, base_url=base_url)
