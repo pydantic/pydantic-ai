@@ -207,6 +207,8 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
+    - `GroqModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
+    - `MistralModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
@@ -520,6 +522,8 @@ class BinaryContent:
     - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    - `GroqModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
+    - `MistralModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
     _identifier: Annotated[str | None, pydantic.Field(alias='identifier', default=None, exclude=True)] = field(

@@ -18,13 +18,6 @@ on:
   # access. Without this, any established external contributor's PR would
   # consume the configured Anthropic key and a model run.
   roles: [admin, maintainer, write]
-  # Make the activation chain wait on the cheap `detect` job below so the
-  # top-level `if:` (which gh-aw copies onto the activation + agent jobs) can
-  # reference `needs.detect.outputs.touched` validly. Listing it here makes
-  # `detect` a pre-activation dependency; without it gh-aw would make `detect`
-  # depend on `activation`, and the `if:` reference would point at a
-  # non-dependency.
-  needs: [detect]
   # Pause for a maintainer's approval of the `ui-security-review` Environment
   # before the agent runs. This gates the `activation` job, but because
   # `activation` is itself gated by the `if:` below, the approval is only
