@@ -660,9 +660,8 @@ def test_init_tool_plain():
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
-    # With no explicit per-tool budget, the agent default resolves per-run via `RunContext.max_retries`
-    # rather than being baked onto the toolset tool (contrast `test_init_tool_ctx`, where an explicit
-    # `max_retries=3` is preserved).
+    # No explicit per-tool budget, so the agent default resolves per-run via `RunContext.max_retries`
+    # rather than baked onto the tool (contrast `test_init_tool_ctx`, where explicit `max_retries=3` wins).
     assert agent._function_toolset.tools['plain_tool'].max_retries is None
 
     agent_infer = Agent('test', tools=[plain_tool], retries={'tools': 7, 'output': 7})

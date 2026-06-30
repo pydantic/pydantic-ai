@@ -466,13 +466,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._output_toolset and self._output_toolset.max_retries is None:
             self._output_toolset.max_retries = self._max_output_retries
 
-        # Leave the function toolset's `max_retries` unset so the agent-level tool-retry default
-        # flows through `ToolManager.default_max_retries` -> `RunContext.max_retries` instead of
-        # being baked onto every tool at construction. This lets `run`/`iter`/`override` override
-        # the tool-retry budget per run (via `default_max_retries`) while explicit per-tool
-        # (`@agent.tool(retries=...)`) and per-toolset (`FunctionToolset(max_retries=...)`) budgets
-        # still take precedence through the `tool.max_retries -> toolset.max_retries -> ctx.max_retries`
-        # fallback chain.
+        # Leave `max_retries=None` so the agent-level tool-retry default resolves per-run via
+        # `ToolManager.default_max_retries` -> `RunContext.max_retries` (overridable at `run`/`iter`/`override`)
+        # rather than baked onto each tool; explicit per-tool/per-toolset budgets still win through the
+        # `tool.max_retries -> toolset.max_retries -> ctx.max_retries` fallback chain.
         self._function_toolset = _AgentFunctionToolset(
             tools,
             max_retries=None,
