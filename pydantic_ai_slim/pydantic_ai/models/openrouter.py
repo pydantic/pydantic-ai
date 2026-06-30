@@ -521,8 +521,6 @@ class _OpenRouterCostDetails:
     upstream_inference_cost: float | None = None
     upstream_inference_prompt_cost: float | None = None
     upstream_inference_completions_cost: float | None = None
-    # TODO rework fields, tests/models/cassettes/test_openrouter/test_openrouter_google_nested_schema.yaml
-    # shows an `upstream_inference_completions_cost` field as well
 
 
 class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
