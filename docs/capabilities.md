@@ -470,6 +470,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`Thinking`][pydantic_ai.capabilities.Thinking] | Enables model [thinking/reasoning](thinking.md) at configurable effort | Yes |
 | [`Hooks`][pydantic_ai.capabilities.Hooks] | Decorator-based [lifecycle hook](hooks.md) registration | — |
 | [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] | OpenTelemetry/Logfire tracing — see [Debugging and Monitoring](logfire.md) | Yes |
+| [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] | Raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] whenever a model response has `finish_reason='content_filter'` | Yes |
 | [`WebSearch`][pydantic_ai.capabilities.WebSearch] | Web search — native by default, optional [local fallback](common-tools.md#duckduckgo-search-tool) via `local='duckduckgo'` | Yes |
 | [`WebFetch`][pydantic_ai.capabilities.WebFetch] | URL fetching — native by default, optional [local fallback](common-tools.md#web-fetch-tool) via `local=True` | Yes |
 | [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] | Image generation — native by default, optional subagent fallback via `fallback_model` | Yes |
@@ -522,6 +523,19 @@ print(result.output)
 ```
 
 See [Thinking](thinking.md) for provider-specific details and the [unified thinking settings](thinking.md#unified-thinking-settings).
+
+### RaiseContentFilterError
+
+[`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] opts into treating any model response with `finish_reason='content_filter'` as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], even when the provider returns partial text or refusal text:
+
+```python {title="raise_content_filter_error.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import RaiseContentFilterError
+
+agent = Agent('openai-responses:gpt-5.4', capabilities=[RaiseContentFilterError()])
+```
+
+Without this capability, Pydantic AI's default behavior is unchanged: non-empty text responses can still become ordinary agent output even when their finish reason is `content_filter`. When the capability raises, the full [`ModelResponse`][pydantic_ai.messages.ModelResponse] is serialized into [`ContentFilterError.body`][pydantic_ai.exceptions.UnexpectedModelBehavior.body] so partial text remains inspectable.
 
 ### Compaction
 

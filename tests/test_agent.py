@@ -60,7 +60,14 @@ from pydantic_ai._output import (
     TextOutput,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, PrepareOutputTools, PrepareTools, WrapRunHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    NativeTool,
+    PrepareOutputTools,
+    PrepareTools,
+    RaiseContentFilterError,
+    WrapRunHandler,
+)
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
@@ -10842,6 +10849,46 @@ async def test_central_content_filter_with_partial_content():
     # Should NOT raise ContentFilterError
     result = await agent.run('Trigger filter')
     assert result.output == 'Partially generated content...'
+
+
+async def test_raise_content_filter_error_capability_with_partial_content():
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('Partially generated content...')],
+            model_name='test-model',
+            finish_reason='content_filter',
+            provider_details={'finish_reason': 'content_filter'},
+        )
+
+    model = FunctionModel(function=filtered_response, model_name='test-model')
+    agent = Agent(model, capabilities=[RaiseContentFilterError()])
+
+    with pytest.raises(
+        ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"
+    ) as exc_info:
+        await agent.run('Trigger filter')
+
+    body = exc_info.value.body
+    assert body is not None
+    response_msg = json.loads(body)[0]
+    assert response_msg['finish_reason'] == 'content_filter'
+    assert response_msg['provider_details'] == {'finish_reason': 'content_filter'}
+    assert response_msg['parts'][0]['content'] == 'Partially generated content...'
+
+
+async def test_raise_content_filter_error_capability_noop_for_other_finish_reason():
+    async def response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('Finished content.')],
+            model_name='test-model',
+            finish_reason='stop',
+        )
+
+    model = FunctionModel(function=response, model_name='test-model')
+    agent = Agent(model, capabilities=[RaiseContentFilterError()])
+
+    result = await agent.run('No filter')
+    assert result.output == 'Finished content.'
 
 
 async def test_agent_allows_none_output_empty_response():
