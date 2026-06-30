@@ -4121,6 +4121,209 @@ def test_dump_messages_legacy_binary_content() -> None:
     )
 
 
+def test_multimodal_roundtrip_preserves_file_vendor_metadata() -> None:
+    """`vendor_metadata` on `FileUrl`/`BinaryContent` survives a dump -> load round-trip (ag-ui >= 0.1.15).
+
+    Regression test for #5764: the AG-UI adapter dropped `vendor_metadata`
+    (e.g. OpenAI/xAI image `detail`, Google `video_metadata`) for every
+    `ImageUrl`/`AudioUrl`/`VideoUrl`/`DocumentUrl`/`BinaryContent`, even though the adjacent
+    `UploadedFile` branch already round-tripped it. Multimodal input content carries it under
+    a `vendor_metadata` key in the typed part's `metadata` field.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(
+                            url='https://example.com/image.png',
+                            media_type='image/png',
+                            vendor_metadata={'detail': 'high'},
+                        ),
+                        AudioUrl(
+                            url='https://example.com/audio.mp3',
+                            media_type='audio/mpeg',
+                            vendor_metadata={'foo': 'bar'},
+                        ),
+                        VideoUrl(
+                            url='https://example.com/video.mp4',
+                            media_type='video/mp4',
+                            vendor_metadata={'fps': 5},
+                        ),
+                        DocumentUrl(
+                            url='https://example.com/doc.pdf',
+                            media_type='application/pdf',
+                            vendor_metadata={'foo': 'baz'},
+                        ),
+                        BinaryContent(
+                            data=b'fake_doc',
+                            media_type='application/pdf',
+                            vendor_metadata={'detail': 'low'},
+                        ),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    # The dumped `metadata` is the external contract a frontend persists and re-sends.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in ag_ui_msgs] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'image',
+                        'source': {'type': 'url', 'value': 'https://example.com/image.png', 'mime_type': 'image/png'},
+                        'metadata': {'vendor_metadata': {'detail': 'high'}},
+                    },
+                    {
+                        'type': 'audio',
+                        'source': {'type': 'url', 'value': 'https://example.com/audio.mp3', 'mime_type': 'audio/mpeg'},
+                        'metadata': {'vendor_metadata': {'foo': 'bar'}},
+                    },
+                    {
+                        'type': 'video',
+                        'source': {'type': 'url', 'value': 'https://example.com/video.mp4', 'mime_type': 'video/mp4'},
+                        'metadata': {'vendor_metadata': {'fps': 5}},
+                    },
+                    {
+                        'type': 'document',
+                        'source': {
+                            'type': 'url',
+                            'value': 'https://example.com/doc.pdf',
+                            'mime_type': 'application/pdf',
+                        },
+                        'metadata': {'vendor_metadata': {'foo': 'baz'}},
+                    },
+                    {
+                        'type': 'document',
+                        'source': {'type': 'data', 'value': 'ZmFrZV9kb2M=', 'mime_type': 'application/pdf'},
+                        'metadata': {'vendor_metadata': {'detail': 'low'}},
+                    },
+                ],
+            }
+        ]
+    )
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    assert loaded == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                identifier='01a7df',
+                                vendor_metadata={'detail': 'high'},
+                            ),
+                            AudioUrl(
+                                url='https://example.com/audio.mp3',
+                                vendor_metadata={'foo': 'bar'},
+                                _media_type='audio/mpeg',
+                            ),
+                            VideoUrl(
+                                url='https://example.com/video.mp4',
+                                media_type='video/mp4',
+                                identifier='8cb95e',
+                                vendor_metadata={'fps': 5},
+                            ),
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                identifier='e3337d',
+                                vendor_metadata={'foo': 'baz'},
+                            ),
+                            BinaryContent(
+                                data=b'fake_doc',
+                                media_type='application/pdf',
+                                identifier='42a9bb',
+                                vendor_metadata={'detail': 'low'},
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+def test_multimodal_roundtrip_file_without_vendor_metadata_stays_none() -> None:
+    """A file with no `vendor_metadata` round-trips to `None` (no spurious `metadata`)."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                        BinaryContent(data=b'fake_image', media_type='image/png'),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    # `exclude_none` drops the `metadata` key entirely when no vendor_metadata is present.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in ag_ui_msgs] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'image',
+                        'source': {'type': 'url', 'value': 'https://example.com/image.png', 'mime_type': 'image/png'},
+                    },
+                    {
+                        'type': 'image',
+                        'source': {'type': 'data', 'value': 'ZmFrZV9pbWFnZQ==', 'mime_type': 'image/png'},
+                    },
+                ],
+            }
+        ]
+    )
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    request = loaded[0]
+    assert isinstance(request, ModelRequest)
+    user_part = request.parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    for item in user_part.content:
+        assert getattr(item, 'vendor_metadata', None) is None
+
+
+def test_load_multimodal_rejects_invalid_vendor_metadata() -> None:
+    """A malformed `vendor_metadata` on multimodal input content is rejected on load.
+
+    The `metadata` field is typed as `Any`, so a non-`dict` client value is passed to the file
+    constructor which raises `ValidationError` here (matching the Vercel adapter), instead of
+    being stored unvalidated and crashing a provider model later.
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AGUIAdapter.load_messages(
+            [
+                UserMessage(
+                    id='msg-1',
+                    content=[
+                        ImageInputContent(
+                            source=InputContentUrlSource(
+                                type='url', value='https://example.com/image.png', mime_type='image/png'
+                            ),
+                            metadata={'vendor_metadata': 'not-a-dict'},
+                        )
+                    ],
+                )
+            ]
+        )
+
+
 def test_load_messages_unknown_type_warns() -> None:
     """Test that an unknown AG-UI message type emits a warning and is skipped."""
 
