@@ -1017,6 +1017,11 @@ class BedrockConverseModel(Model[BaseClient]):
                                 tool_result_content.append({'text': item})
                             else:
                                 tool_result_content.append({'json': item})
+                        if not tool_result_content:
+                            if content_mode == 'str':
+                                tool_result_content.append({'text': str(part.content)})
+                            else:
+                                tool_result_content.append({'json': part.content})
 
                         user_content: list[ContentBlockUnionTypeDef] = [
                             {
