@@ -1728,6 +1728,37 @@ def test_dump_load_roundtrip_builtin_tool_return() -> None:
     assert reloaded == original
 
 
+def test_dump_preserves_tool_return_before_user_prompt() -> None:
+    """Tool returns in a request should stay before later user prompts when dumped."""
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='suggest_answer',
+                    args='{"suggestions":["Yes","No"]}',
+                    tool_call_id='toolu_1',
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='suggest_answer',
+                    content="['Yes', 'No'] suggested.",
+                    tool_call_id='toolu_1',
+                ),
+                UserPromptPart(content='Yes, I confirm.'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    assert [type(msg).__name__ for msg in ag_ui_msgs] == snapshot(['AssistantMessage', 'ToolMessage', 'UserMessage'])
+    assert ag_ui_msgs[1].tool_call_id == 'toolu_1'  # type: ignore[attr-defined]
+    assert ag_ui_msgs[2].content == 'Yes, I confirm.'  # type: ignore[attr-defined]
+
+
 def test_dump_builtin_tool_call_without_return() -> None:
     """Test that NativeToolCallPart without a matching NativeToolReturnPart still dumps correctly."""
     messages: list[ModelMessage] = [
