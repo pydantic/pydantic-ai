@@ -8,7 +8,7 @@ import pytest
 from anyio import ClosedResourceError, create_task_group
 
 from pydantic_graph import GraphBuilder, StepContext
-from pydantic_graph.graph_builder import GraphTask, _GraphIterator
+from pydantic_graph.graph_builder import GraphTask, _GraphIterator  # pyright: ignore[reportPrivateUsage]
 from pydantic_graph.id_types import TaskID
 from pydantic_graph.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
 
@@ -51,7 +51,7 @@ async def test_run_tracked_task_suppresses_closed_resource_error_for_result_send
         iterator.iter_stream_sender = _ClosedSender()  # type: ignore[assignment]
 
         task = GraphTask(produce.id, None, (), TaskID('task:1'))
-        await iterator._run_tracked_task(task)
+        await iterator._run_tracked_task(task)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_run_tracked_task_suppresses_closed_resource_error_for_error_send():
@@ -79,7 +79,7 @@ async def test_run_tracked_task_suppresses_closed_resource_error_for_error_send(
         iterator.iter_stream_sender = _ClosedSender()  # type: ignore[assignment]
 
         task = GraphTask(fail.id, None, (), TaskID('task:1'))
-        await iterator._run_tracked_task(task)
+        await iterator._run_tracked_task(task)  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_map_to_end_node_cancels_pending():
