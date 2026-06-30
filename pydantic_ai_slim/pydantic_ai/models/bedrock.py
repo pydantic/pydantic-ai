@@ -1092,10 +1092,9 @@ class BedrockConverseModel(Model[BaseClient]):
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
                         elif send_back_thinking_parts is False and item.provider_name == self.system and item.signature:
-                            # TODO(v3): remove `bedrock_send_back_thinking_parts=False`. It drops signed
-                            # `reasoningContent` blocks, which Anthropic-via-Bedrock rejects on tool-use turns with a
-                            # `ValidationException`, and is redundant with the `item.signature` guard for non-reasoning
-                            # families (which never produce signed parts). Kept for back-compat; `'auto'` is safe.
+                            # TODO(v3): remove `bedrock_send_back_thinking_parts=False` (kept for back-compat). The
+                            # `item.signature` guard makes it inert for non-reasoning families, which never produce
+                            # signed parts, so this warns only when it actually drops a signed block.
                             warnings.warn(
                                 '`bedrock_send_back_thinking_parts=False` is deprecated and will be removed in v3. '
                                 'It drops signed thinking blocks, which Anthropic-via-Bedrock rejects on tool-use turns '

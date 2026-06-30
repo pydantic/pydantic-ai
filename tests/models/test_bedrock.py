@@ -1293,6 +1293,10 @@ _BEDROCK_SEND_BACK_THINKING_CASES = [
     ),
     # 'tags' but empty content: nothing to render, so no text block is emitted.
     _BedrockSendBackThinkingCase('tags-empty-dropped', 'tags', ThinkingPart(content=''), [_BEDROCK_ANSWER_BLOCK]),
+    # `False` (deprecated) + unsigned: no signed same-provider part, so the deprecation warning never fires and
+    # the part is dropped silently — the `item.signature` guard that keeps `False` inert for non-reasoning
+    # families (Nova, Llama). The signed-part warning path is covered by `..._false_deprecated`.
+    _BedrockSendBackThinkingCase('false-unsigned-silent', False, _BEDROCK_UNSIGNED, [_BEDROCK_ANSWER_BLOCK]),
 ]
 
 
