@@ -2283,12 +2283,15 @@ def _map_usage(
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens.
-    # The raw token counts are summed into the first-class `RequestUsage` fields above, so they're
-    # excluded from `details` (see docstring). The `compaction_iterations`/`message_iterations` counts
-    # stay as they're genuinely supplementary. The `compaction_*` token sub-totals also stay for
-    # transparency, but note they ARE folded into the first-class totals above, so a consumer summing
-    # them against `gen_ai.usage.*` still double-counts under compaction — a known, narrower residual
-    # scoped out of this fix.
+    # The raw token counts are summed into the first-class `RequestUsage` fields above and are excluded
+    # from `details` because their detail keys share the first-class attribute names: e.g.
+    # `gen_ai.usage.details.output_tokens` collides with `gen_ai.usage.output_tokens`, so a consumer
+    # records both against the same metric and double-counts it (#6131).
+    # The `compaction_*` token sub-totals are also folded into the first-class totals, but they are kept:
+    # their `gen_ai.usage.details.compaction_*` attribute names do not collide with any first-class
+    # `gen_ai.usage.*` attribute, so a consumer records them as their own usage-breakdown metric rather
+    # than adding them onto `input_tokens`/`output_tokens` (no double-count of the canonical totals). The
+    # `compaction_iterations`/`message_iterations` counts likewise stay as they're genuinely supplementary.
     request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_for_extraction),
         provider=provider,
