@@ -31,6 +31,20 @@ def test_heroku_provider():
     assert provider.client.api_key == 'api-key'
 
 
+@pytest.mark.parametrize(
+    'base_url',
+    [
+        'https://us.inference.heroku.com',
+        'https://us.inference.heroku.com/',
+        'https://us.inference.heroku.com/v1',
+        'https://us.inference.heroku.com/v1/',
+    ],
+)
+def test_heroku_provider_normalizes_base_url(base_url: str):
+    provider = HerokuProvider(api_key='api-key', base_url=base_url)
+    assert provider.base_url == 'https://us.inference.heroku.com/v1/'
+
+
 def test_heroku_provider_need_api_key(env: TestEnv) -> None:
     env.remove('HEROKU_INFERENCE_KEY')
     with pytest.raises(
