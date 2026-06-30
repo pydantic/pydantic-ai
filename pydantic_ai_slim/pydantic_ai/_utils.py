@@ -801,7 +801,7 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return ()
 
 
-def get_event_loop():
+def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:  # pragma: lax no cover
