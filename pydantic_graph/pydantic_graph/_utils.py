@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover
         return None
 
 
-def get_event_loop():
+def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:
@@ -89,6 +89,12 @@ def get_parent_namespace(frame: types.FrameType | None) -> dict[str, Any] | None
 
     If the graph is defined with generics `Graph[a, b]` then another frame is inserted, and we have to skip that
     to get the correct namespace.
+
+    Args:
+        frame: The frame to start searching from, or `None`.
+
+    Returns:
+        The local namespace dict of the defining frame, or `None` if the frame was `None`.
     """
     if frame is not None:  # pragma: no branch
         if back := frame.f_back:  # pragma: no branch

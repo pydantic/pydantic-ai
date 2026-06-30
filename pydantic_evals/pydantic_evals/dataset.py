@@ -290,7 +290,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
-        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
+        lifecycle: (
+            type[CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | None
+        ) = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -420,7 +424,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
-        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
+        lifecycle: (
+            type[CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | None
+        ) = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -1077,7 +1085,11 @@ async def _run_task_and_evaluators(
     retry_evaluators: RetryConfig | None,
     *,
     source_case_name: str | None = None,
-    lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
+    lifecycle: (
+        type[CaseLifecycle[InputsT, OutputT, MetadataT]]
+        | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
+        | None
+    ) = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
