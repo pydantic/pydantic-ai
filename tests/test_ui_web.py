@@ -190,18 +190,18 @@ def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.Monk
         assert len([m for m in model_ids if 'gpt-4o' in m]) == 2
 
 
-@pytest.fixture
-def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Isolate the index route's HTML cache to a temp dir and stub the CDN fetch.
+def _stub_cdn_fetch(monkeypatch: pytest.MonkeyPatch, content: bytes) -> list[int]:
+    """Stub `httpx.AsyncClient` to return `content` on every fetch, returning a `[count]` list.
 
-    The index route caches the default UI HTML under the shared user cache dir; without
-    per-test isolation, tests that serve `/` race on the same file across xdist workers
-    (a non-atomic write being read mid-write), and miss the cache into a real CDN request.
+    Used by the cache tests to drive `_get_ui_html`'s CDN/url branch without a real network
+    request. The returned single-element list is incremented on each fetch so a test can assert
+    how many times the cache missed.
     """
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    fetch_count = [0]
 
     class MockResponse:
-        content = b'<html>Test UI</html>'
+        def __init__(self) -> None:
+            self.content = content
 
         def raise_for_status(self) -> None:
             pass
@@ -214,9 +214,23 @@ def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
             pass
 
         async def get(self, url: str) -> MockResponse:
+            fetch_count[0] += 1
             return MockResponse()
 
     monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    return fetch_count
+
+
+@pytest.fixture
+def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Isolate the index route's HTML cache to a temp dir and stub the CDN fetch.
+
+    The index route caches the default UI HTML under the shared user cache dir; without
+    per-test isolation, tests that serve `/` race on the same file across xdist workers
+    (a non-atomic write being read mid-write), and miss the cache into a real CDN request.
+    """
+    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    _stub_cdn_fetch(monkeypatch, b'<html>Test UI</html>')
 
 
 def test_chat_app_index_endpoint(isolated_ui_cache: None):
@@ -297,33 +311,13 @@ async def test_get_ui_html_refetches_empty_cache_file(monkeypatch: pytest.Monkey
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     cache_file.write_bytes(b'')
     test_content = b'<html>Recovered UI</html>'
-    fetch_count = 0
-
-    class MockResponse:
-        content = test_content
-
-        def raise_for_status(self) -> None:
-            pass
-
-    class MockAsyncClient:
-        async def __aenter__(self) -> MockAsyncClient:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get(self, url: str) -> MockResponse:
-            nonlocal fetch_count
-            fetch_count += 1
-            return MockResponse()
-
-    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    fetch_count = _stub_cdn_fetch(monkeypatch, test_content)
 
     result = await _get_ui_html()
 
     assert result == test_content
     assert cache_file.read_bytes() == test_content
-    assert fetch_count == 1
+    assert fetch_count[0] == 1
 
 
 def test_write_cached_file_removes_temp_file_on_replace_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -359,24 +353,7 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     full_content = b'<html>complete UI document</html>'
-
-    class MockResponse:
-        content = full_content
-
-        def raise_for_status(self) -> None:
-            pass
-
-    class MockAsyncClient:
-        async def __aenter__(self) -> MockAsyncClient:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get(self, url: str) -> MockResponse:
-            return MockResponse()
-
-    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    _stub_cdn_fetch(monkeypatch, full_content)
 
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     real_replace = app_module.os.replace
