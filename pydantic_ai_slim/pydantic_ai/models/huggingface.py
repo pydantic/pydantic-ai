@@ -462,11 +462,14 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                tool_text, tool_file_content = part.model_response_str_and_user_content()
+                if tool_file_content:
+                    raise NotImplementedError('File content is not supported for Hugging Face')
                 yield ChatCompletionOutputMessage.parse_obj_as_instance(  # type: ignore
                     {
                         'role': 'tool',
                         'tool_call_id': _guard_tool_call_id(t=part),
-                        'content': part.model_response_str(),
+                        'content': tool_text,
                     }
                 )
             elif isinstance(part, RetryPromptPart):

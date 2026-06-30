@@ -1011,6 +1011,23 @@ async def test_unsupported_media_types(allow_model_requests: None, content_item:
         await agent.run(['hello', content_item])
 
 
+async def test_tool_return_file_content_is_rejected():
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=Mock(), api_key='x'))
+    request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_location',
+                content=[UploadedFile(file_id='file-123', provider_name='anthropic')],
+                tool_call_id='call-123',
+            )
+        ]
+    )
+
+    with pytest.raises(NotImplementedError, match='File content is not supported for Hugging Face'):
+        async for _ in model._map_user_message(request):  # pyright: ignore[reportPrivateUsage]
+            pass
+
+
 @pytest.mark.vcr()
 async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
