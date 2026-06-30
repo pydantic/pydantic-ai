@@ -897,8 +897,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             final_result = FinalResult(
                                 None, final_result_event.tool_name, final_result_event.tool_call_id
                             )
-                            if yielded:
-                                raise exceptions.AgentRunError('Agent run produced final results')
                             yielded = True
 
                             messages = graph_ctx.state.message_history.copy()
