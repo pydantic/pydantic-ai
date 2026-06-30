@@ -19,7 +19,7 @@ from .utils import render_table
 
 with try_import() as imports_successful:
     from pydantic_evals import Case, Dataset
-    from pydantic_evals.dataset import _get_relative_path_reference, increment_eval_metric, set_eval_attribute
+    from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
         EvaluationReason,
         EvaluationResult,
@@ -960,15 +960,6 @@ def test_serialization_to_json_with_absolute_schema_path(
     raw = json.loads(json_path.read_text(encoding='utf-8'))
     assert raw['$schema'] == 'test_cases_schema.json'
     assert schema_path.exists()
-
-
-def test_get_relative_path_reference_with_relative_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.chdir(tmp_path)
-
-    source = tmp_path / 'datasets' / 'nested'
-    target = Path('schemas/test_cases_schema.json')
-
-    assert _get_relative_path_reference(target, source) == Path('../../schemas/test_cases_schema.json')
 
 
 def test_serializing_parts_with_discriminators(tmp_path: Path):

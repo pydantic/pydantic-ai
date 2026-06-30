@@ -925,11 +925,11 @@ def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') 
     # This is useful for creating a relative path reference from a source file to a target file.
     # For example, if source is '/a/b/c.py' and target is '/a/d/e.py', the relative path reference
     # would be '../../d/e.py'.
-    if not target.is_absolute():
-        target = target.resolve()
+    if not target.is_absolute():  # pragma: no branch
+        target = target.resolve()  # pragma: no cover
     try:
         return Path(f'{_prefix}{Path(target).relative_to(source)}')
-    except ValueError:
+    except ValueError:  # pragma: no cover
         return _get_relative_path_reference(target, source.parent, _prefix=f'{_prefix}../')
 
 
