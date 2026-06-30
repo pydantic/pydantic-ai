@@ -1670,3 +1670,38 @@ def test_narrow_type_returns_input_unchanged_on_invalid_data():
 
     native_return = NativeToolReturnPart(tool_name='tool_search', tool_call_id='c2', content='oops')
     assert NativeToolReturnPart.narrow_type(native_return, tool_kind='tool-search') is native_return
+
+
+def test_narrow_type_rejects_mismatched_tool_name():
+    """Promotion requires the wire `tool_name` to match the typed subclass's fixed name, not just the
+    `tool_kind`. A `tool_kind` arriving on a part with a different name (inconsistent client input, e.g.
+    a forged or mis-tagged UI-adapter history) is left un-narrowed: promoting it would build a typed part
+    whose `tool_name` violates its own `Literal` and then fail to reload via `ModelMessagesTypeAdapter`.
+
+    Args/content are valid for the typed subclass here, so the name guard is the only thing preventing
+    promotion. The bad name/kind combo can't come from a trusted producer (the emitter derives `tool_kind`
+    from the tool name), so the six narrowers are pinned directly.
+    """
+    cap_call = ToolCallPart(tool_name='innocent', args={'id': 'cap'})
+    cap_return = ToolReturnPart(tool_name='innocent', tool_call_id='c1', content={'instructions': 'x'})
+    native_call = NativeToolCallPart(tool_name='innocent', args={'queries': ['x']})
+    native_return = NativeToolReturnPart(tool_name='innocent', tool_call_id='c2', content={'discovered_tools': []})
+    local_call = ToolCallPart(tool_name='innocent', args={'queries': ['x']})
+    local_return = ToolReturnPart(tool_name='innocent', tool_call_id='c3', content={'discovered_tools': []})
+
+    assert ToolCallPart.narrow_type(cap_call, tool_kind='capability-load') is cap_call
+    assert ToolReturnPart.narrow_type(cap_return, tool_kind='capability-load') is cap_return
+    assert NativeToolCallPart.narrow_type(native_call, tool_kind='tool-search') is native_call
+    assert NativeToolReturnPart.narrow_type(native_return, tool_kind='tool-search') is native_return
+    assert ToolCallPart.narrow_type(local_call, tool_kind='tool-search') is local_call
+    assert ToolReturnPart.narrow_type(local_return, tool_kind='tool-search') is local_return
+
+    # Promoting any of these would produce a typed part whose `tool_name` violates its own `Literal`,
+    # which then fails to reload through the canonical serializer. Left plain, they round-trip cleanly.
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart.narrow_type(cap_call, tool_kind='capability-load')]),
+        ModelRequest(parts=[ToolReturnPart.narrow_type(cap_return, tool_kind='capability-load')]),
+    ]
+    reloaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    assert type(reloaded[0].parts[0]) is ToolCallPart
+    assert type(reloaded[1].parts[0]) is ToolReturnPart
