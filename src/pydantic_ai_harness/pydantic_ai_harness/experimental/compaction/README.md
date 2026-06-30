@@ -176,6 +176,32 @@ def my_file_key(call: ToolCallPart) -> str | None:
     return args.get('path') if isinstance(args, dict) else None
 ```
 
+## Tracing
+
+When core instrumentation is active (the `Instrumentation` capability, `agent.instrument`, or
+`Agent.instrument_all()`), each strategy emits a `compact_messages` span on the run's tracer the
+moment it actually compacts -- that is, in `before_model_request`, once the strategy's threshold is
+exceeded (`ClampOversizedMessages` emits only when a part is actually clamped). `TieredCompaction`
+emits a single span for the whole escalation rather than one per tier, because it drives each tier's
+`compact` directly. Without instrumentation the tracer is a no-op, so the span adds no overhead.
+
+The span name is the static `compact_messages`; the strategy is an attribute, not part of the name,
+to keep span cardinality low. Attributes:
+
+| Attribute | Type | Meaning |
+|---|---|---|
+| `gen_ai.conversation.compacted` | bool | Always `true`; the OpenTelemetry GenAI convention's flag for a compacted context |
+| `compaction.strategy` | str | Strategy class name (e.g. `SlidingWindow`, `SummarizingCompaction`) |
+| `compaction.messages_before` | int | Message count before compaction |
+| `compaction.messages_after` | int | Message count after compaction |
+| `compaction.tokens_before` | int | Estimated token count before compaction |
+| `compaction.tokens_after` | int | Estimated token count after compaction |
+
+`gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is
+harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the
+~4-chars-per-token heuristic.
+Raw message content is not recorded.
+
 ## Out of scope
 
 These strategies compress or drop context *inside* the window. Moving large tool outputs *out* of the

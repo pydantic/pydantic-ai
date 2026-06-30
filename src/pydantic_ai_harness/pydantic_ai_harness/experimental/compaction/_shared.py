@@ -6,7 +6,7 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
@@ -108,6 +108,68 @@ def exceeds(
     if max_tokens is not None and estimate_token_count(messages, tokenizer) > max_tokens:
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Tracing
+# ---------------------------------------------------------------------------
+
+_SPAN_NAME = 'compact_messages'
+"""Static, low-cardinality span name emitted whenever a strategy compacts. The strategy name
+goes in the `compaction.strategy` attribute rather than the span name to keep cardinality low."""
+
+
+def _history_changed(before: list[ModelMessage], after: list[ModelMessage]) -> bool:
+    """Return True if *after* differs from *before*.
+
+    The same list object, or an equal-length list that compares equal element-wise, counts as
+    unchanged; anything else is a change.
+    """
+    # `!=` short-circuits on identity element-wise, so this also covers `before is after`; an
+    # unequal length already implies an unequal list, so a separate length check is redundant.
+    return before != after
+
+
+async def compact_with_span(
+    ctx: RunContext[AgentDepsT],
+    *,
+    strategy: str,
+    messages: list[ModelMessage],
+    compact: Callable[[], Awaitable[list[ModelMessage]]],
+    tokenizer: Callable[[str], int] | None = None,
+) -> list[ModelMessage]:
+    """Run *compact* and emit a `compact_messages` span when it changes the history.
+
+    *compact* runs before the span so a no-op compaction (a trigger fired but the history is
+    returned unchanged) emits nothing. The span is started on `ctx.tracer`, which is a no-op
+    tracer unless core's instrumentation is active, so this adds no overhead to a
+    non-instrumented run; the before/after attributes are only computed when the span records.
+
+    Args:
+        ctx: Run context whose `tracer` the span is started on.
+        strategy: Strategy name recorded in the `compaction.strategy` attribute.
+        messages: The pre-compaction messages, measured for the `*_before` attributes.
+        compact: Zero-argument async callable returning the compacted message list.
+        tokenizer: Optional tokenizer for the `compaction.tokens_*` estimates. When `None`,
+            uses the same ~4 characters-per-token heuristic as `estimate_token_count`.
+    """
+    compacted = await compact()
+    if not _history_changed(messages, compacted):
+        return messages
+    with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+        if span.is_recording():
+            span.set_attributes(
+                {
+                    # GenAI semconv flag; the convention says set `true` only, never `false`.
+                    'gen_ai.conversation.compacted': True,
+                    'compaction.strategy': strategy,
+                    'compaction.messages_before': len(messages),
+                    'compaction.messages_after': len(compacted),
+                    'compaction.tokens_before': estimate_token_count(messages, tokenizer),
+                    'compaction.tokens_after': estimate_token_count(compacted, tokenizer),
+                }
+            )
+    return compacted
 
 
 # ---------------------------------------------------------------------------

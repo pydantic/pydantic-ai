@@ -11,7 +11,12 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ToolCallPart
 from pydantic_ai.tools import RunContext
 
-from pydantic_ai_harness.experimental.compaction._shared import exceeds, iter_tool_pairs, rebuild_with_cleared
+from pydantic_ai_harness.experimental.compaction._shared import (
+    compact_with_span,
+    exceeds,
+    iter_tool_pairs,
+    rebuild_with_cleared,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -107,5 +112,11 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
         if self.max_messages is not None or self.max_tokens is not None:
             if not exceeds(messages, self.max_messages, self.max_tokens, self.tokenizer):
                 return request_context
-        request_context.messages = await self.compact(messages, ctx)
+        request_context.messages = await compact_with_span(
+            ctx,
+            strategy='DeduplicateFileReads',
+            messages=messages,
+            compact=lambda: self.compact(messages, ctx),
+            tokenizer=self.tokenizer,
+        )
         return request_context

@@ -11,7 +11,11 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import RunContext
 
-from pydantic_ai_harness.experimental.compaction._shared import CompactionStrategy, estimate_token_count
+from pydantic_ai_harness.experimental.compaction._shared import (
+    CompactionStrategy,
+    compact_with_span,
+    estimate_token_count,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -91,5 +95,11 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         messages: list[ModelMessage] = list(request_context.messages)
         if estimate_token_count(messages, self.tokenizer) <= self.target_tokens:
             return request_context
-        request_context.messages = await self.compact(messages, ctx)
+        request_context.messages = await compact_with_span(
+            ctx,
+            strategy='TieredCompaction',
+            messages=messages,
+            compact=lambda: self.compact(messages, ctx),
+            tokenizer=self.tokenizer,
+        )
         return request_context

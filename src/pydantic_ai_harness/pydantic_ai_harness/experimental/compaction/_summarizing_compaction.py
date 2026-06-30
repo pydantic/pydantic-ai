@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness.experimental.compaction._shared import (
+    compact_with_span,
     exceeds,
     find_first_user_message,
     find_safe_cutoff,
@@ -259,7 +260,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         messages: list[ModelMessage] = list(request_context.messages)
         if not exceeds(messages, self.max_messages, self.max_tokens, self.tokenizer):
             return request_context
-        request_context.messages = await self.compact(messages, ctx)
+        request_context.messages = await compact_with_span(
+            ctx,
+            strategy='SummarizingCompaction',
+            messages=messages,
+            compact=lambda: self.compact(messages, ctx),
+            tokenizer=self.tokenizer,
+        )
         return request_context
 
     async def _summarize(

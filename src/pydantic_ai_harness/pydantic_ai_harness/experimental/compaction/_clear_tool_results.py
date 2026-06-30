@@ -12,6 +12,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness.experimental.compaction._shared import (
+    compact_with_span,
     estimate_token_count,
     exceeds,
     iter_tool_pairs,
@@ -131,5 +132,11 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         messages: list[ModelMessage] = list(request_context.messages)
         if not exceeds(messages, self.max_messages, self.max_tokens, self.tokenizer):
             return request_context
-        request_context.messages = await self.compact(messages, ctx)
+        request_context.messages = await compact_with_span(
+            ctx,
+            strategy='ClearToolResults',
+            messages=messages,
+            compact=lambda: self.compact(messages, ctx),
+            tokenizer=self.tokenizer,
+        )
         return request_context
