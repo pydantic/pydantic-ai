@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '173'
+      - '198'
       content-type:
       - application/json
       host:
@@ -23,254 +23,197 @@ interactions:
       stream_options:
         include_usage: true
       thinking:
+        clear_thinking: false
         type: enabled
     uri: https://api.z.ai/api/paas/v4/chat/completions
   response:
     body:
       string: |+
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"The"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"\n1"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" user"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":".  **Analyze the User's Request:** The"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" user is asking a very simple,"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" asking"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" fundamental arithmetic question: \"What is "}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" a"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2 + 2?\".\n\n2."}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" simple"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"  **Identify the Core Concept"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" arithmetic"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":":** The core concept is addition"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" question"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":", specifically adding the integer"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":":"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" 2 to another integer"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" \""}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" 2.\n\n3.  **Retrieve"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"What"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" Knowledge:**\n    *  "}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" What is 2?"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" It's the number that"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" comes after 1.\n"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" +"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"    *   What is addition"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"? It's the process of combining two"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" or more numbers to find their"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"?\"\n\n"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" total or sum.\n    *"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"1"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"   What is 2 + 2"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"."}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"? The most basic representation"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is \"two plus two.\""}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" **"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" I can think of two"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Ident"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" groups of two objects.\n"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"ify"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"        *   Group 1: ["}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" the"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"object, object]\n        *   Group"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" core"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" 2: [object, object]\n"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" question"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"        *   Combined:"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":":**"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" [object, object, object, object"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" The"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"]\n    *   Count"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" user"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"ing the combined objects: 1"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" wants"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":", 2, 3"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" to"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":", 4.\n    *   The"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" know"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" result is 4.\n\n4."}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" the"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"  **Formulate the Answer:**\n"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" sum"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"    *   The direct"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" of"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" and most accurate answer is \""}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"4\".\n    *   I can"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" add a tiny bit of context or"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" and"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" just keep it simple. For"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" a question this basic, simplicity"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is best. Over-explaining would"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":".\n"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" be unnecessary and potentially confusing or"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" condescending.\n    *"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"."}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"   A concise and clear"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" answer is preferred.\n\n5. "}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" **"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" **Check for Nuances or"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Retrieve"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" Trickery:**\n   "}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" knowledge"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" *   Is this a trick question?"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":":**"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" \"2 + 2 ="}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" Basic"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" 4\" is a universal"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" addition"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" truth in standard arithmetic.\n"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" facts"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"    *   Are there other contexts"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" indicate"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" (e.g., different"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" that"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" number bases)?\n        *   In"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" base 10 (our standard system"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"): 2 + "}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" plus"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2 = 4.\n        *  "}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" In base 3,"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"2"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" for example, \"4"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" equals"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"\" would be represented as \""}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"11\". But the question is"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"4"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" written in standard notation, so the expected"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":".\n"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" answer is in base 10."}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"3"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" Unless the user specifies a different"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"."}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" base, the default is"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" always base 10.\n"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" **"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"        *   In other"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Form"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" non-standard systems (like"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"ulate"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" a certain Orwellian dystopia"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" the"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"), the answer might be \""}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" answer"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"5\" (\"2 +"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":":**"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" 2 = 5\"). This"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" The"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is a literary reference, not"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" direct"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" a mathematical fact. It's crucial"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" and"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" to give the mathematically correct answer"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" correct"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":".\n    *   Is"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" answer"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" the user testing my ability to answer"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" simple questions? Very likely. It's"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" \""}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" a common sanity check.\n    *"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"4"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"   Could the user be non"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"\".\n"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"-native English speaker? The question"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"4"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is in English, so an"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"."}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" English answer is correct.\n\n6. "}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" **Final Decision:** The most helpful"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" **"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" and correct response is the"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Final"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" simple, direct answer."}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" check"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" No extra fluff is"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":":**"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" needed.\n\n7.  **Draft"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" Is"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" the final response:** \"4"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" there"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"\"."}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" any"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"4"}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" ambiguity"}}]}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
 
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" or"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" hidden"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" meaning"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"?"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" No"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":","}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" it"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"'s"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" a"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" straightforward"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" math"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" question"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":".\n\n"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Therefore"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":","}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" the"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" answer"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" is"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" "}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"4"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"."}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"2"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":" +"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":" "}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"2"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":" is"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":" "}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"4"}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"delta":{"role":"assistant","content":"."}}]}
-
-        data: {"id":"20260325232441b45c991535c342af","created":1774452281,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"finish_reason":"stop","delta":{"role":"assistant","content":""}}],"usage":{"prompt_tokens":13,"completion_tokens":123,"total_tokens":136,"prompt_tokens_details":{"cached_tokens":2},"completion_tokens_details":{"reasoning_tokens":113}}}
+        data: {"id":"202607010739425543ff9439144b2c","created":1782862782,"object":"chat.completion.chunk","model":"glm-4.7","choices":[{"index":0,"finish_reason":"stop","delta":{"role":"assistant","content":""}}],"usage":{"prompt_tokens":13,"completion_tokens":564,"total_tokens":577,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":561}}}
 
         data: [DONE]
 
@@ -279,8 +222,6 @@ interactions:
       - keep-alive
       content-type:
       - text/event-stream;charset=UTF-8
-      keep-alive:
-      - timeout=6
       strict-transport-security:
       - max-age=31536000; includeSubDomains
       transfer-encoding:

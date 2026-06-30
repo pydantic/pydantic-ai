@@ -49,14 +49,13 @@ async def test_zai_model_simple(allow_model_requests: None, zai_api_key: str):
             ModelResponse(
                 parts=[
                     ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='zai'),
-                    TextPart(content='4'),
+                    TextPart(content='2 + 2 is 4.'),
                 ],
                 usage=RequestUsage(
                     input_tokens=13,
-                    cache_read_tokens=2,
-                    output_tokens=108,
+                    output_tokens=437,
                     details={
-                        'reasoning_tokens': 105,
+                        'reasoning_tokens': 427,
                     },
                 ),
                 model_name='glm-4.7',
@@ -67,7 +66,7 @@ async def test_zai_model_simple(allow_model_requests: None, zai_api_key: str):
                     'finish_reason': 'stop',
                     'timestamp': IsDatetime(),
                 },
-                provider_response_id='20260217121043e8de4e8178114889',
+                provider_response_id='20260701073925df703dd30a854c37',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -245,10 +244,9 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
                 ],
                 usage=RequestUsage(
                     input_tokens=13,
-                    cache_read_tokens=2,
-                    output_tokens=123,
+                    output_tokens=564,
                     details={
-                        'reasoning_tokens': 113,
+                        'reasoning_tokens': 561,
                     },
                 ),
                 model_name='glm-4.7',
@@ -259,7 +257,7 @@ async def test_zai_thinking_stream(allow_model_requests: None, zai_api_key: str)
                     'timestamp': IsDatetime(),
                     'finish_reason': 'stop',
                 },
-                provider_response_id='20260325232441b45c991535c342af',
+                provider_response_id='202607010739425543ff9439144b2c',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),

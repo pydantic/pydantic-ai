@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '98'
+      - '137'
       content-type:
       - application/json
       host:
@@ -20,17 +20,17 @@ interactions:
         role: user
       model: glm-4.7
       stream: false
+      thinking:
+        clear_thinking: false
     uri: https://api.z.ai/api/paas/v4/chat/completions
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '848'
+      - '1991'
       content-type:
       - application/json; charset=UTF-8
-      keep-alive:
-      - timeout=6
       strict-transport-security:
       - max-age=31536000; includeSubDomains
       transfer-encoding:
@@ -48,28 +48,52 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: '4'
-          reasoning_content: |-
-            1.  **Identify the user's question:** The user is asking "What is 2 + 2?".
-            2.  **Analyze the complexity:** This is a fundamental arithmetic question. It requires no external data, no complex reasoning, and is not ambiguous.
-            3.  **Calculate the answer:**
-                *   $2 + 2 = 4$.
-            4.  **Formulate the response:** A direct and concise answer is best.
-            5.  **Final Output:** "4."
+          content: 2 + 2 is 4.
+          reasoning_content: |2-
+
+            1.  **Analyze the user's input**: The user is asking a very simple arithmetic question: "What is 2 + 2?".
+
+            2.  **Identify the core task**: The task is to perform addition of the numbers 2 and 2.
+
+            3.  **Determine the answer**:
+                *   The mathematical operation is addition (+).
+                *   The operands are 2 and 2.
+                *   The sum of 2 and 2 is 4.
+
+            4.  **Formulate the response**:
+                *   The most direct and correct answer is "4".
+                *   I can add a complete sentence for better flow, like "The answer is 4." or "2 + 2 is 4."
+                *   The user didn't ask for a long explanation or a joke, so a straightforward, concise answer is best.
+
+            5.  **Review against potential pitfalls**:
+                *   Are there any trick interpretations? "2" could be in base 10, base 2, etc. Without specification, base 10 is the default assumption. In base 10, 2+2=4.
+                *   Could "2" be a different symbol? In the absence of context, "2" universally represents the number two.
+                *   Is this a test of "model alignment"? No, it's a factual question.
+                *   Is this a test of my ability to reason? A simple one, yes.
+
+            6.  **Final Selection**: A simple, direct answer is best. "4" is the core of the answer. I will provide it in a complete sentence.
+
+                *   Draft 1: 4
+                *   Draft 2: 2 + 2 is 4.
+                *   Draft 3: The sum of 2 and 2 is 4.
+
+                Draft 2 is natural and clear.
+
+            7.  **Final Output Generation**: I will output "2 + 2 is 4." This is a perfect, unambiguous, and helpful response.
           role: assistant
-      created: 1771301445
-      id: 20260217121043e8de4e8178114889
+      created: 1782862773
+      id: 20260701073925df703dd30a854c37
       model: glm-4.7
       object: chat.completion
-      request_id: 20260217121043e8de4e8178114889
+      request_id: 20260701073925df703dd30a854c37
       usage:
-        completion_tokens: 108
+        completion_tokens: 437
         completion_tokens_details:
-          reasoning_tokens: 105
+          reasoning_tokens: 427
         prompt_tokens: 13
         prompt_tokens_details:
-          cached_tokens: 2
-        total_tokens: 121
+          cached_tokens: 0
+        total_tokens: 450
     status:
       code: 200
       message: OK
