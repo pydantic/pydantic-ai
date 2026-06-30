@@ -128,9 +128,11 @@ def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
     this slot simply fails to parse and degrades to a plain part. A dict rather than a bare
     string so the format can carry more metadata later.
 
-    Callers gate on `REASONING_VERSION`: the `encrypted_value` field itself landed in 0.1.11,
-    but the streaming carrier (`ReasoningEncryptedValueEvent`) is a `REASONING_*` event, canonical
-    from 0.1.13.
+    Callers gate writes on `REASONING_VERSION` (0.1.13) for symmetry across the streaming and
+    non-streaming sides: the `encrypted_value` field itself landed in 0.1.11, but the streaming
+    carrier (`ReasoningEncryptedValueEvent`) is a `REASONING_*` event the codebase only emits from
+    0.1.13, so a single cutover keeps `tool_kind` round-tripping identically whether the history
+    was built by `dump_messages` or by streaming.
     """
     return json.dumps({'tool_kind': tool_kind}) if tool_kind is not None else None
 

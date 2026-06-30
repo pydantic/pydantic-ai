@@ -416,9 +416,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_name = tool_call.function.name
                             tool_calls[tool_call_id] = tool_name
 
-                            # `getattr`: `encrypted_value` doesn't exist on ag-ui-protocol < 0.1.13.
-                            # The claim is client-supplied, so it goes through the best-effort
-                            # `narrow_type` rather than onto the part directly.
+                            # `getattr`: the `ToolCall.encrypted_value` field is absent on
+                            # ag-ui-protocol < 0.1.11, and the floor is 0.1.10. The claim is
+                            # client-supplied, so it goes through the best-effort `narrow_type`
+                            # rather than onto the part directly.
                             tool_kind = parse_encrypted_tool_kind(getattr(tool_call, 'encrypted_value', None))
                             if tool_kind is not None:
                                 tool_kinds[tool_call_id] = tool_kind
@@ -580,7 +581,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ) -> list[Message]:
         """Convert a `ModelRequest` into AG-UI messages."""
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
-        # `ToolMessage.encrypted_value` arrived with the reasoning spec (0.1.13).
+        # `ToolMessage.encrypted_value` landed in 0.1.11, but `tool_kind` writes gate on
+        # REASONING_VERSION (0.1.13) for symmetry with the streaming carrier — see
+        # `tool_kind_encrypted_value`.
         use_reasoning = parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION
         result: list[Message] = []
         system_content: list[str] = []
@@ -675,7 +678,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_calls_list: list[ToolCall] = []
         tool_messages: list[ToolMessage] = []
 
-        # The reasoning spec (0.1.13) also added `encrypted_value` to ToolCall/ToolMessage.
+        # `encrypted_value` landed on ToolCall/ToolMessage in 0.1.11, but `tool_kind` writes gate
+        # on REASONING_VERSION (0.1.13) for symmetry with the streaming carrier — see
+        # `tool_kind_encrypted_value`.
         use_reasoning = parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION
 
         builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)}
@@ -793,8 +798,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
-        - `tool_kind` is lost when `ag_ui_version < '0.1.13'` (no `encrypted_value` field), so
-          typed tool parts reload as their base classes.
+        - `tool_kind` is lost when `ag_ui_version < '0.1.13'` (its `encrypted_value` carrier is
+          gated on the 0.1.13 reasoning cutover), so typed tool parts reload as their base classes.
         - `tool_kind` is not restored on error/denied tool returns (a typed return implies
           success to its readers), so those reload as plain `ToolReturnPart`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
