@@ -1895,6 +1895,75 @@ async def test_run_stream_load_capability_tool_kind_encrypted_value(
     assert tool_events == expected
 
 
+@pytest.mark.parametrize('ag_ui_version', ['0.1.10', '0.1.13'])
+async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
+    ag_ui_version: Literal['0.1.10', '0.1.13'],
+) -> None:
+    """Streamed native `tool_search` calls carry `tool_kind` via `REASONING_ENCRYPTED_VALUE`.
+
+    Mirrors `test_run_stream_load_capability_tool_kind_encrypted_value`, but for the builtin
+    (`provider_executed`) streaming path, which is a distinct code path. Clients build their
+    `ToolCall` history from streamed events, echoing this back as `encrypted_value` — without
+    it, streaming-built histories reload as plain parts and `parse_discovered_tools()` is empty
+    on resume. The event doesn't exist before 0.1.13, so it's skipped there.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {
+                0: NativeToolSearchCallPart(
+                    tool_call_id='search-1', args='{"queries": ["refund"]}', provider_name='function'
+                )
+            }
+            yield {
+                1: NativeToolSearchReturnPart(
+                    tool_call_id='search-1',
+                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                    provider_name='function',
+                )
+            }
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    run_input = create_input(UserMessage(id='msg_1', content='Find me a refund tool'))
+    events = await run_and_collect_events(agent, run_input, ag_ui_version=ag_ui_version)
+
+    builtin_id = 'pyd_ai_builtin|function|search-1'
+    tool_events = [e for e in events if e['type'].startswith('TOOL_CALL') or e['type'] == 'REASONING_ENCRYPTED_VALUE']
+    encrypted_value_event = {
+        'type': 'REASONING_ENCRYPTED_VALUE',
+        'timestamp': IsInt(),
+        'subtype': 'tool-call',
+        'entityId': builtin_id,
+        'encryptedValue': '{"tool_kind": "tool-search"}',
+    }
+    expected: list[dict[str, Any]] = [
+        {
+            'type': 'TOOL_CALL_START',
+            'timestamp': IsInt(),
+            'toolCallId': builtin_id,
+            'toolCallName': 'tool_search',
+            'parentMessageId': IsStr(),
+        },
+        *([encrypted_value_event] if ag_ui_version == '0.1.13' else []),
+        {'type': 'TOOL_CALL_ARGS', 'timestamp': IsInt(), 'toolCallId': builtin_id, 'delta': '{"queries": ["refund"]}'},
+        {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': builtin_id},
+        {
+            'type': 'TOOL_CALL_RESULT',
+            'timestamp': IsInt(),
+            'messageId': IsStr(),
+            'toolCallId': builtin_id,
+            'content': '{"discovered_tools":[{"name":"refund_tool","description":null}]}',
+            'role': 'tool',
+        },
+    ]
+    assert tool_events == expected
+
+
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
     """Test round-trip preserves multiple ThinkingParts with their metadata."""
     original: list[ModelMessage] = [

@@ -1945,6 +1945,82 @@ async def test_run_stream_load_capability_tool_kind_metadata(sdk_version: Litera
     assert tool_events == expectations[sdk_version]
 
 
+@pytest.mark.parametrize('sdk_version', [5, 6])
+async def test_run_stream_native_tool_search_tool_kind_metadata(sdk_version: Literal[5, 6]):
+    """Streaming chunks for a native `tool_search` call carry `tool_kind` in their metadata.
+
+    Mirrors `test_run_stream_load_capability_tool_kind_metadata`, but for the builtin
+    (`provider_executed`) streaming path, which is a distinct code path: without the
+    discriminator here, a streaming-built history would reload as plain parts and
+    `parse_discovered_tools()` would be empty on resume. As with `load_capability`,
+    `tool-input-available` always carries it while `tool-input-start` only does on v6.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: NativeToolSearchCallPart(tool_call_id='search-1', args='{"queries": ["refund"]}')}
+            yield {
+                1: NativeToolSearchReturnPart(
+                    tool_call_id='search-1',
+                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                )
+            }
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Find me a refund tool')])],
+    )
+
+    adapter = VercelAIAdapter(agent, request, sdk_version=sdk_version)
+    events: list[dict[str, Any] | str] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    tool_input_start = {
+        'type': 'tool-input-start',
+        'toolCallId': 'search-1',
+        'toolName': 'tool_search',
+        'providerExecuted': True,
+    }
+    tool_input_available = {
+        'type': 'tool-input-available',
+        'toolCallId': 'search-1',
+        'toolName': 'tool_search',
+        'input': {'queries': ['refund']},
+        'providerExecuted': True,
+        'providerMetadata': {'pydantic_ai': {'tool_kind': 'tool-search'}},
+    }
+    tool_output_available = {
+        'type': 'tool-output-available',
+        'toolCallId': 'search-1',
+        'output': {'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+        'providerExecuted': True,
+    }
+    expectations: dict[int, list[dict[str, Any]]] = {
+        5: [
+            tool_input_start,
+            {'type': 'tool-input-delta', 'toolCallId': 'search-1', 'inputTextDelta': '{"queries": ["refund"]}'},
+            tool_input_available,
+            tool_output_available,
+        ],
+        6: [
+            {**tool_input_start, 'providerMetadata': {'pydantic_ai': {'tool_kind': 'tool-search'}}},
+            {'type': 'tool-input-delta', 'toolCallId': 'search-1', 'inputTextDelta': '{"queries": ["refund"]}'},
+            tool_input_available,
+            tool_output_available,
+        ],
+    }
+    tool_events = [e for e in events if isinstance(e, dict) and e['type'].startswith('tool-')]
+    assert tool_events == expectations[sdk_version]
+
+
 async def test_run_stream_tool_metadata_single_chunk():
     """Test that a single data-carrying chunk in ToolReturnPart.metadata is yielded to the stream."""
 
