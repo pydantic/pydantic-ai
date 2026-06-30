@@ -971,21 +971,12 @@ async def test_thinking_part_in_history(allow_model_requests: None):
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     sent_messages = kwargs['messages']
+    # Under the default `huggingface_send_back_thinking_parts='auto'` the ThinkingPart is dropped, so the
+    # surrounding text parts are concatenated without the `<think>` block (which the model would mimic).
     assert [{k: v for k, v in asdict(m).items() if v is not None} for m in sent_messages] == snapshot(
         [
             {'content': 'request', 'role': 'user'},
-            {
-                'content': """\
-text 1
-
-<think>
-let me do some thinking
-</think>
-
-text 2\
-""",
-                'role': 'assistant',
-            },
+            {'content': 'text 1\n\ntext 2', 'role': 'assistant'},
             {'content': 'another request', 'role': 'user'},
         ]
     )
