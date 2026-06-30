@@ -1343,6 +1343,30 @@ async def test_bedrock_send_back_thinking_parts_false_deprecated(bedrock_provide
     ]
 
 
+async def test_bedrock_send_back_thinking_parts_true_deprecated(bedrock_provider: BedrockProvider):
+    """`bedrock_send_back_thinking_parts=True` is the deprecated alias for `'auto'`.
+
+    It predates the string values but is equivalent to `'auto'`: signed same-provider thinking round-trips as a
+    native `reasoningContent` block, unsigned/foreign thinking is dropped. Kept (warning) so custom profiles
+    built against the old `bool` field keep type-checking; slated for removal in v3.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    profile = merge_profile(model.profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, profile=profile
+    )
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='question')]),
+        ModelResponse(parts=[_BEDROCK_SIGNED_SAME_PROVIDER, _BEDROCK_UNSIGNED, TextPart(content='answer')]),
+    ]
+    with pytest.warns(PydanticAIDeprecationWarning, match='bedrock_send_back_thinking_parts=True'):
+        _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), None)  # pyright: ignore[reportPrivateUsage]
+    assert bedrock_messages == [
+        {'role': 'user', 'content': [{'text': 'question'}]},
+        {'role': 'assistant', 'content': [_BEDROCK_REASONING_BLOCK, _BEDROCK_ANSWER_BLOCK]},
+    ]
+
+
 @pytest.mark.vcr()
 async def test_bedrock_multiple_documents_in_history(
     allow_model_requests: None, bedrock_provider: BedrockProvider, document_content: BinaryContent
