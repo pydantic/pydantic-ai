@@ -42,9 +42,10 @@ from .todo_write import todo_write
 from .write import write_file
 
 # Claude Code tools are callables returning `str`, sync or async: the
-# harness-backed file/shell tools (`Bash`, `Read`, `Write`, `Edit`, `Grep`,
-# `Glob`, `LS`) are async because they await `ShellToolset` / `FileSystemToolset`,
-# while the remaining ones (`MultiEdit`, `TodoWrite`, `ExitPlanMode`) stay sync.
+# harness-backed tools (`Bash`, `Read`, `Write`, `Edit`, `Grep`, `Glob`, `LS`
+# awaiting `ShellToolset` / `FileSystemToolset`, and `TodoWrite` awaiting the
+# `planning` capability) are async, while the remaining ones (`MultiEdit`,
+# `ExitPlanMode`) stay sync.
 # Their argument signatures vary by tool (Claude's `Bash` takes
 # `(command, timeout?)`, `MultiEdit` takes `(file_path, edits)`, etc.), so the
 # precise per-tool shape is enforced at the tool's own definition site — at the

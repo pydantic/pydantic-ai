@@ -189,17 +189,21 @@ def test_claude_code_tool_names():
 def test_harness_backed_tools_are_async_and_pin_the_remaining_gaps():
     """Guard the harness-backed vs hand-rolled split — the boundary of the swap.
 
-    The file/shell tools delegate to pydantic-ai-harness (`FileSystemToolset` /
-    `ShellToolset`) and are async. The remaining tools have no *stable,
-    Claude-compatible* harness equivalent and stay sync:
+    The harness-backed tools delegate to pydantic-ai-harness and are async:
+    `Bash`/`Read`/`Write`/`Edit`/`Grep`/`Glob`/`LS` to `FileSystemToolset` /
+    `ShellToolset`, and `TodoWrite` to the experimental `planning` capability's
+    `write_plan` (experimental is acceptable; the warning is silenced at import).
+
+    The remaining tools have no harness equivalent and stay sync:
 
     - `MultiEdit` — the harness has no atomic multi-replacement primitive
       (`edit_file` is single-unique-occurrence, one call, no batch rollback).
-    - `TodoWrite` / `ExitPlanMode` — planning acks, not filesystem/shell ops.
-      The harness ships an *experimental* `PlanningToolset.write_plan` (and an
-      experimental `SubAgentToolset.delegate_task` for `Task`), but they emit
-      experimental warnings and use different tool names/schemas, so adopting
-      them is a separate, deliberate step — not part of this swap.
+    - `ExitPlanMode` — a plan-mode protocol ack with no capability behind it.
+
+    (`Task`, in the main shim, stays hand-rolled too: the experimental
+    `SubAgentToolset.delegate_task` routes to *pre-named* agents, while Claude's
+    `Task` spawns an ad-hoc sub-agent from a free-form prompt — a different
+    interface, not just an experimental one.)
 
     If a future change backs one of these with the harness (or accidentally
     de-async's a backed tool), this test trips so the gap list stays honest.
@@ -216,8 +220,8 @@ def test_harness_backed_tools_are_async_and_pin_the_remaining_gaps():
         'TodoWrite': pkg.todo_write,
         'ExitPlanMode': pkg.exit_plan_mode,
     }
-    harness_backed = {'Bash', 'Read', 'Write', 'Edit', 'Grep', 'Glob', 'LS'}
-    hand_rolled = {'MultiEdit', 'TodoWrite', 'ExitPlanMode'}
+    harness_backed = {'Bash', 'Read', 'Write', 'Edit', 'Grep', 'Glob', 'LS', 'TodoWrite'}
+    hand_rolled = {'MultiEdit', 'ExitPlanMode'}
     # Every Claude tool is accounted for in exactly one bucket.
     assert harness_backed.isdisjoint(hand_rolled)
     assert harness_backed | hand_rolled == set(pkg.CLAUDE_CODE_TOOL_NAMES) == set(fn_by_name)
@@ -387,10 +391,21 @@ def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatc
     assert shim._anthropic_native_capabilities() == []  # pyright: ignore[reportPrivateUsage]
 
 
-def test_todo_write_acknowledges():
-    out = pkg.todo_write([{'content': 'do x', 'status': 'in_progress', 'activeForm': 'doing x'}])
-    assert 'do x' in out and out.startswith('todos recorded')
-    assert pkg.todo_write([]) == 'todos recorded (0):\n'
+def test_todo_write_renders_plan_via_harness():
+    # TodoWrite maps Claude's todo schema onto the harness `planning` capability
+    # and returns its `write_plan` rendering (a checklist with a progress line).
+    out = asyncio.run(pkg.todo_write([{'content': 'do x', 'status': 'in_progress', 'activeForm': 'doing x'}]))
+    assert 'do x' in out and '[~]' in out and '(0/1 completed)' in out
+    # A completed step shows as done; an unknown status falls back to pending.
+    out2 = asyncio.run(
+        pkg.todo_write(
+            [
+                {'content': 'a', 'status': 'completed', 'activeForm': ''},
+                {'content': 'b', 'status': 'bogus', 'activeForm': ''},
+            ]
+        )
+    )
+    assert '[x] a' in out2 and '[ ] b' in out2 and '(1/2 completed)' in out2
 
 
 def test_exit_plan_mode_returns_ack():
