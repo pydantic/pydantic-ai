@@ -489,7 +489,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         if tool_kind is not None:
                             # AG-UI sends tool content as a string, but typed return subclasses need
                             # structured content, so parse it before the final `narrow_message_parts`
-                            # pass. An unparseable claim can't be a typed return, so leave the plain
+                            # pass. An unparsable claim can't be a typed return, so leave the plain
                             # string part (matching a claim-free load).
                             try:
                                 return_part = replace(
