@@ -23,7 +23,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import UploadedFile
+from pydantic_ai.messages import ModelResponse, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool
 
@@ -90,6 +90,75 @@ async def test_anthropic_code_execution_files(allow_model_requests: None, anthro
     user_content = json.loads(messages_request.body)['messages'][0]['content']
     container_uploads = [block for block in user_content if block['type'] == 'container_upload']
     assert container_uploads == [{'type': 'container_upload', 'file_id': uploaded.id}]
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_multi_turn(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    """Across two turns, the container is reused by id *and* the `container_upload` block is re-sent.
+
+    `pending_container_uploads` is recomputed from the static `CodeExecutionTool.files` config on
+    every request, so turn 2 re-appends the `container_upload` block for a file the reused container
+    already holds. This pins, against the live API, that Anthropic tolerates that redundant re-send:
+    turn 2 carries both `container=<id from turn 1>` and the same `container_upload`, and still
+    succeeds. If the API ever started rejecting it, the append would need gating to the first turn.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+
+    try:
+        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[
+                NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
+            ],
+        )
+
+        first = await agent.run(_PROMPT)
+        second = await agent.run(
+            'Use the code execution tool again to report the average of the `value` column.',
+            message_history=first.all_messages(),
+        )
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    assert '100' in first.output
+    assert '50' in second.output
+
+    # The container id from turn 1's response is what turn 2 reuses.
+    first_response = first.all_messages()[-1]
+    assert isinstance(first_response, ModelResponse)
+    container_id = (first_response.provider_details or {}).get('container_id')
+    assert container_id
+
+    messages_requests = [r for r in vcr.requests if '/v1/messages' in r.uri]
+    assert len(messages_requests) == 2
+    first_body, second_body = (json.loads(r.body) for r in messages_requests)
+
+    first_uploads = [
+        block
+        for message in first_body['messages']
+        for block in message['content']
+        if block['type'] == 'container_upload'
+    ]
+    second_uploads = [
+        block
+        for message in second_body['messages']
+        for block in message['content']
+        if block['type'] == 'container_upload'
+    ]
+
+    upload_block = {'type': 'container_upload', 'file_id': uploaded.id}
+    # Turn 1: fresh container (no `container` param), file uploaded.
+    assert 'container' not in first_body
+    assert first_uploads == [upload_block]
+    # Turn 2: container reused by id, *and* the same upload block re-sent — accepted by the API.
+    assert second_body['container'] == container_id
+    assert second_uploads == [upload_block]
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')

@@ -1,0 +1,303 @@
+interactions:
+- request:
+    body: "--5286583aec1f8ab914e04f45b98001a2\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
+      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--5286583aec1f8ab914e04f45b98001a2--\r\n"
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '198'
+      content-type:
+      - multipart/form-data; boundary=5286583aec1f8ab914e04f45b98001a2
+      host:
+      - api.anthropic.com
+    method: POST
+    uri: https://api.anthropic.com/v1/files?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '190'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=268
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      created_at: '2026-06-30T03:49:11.625000Z'
+      downloadable: false
+      filename: data.csv
+      id: file_011CcYm8fA5LCVHDKHQbVRRA
+      mime_type: text/csv
+      size_bytes: 30
+      type: file
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '389'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
+          type: text
+        - file_id: file_011CcYm8fA5LCVHDKHQbVRRA
+          type: container_upload
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1437'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-40553c740256902a7af325d51faf29c6-121065d74c1aceab-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-06-30T04:49:15.746412Z'
+        id: container_01LrwUHsLYJNyAvHWSvPKAqb
+      content:
+      - id: srvtoolu_01LC4UWKBEdNAQW7WKgpyWy7
+        input:
+          command: awk -F',' 'NR>1 {sum += $NF} END {print "Sum of value column:", sum}' "$INPUT_DIR/data.csv"
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            Sum of value column: 100
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01LC4UWKBEdNAQW7WKgpyWy7
+        type: bash_code_execution_tool_result
+      - text: "The sum of the `value` column in **data.csv** is **100**. \U0001F389\n\nHere's a quick breakdown of what was
+          done:\n- Used `awk` to parse the CSV file.\n- Skipped the header row (`NR>1`).\n- Accumulated the values in the
+          last column (`$NF`), which corresponds to the `value` column.\n- Printed the total sum at the end."
+        type: text
+      id: msg_01248CVrujMbctpR75c5VYNC
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 4664
+        output_tokens: 197
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1425'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      container: container_01LrwUHsLYJNyAvHWSvPKAqb
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
+          type: text
+        role: user
+      - content:
+        - id: srvtoolu_01LC4UWKBEdNAQW7WKgpyWy7
+          input:
+            command: awk -F',' 'NR>1 {sum += $NF} END {print "Sum of value column:", sum}' "$INPUT_DIR/data.csv"
+          name: bash_code_execution
+          type: server_tool_use
+        - content:
+            content: []
+            return_code: 0
+            stderr: ''
+            stdout: |
+              Sum of value column: 100
+            type: bash_code_execution_result
+          tool_use_id: srvtoolu_01LC4UWKBEdNAQW7WKgpyWy7
+          type: bash_code_execution_tool_result
+        - text: "The sum of the `value` column in **data.csv** is **100**. \U0001F389\n\nHere's a quick breakdown of what
+            was done:\n- Used `awk` to parse the CSV file.\n- Skipped the header row (`NR>1`).\n- Accumulated the values in
+            the last column (`$NF`), which corresponds to the `value` column.\n- Printed the total sum at the end."
+          type: text
+        role: assistant
+      - content:
+        - text: Use the code execution tool again to report the average of the `value` column.
+          type: text
+        - file_id: file_011CcYm8fA5LCVHDKHQbVRRA
+          type: container_upload
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1626'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-0da10d585143ec82800b2ee7f1b8ee4a-b5e294c5f6c31b98-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-06-30T04:49:21.318129Z'
+        id: container_01LrwUHsLYJNyAvHWSvPKAqb
+      content:
+      - id: srvtoolu_01NDKh6tc8auPbkCT1vaXqFb
+        input:
+          command: awk -F',' 'NR>1 {sum += $NF; count++} END {print "Average of value column:", sum/count}' "$INPUT_DIR/data.csv"
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            Average of value column: 50
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01NDKh6tc8auPbkCT1vaXqFb
+        type: bash_code_execution_tool_result
+      - text: "The average of the `value` column in **data.csv** is **50**. \U0001F4CA\n\nHere's a quick breakdown of what
+          was done:\n- Used `awk` to parse the CSV file.\n- Skipped the header row (`NR>1`).\n- Accumulated the values in
+          the last column (`$NF`) and kept a count of the rows.\n- Divided the total sum by the count to calculate the average,
+          and printed the result.\n\nSince we previously found the sum to be **100**, this means there are **2 rows** of data
+          in the file (100 ÷ 2 = 50)."
+        type: text
+      id: msg_015Ltd5XXohnQ4Kamsr5W4gx
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 5151
+        output_tokens: 248
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: DELETE
+    uri: https://api.anthropic.com/v1/files/file_011CcYm8fA5LCVHDKHQbVRRA?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '63'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=414
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      id: file_011CcYm8fA5LCVHDKHQbVRRA
+      type: file_deleted
+    status:
+      code: 200
+      message: OK
+version: 1
