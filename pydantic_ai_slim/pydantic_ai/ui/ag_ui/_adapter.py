@@ -116,7 +116,7 @@ else:
     except ImportError:
 
         class ReasoningMessage:
-            """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
+            """Stub for ag-ui-protocol < 0.1.11 — no instances exist, so pattern matching is a no-op."""
 
     try:
         from ag_ui.core import AudioInputContent, DocumentInputContent, ImageInputContent, VideoInputContent
