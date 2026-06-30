@@ -38,7 +38,7 @@ from typing import (
     overload,
 )
 
-from anyio import BrokenResourceError, CancelScope, create_memory_object_stream, create_task_group
+from anyio import BrokenResourceError, CancelScope, ClosedResourceError, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Never, TypeAliasType, TypeVar, assert_never
@@ -848,7 +848,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 # or ExceptionGroup). This preserves the original exception for the caller.
                 try:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
-                except BrokenResourceError:
+                except (BrokenResourceError, ClosedResourceError):
                     pass  # pragma: no cover
                 return
             try:
@@ -858,8 +858,13 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, []))
                 else:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
-            except BrokenResourceError:
-                # Can happen when an asyncio task is cancelled mid-send.
+            except (BrokenResourceError, ClosedResourceError):
+                # Can happen when an asyncio task is cancelled mid-send: the run's
+                # cleanup closes ``iter_stream_sender`` in another task while this
+                # task is still in-flight on ``send``. Closing the sender raises
+                # ``ClosedResourceError`` (closing the receiver would raise
+                # ``BrokenResourceError``); both are benign here — the result/error
+                # is no longer needed because the run is being torn down.
                 pass
 
     async def _run_task(
