@@ -443,12 +443,18 @@ async def ask_agent(
             live = Live('', refresh_per_second=15, console=console, vertical_overflow='ellipsis')
             content_pieces: list[str] = []
             updated_content = ''
+            live_started = False
 
             async for node in agent_run:
-                status.stop()
-                stack.enter_context(live)
-
                 if Agent.is_model_request_node(node):
+                    # The first model request node always precedes any tool calls, so deferring the
+                    # live display until here keeps the 'Working on it…' spinner up until streamed
+                    # content is about to appear, and enters the Live context exactly once.
+                    if not live_started:
+                        status.stop()
+                        stack.enter_context(live)
+                        live_started = True
+
                     async with node.stream(agent_run.ctx) as handle_stream:
                         async for content in handle_stream.stream_output(debounce_by=None):
                             updated_content = str(content)
@@ -471,6 +477,7 @@ async def ask_agent(
                             ):
                                 tool_name = event.part.tool_name
                                 content_pieces.append(f'> Called tool `{tool_name}`.')
+                                live.update(Markdown('\n\n'.join(content_pieces), code_theme=code_theme))
 
             assert agent_run.result is not None
             return agent_run.result.all_messages()
