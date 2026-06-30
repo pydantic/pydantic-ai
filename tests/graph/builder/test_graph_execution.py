@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
+from anyio import ClosedResourceError, create_task_group
 
 from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.graph_builder import GraphTask, _GraphIterator
+from pydantic_graph.id_types import TaskID
 from pydantic_graph.join import ReduceFirstValue, reduce_list_append, reduce_list_extend
 
 pytestmark = pytest.mark.anyio
@@ -16,6 +19,67 @@ pytestmark = pytest.mark.anyio
 class ExecutionState:
     log: list[str] = field(default_factory=list[str])
     counter: int = 0
+
+
+class _ClosedSender:
+    async def send(self, item: object) -> None:
+        raise ClosedResourceError
+
+
+async def test_run_tracked_task_suppresses_closed_resource_error_for_result_send():
+    """Cancellation cleanup may close the sender while a finished task reports its result."""
+    g = GraphBuilder(state_type=ExecutionState, output_type=int)
+
+    @g.step
+    async def produce(ctx: StepContext[ExecutionState, None, None]) -> int:
+        return 1
+
+    g.add(g.edge_from(g.start_node).to(produce), g.edge_from(produce).to(g.end_node))
+    graph = g.build()
+
+    async with create_task_group() as task_group:
+        iterator = _GraphIterator(
+            graph=graph,
+            state=ExecutionState(),
+            deps=None,
+            task_group=task_group,
+            get_next_node_run_id=lambda: None,  # type: ignore[arg-type]
+            get_next_task_id=lambda: TaskID('unused'),
+        )
+        iterator.iter_stream_sender.close()
+        iterator.iter_stream_receiver.close()
+        iterator.iter_stream_sender = _ClosedSender()  # type: ignore[assignment]
+
+        task = GraphTask(produce.id, None, (), TaskID('task:1'))
+        await iterator._run_tracked_task(task)
+
+
+async def test_run_tracked_task_suppresses_closed_resource_error_for_error_send():
+    """Cancellation cleanup may close the sender while a failing task reports its error."""
+    g = GraphBuilder(state_type=ExecutionState, output_type=int)
+
+    @g.step
+    async def fail(ctx: StepContext[ExecutionState, None, None]) -> int:
+        raise RuntimeError('boom')
+
+    g.add(g.edge_from(g.start_node).to(fail), g.edge_from(fail).to(g.end_node))
+    graph = g.build()
+
+    async with create_task_group() as task_group:
+        iterator = _GraphIterator(
+            graph=graph,
+            state=ExecutionState(),
+            deps=None,
+            task_group=task_group,
+            get_next_node_run_id=lambda: None,  # type: ignore[arg-type]
+            get_next_task_id=lambda: TaskID('unused'),
+        )
+        iterator.iter_stream_sender.close()
+        iterator.iter_stream_receiver.close()
+        iterator.iter_stream_sender = _ClosedSender()  # type: ignore[assignment]
+
+        task = GraphTask(fail.id, None, (), TaskID('task:1'))
+        await iterator._run_tracked_task(task)
 
 
 async def test_map_to_end_node_cancels_pending():
