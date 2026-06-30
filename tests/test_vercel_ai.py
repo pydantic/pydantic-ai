@@ -8752,6 +8752,20 @@ async def test_adapter_roundtrip_preserves_file_vendor_metadata():
     ]
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    # Pin the dumped external contract: each file part carries vendor_metadata under
+    # provider_metadata['pydantic_ai'] (the shape the symmetric dump -> load relies on).
+    dumped_metadata = [
+        part.provider_metadata for message in ui_messages for part in message.parts if isinstance(part, FileUIPart)
+    ]
+    assert dumped_metadata == [
+        {'pydantic_ai': {'vendor_metadata': {'detail': 'high'}}},
+        {'pydantic_ai': {'vendor_metadata': {'foo': 'bar'}}},
+        {'pydantic_ai': {'vendor_metadata': {'fps': 5}}},
+        {'pydantic_ai': {'vendor_metadata': {'foo': 'baz'}}},
+        {'pydantic_ai': {'vendor_metadata': {'detail': 'low'}}},
+    ]
+
     loaded = VercelAIAdapter.load_messages(ui_messages)
 
     assert len(loaded) == 1
@@ -8806,3 +8820,30 @@ async def test_adapter_roundtrip_file_without_vendor_metadata_stays_none():
     assert isinstance(user_part.content, list)
     for item in user_part.content:
         assert getattr(item, 'vendor_metadata', None) is None
+
+
+async def test_adapter_load_binary_content_rejects_invalid_vendor_metadata():
+    """A malformed `vendor_metadata` on a data-URI `BinaryContent` is rejected on load.
+
+    The restore path reconstructs `BinaryContent` through its constructor so a non-dict
+    client value raises `ValidationError` here (matching the URL constructor path),
+    instead of being stored unvalidated and crashing a provider model later.
+    """
+    from pydantic import ValidationError
+
+    ui_messages = [
+        UIMessage(
+            id='msg-1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='application/pdf',
+                    url='data:application/pdf;base64,ZGF0YQ==',
+                    provider_metadata={'pydantic_ai': {'vendor_metadata': 'not-a-dict'}},
+                ),
+            ],
+        )
+    ]
+
+    with pytest.raises(ValidationError):
+        VercelAIAdapter.load_messages(ui_messages)

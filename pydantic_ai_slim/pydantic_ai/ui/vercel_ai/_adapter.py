@@ -315,8 +315,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         )
                         else:
                             # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
+                            # Reconstruct through the constructor so a malformed client value is rejected
+                            # here (matching the URL constructor path) instead of being stored unvalidated
+                            # and crashing a provider model later.
                             if vendor_metadata is not None:
-                                file.vendor_metadata = vendor_metadata
+                                file = BinaryContent(
+                                    data=file.data,
+                                    media_type=file.media_type,
+                                    identifier=file.identifier,
+                                    vendor_metadata=vendor_metadata,
+                                )
                         user_prompt_content.append(file)
                     elif isinstance(part, DataUIPart):
                         # Contains custom data that shouldn't be sent to the model
