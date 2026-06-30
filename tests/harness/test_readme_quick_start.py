@@ -292,7 +292,7 @@ class TestReadmeQuickStart:
     """End-to-end check that the README's Quick start example still works."""
 
     async def test_quick_start_runs_through_codemode_with_faked_io(self) -> None:
-        agent: Agent[None, str] = Agent(
+        agent: Agent[object, str] = Agent(
             FunctionModel(_model_fn),
             capabilities=[
                 # Wire the fake HN tools through the `MCP` capability the same way
@@ -301,7 +301,7 @@ class TestReadmeQuickStart:
                 # capability composition path as production without any network.
                 # MCP's `__init__` narrows `local` to MCP-specific types, but the
                 # parent `NativeOrLocalTool` accepts any `AbstractToolset` at runtime.
-                MCP[None](
+                MCP[object](
                     'https://hn.caseyjhand.com/mcp',
                     native=False,
                     local=_make_fake_hn_toolset(),  # pyright: ignore[reportArgumentType]
@@ -309,8 +309,8 @@ class TestReadmeQuickStart:
                 # The auto-wrapped Tool would take its name from the function
                 # (`_fake_web_search`); pass `name='web_search'` so the sandbox
                 # exposes it under the same name the model uses.
-                WebSearch[None](native=False, local=Tool(_fake_web_search, name='web_search')),
-                CodeMode[None](),
+                WebSearch[object](native=False, local=Tool(_fake_web_search, name='web_search')),
+                CodeMode[object](),
             ],
         )
 

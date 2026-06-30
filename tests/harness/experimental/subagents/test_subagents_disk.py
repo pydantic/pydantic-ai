@@ -175,7 +175,7 @@ class TestDiskLoading:
         # The isolation fixture points the home root at an empty dir; populate its
         # conventional folder and the default `SubAgents()` picks it up with no config.
         _write_agent(Path.home() / '.agents' / 'agents', 'planner.md', '---\nname: planner\n---\nPlan.')
-        cap: SubAgents[None] = SubAgents()
+        cap: SubAgents[object] = SubAgents()
         assert 'planner' in cap._by_name
 
     def test_cwd_equal_home_loads_once_without_shadow_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -191,17 +191,17 @@ class TestDiskLoading:
         _write_agent(root / '.agents' / 'agents', 'planner.md', '---\nname: planner\n---\nPlan.')
         with warnings.catch_warnings():
             warnings.simplefilter('error')
-            cap: SubAgents[None] = SubAgents()
+            cap: SubAgents[object] = SubAgents()
         assert 'planner' in cap._by_name
 
     def test_none_disables_loading(self) -> None:
-        cap: SubAgents[None] = SubAgents(agent_folders=None)
+        cap: SubAgents[object] = SubAgents(agent_folders=None)
         assert cap._by_name == {}
         assert cap.get_toolset() is None
 
     def test_loads_agents_from_folder(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'researcher.md', '---\nname: researcher\ndescription: Researches\n---\nResearch well.')
-        cap: SubAgents[None] = SubAgents(agent_folders=[tmp_path])
+        cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
         assert 'researcher' in cap._by_name
         agent = cap._by_name['researcher'].agent
         assert agent.name == 'researcher'
@@ -209,11 +209,11 @@ class TestDiskLoading:
 
     def test_name_falls_back_to_filename_stem(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'planner.md', 'No frontmatter, just a body.')
-        cap: SubAgents[None] = SubAgents(agent_folders=[tmp_path])
+        cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
         assert 'planner' in cap._by_name
 
     def test_missing_folder_is_skipped(self, tmp_path: Path) -> None:
-        cap: SubAgents[None] = SubAgents(agent_folders=[tmp_path / 'does-not-exist'])
+        cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path / 'does-not-exist'])
         assert cap._by_name == {}
 
     def test_undecodable_file_is_skipped_with_warning(self, tmp_path: Path) -> None:
@@ -223,13 +223,13 @@ class TestDiskLoading:
         (tmp_path / 'broken.md').write_bytes(b'---\nname: broken\n---\n\xff\xfe not utf-8')
         _write_agent(tmp_path, 'valid.md', '---\nname: valid\n---\nWork.')
         with pytest.warns(UserWarning, match='Skipping unreadable disk sub-agent file'):
-            cap: SubAgents[None] = SubAgents(agent_folders=[tmp_path])
+            cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
         assert 'valid' in cap._by_name
         assert 'broken' not in cap._by_name
 
     def test_listing_uses_description(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'r.md', '---\nname: r\ndescription: Researches\n---\nB')
-        cap: SubAgents[None] = SubAgents(agent_folders=[tmp_path])
+        cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
         assert '- r: Researches' in instructions
@@ -240,7 +240,7 @@ class TestPrecedence:
         _write_agent(tmp_path, 'worker.md', '---\nname: worker\ndescription: from disk\n---\nB')
         explicit = Agent(TestModel(), name='worker', description='from code')
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed"):
-            cap: SubAgents[None] = SubAgents(agents=[SubAgent(explicit)], agent_folders=[tmp_path])
+            cap: SubAgents[object] = SubAgents(agents=[SubAgent(explicit)], agent_folders=[tmp_path])
         assert cap._by_name['worker'].agent is explicit
 
     def test_earlier_folder_shadows_later(self, tmp_path: Path) -> None:
@@ -249,7 +249,7 @@ class TestPrecedence:
         _write_agent(project, 'worker.md', '---\nname: worker\ndescription: project\n---\nB')
         _write_agent(home, 'worker.md', '---\nname: worker\ndescription: home\n---\nB')
         with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed"):
-            cap: SubAgents[None] = SubAgents(agent_folders=[project, home])
+            cap: SubAgents[object] = SubAgents(agent_folders=[project, home])
         listing = cap.get_instructions()
         assert isinstance(listing, str)
         assert 'project' in listing
@@ -260,7 +260,7 @@ class TestOverrides:
     def test_model_and_effort_override(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'w.md', '---\nname: w\n---\nB')
         model = TestModel()
-        cap: SubAgents[None] = SubAgents(
+        cap: SubAgents[object] = SubAgents(
             agent_folders=[tmp_path],
             agent_overrides={'w': AgentOverride(model=model, effort='high')},
         )
@@ -269,7 +269,7 @@ class TestOverrides:
 
     def test_effort_floored_without_override(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'w.md', '---\nname: w\n---\nB')
-        cap: SubAgents[None] = SubAgents(agent_folders=[tmp_path])
+        cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
         # No override -> effort defaults to the floor on the built agent's settings.
         agent = cap._by_name['w'].agent
         assert isinstance(agent, Agent)
@@ -287,7 +287,7 @@ class TestToolResolver:
         def resolver(name: str) -> Sequence[AgentToolset[object]] | None:
             return [toolset] if name == 'search' else None
 
-        cap: SubAgents[None] = SubAgents(agent_folders=[tmp_path], tool_resolver=resolver)
+        cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path], tool_resolver=resolver)
         # The resolved toolset is attached to the built agent.
         assert toolset in cap._by_name['w'].agent.toolsets
 
@@ -303,14 +303,14 @@ class TestToolResolver:
     def test_no_resolver_ignores_frontmatter_tools(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'w.md', '---\nname: w\ntools: Read, Edit\n---\nB')
         # Without a resolver, no warning and no own tools -- inheritance is the path.
-        cap: SubAgents[None] = SubAgents(agent_folders=[tmp_path])
+        cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
         assert 'w' in cap._by_name
 
 
 class TestModelInheritance:
     async def test_disk_agent_inherits_parent_model(self, tmp_path: Path) -> None:
         _write_agent(tmp_path, 'worker.md', '---\nname: worker\n---\nDo the work.')
-        cap: SubAgents[None] = SubAgents(agent_folders=[tmp_path])
+        cap: SubAgents[object] = SubAgents(agent_folders=[tmp_path])
         disk_agent = cap._by_name['worker'].agent
         assert isinstance(disk_agent, Agent)
 
@@ -322,7 +322,7 @@ class TestModelInheritance:
             return ''
 
         parent_model = _delegate_then_finish('worker')
-        parent: Agent[None, str] = Agent(parent_model, capabilities=[cap])
+        parent: Agent[object, str] = Agent(parent_model, capabilities=[cap])
         result = await parent.run('go')
         assert result.output == 'all done'
         # The model-less disk agent ran on the parent's resolved model.

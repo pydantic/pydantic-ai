@@ -33,8 +33,8 @@ def anyio_backend() -> str:
     return 'asyncio'
 
 
-def _run_context() -> RunContext[None]:
-    return RunContext[None](
+def _run_context() -> RunContext[object]:
+    return RunContext[object](
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
@@ -141,31 +141,31 @@ class TestRender:
 class TestInstructions:
     def test_includes_files_and_inventory_hint(self, tmp_path: Path) -> None:
         _write(tmp_path / 'CLAUDE.md', 'be nice')
-        cap = RepoContext[None](workspace_dir=tmp_path)
+        cap = RepoContext[object](workspace_dir=tmp_path)
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
         assert 'be nice' in instructions
         assert 'inventory_agent_context' in instructions
 
     def test_none_when_all_disabled(self, tmp_path: Path) -> None:
-        cap = RepoContext[None](workspace_dir=tmp_path, autoload_instructions=False, expose_inventory_tool=False)
+        cap = RepoContext[object](workspace_dir=tmp_path, autoload_instructions=False, expose_inventory_tool=False)
         assert cap.get_instructions() is None
 
     def test_autoload_off_keeps_inventory_hint(self, tmp_path: Path) -> None:
         _write(tmp_path / 'CLAUDE.md', 'ignored')
-        cap = RepoContext[None](workspace_dir=tmp_path, autoload_instructions=False)
+        cap = RepoContext[object](workspace_dir=tmp_path, autoload_instructions=False)
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
         assert 'ignored' not in instructions
         assert 'inventory_agent_context' in instructions
 
     def test_no_files_no_inventory_is_none(self, tmp_path: Path) -> None:
-        cap = RepoContext[None](workspace_dir=tmp_path, expose_inventory_tool=False)
+        cap = RepoContext[object](workspace_dir=tmp_path, expose_inventory_tool=False)
         assert cap.get_instructions() is None
 
     def test_files_cached_across_calls(self, tmp_path: Path) -> None:
         _write(tmp_path / 'CLAUDE.md', 'first')
-        cap = RepoContext[None](workspace_dir=tmp_path)
+        cap = RepoContext[object](workspace_dir=tmp_path)
         assert cap.get_instructions() is not None and 'first' in cap.get_instructions()  # type: ignore[operator]
         _write(tmp_path / 'CLAUDE.md', 'second')
         # Read-once: the cached result is reused, so the edit is not picked up.
@@ -174,15 +174,16 @@ class TestInstructions:
 
 class TestToolset:
     def test_get_toolset_none_when_disabled(self, tmp_path: Path) -> None:
-        assert RepoContext[None](workspace_dir=tmp_path, expose_inventory_tool=False).get_toolset() is None
+        assert RepoContext[object](workspace_dir=tmp_path, expose_inventory_tool=False).get_toolset() is None
 
     def test_get_toolset_present(self, tmp_path: Path) -> None:
-        assert isinstance(RepoContext[None](workspace_dir=tmp_path).get_toolset(), RepoContextToolset)
+        assert isinstance(RepoContext[object](workspace_dir=tmp_path).get_toolset(), RepoContextToolset)
 
     async def test_inventory_tool_runs_through_agent(self, tmp_path: Path) -> None:
         _write(tmp_path / '.claude' / 'skills' / 'foo' / 'SKILL.md', 'skill')
         agent = Agent(
-            TestModel(call_tools=['inventory_agent_context']), capabilities=[RepoContext[None](workspace_dir=tmp_path)]
+            TestModel(call_tools=['inventory_agent_context']),
+            capabilities=[RepoContext[object](workspace_dir=tmp_path)],
         )
         result = await agent.run('go')
         assert 'inventory_agent_context' in result.output
@@ -230,14 +231,14 @@ class TestScanAssets:
 class TestNestedTraversal:
     async def test_off_by_default_returns_result(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[None](workspace_dir=tmp_path)
+        cap = RepoContext[object](workspace_dir=tmp_path)
         call, tool_def, args = _call('list_directory', path='sub')
         out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='listing')
         assert out == 'listing'
 
     async def test_pointer_appended_on_first_traversal(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[None](workspace_dir=tmp_path, nested_traversal=True)
+        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
         call, tool_def, args = _call('list_directory', path='sub')
         out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='listing')
         assert out.startswith('listing')
@@ -246,7 +247,7 @@ class TestNestedTraversal:
 
     async def test_second_traversal_no_reappend(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[None](workspace_dir=tmp_path, nested_traversal=True)
+        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
         call, tool_def, args = _call('list_directory', path='sub')
         ctx = _run_context()
         first = await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result='one')
@@ -256,13 +257,13 @@ class TestNestedTraversal:
 
     async def test_tool_name_not_matched(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[None](workspace_dir=tmp_path, nested_traversal=True)
+        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
         call, tool_def, args = _call('write_file', path='sub')
         out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')
         assert out == 'r'
 
     async def test_non_str_path_arg_ignored(self, tmp_path: Path) -> None:
-        cap = RepoContext[None](workspace_dir=tmp_path, nested_traversal=True)
+        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
         call = ToolCallPart(tool_name='list_directory', args={'path': 123})
         out = await cap.after_tool_execute(
             _run_context(), call=call, tool_def=ToolDefinition(name='list_directory'), args={'path': 123}, result='r'
@@ -271,7 +272,7 @@ class TestNestedTraversal:
 
     async def test_dir_without_context_file_untouched(self, tmp_path: Path) -> None:
         (tmp_path / 'sub').mkdir()
-        cap = RepoContext[None](workspace_dir=tmp_path, nested_traversal=True)
+        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
         call, tool_def, args = _call('list_directory', path='sub')
         out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')
         assert out == 'r'
@@ -279,14 +280,14 @@ class TestNestedTraversal:
     async def test_read_file_uses_parent_dir(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
         target = _write(tmp_path / 'sub' / 'code.py', 'x = 1')
-        cap = RepoContext[None](workspace_dir=tmp_path, nested_traversal=True)
+        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
         call, tool_def, args = _call('read_file', path=str(target))
         out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='file body')
         assert 'CLAUDE.md' in out
 
     async def test_contents_mode_inlines_body(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'CLAUDE.md', 'NESTED BODY')
-        cap = RepoContext[None](workspace_dir=tmp_path, nested_traversal=True, nested_inject='contents')
+        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True, nested_inject='contents')
         call, tool_def, args = _call('list_directory', path='sub')
         out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')
         assert 'NESTED BODY' in out
@@ -295,14 +296,14 @@ class TestNestedTraversal:
         workspace = tmp_path / 'ws'
         workspace.mkdir()
         outside = _write(tmp_path / 'outside' / 'CLAUDE.md', 'nested').parent
-        cap = RepoContext[None](workspace_dir=workspace, nested_traversal=True)
+        cap = RepoContext[object](workspace_dir=workspace, nested_traversal=True)
         call, tool_def, args = _call('list_directory', path=str(outside))
         out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')
         assert outside.resolve().as_posix() in out
 
     async def test_non_str_result_returned_unchanged(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[None](
+        cap = RepoContext[object](
             workspace_dir=tmp_path, nested_traversal=True, traversal_tool_names=frozenset({'list_dir', 'read_file'})
         )
         call, tool_def, args = _call('list_dir', path='sub')
@@ -312,7 +313,7 @@ class TestNestedTraversal:
 
     async def test_string_result_still_gets_note(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        cap = RepoContext[None](workspace_dir=tmp_path, nested_traversal=True)
+        cap = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
         call, tool_def, args = _call('list_directory', path='sub')
         out = await cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='listing')
         assert out.startswith('listing')
@@ -322,7 +323,7 @@ class TestNestedTraversal:
 class TestForRunAndMisc:
     async def test_for_run_isolates_state(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'CLAUDE.md', 'nested')
-        base = RepoContext[None](workspace_dir=tmp_path, nested_traversal=True)
+        base = RepoContext[object](workspace_dir=tmp_path, nested_traversal=True)
         run_cap = await base.for_run(_run_context())
         call, tool_def, args = _call('list_directory', path='sub')
         await run_cap.after_tool_execute(_run_context(), call=call, tool_def=tool_def, args=args, result='r')

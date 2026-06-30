@@ -112,10 +112,10 @@ class TestConstruction:
         assert SubAgents.get_serialization_name() is None
 
     def test_empty_agents_no_instructions(self) -> None:
-        assert SubAgents[None]().get_instructions() is None
+        assert SubAgents[object]().get_instructions() is None
 
     def test_empty_agents_no_toolset(self) -> None:
-        assert SubAgents[None]().get_toolset() is None
+        assert SubAgents[object]().get_toolset() is None
 
 
 class TestInstructions:
@@ -171,7 +171,7 @@ class TestToolset:
 class TestDelegation:
     async def test_delegates_and_returns_output(self) -> None:
         worker = Agent(TestModel(custom_output_text='WORKER RESULT'), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'), capabilities=[SubAgents(agents=[SubAgent(worker)])]
         )
         result = await parent.run('go')
@@ -186,7 +186,7 @@ class TestDelegation:
 
     async def test_delegates_via_name_override(self) -> None:
         worker = Agent(TestModel(custom_output_text='WORKER RESULT'), name='internal')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('public'),
             capabilities=[SubAgents(agents=[SubAgent(worker, name='public')])],
         )
@@ -197,7 +197,7 @@ class TestDelegation:
     async def test_unknown_agent_triggers_retry_then_succeeds(self) -> None:
         worker = Agent(TestModel(custom_output_text='OK'), name='worker')
         helper = Agent(TestModel(custom_output_text='OK'), name='helper')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker', retries_before=1),
             capabilities=[SubAgents(agents=[SubAgent(worker), SubAgent(helper)])],
         )
@@ -254,7 +254,7 @@ class TestDelegation:
             return ModelResponse(parts=[TextPart('sub done')])
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
             capabilities=[SubAgents(agents=[SubAgent(worker)], inherit_tools=True)],
         )
@@ -282,7 +282,7 @@ class TestDelegation:
             return ModelResponse(parts=[TextPart('sub done')])
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
-        toolset: SubAgentToolset[None] = SubAgentToolset(
+        toolset: SubAgentToolset[object] = SubAgentToolset(
             agents={'worker': SubAgent(worker)},
             forward_usage=True,
             inherit_tools=True,
@@ -291,7 +291,7 @@ class TestDelegation:
             tool_name='delegate_task',
             call_counts={},
         )
-        parent: Agent[None, str] = Agent(_delegate_then_finish('worker'), toolsets=[toolset])
+        parent: Agent[object, str] = Agent(_delegate_then_finish('worker'), toolsets=[toolset])
 
         @parent.tool_plain
         def parent_tool() -> str:  # pyright: ignore[reportUnusedFunction]
@@ -311,12 +311,12 @@ class TestDelegation:
         from pydantic_ai.toolsets import FunctionToolset
 
         @dataclass
-        class _ToolCapability(AbstractCapability[None]):
+        class _ToolCapability(AbstractCapability[object]):
             def get_toolset(self) -> Any:
                 def cap_tool() -> str:
                     return 'CT'  # pragma: no cover - never offered to the sub-agent
 
-                return FunctionToolset[None](tools=[cap_tool])
+                return FunctionToolset[object](tools=[cap_tool])
 
         offered: list[str] = []
 
@@ -325,7 +325,7 @@ class TestDelegation:
             return ModelResponse(parts=[TextPart('sub done')])
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
             capabilities=[SubAgents(agents=[SubAgent(worker)], inherit_tools=True), _ToolCapability()],
         )
@@ -340,9 +340,9 @@ class TestDelegation:
         assert 'cap_tool' not in offered
 
     async def test_shared_capabilities_applied_to_subagent(self) -> None:
-        cap: _RecordingCapability[None] = _RecordingCapability()
+        cap: _RecordingCapability[object] = _RecordingCapability()
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
             capabilities=[SubAgents(agents=[SubAgent(worker)], shared_capabilities=[cap])],
         )
@@ -353,12 +353,12 @@ class TestDelegation:
     async def test_event_stream_handler_forwarded_to_subagent(self) -> None:
         events: list[str] = []
 
-        async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
             async for event in stream:
                 events.append(type(event).__name__)
 
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
             capabilities=[SubAgents(agents=[SubAgent(worker)], event_stream_handler=handler)],
         )
@@ -371,7 +371,7 @@ class TestDelegation:
             raise UsageLimitExceeded('limit hit')
 
         limited = Agent(FunctionModel(boom), name='limited')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('limited'),
             capabilities=[SubAgents(agents=[SubAgent(limited)])],
         )
@@ -400,7 +400,7 @@ class TestDelegation:
                 )
             return ModelResponse(parts=[TextPart('all done')])
 
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             FunctionModel(parent_fn),
             capabilities=[SubAgents(agents=[SubAgent(boomer), SubAgent(worker)])],
         )
@@ -451,17 +451,17 @@ class TestRunControls:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
 
         @worker.instructions
-        def _capture(ctx: RunContext[None]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def _capture(ctx: RunContext[object]) -> str:  # pyright: ignore[reportUnusedFunction]
             captured['usage_is_parent'] = ctx.usage is parent_usage.get('usage')
             return ''
 
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
             capabilities=[SubAgents(agents=[SubAgent(worker, usage_limits=UsageLimits(request_limit=5))])],
         )
 
         @parent.instructions
-        def _remember_usage(ctx: RunContext[None]) -> str:  # pyright: ignore[reportUnusedFunction]
+        def _remember_usage(ctx: RunContext[object]) -> str:  # pyright: ignore[reportUnusedFunction]
             parent_usage['usage'] = ctx.usage
             return ''
 
@@ -485,7 +485,7 @@ class TestRunControls:
         def noop() -> str:  # pyright: ignore[reportUnusedFunction]
             return 'x'
 
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
             capabilities=[SubAgents(agents=[SubAgent(worker, usage_limits=UsageLimits(request_limit=1))])],
         )
@@ -500,7 +500,7 @@ class TestRunControls:
         # No per-child limit -> the child shares accounting and a parent-level usage
         # limit remains a hard stop for the whole tree.
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
             capabilities=[SubAgents(agents=[SubAgent(worker)])],
         )
@@ -513,7 +513,7 @@ class TestRunControls:
             return ModelResponse(parts=[TextPart('late')])  # pragma: no cover - cancelled by the timeout
 
         worker = Agent(FunctionModel(slow_fn), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
             capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=0.01)])],
         )
@@ -531,7 +531,7 @@ class TestRunControls:
             return ModelResponse(parts=[TextPart('W')])
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_n_then_finish('worker', 2),
             capabilities=[SubAgents(agents=[SubAgent(worker, max_calls=1)])],
         )
@@ -561,7 +561,7 @@ class TestRunControls:
             raise UnexpectedModelBehavior('kaboom')
 
         boomer = Agent(FunctionModel(boom), name='boomer')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('boomer'),
             capabilities=[SubAgents(agents=[SubAgent(boomer, on_failure='steer: use existing evidence')])],
         )
@@ -579,7 +579,7 @@ class TestRunControls:
 
     async def test_on_failure_overrides_default_steering(self) -> None:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_n_then_finish('worker', 2),
             capabilities=[SubAgents(agents=[SubAgent(worker, max_calls=1, on_failure='custom budget note')])],
         )
@@ -591,7 +591,7 @@ class TestRunControls:
     async def test_limits_without_budget_run_normally(self) -> None:
         # A SubAgent with only an unrelated control set must not alter the happy path.
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             _delegate_then_finish('worker'),
             capabilities=[SubAgents(agents=[SubAgent(worker, timeout_seconds=30)])],
         )
@@ -622,7 +622,7 @@ class TestRunControls:
                 )
             return ModelResponse(parts=[TextPart('all done')])
 
-        parent: Agent[None, str] = Agent(
+        parent: Agent[object, str] = Agent(
             FunctionModel(parent_fn),
             capabilities=[SubAgents(agents=[SubAgent(worker, max_calls=1)])],
         )

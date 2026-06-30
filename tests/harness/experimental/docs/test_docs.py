@@ -63,7 +63,7 @@ class TestPyaiDocsToolset:
     async def test_local_hit_is_cached(self, tmp_path: Path) -> None:
         (tmp_path / 'hooks.md').write_text('# Hooks local', encoding='utf-8')
         cache: dict[PyaiDocsTopic, str] = {}
-        toolset = PyaiDocsToolset[None](local_docs_path=tmp_path, cache=cache)
+        toolset = PyaiDocsToolset[object](local_docs_path=tmp_path, cache=cache)
 
         assert await toolset.read_pyai_docs(PyaiDocsTopic.hooks) == '# Hooks local'
         assert cache[PyaiDocsTopic.hooks] == '# Hooks local'
@@ -74,7 +74,7 @@ class TestPyaiDocsToolset:
 
     async def test_remote_fallback_without_local_and_caching_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_httpx(monkeypatch, text='# Capabilities remote')
-        toolset = PyaiDocsToolset[None](local_docs_path=None, cache=None)
+        toolset = PyaiDocsToolset[object](local_docs_path=None, cache=None)
 
         assert await toolset.read_pyai_docs(PyaiDocsTopic.capabilities) == '# Capabilities remote'
 
@@ -83,21 +83,21 @@ class TestPyaiDocsToolset:
     ) -> None:
         _install_fake_httpx(monkeypatch, text='# Agent remote')
         cache: dict[PyaiDocsTopic, str] = {}
-        toolset = PyaiDocsToolset[None](local_docs_path=tmp_path, cache=cache)
+        toolset = PyaiDocsToolset[object](local_docs_path=tmp_path, cache=cache)
 
         assert await toolset.read_pyai_docs(PyaiDocsTopic.agent) == '# Agent remote'
         assert cache[PyaiDocsTopic.agent] == '# Agent remote'
 
     async def test_remote_error_without_local_checkout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_httpx(monkeypatch, error=httpx.ConnectError('boom'))
-        toolset = PyaiDocsToolset[None](local_docs_path=None, cache=None)
+        toolset = PyaiDocsToolset[object](local_docs_path=None, cache=None)
 
         with pytest.raises(RuntimeError, match='no local checkout configured'):
             await toolset.read_pyai_docs(PyaiDocsTopic.tools)
 
     async def test_remote_error_reports_local_path(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         _install_fake_httpx(monkeypatch, status=404)
-        toolset = PyaiDocsToolset[None](local_docs_path=tmp_path, cache=None)
+        toolset = PyaiDocsToolset[object](local_docs_path=tmp_path, cache=None)
 
         with pytest.raises(RuntimeError, match=str(tmp_path)):
             await toolset.read_pyai_docs(PyaiDocsTopic.toolsets)
@@ -110,14 +110,14 @@ class TestPyaiDocsToolset:
 
     async def test_tools_advanced_reads_hyphenated_file(self, tmp_path: Path) -> None:
         (tmp_path / 'tools-advanced.md').write_text('# Tools advanced local', encoding='utf-8')
-        toolset = PyaiDocsToolset[None](local_docs_path=tmp_path, cache=None)
+        toolset = PyaiDocsToolset[object](local_docs_path=tmp_path, cache=None)
 
         assert await toolset.read_pyai_docs(PyaiDocsTopic.tools_advanced) == '# Tools advanced local'
 
     async def test_local_path_expands_user(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('HOME', str(tmp_path))
         (tmp_path / 'hooks.md').write_text('# Hooks home', encoding='utf-8')
-        toolset = PyaiDocsToolset[None](local_docs_path=Path('~'), cache=None)
+        toolset = PyaiDocsToolset[object](local_docs_path=Path('~'), cache=None)
 
         assert await toolset.read_pyai_docs(PyaiDocsTopic.hooks) == '# Hooks home'
 
@@ -125,29 +125,29 @@ class TestPyaiDocsToolset:
 class TestPyaiDocsCapability:
     def test_resolved_path_prefers_constructor_arg(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('PYDANTIC_AI_HARNESS_DOCS_PATH', '/env/ignored')
-        assert PyaiDocs[None](local_docs_path=tmp_path)._resolved_local_path() == tmp_path
+        assert PyaiDocs[object](local_docs_path=tmp_path)._resolved_local_path() == tmp_path
 
     def test_resolved_path_falls_back_to_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('PYDANTIC_AI_HARNESS_DOCS_PATH', str(tmp_path))
-        assert PyaiDocs[None]()._resolved_local_path() == tmp_path
+        assert PyaiDocs[object]()._resolved_local_path() == tmp_path
 
     def test_resolved_path_none_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('PYDANTIC_AI_HARNESS_DOCS_PATH', raising=False)
-        assert PyaiDocs[None]()._resolved_local_path() is None
+        assert PyaiDocs[object]()._resolved_local_path() is None
 
     def test_get_toolset_shares_cache_when_enabled(self) -> None:
-        capability = PyaiDocs[None]()
+        capability = PyaiDocs[object]()
         toolset = capability.get_toolset()
         assert isinstance(toolset, PyaiDocsToolset)
         assert toolset._cache is capability._cache
 
     def test_get_toolset_disables_cache(self) -> None:
-        toolset = PyaiDocs[None](cache=False).get_toolset()
+        toolset = PyaiDocs[object](cache=False).get_toolset()
         assert isinstance(toolset, PyaiDocsToolset)
         assert toolset._cache is None
 
     def test_instructions_mention_the_tool(self) -> None:
-        instructions = PyaiDocs[None]().get_instructions()
+        instructions = PyaiDocs[object]().get_instructions()
         assert isinstance(instructions, str)
         assert 'read_pyai_docs' in instructions
 

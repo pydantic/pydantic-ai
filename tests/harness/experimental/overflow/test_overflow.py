@@ -101,7 +101,7 @@ def _tool_def(name: str = 'big_tool') -> ToolDefinition:
     return ToolDefinition(name=name)
 
 
-async def _run(cap: OverflowingToolOutput[None], result: Any, *, ctx: Any = None, tool_name: str = 'big_tool') -> Any:
+async def _run(cap: OverflowingToolOutput[object], result: Any, *, ctx: Any = None, tool_name: str = 'big_tool') -> Any:
     return await cap.after_tool_execute(
         ctx if ctx is not None else _make_ctx(),
         call=_call(tool_name),
@@ -296,14 +296,14 @@ class TestCleanup:
 
 class TestConstruction:
     def test_default_band_is_spill_then_truncate(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput()
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput()
         assert len(cap._bands) == 1
         action = cap._bands[0].action
         assert isinstance(action, Spill)
         assert isinstance(action.then, Truncate)
 
     def test_bands_sorted_descending(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=10, action=Truncate()), Band(over=100, action=Spill())]
         )
         assert [b.over for b in cap._bands] == [100, 10]
@@ -314,11 +314,11 @@ class TestConstruction:
 
     def test_provided_store_used(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(store=store)
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(store=store)
         assert cap._store is store
 
     def test_per_tool_prepared(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             per_tool={'read_file': [Band(over=5, action=Truncate())]}
         )
         assert 'read_file' in cap._per_tool
@@ -331,19 +331,19 @@ class TestConstruction:
 
 class TestPassthrough:
     async def test_read_tool_exempt(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=1, action=Truncate(max_chars=2))])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=1, action=Truncate(max_chars=2))])
         out = await _run(cap, 'x' * 100, tool_name=READ_TOOL_NAME)
         assert out == 'x' * 100
 
     async def test_tool_filter_skips_unmatched(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=1, action=Truncate(max_chars=2))], tool_filter=['other']
         )
         out = await _run(cap, 'x' * 100)
         assert out == 'x' * 100
 
     async def test_callable_filter(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=1, action=Truncate(max_chars=2))],
             tool_filter=lambda ctx, td: td.name == 'big_tool',
         )
@@ -351,12 +351,12 @@ class TestPassthrough:
         assert isinstance(out, str) and 'truncated' in out
 
     async def test_below_threshold_passthrough(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=1000, action=Truncate())])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=1000, action=Truncate())])
         out = await _run(cap, 'small')
         assert out == 'small'
 
     async def test_exception_result_passthrough(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=1, action=Truncate(max_chars=2))])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=1, action=Truncate(max_chars=2))])
         err = ValueError('boom')
         assert await _run(cap, err) is err
 
@@ -368,26 +368,26 @@ class TestPassthrough:
 
 class TestTruncate:
     async def test_truncates_text(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=10, action=Truncate(max_chars=20, strategy=TruncationStrategy.head))]
         )
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and out.startswith('a' * 20)
 
     async def test_strip_ansi_applied(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=5, action=Truncate(max_chars=1000))], strip_ansi=True
         )
         out = await _run(cap, '\x1b[31m' + 'red text ' * 10 + '\x1b[0m')
         assert isinstance(out, str) and '\x1b[' not in out
 
     async def test_binary_truncate_falls_back_to_passthrough(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=1, action=Truncate())])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=1, action=Truncate())])
         data = b'\x00\x01' * 100
         assert await _run(cap, data) == data
 
     async def test_tool_return_envelope_preserved(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=10, action=Truncate(max_chars=20))])
         out = await _run(cap, ToolReturn(return_value='a' * 100, content='note', metadata={'k': 1}))
         assert isinstance(out, ToolReturn)
         assert out.content == 'note'
@@ -402,7 +402,7 @@ class TestTruncate:
 class TestSpill:
     async def test_spill_roundtrip(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=10, action=Spill(preview_chars=20))], store=store
         )
         text = 'line\n' * 1000
@@ -415,7 +415,7 @@ class TestSpill:
 
     async def test_spill_binary_verbatim(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=1, action=Spill())], store=store)
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=1, action=Spill())], store=store)
         data = b'\x00\xff' * 100
         out = await _run(cap, data)
         assert isinstance(out, ToolReturn)
@@ -424,20 +424,20 @@ class TestSpill:
 
     async def test_spill_structured_includes_sketch(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=5, action=Spill())], store=store)
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=5, action=Spill())], store=store)
         out = await _run(cap, {'rows': list(range(1000)), 'ok': True})
         assert isinstance(out, ToolReturn)
         assert 'shape:' in out.return_value  # type: ignore[operator]
 
     async def test_spill_failure_falls_back_to_truncate(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=10, action=Spill(then=Truncate(max_chars=15)))], store=_BrokenStore()
         )
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and 'truncated' in out
 
     async def test_spill_failure_no_fallback_returns_original(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=10, action=Spill())], store=_BrokenStore()
         )
         out = await _run(cap, 'a' * 100)
@@ -445,14 +445,14 @@ class TestSpill:
 
     async def test_handle_distinct_per_retry(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=5, action=Spill())], store=store)
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=5, action=Spill())], store=store)
         out0 = await _run(cap, 'a' * 100, ctx=_make_ctx(retry=0))
         out1 = await _run(cap, 'b' * 100, ctx=_make_ctx(retry=1))
         assert out0.metadata['overflow_handle'] != out1.metadata['overflow_handle']  # type: ignore[union-attr]
 
     async def test_spill_merges_existing_metadata(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=5, action=Spill())], store=store)
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=5, action=Spill())], store=store)
         out = await _run(cap, ToolReturn(return_value='a' * 100, metadata={'orig': True}))
         assert isinstance(out, ToolReturn)
         assert out.metadata['orig'] is True
@@ -477,7 +477,7 @@ class _BrokenStore:
 class TestContentReduction:
     async def test_large_content_spilled(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=100, action=Spill(preview_chars=20))], store=store
         )
         out = await _run(cap, ToolReturn(return_value='small', content='C' * 5000))
@@ -488,20 +488,20 @@ class TestContentReduction:
         assert await store.read(handle) == ('C' * 5000).encode('utf-8')
 
     async def test_large_content_truncated(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=10, action=Truncate(max_chars=20))])
         out = await _run(cap, ToolReturn(return_value='small', content='C' * 200))
         assert isinstance(out, ToolReturn)
         assert isinstance(out.content, str) and 'truncated' in out.content
 
     async def test_both_value_and_content_reduced(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=50, action=Spill())], store=store)
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=50, action=Spill())], store=store)
         out = await _run(cap, ToolReturn(return_value='v' * 500, content='c' * 500))
         assert isinstance(out, ToolReturn)
         assert out.metadata['overflow_handle'] != out.metadata['overflow_content_handle']
 
     async def test_nontext_content_warns_and_passes_through(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=10, action=Truncate())])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=10, action=Truncate())])
         content = ['x' * 5000, BinaryContent(data=b'\x00', media_type='application/octet-stream')]
         original = ToolReturn(return_value='small', content=content)
         with pytest.warns(UserWarning, match='non-text content'):
@@ -509,14 +509,14 @@ class TestContentReduction:
         assert out is original
 
     async def test_nontext_content_passthrough_action_no_warn(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=1, action=Passthrough())])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=1, action=Passthrough())])
         content = ['x' * 5000, BinaryContent(data=b'\x00', media_type='application/octet-stream')]
         original = ToolReturn(return_value='small', content=content)
         out = await _run(cap, original)  # Passthrough action -> no warning, returned unchanged
         assert out is original
 
     async def test_small_nontext_content_no_warn(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=10_000, action=Truncate())])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=10_000, action=Truncate())])
         content = ['tiny', BinaryContent(data=b'\x00', media_type='application/octet-stream')]
         original = ToolReturn(return_value='small', content=content)
         out = await _run(cap, original)
@@ -530,7 +530,7 @@ class TestContentReduction:
 
 class TestSummarize:
     async def test_custom_sync_summarizer(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=5, action=Summarize(summarize=lambda name, text: f'{name}:{len(text)}'))]
         )
         out = await _run(cap, 'x' * 100)
@@ -540,21 +540,23 @@ class TestSummarize:
         async def summ(name: str, text: str) -> str:
             return f'async:{len(text)}'
 
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=5, action=Summarize(summarize=summ))])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
+            bands=[Band(over=5, action=Summarize(summarize=summ))]
+        )
         out = await _run(cap, 'x' * 100)
         assert out == 'async:100'
 
     async def test_inherited_model_and_usage(self):
         # model=None resolves to ctx.model, and the call threads usage=ctx.usage.
         ctx = _make_ctx(model=_fixed_model('THE SUMMARY'))
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=5, action=Summarize())])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=5, action=Summarize())])
         out = await _run(cap, 'x' * 100, ctx=ctx)
         assert out == 'THE SUMMARY'
         assert ctx.usage.requests == 1
 
     async def test_explicit_model_overrides_ctx(self):
         ctx = _make_ctx(model=_fixed_model('FROM CTX MODEL'))
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=5, action=Summarize(model=_fixed_model('FROM EXPLICIT MODEL')))]
         )
         out = await _run(cap, 'x' * 100, ctx=ctx)
@@ -562,7 +564,7 @@ class TestSummarize:
         assert ctx.usage.requests == 1
 
     async def test_binary_summarize_falls_back(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=1, action=Summarize(then=Passthrough()))]
         )
         data = b'\x00' * 100
@@ -572,7 +574,7 @@ class TestSummarize:
         def boom(name: str, text: str) -> str:
             raise RuntimeError('model down')
 
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=5, action=Summarize(summarize=boom, then=Truncate(max_chars=10)))]
         )
         out = await _run(cap, 'a' * 100)
@@ -586,11 +588,11 @@ class TestSummarize:
 
 class TestActionsAndSelection:
     async def test_passthrough_action(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(bands=[Band(over=1, action=Passthrough())])
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(bands=[Band(over=1, action=Passthrough())])
         assert await _run(cap, 'x' * 100) == 'x' * 100
 
     async def test_per_tool_replaces_bands(self):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=1, action=Truncate(max_chars=5))],
             per_tool={'big_tool': [Band(over=100_000, action=Truncate())]},
         )
@@ -709,7 +711,7 @@ class TestReadBack:
     async def test_get_toolset_registers_read_tool(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', b'hello\nworld')
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(store=store)
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(store=store)
         toolset = cap.get_toolset()
         assert toolset is not None
         tool = toolset.tools[READ_TOOL_NAME]  # type: ignore[union-attr]
@@ -725,7 +727,7 @@ class TestReadBack:
 class TestAgentIntegration:
     async def test_spill_persists_in_history(self, tmp_path: Path, anyio_backend: str):
         store = LocalFileStore(base_dir=tmp_path)
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=100, action=Spill(preview_chars=50))], store=store
         )
         agent = Agent(TestModel(call_tools=['big_tool']), capabilities=[cap])
@@ -744,7 +746,7 @@ class TestAgentIntegration:
         assert await store.read(part.metadata['overflow_handle']) == ('data line\n' * 500).encode('utf-8')
 
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
-        cap: OverflowingToolOutput[None] = OverflowingToolOutput(
+        cap: OverflowingToolOutput[object] = OverflowingToolOutput(
             bands=[Band(over=10_000, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
         )
         agent = Agent(TestModel(call_tools=['small_tool']), capabilities=[cap])

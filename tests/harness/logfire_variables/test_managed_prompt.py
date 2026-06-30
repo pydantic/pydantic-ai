@@ -15,7 +15,6 @@ default Logfire instance keeps its variable registry across `configure()` calls.
 
 from __future__ import annotations
 
-import importlib.metadata
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -40,13 +39,6 @@ from pydantic_ai_harness.logfire import ManagedPrompt as ManagedPromptFromPackag
 pytestmark = pytest.mark.anyio
 
 DEFAULT = 'You are a helpful assistant.'
-
-# pydantic-ai 2.0.0 reworked Instrumentation: the agent run span was renamed from
-# `agent run` to `invoke_agent agent`, the tool span from `running tool` to
-# `execute_tool noop`, and several span attribute keys were renamed. Harness still
-# supports the 1.x floor (`pydantic-ai-slim>=1.105.0`), so version-tolerant tests
-# keep both the locked 1.x jobs and the `test on latest` (2.0.0) job green.
-_PYDANTIC_AI_GE_2 = int(importlib.metadata.version('pydantic-ai-slim').split('.')[0]) >= 2
 
 
 @pytest.fixture(autouse=True, scope='module')
@@ -216,10 +208,6 @@ async def test_records_variable_resolution_span(capfire: CaptureLogfire) -> None
     )
 
 
-@pytest.mark.skipif(
-    _PYDANTIC_AI_GE_2,
-    reason='pydantic-ai 2.0.0 reworked instrumentation span/attribute names; logfire snapshot needs a 2.0.0 refresh -- tracked',
-)
 async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire) -> None:
     # `Instrumentation` produces the agent run / model request / tool spans; `ManagedPrompt`
     # runs outermost so its `logfire.variables.prompt__baggage_slug` baggage lands on all of them.
@@ -267,28 +255,28 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
-                    'gen_ai.input.messages': '[{"role": "user", "parts": [{"type": "text", "content": "hello"}]}]',
-                    'gen_ai.output.messages': '[{"role": "assistant", "parts": [{"type": "tool_call", "id": "pyd_ai_tool_call_id__noop", "name": "noop", "arguments": {}}]}]',
-                    'gen_ai.system_instructions': '[{"type": "text", "content": "You are a helpful assistant."}]',
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.input.messages": {"type": "array"}, "gen_ai.output.messages": {"type": "array"}, "gen_ai.system_instructions": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
+                    'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]}]',
+                    'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"You are a helpful assistant."}]',
+                    'logfire.json_schema': '{"type":"object","properties":{"gen_ai.input.messages":{"type":"array"},"gen_ai.output.messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"model_request_parameters":{"type":"object"}}}',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 2,
                     'gen_ai.response.model': 'test',
                 },
             },
             {
-                'name': 'running tool',
+                'name': 'execute_tool noop',
                 'attributes': {
                     'gen_ai.operation.name': 'execute_tool',
                     'gen_ai.tool.name': 'noop',
                     'gen_ai.tool.call.id': 'pyd_ai_tool_call_id__noop',
-                    'tool_arguments': '{}',
+                    'gen_ai.tool.call.arguments': '{}',
                     'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'running tool: noop',
-                    'logfire.json_schema': '{"type":"object","properties":{"tool_arguments":{"type":"object"},"tool_response":{"type":"object"},"gen_ai.tool.name":{},"gen_ai.tool.call.id":{}}}',
+                    'logfire.json_schema': '{"type":"object","properties":{"gen_ai.tool.call.arguments":{"type":"object"},"gen_ai.tool.call.result":{"type":"object"},"gen_ai.tool.name":{},"gen_ai.tool.call.id":{}}}',
                     'logfire.span_type': 'span',
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
-                    'tool_response': 'ok',
+                    'gen_ai.tool.call.result': 'ok',
                 },
             },
             {
@@ -304,17 +292,17 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
-                    'gen_ai.input.messages': '[{"role": "user", "parts": [{"type": "text", "content": "hello"}]}, {"role": "assistant", "parts": [{"type": "tool_call", "id": "pyd_ai_tool_call_id__noop", "name": "noop", "arguments": {}}]}, {"role": "user", "parts": [{"type": "tool_call_response", "id": "pyd_ai_tool_call_id__noop", "name": "noop", "result": "ok"}]}]',
-                    'gen_ai.output.messages': '[{"role": "assistant", "parts": [{"type": "text", "content": "{\\"noop\\":\\"ok\\"}"}]}]',
-                    'gen_ai.system_instructions': '[{"type": "text", "content": "You are a helpful assistant."}]',
-                    'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.input.messages": {"type": "array"}, "gen_ai.output.messages": {"type": "array"}, "gen_ai.system_instructions": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
+                    'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]}]',
+                    'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"You are a helpful assistant."}]',
+                    'logfire.json_schema': '{"type":"object","properties":{"gen_ai.input.messages":{"type":"array"},"gen_ai.output.messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"model_request_parameters":{"type":"object"}}}',
                     'gen_ai.usage.input_tokens': 52,
                     'gen_ai.usage.output_tokens': 6,
                     'gen_ai.response.model': 'test',
                 },
             },
             {
-                'name': 'agent run',
+                'name': 'invoke_agent agent',
                 'attributes': {
                     'model_name': 'test',
                     'agent_name': 'agent',
@@ -324,10 +312,10 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.span_type': 'span',
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
                     'final_result': '{"noop":"ok"}',
-                    'gen_ai.usage.input_tokens': 103,
-                    'gen_ai.usage.output_tokens': 8,
+                    'gen_ai.aggregated_usage.input_tokens': 103,
+                    'gen_ai.aggregated_usage.output_tokens': 8,
                     'pydantic_ai.all_messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]},{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
-                    'gen_ai.system_instructions': '[{"type": "text", "content": "You are a helpful assistant."}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"You are a helpful assistant."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"pydantic_ai.all_messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"final_result":{"type":"object"}}}',
                 },
             },
@@ -481,8 +469,7 @@ async def test_provider_backed_resolution_tags_v1_instrumentation_spans(capfire:
     spans = capfire.exporter.exported_spans_as_dict()
     # Child spans are tagged with the resolved label via baggage.
     tagged = {s['name'] for s in spans if s['attributes'].get('logfire.variables.prompt__remote_slug') == 'production'}
-    agent_span = 'invoke_agent agent' if _PYDANTIC_AI_GE_2 else 'agent run'
-    assert {agent_span, 'chat test'} <= tagged
+    assert {'invoke_agent agent', 'chat test'} <= tagged
 
 
 def test_logfire_instance_with_prebuilt_variable_warns() -> None:

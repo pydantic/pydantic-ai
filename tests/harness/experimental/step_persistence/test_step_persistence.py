@@ -75,8 +75,8 @@ def build_run_context(
     )
 
 
-def make_simple_agent(capabilities: list[Any]) -> Agent[None, str]:
-    agent: Agent[None, str] = Agent(TestModel(), capabilities=capabilities)
+def make_simple_agent(capabilities: list[Any]) -> Agent[object, str]:
+    agent: Agent[object, str] = Agent(TestModel(), capabilities=capabilities)
 
     @agent.tool_plain
     def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
@@ -723,9 +723,9 @@ class TestStepPersistenceCapability:
     async def test_single_capability_instance_reused_gets_fresh_ids(self) -> None:
         """One `StepPersistence(agent_name=...)` reused for two runs -> two distinct ids."""
         store = InMemoryStepStore()
-        cap: StepPersistence[None] = StepPersistence(store=store, agent_name='librarian')
+        cap: StepPersistence[object] = StepPersistence(store=store, agent_name='librarian')
 
-        agent1: Agent[None, str] = Agent(TestModel(), capabilities=[cap])
+        agent1: Agent[object, str] = Agent(TestModel(), capabilities=[cap])
 
         @agent1.tool_plain
         def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
@@ -746,7 +746,7 @@ class TestStepPersistenceCapability:
         is auto-set to the orchestrator's `run_id` without manual threading."""
         store = InMemoryStepStore()
 
-        delegate: Agent[None, str] = Agent(
+        delegate: Agent[object, str] = Agent(
             TestModel(),
             capabilities=[StepPersistence(store=store, agent_name='delegate')],
         )
@@ -755,7 +755,7 @@ class TestStepPersistenceCapability:
         def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
             return a + b
 
-        orchestrator: Agent[None, str] = Agent(
+        orchestrator: Agent[object, str] = Agent(
             TestModel(),
             capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
         )
@@ -792,7 +792,7 @@ class TestStepPersistenceCapability:
     async def test_list_runs_parent_and_conversation_filters_combine(self) -> None:
         store = InMemoryStepStore()
 
-        delegate: Agent[None, str] = Agent(
+        delegate: Agent[object, str] = Agent(
             TestModel(),
             capabilities=[StepPersistence(store=store, agent_name='delegate')],
         )
@@ -801,7 +801,7 @@ class TestStepPersistenceCapability:
         def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
             return a + b
 
-        orchestrator: Agent[None, str] = Agent(
+        orchestrator: Agent[object, str] = Agent(
             TestModel(),
             capabilities=[StepPersistence(store=store, agent_name='orchestrator')],
         )
@@ -880,7 +880,7 @@ class TestStepPersistenceCapability:
 
     async def test_tool_failure_records_failed_status_and_event(self) -> None:
         store = InMemoryStepStore()
-        agent: Agent[None, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store)])
+        agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store)])
 
         @agent.tool_plain
         def boom() -> int:  # pyright: ignore[reportUnusedFunction]
@@ -966,8 +966,8 @@ class TestCrashMidToolCallContract:
 
     async def test_visible_trail_no_false_continuation_point(self) -> None:
         store = InMemoryStepStore()
-        cap: StepPersistence[None] = StepPersistence(store=store, agent_name='delegate')
-        agent: Agent[None, str] = Agent(TestModel(), capabilities=[cap])
+        cap: StepPersistence[object] = StepPersistence(store=store, agent_name='delegate')
+        agent: Agent[object, str] = Agent(TestModel(), capabilities=[cap])
 
         @agent.tool_plain
         def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
@@ -1024,7 +1024,7 @@ class TestCapabilityHookBranches:
     async def test_effective_run_id_falls_back_to_capability_field(self) -> None:
         """When `ctx.run_id` is missing, the capability uses its own `run_id`."""
         store = InMemoryStepStore()
-        cap: StepPersistence[None] = StepPersistence(store=store, run_id='configured', agent_name='a')
+        cap: StepPersistence[object] = StepPersistence(store=store, run_id='configured', agent_name='a')
         ctx_no_run_id = build_run_context(deps=None, run_id=None)
         await cap.before_run(ctx_no_run_id)
 
@@ -1036,7 +1036,7 @@ class TestCapabilityHookBranches:
     async def test_after_run_skips_snapshot_when_history_not_provider_valid(self) -> None:
         """`after_run` only persists a snapshot when the history is provider-valid."""
         store = InMemoryStepStore()
-        cap: StepPersistence[None] = StepPersistence(store=store)
+        cap: StepPersistence[object] = StepPersistence(store=store)
         ctx = build_run_context(deps=None, run_id='r1')
 
         unmatched: list[ModelMessage] = [
@@ -1057,7 +1057,7 @@ class TestCapabilityHookBranches:
     async def test_after_run_saves_fallback_snapshot_when_no_node_snapshot(self) -> None:
         """With no `CallToolsNode` snapshot taken, `after_run` saves the final valid history."""
         store = InMemoryStepStore()
-        cap: StepPersistence[None] = StepPersistence(store=store)
+        cap: StepPersistence[object] = StepPersistence(store=store)
         ctx = build_run_context(deps=None, run_id='r1', run_step=3)
 
         valid: list[ModelMessage] = [
@@ -1078,7 +1078,7 @@ class TestCapabilityHookBranches:
 
     async def test_on_model_request_error_records_event_and_reraises(self) -> None:
         store = InMemoryStepStore()
-        cap: StepPersistence[None] = StepPersistence(store=store)
+        cap: StepPersistence[object] = StepPersistence(store=store)
         ctx = build_run_context(deps=None, run_id='r1')
         request_context = ModelRequestContext(
             model=ctx.model,
@@ -1098,7 +1098,7 @@ class TestCapabilityHookBranches:
     async def test_for_run_returns_self_when_resolution_is_no_op(self) -> None:
         """When `run_id` is explicit and no contextvar is set, `for_run` returns `self`."""
         store = InMemoryStepStore()
-        cap: StepPersistence[None] = StepPersistence(store=store, run_id='fixed')
+        cap: StepPersistence[object] = StepPersistence(store=store, run_id='fixed')
         ctx = build_run_context(deps=None, run_id='ignored')
 
         result = await cap.for_run(ctx)
@@ -1172,10 +1172,10 @@ class TestToolEffectMetadataPreservation:
         from pydantic_ai_harness.experimental.step_persistence import annotate_tool_effect
 
         store = InMemoryStepStore()
-        agent: Agent[None, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
+        agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
 
         @agent.tool
-        async def write_label(ctx: RunContext[None], label: str) -> str:  # pyright: ignore[reportUnusedFunction]
+        async def write_label(ctx: RunContext[object], label: str) -> str:  # pyright: ignore[reportUnusedFunction]
             await annotate_tool_effect(
                 store,
                 ctx,
@@ -1197,10 +1197,10 @@ class TestToolEffectMetadataPreservation:
         from pydantic_ai_harness.experimental.step_persistence import annotate_tool_effect
 
         store = InMemoryStepStore()
-        agent: Agent[None, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
+        agent: Agent[object, str] = Agent(TestModel(), capabilities=[StepPersistence(store=store, run_id='r1')])
 
         @agent.tool
-        async def boom(ctx: RunContext[None]) -> int:  # pyright: ignore[reportUnusedFunction]
+        async def boom(ctx: RunContext[object]) -> int:  # pyright: ignore[reportUnusedFunction]
             await annotate_tool_effect(store, ctx, idempotency_key='boom-key')
             raise ValueError('kaboom')
 

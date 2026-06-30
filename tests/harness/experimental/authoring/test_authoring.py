@@ -439,24 +439,24 @@ class TestAuthoringToolset:
 
 class TestRuntimeAuthoringCapability:
     def test_get_instructions_default(self, tmp_path: Path) -> None:
-        instructions = RuntimeAuthoring[None](directory=tmp_path).get_instructions()
+        instructions = RuntimeAuthoring[object](directory=tmp_path).get_instructions()
         assert isinstance(instructions, str)
         assert 'author_capability' in instructions
 
     def test_get_instructions_custom(self, tmp_path: Path) -> None:
-        assert RuntimeAuthoring[None](directory=tmp_path, guidance='X').get_instructions() == 'X'
+        assert RuntimeAuthoring[object](directory=tmp_path, guidance='X').get_instructions() == 'X'
 
     def test_get_instructions_empty_omitted(self, tmp_path: Path) -> None:
-        assert RuntimeAuthoring[None](directory=tmp_path, guidance='').get_instructions() is None
+        assert RuntimeAuthoring[object](directory=tmp_path, guidance='').get_instructions() is None
 
     def test_get_toolset_type(self, tmp_path: Path) -> None:
-        assert isinstance(RuntimeAuthoring[None](directory=tmp_path).get_toolset(), AuthoringToolset)
+        assert isinstance(RuntimeAuthoring[object](directory=tmp_path).get_toolset(), AuthoringToolset)
 
     def test_serialization_name_none(self) -> None:
         assert RuntimeAuthoring.get_serialization_name() is None
 
     def test_store_property(self, tmp_path: Path) -> None:
-        store = RuntimeAuthoring[None](directory=tmp_path).store
+        store = RuntimeAuthoring[object](directory=tmp_path).store
         assert isinstance(store, CapabilityStore)
         assert store.directory == tmp_path
 
