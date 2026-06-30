@@ -16,12 +16,12 @@ class SnowflakeCortexModel(WrapperModel):
 
     Auto-routes to the correct Cortex endpoint based on model name:
 
-    * ``claude-*`` models use :class:`~pydantic_ai.models.anthropic.AnthropicModel`
-      with :class:`~pydantic_ai.providers.snowflake.SnowflakeCortexAnthropicProvider`
+    * ``claude-*`` models use `AnthropicModel`
+      with `SnowflakeCortexAnthropicProvider`
       (``/api/v2/cortex/v1/messages`` — Anthropic-native path, supports extended
       thinking, cache control, and other Anthropic-specific features).
-    * All other models use :class:`~pydantic_ai.models.openai.OpenAIChatModel`
-      with :class:`~pydantic_ai.providers.snowflake.SnowflakeCortexProvider`
+    * All other models use `OpenAIChatModel`
+      with `SnowflakeCortexProvider`
       (``/api/v2/cortex/v1/chat/completions`` — OpenAI-compatible path).
 
     Auth reads ``SNOWFLAKE_ACCOUNT`` and ``SNOWFLAKE_TOKEN`` from the environment,

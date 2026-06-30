@@ -2,16 +2,17 @@
 
 Two provider classes are available:
 
-* :class:`SnowflakeCortexProvider` — OpenAI-compatible path
+* `SnowflakeCortexProvider` — OpenAI-compatible path
   (``/api/v2/cortex/v1/chat/completions``). Works with all Cortex models.
-* :class:`SnowflakeCortexAnthropicProvider` — Anthropic-native path
-  (``/api/v2/cortex/v1/messages``). Claude models only; exposes
+* `SnowflakeCortexAnthropicProvider` — Anthropic-native path
+  (``/api/v2/cortex/anthropic/v1/messages``). Claude models only; exposes
   Anthropic-specific features (extended thinking, cache control, etc.).
 
 Both use the same auth: a Snowflake PAT or OAuth token sent as
 ``Authorization: Bearer <token>`` via ``SNOWFLAKE_ACCOUNT`` +
 ``SNOWFLAKE_TOKEN`` environment variables.
 """
+
 from __future__ import annotations as _annotations
 
 import os
@@ -88,8 +89,8 @@ class SnowflakeCortexProvider(Provider[AsyncOpenAI]):
         For Claude models, Snowflake also exposes an Anthropic-native
         ``/messages`` endpoint that supports extended thinking, cache control,
         and other Anthropic-specific features. Use
-        :class:`SnowflakeCortexAnthropicProvider` with
-        :class:`pydantic_ai.models.anthropic.AnthropicModel` for that path.
+        `SnowflakeCortexAnthropicProvider` with
+        `pydantic_ai.models.anthropic.AnthropicModel` for that path.
 
     Example::
 
@@ -185,14 +186,27 @@ class SnowflakeCortexProvider(Provider[AsyncOpenAI]):
 
         self._account = account
         base_url = f'https://{account}.snowflakecomputing.com/api/v2/cortex/v1'
+        # Required header that tells Snowflake the token is a PAT.
+        # Without it, Bearer-token requests to Cortex may be rejected.
+        pat_headers = {'X-Snowflake-Authorization-Token-Type': 'PROGRAMMATIC_ACCESS_TOKEN'}
 
         if http_client is not None:
-            self._client = AsyncOpenAI(base_url=base_url, api_key=token, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=base_url,
+                api_key=token,
+                http_client=http_client,
+                default_headers=pat_headers,
+            )
         else:
             http_client = create_async_http_client()
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=base_url, api_key=token, http_client=http_client)
+            self._client = AsyncOpenAI(
+                base_url=base_url,
+                api_key=token,
+                http_client=http_client,
+                default_headers=pat_headers,
+            )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
@@ -202,14 +216,14 @@ class SnowflakeCortexAnthropicProvider(Provider[AsyncAnthropic]):
     """Provider for Snowflake Cortex Inference — Anthropic-native path.
 
     Routes Claude model requests through Snowflake's Anthropic-compatible
-    ``/api/v2/cortex/v1/messages`` endpoint. Use this provider with
-    :class:`pydantic_ai.models.anthropic.AnthropicModel` to access
+    ``/api/v2/cortex/anthropic/v1/messages`` endpoint. Use this provider with
+    `pydantic_ai.models.anthropic.AnthropicModel` to access
     Anthropic-specific features such as extended thinking, prompt caching,
     and cache control.
 
     .. note::
         This provider only supports Claude models (``claude-*``). For
-        non-Claude models, use :class:`SnowflakeCortexProvider` instead.
+        non-Claude models, use `SnowflakeCortexProvider` instead.
 
     Auth uses ``auth_token`` (``Authorization: Bearer <token>``), which is
     what Snowflake Cortex expects — distinct from Anthropic's own API that
@@ -237,7 +251,7 @@ class SnowflakeCortexAnthropicProvider(Provider[AsyncAnthropic]):
 
     @property
     def base_url(self) -> str:
-        return f'https://{self._account}.snowflakecomputing.com/api/v2/cortex/v1'
+        return f'https://{self._account}.snowflakecomputing.com/api/v2/cortex/anthropic/v1'
 
     @property
     def client(self) -> AsyncAnthropic:
@@ -316,16 +330,28 @@ class SnowflakeCortexAnthropicProvider(Provider[AsyncAnthropic]):
             )
 
         self._account = account
-        base_url = f'https://{account}.snowflakecomputing.com/api/v2/cortex/v1'
+        base_url = f'https://{account}.snowflakecomputing.com/api/v2/cortex/anthropic/v1'
+        # auth_token sends Authorization: Bearer <token>.
+        # X-Snowflake-Authorization-Token-Type tells Snowflake this is a PAT.
+        pat_headers = {'X-Snowflake-Authorization-Token-Type': 'PROGRAMMATIC_ACCESS_TOKEN'}
 
         if http_client is not None:
-            # auth_token sends Authorization: Bearer <token> — required by Cortex Inference.
-            self._client = AsyncAnthropic(auth_token=token, base_url=base_url, http_client=http_client)
+            self._client = AsyncAnthropic(
+                auth_token=token,
+                base_url=base_url,
+                http_client=http_client,
+                default_headers=pat_headers,
+            )
         else:
             http_client = create_async_http_client()
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
-            self._client = AsyncAnthropic(auth_token=token, base_url=base_url, http_client=http_client)
+            self._client = AsyncAnthropic(
+                auth_token=token,
+                base_url=base_url,
+                http_client=http_client,
+                default_headers=pat_headers,
+            )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

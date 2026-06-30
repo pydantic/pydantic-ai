@@ -1,4 +1,5 @@
 """Tests for SnowflakeCortexProvider."""
+
 import re
 
 import httpx
@@ -89,7 +90,7 @@ def test_provider_openai_client_excludes_account() -> None:
         base_url='https://myorg-myacct.snowflakecomputing.com/api/v2/cortex/v1',
     )
     with pytest.raises(AssertionError):
-        SnowflakeCortexProvider(openai_client=openai_client, account='other')
+        SnowflakeCortexProvider(openai_client=openai_client, account='other')  # type: ignore[call-overload]
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ def test_provider_repr() -> None:
 def test_anthropic_provider_from_explicit_args() -> None:
     provider = SnowflakeCortexAnthropicProvider(account='myorg-myacct', token='pat-secret')
     assert provider.name == 'snowflake-cortex-anthropic'
-    assert provider.base_url == 'https://myorg-myacct.snowflakecomputing.com/api/v2/cortex/v1'
+    assert provider.base_url == 'https://myorg-myacct.snowflakecomputing.com/api/v2/cortex/anthropic/v1'
     assert isinstance(provider.client, anthropic.AsyncAnthropic)
 
 
@@ -171,6 +172,23 @@ def test_anthropic_provider_uses_auth_token_not_api_key() -> None:
     # auth_token sets Authorization: Bearer, api_key sets X-Api-Key
     assert provider.client.auth_token == 'my-pat'
     assert provider.client.api_key is None
+
+
+def test_anthropic_provider_sends_pat_token_type_header() -> None:
+    """Both providers must send X-Snowflake-Authorization-Token-Type: PROGRAMMATIC_ACCESS_TOKEN."""
+    ap = SnowflakeCortexAnthropicProvider(account='myorg-myacct', token='my-pat')
+    assert ap.client.default_headers.get('X-Snowflake-Authorization-Token-Type') == 'PROGRAMMATIC_ACCESS_TOKEN'
+
+
+def test_openai_provider_sends_pat_token_type_header() -> None:
+    op = SnowflakeCortexProvider(account='myorg-myacct', token='my-pat')
+    assert op.client.default_headers.get('X-Snowflake-Authorization-Token-Type') == 'PROGRAMMATIC_ACCESS_TOKEN'
+
+
+def test_anthropic_provider_uses_anthropic_endpoint_path() -> None:
+    """Anthropic path is /cortex/anthropic/v1, not /cortex/v1."""
+    provider = SnowflakeCortexAnthropicProvider(account='myorg-myacct', token='tok')
+    assert '/cortex/anthropic/v1' in provider.base_url
 
 
 def test_anthropic_provider_from_env(env: TestEnv) -> None:
@@ -203,7 +221,7 @@ def test_anthropic_provider_with_http_client() -> None:
 def test_anthropic_provider_with_anthropic_client() -> None:
     client = anthropic.AsyncAnthropic(
         auth_token='pat',
-        base_url='https://myorg-myacct.snowflakecomputing.com/api/v2/cortex/v1',
+        base_url='https://myorg-myacct.snowflakecomputing.com/api/v2/cortex/anthropic/v1',
     )
     provider = SnowflakeCortexAnthropicProvider(anthropic_client=client)
     assert provider.client is client
