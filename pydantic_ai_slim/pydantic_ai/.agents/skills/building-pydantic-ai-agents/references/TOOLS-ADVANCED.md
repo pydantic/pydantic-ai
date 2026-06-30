@@ -59,6 +59,8 @@ def get_user_by_name(ctx: RunContext[dict[str, int]], name: str) -> int:
 
 Use retries for recoverable model mistakes, not application crashes.
 
+Set the agent-wide tool-retry default with `Agent(retries={'tools': N})`, and override it for a single run (or `iter`) with `agent.run(retries={'tools': N})` — explicit per-tool `retries=` and per-toolset `FunctionToolset(max_retries=N)` still win. A bare `int` at run time overrides only the output budget, so pass the `{'tools': N}` dict to change tool retries.
+
 ## Validate or Require Approval Before Tool Execution
 
 Use `args_validator=` when arguments are structurally valid but still need business-rule validation before execution or approval.
