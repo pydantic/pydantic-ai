@@ -5277,7 +5277,6 @@ docs-upload = [
 ]
 lint = [
     { name = "mypy" },
-    { name = "pydantic-ai-harness" },
     { name = "pyright" },
     { name = "ruff" },
 ]
@@ -5352,7 +5351,6 @@ docs-upload = [
 ]
 lint = [
     { name = "mypy", specifier = ">=1.11.2" },
-    { name = "pydantic-ai-harness", specifier = ">=0.4.0" },
     { name = "pyright", specifier = ">=1.1.408" },
     { name = "ruff", specifier = ">=0.14.14" },
 ]
@@ -5397,19 +5395,6 @@ requires-dist = [
     { name = "rich", specifier = ">=13.9.2" },
     { name = "twelvelabs", specifier = ">=1.2.8" },
     { name = "uvicorn", specifier = ">=0.32.0" },
-]
-
-[[package]]
-name = "pydantic-ai-harness"
-version = "0.4.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic-ai-slim" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c1/7b/b0ec85f6a7d62e19524753715ff77046a9fce3a3e1a98df858bf5cde8151/pydantic_ai_harness-0.4.0.tar.gz", hash = "sha256:78daa5a9d3289e2c90deae140c2ed59617cc91a945726b8aad70a8fa15348387", size = 733974, upload-time = "2026-06-17T11:07:42.577Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/8b/fe2e9b3053f1a5f9278eadc80da9898154b2542bbbac4ee74f544001484a/pydantic_ai_harness-0.4.0-py3-none-any.whl", hash = "sha256:cf231f8c5b4dcf5096f9f318459ee97f1c8dc8dc50b8b26a7abc71dfcf7c74be", size = 164741, upload-time = "2026-06-17T11:07:41.258Z" },
 ]
 
 [[package]]
