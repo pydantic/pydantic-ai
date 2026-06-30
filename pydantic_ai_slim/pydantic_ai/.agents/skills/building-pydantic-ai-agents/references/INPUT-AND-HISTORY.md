@@ -9,7 +9,7 @@ Pass multimodal content as a list mixing text with `ImageUrl`, `AudioUrl`, `Vide
 ```python
 from pydantic_ai import Agent, ImageUrl
 
-agent = Agent(model='openai:gpt-5.2')
+agent = Agent(model='openai:gpt-5.2', name='multimodal_agent')
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -30,7 +30,7 @@ Use `message_history=` to continue a conversation across runs.
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+agent = Agent('openai:gpt-5.2', name='conversation_agent', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
 result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
@@ -56,7 +56,7 @@ async def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-10:] if len(messages) > 10 else messages
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(keep_recent)])
+agent = Agent('openai:gpt-5.2', name='trimmed_history_agent', capabilities=[ProcessHistory(keep_recent)])
 ```
 
 Good uses:
@@ -75,7 +75,7 @@ Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqu
 ```python
 from pydantic_ai import Agent, RunContext
 
-agent = Agent('anthropic:claude-opus-4-7')
+agent = Agent('anthropic:claude-opus-4-7', name='alerting_agent')
 
 
 @agent.tool

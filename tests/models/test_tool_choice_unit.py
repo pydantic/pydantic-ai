@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
-from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
@@ -616,6 +616,17 @@ NATIVE_TOOL_CONFIG_CASES = [
         model='gemini-2.5-pro',
         request_parameters=ModelRequestParameters(function_tools=[make_tool('get_weather')]),
         expected_tool_config={'function_calling_config': {'mode': 'AUTO'}},
+    ),
+    dict(
+        id='code-execution-gemini-3-sets-server-side-flag',
+        model='gemini-3-flash-preview',
+        request_parameters=ModelRequestParameters(
+            native_tools=[CodeExecutionTool()], function_tools=[make_tool('get_weather')]
+        ),
+        expected_tool_config={
+            'include_server_side_tool_invocations': True,
+            'function_calling_config': {'mode': 'AUTO'},
+        },
     ),
 ]
 
