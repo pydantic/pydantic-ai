@@ -206,6 +206,9 @@ When loading this configuration with [`load_mcp_toolsets()`][pydantic_ai.mcp.loa
 !!! warning
     If a referenced environment variable using `${VAR}` syntax is not defined, a `ValueError` will be raised. Use the `${VAR:-default}` syntax to provide a fallback value.
 
+!!! warning "Treat configuration files as trusted input"
+    A configuration file specifies executables and arguments to spawn as subprocesses, so anyone who can write it can run arbitrary commands. `${VAR}` references are expanded against the full process environment without an allowlist, so a config file can also read any environment variable. Only load configuration files you control; never load them from untrusted sources.
+
 ### Usage
 
 ```python {title="mcp_config_loader.py" test="skip"}
