@@ -22,6 +22,11 @@ async def write_file(file_path: str, content: str) -> str:
         if parent:
             await fs.create_directory(parent)
         result = await fs.write_file(file_path, content)
-    except ModelRetry as exc:
+    except (ModelRetry, OSError) as exc:
+        # The harness converts its own recoverable errors to `ModelRetry`, but
+        # `create_directory` -> `Path.mkdir(exist_ok=True)` still raises a bare
+        # `FileExistsError` when a path segment is an existing file. The old
+        # hand-rolled `Write` caught `OSError`, so keep doing that: a bad path is
+        # a returned error, not a run-aborting exception.
         return f'error: {exc}'
     return attach_context(file_path) + result

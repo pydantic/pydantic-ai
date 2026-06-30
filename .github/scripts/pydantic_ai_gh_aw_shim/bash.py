@@ -19,9 +19,18 @@ async def bash(command: str, timeout: int | None = None) -> str:
     """
     secs = BASH_DEFAULT_TIMEOUT if not timeout or timeout <= 0 else min(int(timeout), BASH_MAX_TIMEOUT)
     try:
-        return await shell().run_command(command, timeout_seconds=float(secs))
-    except ModelRetry as exc:
-        # The harness raises `ModelRetry` for a blocked command; the shim's tools
-        # have always surfaced such conditions as a returned error string rather
-        # than a model-facing retry, so preserve that.
+        out = await shell().run_command(command, timeout_seconds=float(secs))
+    except (ModelRetry, OSError) as exc:
+        # ModelRetry: the harness blocked the command; the shim's tools have always
+        # surfaced such conditions as a returned error string rather than a
+        # model-facing retry. OSError: subprocess startup failed (e.g. the
+        # workspace cwd does not exist) -- the harness doesn't convert it, so catch
+        # it here rather than let it abort the whole run.
         return f'error: {exc}'
+    # On timeout the harness *returns* a `[Command timed out after Ns]` sentinel
+    # rather than raising. The old tool surfaced timeouts as an `error:` string
+    # (and `Grep` already wraps the same sentinel), so do the same here instead
+    # of handing the model an unprefixed result it might read as success.
+    if out.startswith('[Command timed out'):
+        return f'error: {out}'
+    return out

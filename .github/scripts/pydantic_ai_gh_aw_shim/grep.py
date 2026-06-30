@@ -63,7 +63,10 @@ async def grep(pattern: str, path: str = '.') -> str:
     try:
         await filesystem().file_info(path)
         out = await shell().run_command(command, timeout_seconds=GREP_TIMEOUT)
-    except ModelRetry as exc:
+    except (ModelRetry, OSError) as exc:
+        # The harness converts only a fixed set of errors to `ModelRetry`; a bare
+        # `OSError` (e.g. `ENAMETOOLONG` from the `file_info` preflight resolving
+        # an over-long path) would otherwise escape and abort the whole run.
         return f'error: {exc}'
     if out.startswith('[Command timed out'):
         return f'error: {out}'

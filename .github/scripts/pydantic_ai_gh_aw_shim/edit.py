@@ -18,26 +18,35 @@ async def edit_file(file_path: str, old_string: str, new_string: str, replace_al
     Replaces the single (unique) occurrence, or every occurrence when `replace_all`.
     """
     if replace_all:
-        return _replace_all(file_path, old_string, new_string)
+        return await _replace_all(file_path, old_string, new_string)
     try:
         result = await filesystem().edit_file(file_path, old_string, new_string)
-    except ModelRetry as exc:
+    except (ModelRetry, OSError) as exc:
+        # The harness only converts a fixed set of errors to `ModelRetry`; a bare
+        # `OSError` (e.g. `ENAMETOOLONG` while resolving the path) would otherwise
+        # escape and abort the whole run, where the old tool returned an error.
         return f'error: {exc}'
     return attach_context(file_path) + result
 
 
-def _replace_all(file_path: str, old_string: str, new_string: str) -> str:
+async def _replace_all(file_path: str, old_string: str, new_string: str) -> str:
     """Replace every occurrence of `old_string`.
 
     The harness `edit_file` rejects non-unique matches, so replace-all stays an
-    in-place rewrite (as the tool did before it was harness-backed).
+    in-place rewrite (as the tool did before it was harness-backed). Workspace
+    containment is still enforced by preflighting the path through the filesystem
+    capability's `file_info` -- the same check `Grep` uses -- so this branch
+    can't escape the workspace root while the single-edit branch can't.
     """
     try:
+        await filesystem().file_info(file_path)  # rejects a path that escapes the workspace
         p = resolve(file_path)
         text = p.read_text(encoding='utf-8')
         if old_string not in text:
             return 'error: `old_string` not found'
         p.write_text(text.replace(old_string, new_string, -1), encoding='utf-8')
-        return attach_context(file_path) + f'edited {p}'
+    except ModelRetry as exc:
+        return f'error: {exc}'
     except OSError as exc:
         return f'error: {exc}'
+    return attach_context(file_path) + f'edited {p}'

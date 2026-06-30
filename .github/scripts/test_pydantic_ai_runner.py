@@ -260,17 +260,129 @@ def test_read_file_offset_and_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert 'l1' not in out and 'l4' not in out
 
 
-def test_edit_file_replace_all(tmp_path: Path):
-    # `replace_all` has no harness equivalent, so it stays an in-place rewrite.
+def test_read_continuation_hint_uses_one_based_offset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # The harness's truncation hint carries its own 0-based offset; this tool's
+    # `offset` is 1-based, so the hint must be bumped by one. Otherwise a model
+    # that follows the hint literally re-reads the last line of the prior chunk.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    f = tmp_path / 'big.txt'
+    f.write_text('\n'.join(f'L{i}' for i in range(1, 4)) + '\n', encoding='utf-8')  # L1..L3
+    first = asyncio.run(pkg.read_file(str(f), limit=2))  # reads L1,L2 + a continuation hint
+    assert 'Use offset=3 to continue reading.' in first  # harness emits 2 (0-based); bumped to 3
+    assert 'Use offset=2 to continue reading.' not in first
+    # Following the (1-based) hint continues at L3 with no duplicated boundary line.
+    nxt = asyncio.run(pkg.read_file(str(f), offset=3, limit=2))
+    assert 'L3' in nxt and 'L2' not in nxt
+
+
+def test_read_limit_zero_behaves_like_omitted_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Passed straight to the harness, `limit=0` reads zero lines and emits a
+    # same-offset hint that loops. The adapter normalizes `limit<=0` to an omitted
+    # limit, so a small file comes back whole with no continuation hint.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    f = tmp_path / 'f.txt'
+    f.write_text('one\ntwo\nthree\n', encoding='utf-8')
+    out = asyncio.run(pkg.read_file(str(f), offset=1, limit=0))
+    assert 'one' in out and 'three' in out
+    assert 'to continue reading' not in out  # whole short file fit; no looping hint
+
+
+def test_harness_backed_tools_surface_oserror_as_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # The harness converts only a fixed set of exceptions to `ModelRetry`; a bare
+    # `OSError` (here `ENAMETOOLONG` from an over-long path component) is not one
+    # of them, so each adapter must catch it and return an `error:` string instead
+    # of letting it escape and abort the whole agent run.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    long_path = 'a' * 10_000
+    assert asyncio.run(pkg.read_file(long_path)).startswith('error:')
+    assert asyncio.run(pkg.edit_file(long_path, 'x', 'y')).startswith('error:')
+    assert asyncio.run(pkg.list_dir(long_path)).startswith('error:')
+    assert asyncio.run(pkg.glob_search('*.py', long_path)).startswith('error:')
+    assert asyncio.run(pkg.grep('x', long_path)).startswith('error:')
+
+
+def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # The harness puts its continuation hint at the tail, but the shim's output cap
+    # keeps the head -- so a chunk over the char cap (common for long-lined files)
+    # would lose the hint entirely. The adapter truncates on a whole-line boundary
+    # and re-advertises the exact 1-based offset of the first dropped line.
+    import re
+
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    f = tmp_path / 'big.txt'
+    # Zero-padded line ids (distinct from the harness's space-padded line numbers)
+    # plus long padding so the chunk blows well past the char cap.
+    f.write_text('\n'.join(f'{i:06d}' + 'x' * 200 for i in range(1, 2001)) + '\n', encoding='utf-8')
+    out = asyncio.run(pkg.read_file(str(f)))
+    assert len(out) <= shared.MAX_TOOL_OUTPUT + 256  # bounded by the output cap
+    m = re.search(r'Use offset=(\d+) to continue reading', out)
+    assert m, 'continuation hint must survive char-budget truncation'
+    nxt = int(m.group(1))
+    # The advertised offset is the first line NOT shown: line (nxt-1) is present,
+    # line nxt is not (no off-by-one, no gap).
+    assert f'{nxt - 1:06d}x' in out and f'{nxt:06d}x' not in out
+    # Following the offset continues exactly at line nxt.
+    cont = asyncio.run(pkg.read_file(str(f), offset=nxt))
+    assert f'{nxt:06d}x' in cont
+
+
+def test_read_does_not_rewrite_hint_text_in_file_contents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # The offset bump must target only the harness's own continuation hint, not file
+    # content -- even a line reproducing the *full* hint verbatim. The harness writes
+    # the real hint at column 0; content lines are line-number-prefixed, so anchoring
+    # to `^` leaves the content untouched.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    f = tmp_path / 'doc.txt'
+    f.write_text('... (4 more lines. Use offset=7 to continue reading.)\n', encoding='utf-8')
+    out = asyncio.run(pkg.read_file(str(f)))  # short file: not truncated, no real hint added
+    assert 'Use offset=7 to continue reading.' in out  # content preserved verbatim
+    assert 'Use offset=8' not in out
+
+
+def test_edit_file_replace_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # `replace_all` has no harness equivalent, so it stays an in-place rewrite
+    # (still contained to the workspace -- see the companion containment test).
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'r.txt'
     f.write_text('a a a', encoding='utf-8')
     asyncio.run(pkg.edit_file(str(f), 'a', 'b', replace_all=True))
     assert f.read_text(encoding='utf-8') == 'b b b'
 
 
+def test_edit_replace_all_is_contained_to_the_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # `replace_all` does the rewrite by hand rather than through the harness, but
+    # it must still honor the workspace boundary the single-edit path enforces;
+    # otherwise an absolute path outside the root would be editable via this flag.
+    workspace = tmp_path / 'ws'
+    workspace.mkdir()
+    outside = tmp_path / 'outside.txt'
+    outside.write_text('a a a', encoding='utf-8')
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
+    out = asyncio.run(pkg.edit_file(str(outside), 'a', 'b', replace_all=True))
+    assert out.startswith('error:')
+    assert outside.read_text(encoding='utf-8') == 'a a a'  # untouched
+
+
 def test_bash_tool():
     out = asyncio.run(pkg.bash('echo hello-from-bash'))
     assert 'hello-from-bash' in out
+
+
+def test_bash_timeout_is_surfaced_as_error():
+    # The harness *returns* a `[Command timed out ...]` sentinel rather than
+    # raising; the adapter must wrap it as an `error:` string (as the old tool
+    # did) so the model doesn't read a timeout as a successful, empty result.
+    out = asyncio.run(pkg.bash('sleep 5', timeout=1))
+    assert out.startswith('error:') and 'timed out' in out
+
+
+def test_bash_subprocess_startup_failure_is_an_error_not_a_crash(monkeypatch: pytest.MonkeyPatch):
+    # `run_command` can raise a raw `OSError` (not converted to `ModelRetry`) when
+    # subprocess startup fails -- e.g. the workspace cwd doesn't exist. That must
+    # come back as an `error:` string instead of aborting the whole agent run.
+    monkeypatch.setenv('GITHUB_WORKSPACE', '/definitely/not/a/workspace/xyz')
+    out = asyncio.run(pkg.bash('echo hi', timeout=1))
+    assert out.startswith('error:')
 
 
 def test_grep_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -338,7 +450,7 @@ def test_grep_large_match_set_is_not_misreported_as_error(tmp_path: Path, monkey
 
 
 def test_glob_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # Harness-backed `find_files` returns matches relative to the workspace root.
+    # `Glob` returns matches relative to the search path (workspace root for '.').
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     (tmp_path / 'x').mkdir()
     (tmp_path / 'x' / 'a.py').write_text('', encoding='utf-8')
@@ -349,10 +461,63 @@ def test_glob_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def test_glob_outside_base_is_handled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # An absolute glob pattern can't resolve under the workspace root; the
-    # adapter rejects it up front (the harness would raise `NotImplementedError`).
+    # adapter rejects it up front.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     out = asyncio.run(pkg.glob_search('/etc/*', '.'))
     assert out.startswith('error:')
+
+
+def test_ls_and_glob_surface_dotfiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # The harness `list_directory`/`find_files` walkers hide every dot-prefixed
+    # path, which would make `.github/` (where gh-aw's workflows live) invisible.
+    # The shim hand-rolls the enumeration so dot-paths stay discoverable.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    (tmp_path / '.github' / 'workflows').mkdir(parents=True)
+    (tmp_path / '.github' / 'workflows' / 'ci.yml').write_text('', encoding='utf-8')
+    assert '.github/' in asyncio.run(pkg.list_dir('.'))
+    assert 'workflows/' in asyncio.run(pkg.list_dir('.github'))
+    assert '.github/workflows/ci.yml' in asyncio.run(pkg.glob_search('.github/**/*.yml', '.'))
+
+
+def test_ls_and_glob_paths_are_contained_to_the_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # The hand-rolled enumeration still preflights containment through the
+    # filesystem capability, so a path escaping the workspace is rejected.
+    workspace = tmp_path / 'ws'
+    workspace.mkdir()
+    (tmp_path / 'secret.txt').write_text('TOPSECRET\n', encoding='utf-8')
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
+    ls_out = asyncio.run(pkg.list_dir('..'))
+    glob_out = asyncio.run(pkg.glob_search('*.txt', '..'))
+    assert ls_out.startswith('error:') and 'secret.txt' not in ls_out
+    assert glob_out.startswith('error:') and 'secret.txt' not in glob_out
+
+
+def test_glob_reports_matched_symlink_not_its_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Resolving a match is only for the containment decision; the returned path
+    # must be the name that matched. An in-workspace symlink (here `CLAUDE.md` ->
+    # `AGENTS.md`, as this repo actually has) must be reported as `CLAUDE.md`, and
+    # must not be collapsed into its target by dedup.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    (tmp_path / 'AGENTS.md').write_text('x', encoding='utf-8')
+    (tmp_path / 'CLAUDE.md').symlink_to('AGENTS.md')
+    assert asyncio.run(pkg.glob_search('CLAUDE.md', '.')).splitlines()[-1] == 'CLAUDE.md'
+    both = asyncio.run(pkg.glob_search('*.md', '.'))
+    assert 'AGENTS.md' in both and 'CLAUDE.md' in both
+
+
+def test_glob_pattern_cannot_escape_via_dotdot_or_symlink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Reverting to a stdlib glob must not lose containment: a `..` in the pattern,
+    # or an in-workspace symlink pointing out, must NOT surface a file outside the
+    # workspace -- a purely lexical `relative_to` check would miss both.
+    workspace = tmp_path / 'ws'
+    workspace.mkdir()
+    (tmp_path / 'secret.txt').write_text('TOPSECRET\n', encoding='utf-8')
+    (workspace / 'link').symlink_to(tmp_path)  # symlink that climbs out of the workspace
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(workspace))
+    via_dotdot = asyncio.run(pkg.glob_search('../secret.txt', '.'))
+    via_symlink = asyncio.run(pkg.glob_search('link/*.txt', '.'))
+    assert 'secret.txt' not in via_dotdot
+    assert 'secret.txt' not in via_symlink
 
 
 def test_multi_edit_atomic(tmp_path: Path):
@@ -1135,6 +1300,17 @@ def test_write_to_existing_parent_succeeds_otherwise_creates(tmp_path: Path, mon
     nested = tmp_path / 'a' / 'b' / 'c.txt'
     assert 'Wrote' in asyncio.run(pkg.write_file(str(nested), 'ok'))
     assert nested.read_text(encoding='utf-8') == 'ok'
+
+
+def test_write_under_a_file_path_returns_error_not_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # When a parent segment is an existing *file*, the adapter's `create_directory`
+    # makes `Path.mkdir(exist_ok=True)` raise a bare `FileExistsError` -- which the
+    # harness does NOT convert to `ModelRetry`. It must come back as an `error:`
+    # string, not escape and abort the whole agent run.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    (tmp_path / 'afile').write_text('x', encoding='utf-8')
+    out = asyncio.run(pkg.write_file(str(tmp_path / 'afile' / 'inner.txt'), 'data'))
+    assert out.startswith('error:')
 
 
 # --------------------------------------------------------------------------- #
