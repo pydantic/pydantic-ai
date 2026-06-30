@@ -2307,7 +2307,10 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
 
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent: Agent[None, str] = Agent(
-        model, instructions="First load capability id 'foo', then call bar.", capabilities=[foo]
+        model,
+        deps_type=type(None),
+        instructions="First load capability id 'foo', then call bar.",
+        capabilities=[foo],
     )
 
     result = await agent.run('Use foo with x=1.')
