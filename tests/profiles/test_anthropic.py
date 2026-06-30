@@ -351,3 +351,29 @@ def test_model_profile_mythos_5():
     # Shared divergences from the Opus mirror (same as Fable 5)
     assert profile.anthropic_supports_fast_speed is False
     assert profile.anthropic_supports_forced_tool_choice is False
+
+
+def test_model_profile_sonnet_5():
+    """Claude Sonnet 5 carries Sonnet 4.6's tool/schema/adaptive surface plus the Opus 4.7 / 4.8
+    frontier flags (xhigh effort, task budgets, no budget-based thinking, no sampling settings).
+
+    Capabilities verified live against the Anthropic API: it accepts adaptive thinking, `xhigh`
+    effort, task budgets, json-schema output, tool search, and forced `tool_choice`, but rejects
+    budget-based thinking, sampling settings, and `anthropic_speed='fast'`.
+    """
+    profile = anthropic_model_profile('claude-sonnet-5')
+    assert profile is not None
+
+    # Frontier flags shared with the Opus 4.7 / 4.8 family (new vs Sonnet 4.6)
+    assert profile.supports_json_schema_output is True
+    assert profile.anthropic_supports_adaptive_thinking is True
+    assert profile.anthropic_supports_effort is True
+    assert profile.anthropic_supports_xhigh_effort is True
+    assert profile.anthropic_disallows_budget_thinking is True
+    assert profile.anthropic_disallows_sampling_settings is True
+    assert profile.anthropic_supports_task_budgets is True
+    assert profile.anthropic_default_code_execution_tool_version == '20260120'
+
+    # Sonnet-5-specific: forcing is allowed (unlike Fable/Mythos), fast speed is not (Opus-only)
+    assert profile.anthropic_supports_forced_tool_choice is True
+    assert profile.anthropic_supports_fast_speed is False
