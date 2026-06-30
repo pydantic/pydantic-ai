@@ -18,7 +18,7 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 [Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
 
 2. **Model-agnostic**:
-Supports virtually every [model](models/overview.md) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, SambaNova, and Outlines. If your favorite model or provider is not listed, you can easily implement a [custom model](models/overview.md#custom-models).
+Supports virtually every [model](models/overview.md) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Cloud, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, and SambaNova. If your favorite model or provider is not listed, you can easily implement a [custom model](models/overview.md#custom-models).
 
 3. **Seamless Observability**:
 Tightly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that too](logfire.md#alternative-observability-backends).
@@ -29,19 +29,22 @@ Designed to give your IDE or AI coding agent as much context as possible for aut
 5. **Powerful Evals**:
 Enables you to systematically test and [evaluate](evals.md) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
-6. **MCP, A2A, and UI**:
-Integrates the [Model Context Protocol](mcp/overview.md), [Agent2Agent](a2a.md), and various [UI event stream](ui/overview.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
+6. **Extensible by Design**:
+Build agents from composable [capabilities](capabilities.md) that bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](capabilities.md#provider-adaptive-tools), [thinking](capabilities.md#thinking), and [MCP](capabilities.md#provider-adaptive-tools), pick from the [Pydantic AI Harness](harness/overview.md) capability library, build your own, or install [third-party capability packages](extensibility.md). Define agents entirely in [YAML/JSON](agent-spec.md) — no code required.
 
-7. **Human-in-the-Loop Tool Approval**:
+7. **MCP and UI**:
+Integrates the [Model Context Protocol](mcp/overview.md) and various [UI event stream](ui/overview.md) standards to give your agent access to external tools and data and build interactive applications with streaming event-based communication.
+
+8. **Human-in-the-Loop Tool Approval**:
 Easily lets you flag that certain tool calls [require approval](deferred-tools.md#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.
 
-8. **Durable Execution**:
+9. **Durable Execution**:
 Enables you to build [durable agents](durable_execution/overview.md) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
 
-9. **Streamed Outputs**:
+10. **Streamed Outputs**:
 Provides the ability to [stream](output.md#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.
 
-10. **Graph Support**:
+11. **Graph Support**:
 Provides a powerful way to define [graphs](graph.md) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
 
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
@@ -93,7 +96,26 @@ _(This example is complete, it can be run "as is", assuming you've [installed th
 
 The exchange will be very short: Pydantic AI will send the instructions and the user prompt to the LLM, and the model will return a text response.
 
-Not very interesting yet, but we can easily add [tools](tools.md), [dynamic instructions](agent.md#instructions), and [structured outputs](output.md) to build more powerful agents.
+Not very interesting yet, but we can easily add [tools](tools.md), [dynamic instructions](agent.md#instructions), [structured outputs](output.md), or composable [capabilities](capabilities.md) to build more powerful agents.
+
+Here's the same agent with [thinking](capabilities.md#thinking) and [web search](capabilities.md#provider-adaptive-tools) capabilities:
+
+```python {title="hello_world_capabilities.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Thinking, WebSearch
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='Be concise, reply with one sentence.',
+    capabilities=[Thinking(), WebSearch(local='duckduckgo')],
+)
+
+result = agent.run_sync('What was the mass of the largest meteorite found this year?')
+print(result.output)
+"""
+The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.
+"""
+```
 
 ## Tools & Dependency Injection Example
 
@@ -216,7 +238,7 @@ support_agent = Agent(
 ```
 
 1. Configure the Logfire SDK, this will fail if project is not set up.
-2. This will instrument all Pydantic AI agents used from here on out. If you want to instrument only a specific agent, you can pass the [`instrument=True` keyword argument][pydantic_ai.agent.Agent.__init__] to the agent.
+2. This will instrument all Pydantic AI agents used from here on out. To instrument only a specific agent, add an [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] entry to the agent's `capabilities=[...]`.
 3. In our demo, `DatabaseConn` uses [`sqlite3`][] to connect to a PostgreSQL database, so [`logfire.instrument_sqlite3()`](https://logfire.pydantic.dev/docs/integrations/databases/sqlite3/)
    is used to log the database queries.
 
@@ -252,4 +274,4 @@ Read the [docs](agent.md) to learn more about building applications with Pydanti
 
 Read the [API Reference](api/agent.md) to understand Pydantic AI's interface.
 
-Join [:simple-slack: Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.
+Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.

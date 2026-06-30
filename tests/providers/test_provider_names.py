@@ -23,6 +23,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
@@ -32,7 +33,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
-    from pydantic_ai.providers.outlines import OutlinesProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
@@ -46,8 +46,8 @@ with try_import() as imports_successful:
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
-        ('google-vertex', GoogleProvider, 'Your default credentials were not found'),
-        ('google-gla', GoogleProvider, 'GOOGLE_API_KEY'),
+        ('google', GoogleProvider, 'GOOGLE_API_KEY'),
+        ('google-cloud', GoogleCloudProvider, 'Your default credentials were not found'),
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
         ('xai', XaiProvider, 'XAI_API_KEY'),
@@ -62,10 +62,9 @@ with try_import() as imports_successful:
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
         ('gateway/chat', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
-        ('gateway/gemini', GoogleProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
+        ('gateway/google', GoogleCloudProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/converse', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
-        ('outlines', OutlinesProvider, None),
     ]
 
 if not imports_successful():
@@ -83,12 +82,11 @@ def empty_env():
 
 
 @pytest.mark.parametrize(('provider', 'provider_cls', 'exception_has'), test_infer_provider_params)
-@pytest.mark.filterwarnings('ignore:.*GrokProvider.*:DeprecationWarning')
 def test_infer_provider(provider: str, provider_cls: type[Provider[Any]], exception_has: str | None):
-    if provider == 'google-vertex':
+    if provider == 'google-cloud':
         try:
             infer_provider(provider)
-        except (GoogleAuthError, ValueError):  # pragma: no branch
+        except (GoogleAuthError, UserError, ValueError):  # pragma: no branch
             pytest.skip('Google credentials not available')
 
     if exception_has is not None:
@@ -104,3 +102,17 @@ def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], 
         pytest.skip('Gateway providers are not supported for this test')
 
     assert infer_provider_class(provider) == provider_cls
+
+
+@pytest.mark.parametrize('removed_prefix', ['google-gla', 'google-vertex', 'vertexai'])
+def test_infer_provider_rejects_removed_google_prefixes(removed_prefix: str):
+    """The `google-gla:`, `google-vertex:`, and `vertexai:` provider prefixes were removed in v2.
+
+    `google-vertex` only survives as an internal Gateway API route string (see `_gateway_route`),
+    never as a user-facing prefix — `gateway/google-vertex:model` also raises (see
+    `test_gateway_provider_unknown`).
+    """
+    with pytest.raises(ValueError, match=f'Unknown provider: {removed_prefix}'):
+        infer_provider_class(removed_prefix)
+    with pytest.raises(ValueError, match=f'Unknown provider: {removed_prefix}'):
+        infer_provider(removed_prefix)

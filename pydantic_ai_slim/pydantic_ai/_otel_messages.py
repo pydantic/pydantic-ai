@@ -16,12 +16,25 @@ class TextPart(TypedDict):
     content: NotRequired[str]
 
 
+class ToolCallPartOtelMetadata(TypedDict, total=False):
+    """Typed metadata stored on `messages.BaseToolCallPart.otel_metadata` to inform OTel event rendering.
+
+    Used by Logfire for rendering hints (e.g. syntax highlighting of code arguments).
+    Not sent directly as part of OTel events; individual fields are extracted in `otel_message_parts()`.
+    """
+
+    code_arg_name: str
+    code_arg_language: str
+
+
 class ToolCallPart(TypedDict):
     type: Literal['tool_call']
     id: str
     name: str
     arguments: NotRequired[JsonValue]
     builtin: NotRequired[bool]  # Not (currently?) part of the spec, used by Logfire
+    code_arg_name: NotRequired[str]  # Not (currently?) part of the spec, used by Logfire
+    code_arg_language: NotRequired[str]  # Not (currently?) part of the spec, used by Logfire
 
 
 class ToolCallResponsePart(TypedDict):
@@ -53,6 +66,15 @@ class UriPart(TypedDict):
     mime_type: NotRequired[str]
 
 
+class FilePart(TypedDict):
+    """Represents an external referenced file sent to the model by file id (OTel GenAI spec)."""
+
+    type: Literal['file']
+    modality: str
+    file_id: NotRequired[str]
+    mime_type: NotRequired[str]
+
+
 class BinaryDataPart(TypedDict):
     type: Literal['binary']
     media_type: str
@@ -80,9 +102,7 @@ class ThinkingPart(TypedDict):
     content: NotRequired[str]
 
 
-MessagePart: TypeAlias = (
-    'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | UriPart | BinaryDataPart | BlobPart | ThinkingPart'
-)
+MessagePart: TypeAlias = 'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | UriPart | FilePart | BinaryDataPart | BlobPart | ThinkingPart'
 
 
 Role = Literal['system', 'user', 'assistant']

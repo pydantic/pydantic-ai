@@ -1,25 +1,24 @@
 from __future__ import annotations as _annotations
 
 import argparse
-import asyncio
+import functools
 import sys
-from asyncio import CancelledError
 from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import anyio
 from pydantic import ImportString, TypeAdapter, ValidationError
-from typing_inspection.introspection import get_literal_values
 
 from .. import __version__, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
-from ..builtin_tools import BUILTIN_TOOLS_REQUIRING_CONFIG, SUPPORTED_BUILTIN_TOOLS
 from ..exceptions import UserError
 from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
-from ..models import KnownModelName, infer_model
+from ..models import infer_model, known_model_names
+from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
 from ..settings import ModelSettings
 from ..toolsets import AbstractToolset
@@ -58,7 +57,7 @@ This folder is used to store the prompt history and configuration.
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
 
 SUPPORTED_CLI_TOOL_IDS = sorted(
-    bint.kind for bint in SUPPORTED_BUILTIN_TOOLS if bint not in BUILTIN_TOOLS_REQUIRING_CONFIG
+    bint.kind for bint in SUPPORTED_NATIVE_TOOLS if bint not in NATIVE_TOOLS_REQUIRING_CONFIG
 )
 
 
@@ -95,14 +94,24 @@ _import_string_adapter: TypeAdapter[Any] = TypeAdapter(ImportString)
 
 
 def load_agent(agent_path: str) -> Agent[Any, Any] | None:
-    """Load an agent from module path in uvicorn style.
+    """Load an agent from a module path or a YAML/JSON spec file.
+
+    Supports two formats:
+    - Module path in uvicorn style: `'module:variable'`, e.g. `'test_agent:my_agent'`
+    - File path to a YAML or JSON agent spec: e.g. `'agent.yml'`, `'agent.yaml'`, `'agent.json'`
 
     Args:
-        agent_path: Path in format 'module:variable', e.g. 'test_agent:my_agent'
+        agent_path: Module path or file path to load the agent from.
 
     Returns:
-        Agent instance or None if loading fails
+        Agent instance or None if loading fails.
     """
+    path = Path(agent_path)
+    if path.suffix in ('.yaml', '.yml', '.json'):  # pragma: no cover
+        if not path.is_file():
+            return None
+        return Agent.from_file(path)
+
     sys.path.insert(0, str(Path.cwd()))
     try:
         obj = _import_string_adapter.validate_python(agent_path)
@@ -133,7 +142,7 @@ def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', defa
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
-    qualified_model_names = [n for n in get_literal_values(KnownModelName.__value__) if ':' in n]
+    qualified_model_names = [n for n in known_model_names() if ':' in n]
     args_list = list(args_list) if args_list is not None else sys.argv[1:]
 
     # Check if this is a web command - route to web parser if so
@@ -153,7 +162,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     parser.add_argument(
         '--agent',
         '-a',
-        help='Agent to serve, in format "module:variable" (e.g., "mymodule:agent"). '
+        help='Agent to serve: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml". '
         'If omitted, creates a generic agent with the first specified model as default.',
     )
     model_arg = parser.add_argument(
@@ -240,7 +249,7 @@ subcommands:
     parser.add_argument(
         '-a',
         '--agent',
-        help='Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"',
+        help='Custom Agent to use: a module path like "module:variable" or a YAML/JSON spec file like "agent.yml"',
     )
     parser.add_argument(
         '-t',
@@ -276,7 +285,7 @@ def _run_chat_command(
     args: argparse.Namespace, console: Console, name_version: str, default_model: str, prog_name: str
 ) -> int:
     """Handle the chat command."""
-    agent: Agent[None, str] = cli_agent
+    agent: Agent[object, str] = cli_agent
     if args.agent:
         loaded = load_agent(args.agent)
         if loaded is None:
@@ -287,13 +296,13 @@ def _run_chat_command(
     toolsets: Sequence[AbstractToolset[Any]] = ()
     if args.mcp_config:
         try:
-            from ..mcp import load_mcp_servers
+            from ..mcp import load_mcp_toolsets
         except ImportError as e:  # pragma: no cover
             raise ImportError(
                 'Please install the `mcp` package to use --mcp-config, '
                 'you can use the `mcp` optional group - `pip install "pydantic-ai-slim[mcp]"`'
             ) from e
-        toolsets = load_mcp_servers(args.mcp_config)
+        toolsets = load_mcp_toolsets(args.mcp_config)
 
     model_arg_set = args.model is not None
     if agent.model is None or model_arg_set:
@@ -324,13 +333,13 @@ def _run_chat_command(
 
     if args.prompt:
         try:
-            asyncio.run(ask_agent(agent, args.prompt, stream, console, code_theme, toolsets=toolsets))
+            anyio.run(functools.partial(ask_agent, agent, args.prompt, stream, console, code_theme, toolsets=toolsets))
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name, toolsets=toolsets))
+        return anyio.run(functools.partial(run_chat, stream, agent, console, code_theme, prog_name, toolsets=toolsets))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
@@ -385,7 +394,7 @@ async def run_chat(
                     usage_limits,
                     toolsets=toolsets,
                 )
-            except CancelledError:  # pragma: no cover
+            except anyio.get_cancelled_exc_class():  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
                 cause = getattr(e, '__cause__', None)
@@ -458,9 +467,9 @@ async def ask_agent(
                                 display = '\n\n'.join(content_pieces + [f'> _Calling tool `{tool_name}`..._'])
                                 live.update(Markdown(display, code_theme=code_theme))
                             elif isinstance(event, FunctionToolResultEvent) and isinstance(  # pragma: no branch
-                                event.result, ToolReturnPart
+                                event.part, ToolReturnPart
                             ):
-                                tool_name = event.result.tool_name
+                                tool_name = event.part.tool_name
                                 content_pieces.append(f'> Called tool `{tool_name}`.')
 
             assert agent_run.result is not None

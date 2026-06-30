@@ -1,0 +1,57 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What''s the weather in Paris?"}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_weather", "inputSchema": {"json": {"type": "object", "properties":
+      {"city": {"type": "string"}}, "required": ["city"], "additionalProperties": false}}, "description": "Get weather for
+      a city", "strict": true}}, {"toolSpec": {"name": "get_time", "inputSchema": {"json": {"type": "object", "properties":
+      {"timezone": {"type": "string"}}, "required": ["timezone"], "additionalProperties": false}}, "description": "Get time
+      in a timezone", "strict": true}}], "toolChoice": {"tool": {"name": "get_weather"}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ODEyZDRmZmYtNmRkNS00YTYwLTkwZTYtNTZkYzhhZWFjZDU5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '681'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '463'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 13118
+      output:
+        message:
+          content:
+          - toolUse:
+              input:
+                city: Paris
+              name: get_weather
+              toolUseId: tooluse_XH9QwZ53aYzZNhWMTAAJzl
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 727
+        outputTokens: 33
+        serverToolUsage: {}
+        totalTokens: 760
+    status:
+      code: 200
+      message: OK
+version: 1

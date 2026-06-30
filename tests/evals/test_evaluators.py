@@ -15,9 +15,6 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals.evaluators._run_evaluator import run_evaluator
     from pydantic_evals.evaluators.common import (
         Contains,
@@ -37,10 +34,17 @@ with try_import() as imports_successful:
         EvaluatorOutput,
     )
     from pydantic_evals.evaluators.spec import EvaluatorSpec
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
+with try_import() as logfire_import_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
+    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
 
 class TaskInput(BaseModel):
@@ -246,6 +250,9 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
             return self.result
 
+        def get_default_evaluation_name(self) -> str:
+            return self.evaluation_name
+
     evaluator = CustomNameFieldEvaluator(result=123, evaluation_name='abc')
 
     assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
@@ -255,31 +262,32 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
                 'reason': None,
                 'source': {'arguments': {'evaluation_name': 'abc', 'result': 123}, 'name': 'CustomNameFieldEvaluator'},
                 'value': 123,
+                'evaluator_version': None,
             }
         ]
     )
 
     @dataclass
-    class CustomNamePropertyEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+    class CustomNameMethodEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
         result: int
         my_name: str
-
-        @property
-        def evaluation_name(self) -> str:
-            return f'hello {self.my_name}'
 
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> EvaluatorOutput:
             return self.result
 
-    evaluator = CustomNamePropertyEvaluator(result=123, my_name='marcelo')
+        def get_default_evaluation_name(self) -> str:
+            return f'hello {self.my_name}'
+
+    evaluator = CustomNameMethodEvaluator(result=123, my_name='marcelo')
 
     assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
         [
             {
                 'name': 'hello marcelo',
                 'reason': None,
-                'source': {'arguments': {'my_name': 'marcelo', 'result': 123}, 'name': 'CustomNamePropertyEvaluator'},
+                'source': {'arguments': {'my_name': 'marcelo', 'result': 123}, 'name': 'CustomNameMethodEvaluator'},
                 'value': 123,
+                'evaluator_version': None,
             }
         ]
     )
@@ -302,6 +310,7 @@ async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput
         error_message='ValueError: Simulated error',
         error_stacktrace=IsStr(),
         source=FailingEvaluator().as_spec(),
+        error_type='ValueError',
     )
 
 
@@ -544,6 +553,7 @@ async def test_max_duration_evaluator(test_context: EvaluatorContext[TaskInput, 
     assert result is False
 
 
+@needs_logfire
 async def test_span_query_evaluator(
     capfire: CaptureLogfire,
 ):

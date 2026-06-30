@@ -63,7 +63,7 @@ def test_openrouter_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `OPENROUTER_API_KEY` environment variable or pass it via `OpenRouterProvider(api_key=...)`'
-            'to use the OpenRouter provider.'
+            ' to use the OpenRouter provider.'
         ),
     ):
         OpenRouterProvider()
@@ -112,67 +112,149 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     google_profile = provider.model_profile('google/gemini-2.5-pro-preview')
     google_model_profile_mock.assert_called_with('gemini-2.5-pro-preview')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
+    assert google_profile.get('json_schema_transformer', None) == _OpenRouterGoogleJsonSchemaTransformer
 
     google_profile = provider.model_profile('google/gemma-3n-e4b-it:free')
     google_model_profile_mock.assert_called_with('gemma-3n-e4b-it')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
+    assert google_profile.get('json_schema_transformer', None) == _OpenRouterGoogleJsonSchemaTransformer
 
     openai_profile = provider.model_profile('openai/o1-mini')
     openai_model_profile_mock.assert_called_with('o1-mini')
     assert openai_profile is not None
-    assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert openai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    # OpenRouter only accepts the older `max_tokens` field, never `max_completion_tokens` — even for OpenAI
+    # models, whose own profile defaults the flag to `True`; the merge must not clobber OpenRouter's `False`.
+    assert openai_profile.get('openai_chat_supports_max_completion_tokens', True) is False
 
     anthropic_profile = provider.model_profile('anthropic/claude-3.5-sonnet')
-    anthropic_model_profile_mock.assert_called_with('claude-3.5-sonnet')
+    anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet')
     assert anthropic_profile is not None
-    assert anthropic_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert anthropic_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    anthropic_profile = provider.model_profile('anthropic/claude-sonnet-4.5')
+    anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.get('supports_json_schema_output', False) is True
+
+    anthropic_profile = provider.model_profile('anthropic/claude-haiku-4.5:free')
+    anthropic_model_profile_mock.assert_called_with('claude-haiku-4-5')
+    assert anthropic_profile is not None
+    assert anthropic_profile.get('supports_json_schema_output', False) is True
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
     assert mistral_profile is not None
-    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     qwen_profile = provider.model_profile('qwen/qwen-2.5-coder-32b')
     qwen_model_profile_mock.assert_called_with('qwen-2.5-coder-32b')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     grok_profile = provider.model_profile('x-ai/grok-3')
     grok_model_profile_mock.assert_called_with('grok-3')
     assert grok_profile is not None
-    assert grok_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     cohere_profile = provider.model_profile('cohere/command-a')
     cohere_model_profile_mock.assert_called_with('command-a')
     assert cohere_profile is not None
-    assert cohere_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert cohere_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     amazon_profile = provider.model_profile('amazon/titan-text-express-v1')
     amazon_model_profile_mock.assert_called_with('titan-text-express-v1')
     assert amazon_profile is not None
-    assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert amazon_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('deepseek/deepseek-r1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     meta_profile = provider.model_profile('meta-llama/llama-4-maverick')
     meta_model_profile_mock.assert_called_with('llama-4-maverick')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     moonshotai_profile = provider.model_profile('moonshotai/kimi-k2')
     moonshotai_model_profile_mock.assert_called_with('kimi-k2')
     assert moonshotai_profile is not None
-    assert moonshotai_profile.ignore_streamed_leading_whitespace is True
-    assert moonshotai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert moonshotai_profile.get('ignore_streamed_leading_whitespace', False) is True
+    assert moonshotai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None
-    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_flags'),
+    [
+        # Anthropic: full cache support, TTL, tool-definition caching, dynamic-instruction split, 4-breakpoint cap.
+        (
+            'anthropic/claude-sonnet-4.6',
+            {
+                'openrouter_supports_cache_control': True,
+                'openrouter_supports_cache_ttl': True,
+                'openrouter_supports_tool_cache': True,
+                'openrouter_supports_dynamic_instruction_cache': True,
+                'openrouter_max_cache_points': 4,
+            },
+        ),
+        # Google: cache_control only — no TTL, no tool caching, no dynamic-instruction split, no cap.
+        (
+            'google/gemini-2.5-flash',
+            {
+                'openrouter_supports_cache_control': True,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+            },
+        ),
+        # Unsupported downstream provider: no cache support at all.
+        (
+            'openai/gpt-5-mini',
+            {
+                'openrouter_supports_cache_control': False,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+            },
+        ),
+        # `~provider` latest-alias models resolve to the same downstream cache capabilities.
+        (
+            '~anthropic/claude-sonnet-latest',
+            {
+                'openrouter_supports_cache_control': True,
+                'openrouter_supports_cache_ttl': True,
+                'openrouter_supports_tool_cache': True,
+                'openrouter_supports_dynamic_instruction_cache': True,
+                'openrouter_max_cache_points': 4,
+            },
+        ),
+        (
+            '~google/gemini-pro-latest',
+            {
+                'openrouter_supports_cache_control': True,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+            },
+        ),
+    ],
+)
+def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_flags: dict[str, object]) -> None:
+    """Cache capability flags are derived from the downstream provider, not model-name matching."""
+    provider = OpenRouterProvider(api_key='api-key')
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+
+    actual = {flag: value for flag, value in profile.items() if flag in expected_flags}
+    assert actual == expected_flags
 
 
 def test_openrouter_google_json_schema_transformer():

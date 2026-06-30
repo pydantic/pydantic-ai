@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-from asyncio import Lock
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
@@ -10,7 +8,9 @@ from typing import Any
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
+from .._utils import gather
 from ..exceptions import UserError
+from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -31,8 +31,6 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
-    _enter_lock: Lock = field(compare=False, init=False, default_factory=Lock)
-    _entered_count: int = field(init=False, default=0)
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
 
     @property
@@ -43,25 +41,30 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def label(self) -> str:
         return f'{self.__class__.__name__}({", ".join(toolset.label for toolset in self.toolsets)})'  # pragma: no cover
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        new_toolsets = await gather(*(t.for_run(ctx) for t in self.toolsets))
+        return replace(self, toolsets=new_toolsets)
+
+    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        new_toolsets = await gather(*(t.for_run_step(ctx) for t in self.toolsets))
+        if all(new is old for new, old in zip(new_toolsets, self.toolsets)):
+            return self
+        return replace(self, toolsets=new_toolsets)
+
     async def __aenter__(self) -> Self:
-        async with self._enter_lock:
-            if self._entered_count == 0:
-                async with AsyncExitStack() as exit_stack:
-                    for toolset in self.toolsets:
-                        await exit_stack.enter_async_context(toolset)
-                    self._exit_stack = exit_stack.pop_all()
-            self._entered_count += 1
+        async with AsyncExitStack() as exit_stack:
+            for toolset in self.toolsets:
+                await exit_stack.enter_async_context(toolset)
+            self._exit_stack = exit_stack.pop_all()
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
-        async with self._enter_lock:
-            self._entered_count -= 1
-            if self._entered_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+        if self._exit_stack is not None:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
+        toolsets_tools = await gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):
@@ -78,6 +81,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     tool_def=tool.tool_def,
                     max_retries=tool.max_retries,
                     args_validator=tool.args_validator,
+                    args_validator_func=tool.args_validator_func,
                     source_toolset=toolset,
                     source_tool=tool,
                 )
@@ -97,3 +101,14 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str | InstructionPart] | None:
+        results = await gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
+        parts: list[str | InstructionPart] = []
+        for r in results:
+            if r is not None:
+                if isinstance(r, (str, InstructionPart)):
+                    parts.append(r)
+                else:
+                    parts.extend(r)
+        return parts or None

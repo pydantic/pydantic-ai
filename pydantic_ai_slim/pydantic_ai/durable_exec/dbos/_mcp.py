@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from dbos import DBOS
 from typing_extensions import Self
 
 from pydantic_ai import AbstractToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._utils import StepConfig
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     from pydantic_ai.mcp import ToolResult
 
 
-class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
+class DBOSMCPToolsetBase(WrapperToolset[AgentDepsT], ABC):
     """A wrapper for MCP toolset that integrates with DBOS, turning call_tool and get_tools to DBOS steps."""
 
     def __init__(
@@ -41,12 +42,25 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
             ctx: RunContext[AgentDepsT],
         ) -> dict[str, ToolDefinition]:
             # Need to return a serializable dict, so we cannot return ToolsetTool directly.
-            tools = await super(DBOSMCPToolset, self).get_tools(ctx)
+            tools = await super(DBOSMCPToolsetBase, self).get_tools(ctx)
             # ToolsetTool is not serializable as it holds a SchemaValidator (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
             # so we just return the ToolDefinitions and wrap them in ToolsetTool outside of the activity.
             return {name: tool.tool_def for name, tool in tools.items()}
 
         self._dbos_wrapped_get_tools_step = wrapped_get_tools_step
+
+        # Wrap get_instructions in a DBOS step.
+        @DBOS.step(
+            name=f'{self._name}.get_instructions',
+            **self._step_config,
+        )
+        async def wrapped_get_instructions_step(
+            ctx: RunContext[AgentDepsT],
+        ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+            async with self.wrapped:
+                return await super(DBOSMCPToolsetBase, self).get_instructions(ctx)
+
+        self._dbos_wrapped_get_instructions_step = wrapped_get_instructions_step
 
         # Wrap call_tool in a DBOS step.
         @DBOS.step(
@@ -59,7 +73,7 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
             ctx: RunContext[AgentDepsT],
             tool: ToolsetTool[AgentDepsT],
         ) -> ToolResult:
-            return await super(DBOSMCPToolset, self).call_tool(name, tool_args, ctx, tool)
+            return await super(DBOSMCPToolsetBase, self).call_tool(name, tool_args, ctx, tool)
 
         self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
 
@@ -88,6 +102,23 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tool_defs = await self._dbos_wrapped_get_tools_step(ctx)
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        # Try locally first (fast path: returns None when disabled or returns cached instructions).
+        result = await super().get_instructions(ctx)
+        if result is not None:
+            return result
+        # If instructions are enabled but the server isn't initialized locally, fetch via step.
+        try:
+            from pydantic_ai.mcp import MCPToolset
+        except ImportError:
+            pass
+        else:
+            if isinstance(self.wrapped, MCPToolset) and self.wrapped.include_instructions:
+                return await self._dbos_wrapped_get_instructions_step(ctx)
+        return None
 
     async def call_tool(
         self,

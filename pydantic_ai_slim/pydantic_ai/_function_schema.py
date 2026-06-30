@@ -5,24 +5,33 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_origin
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, cast, get_args, get_origin
 
-from pydantic import ConfigDict
-from pydantic._internal import _decorators, _generate_schema, _typing_extra
+from pydantic import ConfigDict, TypeAdapter, ValidationError
+from pydantic._internal import _decorators, _generate_schema
 from pydantic._internal._config import ConfigWrapper
+from pydantic.errors import PydanticSchemaGenerationError, PydanticUserError
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, TypeIs, TypeVar, get_type_hints
+from typing_extensions import ParamSpec, Self, TypeIs, TypeVar, get_type_hints
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
-from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
+from ._utils import (
+    check_object_json_schema,
+    is_async_callable,
+    is_model_like,
+    run_in_executor,
+    takes_run_context,
+)
+from .messages import ToolReturn
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -36,6 +45,7 @@ class FunctionSchema:
     """Internal information about a function schema."""
 
     function: Callable[..., Any]
+    name: str
     description: str | None
     validator: SchemaValidator
     json_schema: ObjectJsonSchema
@@ -45,6 +55,27 @@ class FunctionSchema:
     single_arg_name: str | None = None
     positional_fields: list[str] = field(default_factory=list[str])
     var_positional_field: str | None = None
+    return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
+    """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
+
+    @property
+    def single_field_name(self) -> str | None:
+        """Name of the single argument if the function takes exactly one value-carrying arg, else `None`.
+
+        Covers both model-like single args (via `single_arg_name`, which uses a wrap validator
+        to normalize to `{name: value}`) and primitive single args (where the schema is a
+        one-property TypedDict). Returns `None` for multi-arg functions and `**kwargs`-only.
+
+        The "field name" is the wrapper key only — e.g. for `def f(data: dict[str, str])`,
+        this is `'data'`. The dict the user sends as `data` keeps all its keys; only the
+        outer `{data: ...}` envelope is the wrapper.
+        """
+        if self.single_arg_name is not None:
+            return self.single_arg_name
+        properties = self.json_schema.get('properties', {})
+        if len(properties) == 1:
+            return next(iter(properties))
+        return None
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -60,9 +91,6 @@ class FunctionSchema:
         args_dict: dict[str, Any],
         ctx: RunContext[Any],
     ) -> tuple[list[Any], dict[str, Any]]:
-        if self.single_arg_name:
-            args_dict = {self.single_arg_name: args_dict}
-
         args = [ctx] if self.takes_ctx else []
         for positional_field in self.positional_fields:
             args.append(args_dict.pop(positional_field))  # pragma: no cover
@@ -75,6 +103,8 @@ class FunctionSchema:
 def function_schema(  # noqa: C901
     function: Callable[..., Any],
     schema_generator: type[GenerateJsonSchema],
+    *,
+    tool_name: str | None = None,
     takes_ctx: bool | None = None,
     docstring_format: DocstringFormat = 'auto',
     require_parameter_descriptions: bool = False,
@@ -83,6 +113,7 @@ def function_schema(  # noqa: C901
 
     Args:
         function: The function to build a validator and JSON schema for.
+        tool_name: The tool name. Defaults to `function.__name__`.
         takes_ctx: Whether the function takes a `RunContext` first argument.
         docstring_format: The docstring format to use.
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
@@ -167,7 +198,8 @@ def function_schema(  # noqa: C901
                 required=required,
             )
             # noinspection PyTypeChecker
-            td_schema.setdefault('metadata', {})['is_model_like'] = is_model_like(annotation)
+            metadata = td_schema.setdefault('metadata', {})
+            metadata['is_model_like'] = is_model_like(annotation)
 
             if p.kind == Parameter.POSITIONAL_ONLY:
                 positional_fields.append(field_name)
@@ -185,7 +217,7 @@ def function_schema(  # noqa: C901
 
     core_config = config_wrapper.core_config(None)
 
-    schema, single_arg_name = _build_schema(fields, var_kwargs_schema, core_config)
+    schema, single_arg_name, single_arg_keys = _build_schema(fields, var_kwargs_schema, core_config)
     schema = gen_schema.clean_schema(schema)
     # noinspection PyUnresolvedReferences
     schema_validator = create_schema_validator(
@@ -201,6 +233,12 @@ def function_schema(  # noqa: C901
     schema_validator = cast(SchemaValidator, schema_validator)
     json_schema = schema_generator().generate(schema)
 
+    if single_arg_keys is not None:
+        # For a single model-like arg the tool's JSON schema *is* the model's, so its property names
+        # are exactly the top-level keys the model accepts (aliases already resolved by Pydantic).
+        # `_validate_single_arg` reads this to tell unwrapped input from a wrapper envelope.
+        single_arg_keys.update(json_schema.get('properties', {}))
+
     # workaround for https://github.com/pydantic/pydantic/issues/10785
     # if we build a custom TypedDict schema (matches when `single_arg_name is None`), we manually set
     # `additionalProperties` in the JSON Schema
@@ -209,16 +247,37 @@ def function_schema(  # noqa: C901
         # and set it on the tool
         description = json_schema.pop('description', None)
 
+    name = tool_name or function.__name__
+    checked_json_schema = check_object_json_schema(json_schema)
+
+    # Compute return schema eagerly (before Temporal sandbox where TypeAdapter is too slow)
+    return_annotation = type_hints.get('return')
+    return_schema_type = _extract_return_schema_type(return_annotation, function)
+    try:
+        return_schema: ObjectJsonSchema = TypeAdapter(return_schema_type).json_schema(
+            schema_generator=schema_generator, mode='serialization'
+        )
+    except (PydanticSchemaGenerationError, PydanticUserError):
+        warnings.warn(
+            f'Could not generate return schema for {original_func.__qualname__!r}: '
+            f'unsupported return type {return_annotation!r}. Falling back to unconstrained schema.',
+            UserWarning,
+            stacklevel=2,
+        )
+        return_schema = {}
+
     return FunctionSchema(
+        name=name,
         description=description,
         validator=schema_validator,
-        json_schema=check_object_json_schema(json_schema),
+        json_schema=checked_json_schema,
         single_arg_name=single_arg_name,
         positional_fields=positional_fields,
         var_positional_field=var_positional_field,
         takes_ctx=bool(takes_ctx),
         is_async=is_async_callable(function),
         function=function,
+        return_schema=return_schema,
     )
 
 
@@ -240,35 +299,14 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:  # 
     Returns:
         `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
     """
-    try:
-        sig = signature(callable_obj)
-    except ValueError:
-        return False
-    try:
-        first_param_name = next(iter(sig.parameters.keys()))
-    except StopIteration:
-        return False
-    else:
-        # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
-        if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
-            call_func = getattr(type(callable_obj), '__call__', None)
-            if call_func is not None:
-                callable_obj = call_func
-            else:
-                return False  # pragma: no cover
-
-        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_obj))
-        annotation = type_hints.get(first_param_name)
-        if annotation is None:
-            return False
-        return True is not sig.empty and _is_call_ctx(annotation)
+    return takes_run_context(callable_obj)
 
 
 def _build_schema(
     fields: dict[str, core_schema.TypedDictField],
     var_kwargs_schema: core_schema.CoreSchema | None,
     core_config: core_schema.CoreConfig,
-) -> tuple[core_schema.CoreSchema, str | None]:
+) -> tuple[core_schema.CoreSchema, str | None, set[str] | None]:
     """Generate a typed dict schema for function parameters.
 
     Args:
@@ -277,13 +315,33 @@ def _build_schema(
         core_config: The core configuration.
 
     Returns:
-        tuple of (generated core schema, single arg name).
+        tuple of (generated core schema, single arg name, single arg model keys). The keys set is
+        empty here and filled in by `function_schema` from the generated JSON schema.
     """
     if len(fields) == 1 and var_kwargs_schema is None:
         name = next(iter(fields))
         td_field = fields[name]
-        if td_field['metadata']['is_model_like']:  # type: ignore
-            return td_field['schema'], name
+        metadata = td_field.get('metadata') or {}
+        if metadata.get('is_model_like'):
+            # The JSON schema sent to the model is the model-like parameter's schema directly (unwrapped),
+            # so the model generates its fields at the top level rather than inside a redundant wrapper.
+            # The validator output is wrapped to `{name: value}` so validated args are always a dict
+            # keyed by parameter name — matching the contract that hooks and `call_tool` rely on.
+            # Use a wrap validator so we also accept the already-wrapped `{name: value}` shape,
+            # which is what Temporal (and any other caller) passes when re-validating previously
+            # validated args after serialization round-trip.
+            # `accepted_keys` lets the validator tell that wrapper shape apart from genuine unwrapped
+            # input for a model with a field (or alias) named `name`; `function_schema` fills it from
+            # the generated JSON schema so we don't rebuild the model's schema just to read its keys.
+            accepted_keys: set[str] = set()
+            return (
+                core_schema.no_info_wrap_validator_function(
+                    partial(_validate_single_arg, name=name, accepted_keys=accepted_keys),
+                    td_field['schema'],
+                ),
+                name,
+                accepted_keys,
+            )
 
     extra_behavior: Literal['allow', 'forbid'] = 'allow' if var_kwargs_schema else 'forbid'
     td_schema = core_schema.typed_dict_schema(
@@ -292,7 +350,72 @@ def _build_schema(
         extra_behavior=extra_behavior,
         extras_schema=var_kwargs_schema,
     )
-    return td_schema, None
+    return td_schema, None, None
+
+
+def _is_wrapped_single_arg(value: Any, name: str) -> TypeIs[dict[Any, Any]]:
+    return isinstance(value, dict) and list(cast(dict[Any, Any], value)) == [name]
+
+
+def _validate_single_arg(
+    value: Any,
+    handler: core_schema.ValidatorFunctionWrapHandler,
+    *,
+    name: str,
+    accepted_keys: set[str],
+) -> dict[str, Any]:
+    if not _is_wrapped_single_arg(value, name):
+        # Plain unwrapped model input, as emitted against the flattened JSON schema.
+        return {name: handler(value)}
+    if name not in accepted_keys:
+        # `name` isn't a key the model accepts, so `{name: ...}` can only be a wrapper envelope (e.g.
+        # re-validated args after a Temporal round-trip). Unwrap it; a bad payload still raises here.
+        return {name: handler(value[name])}
+    # `name` is a real field or alias, so `{name: ...}` is normally genuine unwrapped input. Validate it
+    # as-is, falling back to unwrapping the envelope only when that fails (the round-trip of such a model).
+    # If the field accepts both shapes (e.g. it's typed `Any`) the two are indistinguishable; we prefer
+    # the unwrapped reading, so re-validation isn't idempotent for that (rare) collision.
+    try:
+        return {name: handler(value)}
+    except ValidationError:
+        return {name: handler(value[name])}
+
+
+def _extract_return_schema_type(return_annotation: Any, function: Callable[..., Any]) -> Any:
+    """Extract the type to generate a return schema for.
+
+    Always returns a type — every function has a return schema:
+    - No annotation (`None` from `get()`) → `Any` (produces `{}`)
+    - `-> None` (`type(None)`) → `type(None)` (produces `{"type": "null"}`)
+    - `-> Any` → `Any` (produces `{}`)
+    - `-> Self` → resolved to owning class for bound methods
+    - Bare `ToolReturn` → `Any` (pre-generic legacy form)
+    - `ToolReturn[Any]` → `Any` (produces `{}`)
+    - `ToolReturn[T]` → `T`
+    - Other types → the type itself
+    """
+    if return_annotation is None:
+        # No annotation — untyped, same as Any
+        return Any
+    if return_annotation is type(None):
+        return type(None)
+    # Bare ToolReturn without type parameter — pre-generic legacy form
+    if return_annotation is ToolReturn:
+        return Any
+    # Resolve Self to the owning class for bound methods.
+    # Only works when the function is already bound (e.g. instance.method);
+    # unbound methods and classmethods fall back to Any since there's no
+    # instance to infer the class from.
+    if return_annotation is Self:
+        self_obj = getattr(function, '__self__', None)
+        if self_obj is not None:
+            return cast(type[Any], type(self_obj))
+        return Any
+    if get_origin(return_annotation) is ToolReturn:
+        type_args = get_args(return_annotation)
+        inner_type = type_args[0] if type_args else Any
+        return inner_type
+    return return_annotation
 
 
 def _is_call_ctx(annotation: Any) -> bool:

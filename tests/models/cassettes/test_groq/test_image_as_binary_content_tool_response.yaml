@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '408'
+      - '438'
       content-type:
       - application/json
       host:
@@ -43,7 +43,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '689'
+      - '744'
       content-type:
       - application/json
       strict-transport-security:
@@ -63,26 +63,26 @@ interactions:
           - function:
               arguments: '{}'
               name: get_image
-            id: arq6emmq6
+            id: 911ra51k8
             type: function
-      created: 1766496665
-      id: chatcmpl-31dace36-574a-42ee-a89f-154b2881e090
+      created: 1771451266
+      id: chatcmpl-43b495df-97b8-47cd-8785-7b0c4afee40b
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_d2c1f7e199
+      system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.033183755
+        completion_time: 0.106176858
         completion_tokens: 20
-        prompt_time: 0.015161112
+        prompt_time: 0.020503713
         prompt_tokens: 712
-        queue_time: 0.08678133
-        total_time: 0.048344867
+        queue_time: 0.112876816
+        total_time: 0.126680571
         total_tokens: 732
       usage_breakdown: null
       x_groq:
-        id: req_01kd5pfzfdey6an8xeba8hkbz3
-        seed: 60231349
+        id: req_01khsbjd7rf0c8mr6kbynjhq5c
+        seed: 1608772041
     status:
       code: 200
       message: OK
@@ -91,15 +91,15 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '132174'
+      - '132235'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=xTKt68nGf8bzXxoN97ce9fDZ1L.9ns9Aa8h8o1IYCpw-1766496665-1.0.1.1-_WtKEZ8hzy3m1.w9u2kXe4cSyWpF.AupbGkXJjuzaYHpNtXRuQqcqVZT87.fN6aLeEIBhysEbIsQ5ELcy5KrJBmpOXBLwicqMGgDvH5cLWI
+      - __cf_bm=jTDl7VJHcOKCko0ebNa8o4CBl2Y79QM2ipz9KXzQPqk-1771451266.2629151-1.0.1.1-6aMveFnrMWQPApyxvOyUVOlTAtR3zKpmqtj.P7n7SstsTQahvwEdrMAv_9A6o7WLRfVub9tX66zTkgsu60W7KBPq77ZFPg_HA5s0SkbTnLX2TYgN.1JDHFaEdDWTn.CZ
       host:
       - api.groq.com
     method: POST
@@ -114,11 +114,11 @@ interactions:
         - function:
             arguments: '{}'
             name: get_image
-          id: arq6emmq6
+          id: 911ra51k8
           type: function
-      - content: See file 241a70
+      - content: See file 241a70.
         role: tool
-        tool_call_id: arq6emmq6
+        tool_call_id: 911ra51k8
       - content:
         - text: 'This is file 241a70:'
           type: text
@@ -149,7 +149,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '632'
+      - '676'
       content-type:
       - application/json
       strict-transport-security:
@@ -166,24 +166,24 @@ interactions:
         message:
           content: The fruit in the image is a kiwi.
           role: assistant
-      created: 1766496665
-      id: chatcmpl-5644262c-ce2b-40af-9408-21690b4619a8
+      created: 1771451267
+      id: chatcmpl-691800ee-e118-49c2-9845-bf0d4c3a9f5c
       model: meta-llama/llama-4-maverick-17b-128e-instruct
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_d2c1f7e199
+      system_fingerprint: fp_992318f10a
       usage:
-        completion_time: 0.039272052
+        completion_time: 0.039360082
         completion_tokens: 11
-        prompt_time: 0.033680358
+        prompt_time: 0.056962816
         prompt_tokens: 1501
-        queue_time: 0.123790924
-        total_time: 0.07295241
+        queue_time: 0.080378752
+        total_time: 0.096322898
         total_tokens: 1512
       usage_breakdown: null
       x_groq:
-        id: req_01kd5pfzswfgatrrs48mjvb4g5
-        seed: 1111615022
+        id: req_01khsbjds7ex3tmxzcbf40kyaj
+        seed: 546236490
     status:
       code: 200
       message: OK

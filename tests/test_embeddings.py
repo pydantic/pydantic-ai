@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, get_args
+from typing import Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 
@@ -40,7 +42,6 @@ with try_import() as logfire_imports_successful:
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
-    from pydantic_ai.providers.gateway import GATEWAY_BASE_URL
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
@@ -69,6 +70,7 @@ with try_import() as google_imports_successful:
         LatestGoogleVertexEmbeddingModelNames,
     )
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as voyageai_imports_successful:
     from pydantic_ai.embeddings.voyageai import (
@@ -112,7 +114,7 @@ class TestOpenAI:
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'azure'
-        assert 'azure.com' in model.base_url
+        assert urlparse(model.base_url).hostname == 'project-id.openai.azure.com'
 
         assert await model.max_input_tokens() is None
         with pytest.raises(UserError, match='Counting tokens is not supported for non-OpenAI embedding models'):
@@ -121,13 +123,16 @@ class TestOpenAI:
     async def test_infer_model_gateway(self):
         with patch.dict(
             os.environ,
-            {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL},
+            {
+                'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key',
+                'PYDANTIC_AI_GATEWAY_BASE_URL': 'https://gateway.pydantic.dev/proxy',
+            },
         ):
             model = infer_embedding_model('gateway/openai:text-embedding-3-small')
         assert isinstance(model, OpenAIEmbeddingModel)
         assert model.model_name == 'text-embedding-3-small'
         assert model.system == 'openai'
-        assert 'gateway.pydantic.dev' in model.base_url
+        assert urlparse(model.base_url).hostname == 'gateway.pydantic.dev'
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
@@ -290,7 +295,6 @@ class TestOpenAI:
                                     'gen_ai.operation.name': 'embeddings',
                                     'gen_ai.request.model': 'text-embedding-3-small',
                                     'gen_ai.response.model': 'text-embedding-3-small',
-                                    'gen_ai.token.type': 'input',
                                 },
                                 'start_time_unix_nano': IsInt(),
                                 'time_unix_nano': IsInt(),
@@ -1076,6 +1080,26 @@ class TestBedrock:
             )
         )
 
+    async def test_inference_profile_embed(self, bedrock_provider: BedrockProvider):
+        # When re-recording, set AWS_ACCOUNT_ID to your real account ID
+        account_id = os.getenv('AWS_ACCOUNT_ID', '123456789012')
+        inference_profile_arn = f'arn:aws:bedrock:us-east-1:{account_id}:application-inference-profile/otnfa2ysixqd'
+        settings: BedrockEmbeddingSettings = {'bedrock_inference_profile': inference_profile_arn}
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider, settings=settings)
+
+        result = await model.embed('Hello, world!', input_type='document')
+        assert result == snapshot(
+            EmbeddingResult(
+                embeddings=IsList(IsList(IsFloat(), length=1024), length=1),
+                inputs=['Hello, world!'],
+                input_type='document',
+                model_name='amazon.titan-embed-text-v2:0',
+                provider_name='bedrock',
+                timestamp=IsDatetime(),
+                usage=RequestUsage(input_tokens=5),
+            )
+        )
+
     async def test_unsupported_model_error(self, bedrock_provider: BedrockProvider):
         with pytest.raises(UserError, match='Unsupported Bedrock embedding model'):
             BedrockEmbeddingModel('unsupported.model', provider=bedrock_provider)
@@ -1175,10 +1199,210 @@ class TestBedrock:
                     'logfire.msg': 'embeddings amazon.titan-embed-text-v2:0',
                     'gen_ai.usage.input_tokens': 5,
                     'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
+                    'operation.cost': 5e-07,
                     'gen_ai.embeddings.dimension.count': 256,
                 },
             }
         )
+
+
+@dataclass
+class _GoogleTaskPrefixCase:
+    id: str
+    model_name: str
+    input_type: Literal['query', 'document']
+    inputs: list[str]
+    settings: GoogleEmbeddingSettings
+    expected_texts: list[str]
+    expected_task_type: str | None
+    expected_warning: str | None = None
+
+
+# The `GoogleEmbeddingSettings(...)` calls are only evaluated when the `google` extra is installed.
+_GOOGLE_TASK_PREFIX_CASES: list[_GoogleTaskPrefixCase] = (
+    [
+        _GoogleTaskPrefixCase(
+            id='default-query',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['Hello, world!'],
+            settings=GoogleEmbeddingSettings(),
+            expected_texts=['task: search result | query: Hello, world!'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-query',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['Hello, world!'],
+            settings=GoogleEmbeddingSettings(google_task='question answering'),
+            expected_texts=['task: question answering | query: Hello, world!'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-with-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='search result', google_title='Greeting'),
+            expected_texts=['title: Greeting | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-no-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello', 'world'],
+            settings=GoogleEmbeddingSettings(),
+            expected_texts=['title: none | text: hello', 'title: none | text: world'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='symmetric-query',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='classification'),
+            expected_texts=['task: classification | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='symmetric-document-ignores-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='clustering', google_title='ignored'),
+            expected_texts=['task: clustering | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='symmetric-sentence-similarity-ignores-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='sentence similarity', google_title='ignored'),
+            expected_texts=['task: sentence similarity | query: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='asymmetric-document-empty-title',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_title=''),
+            expected_texts=['title: none | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='raw-passthrough',
+            model_name='gemini-embedding-2',
+            input_type='document',
+            inputs=['title: custom | text: hello'],
+            settings=GoogleEmbeddingSettings(google_task='raw'),
+            expected_texts=['title: custom | text: hello'],
+            expected_task_type=None,
+        ),
+        _GoogleTaskPrefixCase(
+            id='task-type-ignored-on-embedding-2',
+            model_name='gemini-embedding-2',
+            input_type='query',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='classification', google_task_type='RETRIEVAL_QUERY'),
+            expected_texts=['task: classification | query: hello'],
+            expected_task_type=None,
+            expected_warning='`google_task_type` is not supported by `gemini-embedding-2`',
+        ),
+        _GoogleTaskPrefixCase(
+            id='task-ignored-on-other-model',
+            model_name='gemini-embedding-2-preview',
+            input_type='query',
+            inputs=['hello'],
+            settings=GoogleEmbeddingSettings(google_task='classification'),
+            expected_texts=['hello'],
+            expected_task_type='RETRIEVAL_QUERY',
+            expected_warning='`google_task` is only supported by `gemini-embedding-2`',
+        ),
+    ]
+    if google_imports_successful()
+    else []
+)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.vcr
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in _GOOGLE_TASK_PREFIX_CASES])
+async def test_google_task_prefix(case: _GoogleTaskPrefixCase, gemini_api_key: str, monkeypatch: pytest.MonkeyPatch):
+    """`google_task` builds the right text prefix (and `task_type`) for `gemini-embedding-2`.
+
+    Spies on `embed_content` to assert the exact text sent to the API for each
+    (task, input_type, title) combination, plus the warn-and-ignore behavior when
+    `google_task`/`google_task_type` are used on the wrong model.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key)
+    model = GoogleEmbeddingModel(case.model_name, provider=provider)
+    embedder = Embedder(model)
+
+    captured: dict[str, Any] = {}
+    real_embed_content = provider.client.aio.models.embed_content
+
+    async def spy(**kwargs: Any) -> Any:
+        captured['contents'] = kwargs['contents']
+        captured['config'] = kwargs['config']
+        return await real_embed_content(**kwargs)
+
+    monkeypatch.setattr(provider.client.aio.models, 'embed_content', spy)
+
+    async def run() -> EmbeddingResult:
+        if case.input_type == 'query':
+            return await embedder.embed_query(case.inputs, settings=case.settings)
+        return await embedder.embed_documents(case.inputs, settings=case.settings)
+
+    if case.expected_warning is not None:
+        with pytest.warns(UserWarning, match=case.expected_warning):
+            result = await run()
+    else:
+        result = await run()
+
+    sent_texts = [part.text for content in captured['contents'] for part in content.parts]
+    assert sent_texts == case.expected_texts
+    assert captured['config'].task_type == case.expected_task_type
+    assert captured['config'].title is None
+    assert len(result.embeddings) == len(case.inputs)
+    # The prefix is applied internally; the user gets their original (non-prefixed) text back.
+    assert result.inputs == case.inputs
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.skipif(
+    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
+)
+@pytest.mark.vcr
+async def test_google_task_prefix_vertex(
+    allow_model_requests: None, vertex_provider: GoogleCloudProvider, monkeypatch: pytest.MonkeyPatch
+):  # pragma: lax no cover
+    """`google_task` builds the same `gemini-embedding-2` prefix against Google Cloud (Vertex) as against the Gemini API."""
+    model = GoogleEmbeddingModel('gemini-embedding-2', provider=vertex_provider)
+    embedder = Embedder(model)
+
+    captured: dict[str, Any] = {}
+    real_embed_content = vertex_provider.client.aio.models.embed_content
+
+    async def spy(**kwargs: Any) -> Any:
+        captured['contents'] = kwargs['contents']
+        captured['config'] = kwargs['config']
+        return await real_embed_content(**kwargs)
+
+    monkeypatch.setattr(vertex_provider.client.aio.models, 'embed_content', spy)
+
+    result = await embedder.embed_query(
+        'Hello, world!', settings=GoogleEmbeddingSettings(google_task='question answering')
+    )
+
+    sent_texts = [part.text for content in captured['contents'] for part in content.parts]
+    assert sent_texts == ['task: question answering | query: Hello, world!']
+    assert captured['config'].task_type is None
+    assert captured['config'].title is None
+    assert len(result.embeddings) == 1
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
@@ -1186,36 +1410,31 @@ class TestBedrock:
 class TestGoogle:
     @pytest.fixture
     def embedder(self, gemini_api_key: str) -> Embedder:
-        return Embedder(GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key)))
+        return Embedder(
+            GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
+        )
 
-    async def test_infer_model_gla(self, gemini_api_key: str):
+    async def test_infer_model_google(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
-            model = infer_embedding_model('google-gla:gemini-embedding-001')
+            model = infer_embedding_model('google:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-gla'
-        assert 'generativelanguage.googleapis.com' in model.base_url
+        assert model.system == 'google'
+        assert urlparse(model.base_url).hostname == 'generativelanguage.googleapis.com'
 
-    async def test_infer_model_vertex(self):
-        # Vertex AI requires project setup, so we just test the model creation
-        # without actually calling the API
-        with patch.dict(
-            os.environ,
-            {
-                'GOOGLE_API_KEY': 'mock-api-key',
-            },
-        ):
-            model = infer_embedding_model('google-vertex:gemini-embedding-001')
+    async def test_infer_model_google_cloud(self):
+        with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):
+            model = infer_embedding_model('google-cloud:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-vertex'
+        assert model.system == 'google-cloud'
 
     async def test_model_with_string_provider(self, gemini_api_key: str):
         with patch.dict(os.environ, {'GOOGLE_API_KEY': gemini_api_key}):
-            model = GoogleEmbeddingModel('gemini-embedding-001', provider='google-gla')
+            model = GoogleEmbeddingModel('gemini-embedding-001', provider='google')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
-        assert model.system == 'google-gla'
+        assert model.system == 'google'
 
     async def test_query(self, embedder: Embedder):
         result = await embedder.embed_query('Hello, world!')
@@ -1225,9 +1444,9 @@ class TestGoogle:
                 inputs=['Hello, world!'],
                 input_type='query',
                 usage=RequestUsage(),
-                model_name='gemini-embedding-001',
+                model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1239,9 +1458,9 @@ class TestGoogle:
                 inputs=['hello', 'world'],
                 input_type='document',
                 usage=RequestUsage(),
-                model_name='gemini-embedding-001',
+                model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1253,15 +1472,15 @@ class TestGoogle:
                 inputs=['Hello, world!'],
                 input_type='query',
                 usage=RequestUsage(),
-                model_name='gemini-embedding-001',
+                model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
     async def test_max_input_tokens(self, embedder: Embedder):
         max_input_tokens = await embedder.max_input_tokens()
-        assert max_input_tokens == snapshot(2048)
+        assert max_input_tokens == snapshot(8192)
 
     async def test_count_tokens(self, embedder: Embedder):
         count = await embedder.count_tokens('Hello, world!')
@@ -1289,9 +1508,9 @@ class TestGoogle:
                 inputs=['Hello, world!'],
                 input_type='query',
                 usage=RequestUsage(),
-                model_name='gemini-embedding-001',
+                model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
-                provider_name='google-gla',
+                provider_name='google',
             )
         )
 
@@ -1313,13 +1532,13 @@ class TestGoogle:
                 usage=RequestUsage(input_tokens=4),
                 model_name='gemini-embedding-001',
                 timestamp=IsDatetime(),
-                provider_name='google-vertex',
+                provider_name='google-cloud',
             )
         )
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, gemini_api_key: str, capfire: CaptureLogfire):
-        model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key=gemini_api_key))
+        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
         embedder = Embedder(model, instrument=True)
         await embedder.embed_query('Hello, world!', settings={'dimensions': 768})
 
@@ -1328,15 +1547,15 @@ class TestGoogle:
 
         assert span == snapshot(
             {
-                'name': 'embeddings gemini-embedding-001',
+                'name': 'embeddings gemini-embedding-2-preview',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': IsInt(),
                 'end_time': IsInt(),
                 'attributes': {
                     'gen_ai.operation.name': 'embeddings',
-                    'gen_ai.provider.name': 'google-gla',
-                    'gen_ai.request.model': 'gemini-embedding-001',
+                    'gen_ai.provider.name': 'google',
+                    'gen_ai.request.model': 'gemini-embedding-2-preview',
                     'input_type': 'query',
                     'server.address': 'generativelanguage.googleapis.com',
                     'inputs_count': 1,
@@ -1353,9 +1572,8 @@ class TestGoogle:
                         },
                     },
                     'logfire.span_type': 'span',
-                    'logfire.msg': 'embeddings gemini-embedding-001',
-                    'gen_ai.response.model': 'gemini-embedding-001',
-                    'operation.cost': 0.0,
+                    'logfire.msg': 'embeddings gemini-embedding-2-preview',
+                    'gen_ai.response.model': 'gemini-embedding-2-preview',
                     'gen_ai.embeddings.dimension.count': 768,
                 },
             }
@@ -1435,13 +1653,13 @@ def test_known_embedding_model_names():  # pragma: lax no cover
 
     openai_names = [f'openai:{n}' for n in get_model_names(LatestOpenAIEmbeddingModelNames)]
     cohere_names = [f'cohere:{n}' for n in get_model_names(LatestCohereEmbeddingModelNames)]
-    google_gla_names = [f'google-gla:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
-    google_vertex_names = [f'google-vertex:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
+    google_names = [f'google:{n}' for n in get_model_names(LatestGoogleGLAEmbeddingModelNames)]
+    google_cloud_names = [f'google-cloud:{n}' for n in get_model_names(LatestGoogleVertexEmbeddingModelNames)]
     voyageai_names = [f'voyageai:{n}' for n in get_model_names(LatestVoyageAIEmbeddingModelNames)]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(LatestBedrockEmbeddingModelNames)]
 
     generated_names = sorted(
-        openai_names + cohere_names + google_gla_names + google_vertex_names + voyageai_names + bedrock_names
+        openai_names + cohere_names + google_names + google_cloud_names + voyageai_names + bedrock_names
     )
 
     known_model_names = sorted(get_args(KnownEmbeddingModelName.__value__))
@@ -1475,7 +1693,7 @@ async def test_instrument_all():
     m = get_model()
     assert isinstance(m, InstrumentedEmbeddingModel)
     assert m.wrapped is model
-    assert m.instrumentation_settings.event_mode == InstrumentationSettings().event_mode
+    assert m.instrumentation_settings.version == InstrumentationSettings().version
 
     assert m.model_name == model.model_name
     assert m.system == model.system
@@ -1488,7 +1706,7 @@ async def test_instrument_all():
     assert await m.max_input_tokens() == await model.max_input_tokens()
     assert await m.count_tokens('Hello, world!') == await model.count_tokens('Hello, world!')
 
-    options = InstrumentationSettings(version=1, event_mode='logs')
+    options = InstrumentationSettings(version=5)
     Embedder.instrument_all(options)
     m = get_model()
     assert isinstance(m, InstrumentedEmbeddingModel)

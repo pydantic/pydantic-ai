@@ -19,14 +19,9 @@
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
       "Bash(uv run:*)",
+      "Bash(uv run pyright *)",
+      "Bash(PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright *)",
       "Bash(make:*)"
-    ],
-    "ask": [
-      "Bash(git add:*)",
-      "Bash(git checkout:*)",
-      "Bash(git commit:*)",
-      "Bash(git push:*)",
-      "Bash(gh pr create:*)"
     ]
   }
 }

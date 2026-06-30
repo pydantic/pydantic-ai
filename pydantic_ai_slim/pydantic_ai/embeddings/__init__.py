@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -36,10 +36,14 @@ __all__ = [
 KnownEmbeddingModelName = TypeAliasType(
     'KnownEmbeddingModelName',
     Literal[
-        'google-gla:gemini-embedding-001',
-        'google-vertex:gemini-embedding-001',
-        'google-vertex:text-embedding-005',
-        'google-vertex:text-multilingual-embedding-002',
+        'google-cloud:gemini-embedding-001',
+        'google-cloud:gemini-embedding-2-preview',
+        'google-cloud:gemini-embedding-2',
+        'google-cloud:text-embedding-005',
+        'google-cloud:text-multilingual-embedding-002',
+        'google:gemini-embedding-001',
+        'google:gemini-embedding-2-preview',
+        'google:gemini-embedding-2',
         'openai:text-embedding-ada-002',
         'openai:text-embedding-3-small',
         'openai:text-embedding-3-large',
@@ -102,6 +106,9 @@ def infer_embedding_model(
         'openai',
         # For now, we assume that every chat and completions-compatible provider also
         # supports the embeddings endpoint, as at worst the user would get an `ModelHTTPError`.
+        # `openai-chat` / `openai-responses` aren't listed: there's no chat-vs-responses split
+        # for the embeddings API, and `normalize_gateway_provider` returns `gateway/openai`
+        # as `openai`, so the canonical name suffices.
         *get_args(OpenAIChatCompatibleProvider.__value__),
         *get_args(OpenAIResponsesCompatibleProvider.__value__),
     ):
@@ -116,7 +123,7 @@ def infer_embedding_model(
         from .bedrock import BedrockEmbeddingModel
 
         return BedrockEmbeddingModel(model_name, provider=provider)
-    elif model_kind in ('google-gla', 'google-vertex'):
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleEmbeddingModel
 
         return GoogleEmbeddingModel(model_name, provider=provider)
@@ -222,7 +229,7 @@ class Embedder:
         self,
         *,
         model: EmbeddingModel | KnownEmbeddingModelName | str | _utils.Unset = _utils.UNSET,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override the embedding model.
 
         Useful for testing or dynamically switching models.

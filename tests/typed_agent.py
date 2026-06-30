@@ -10,8 +10,9 @@ from typing import Any, TypeAlias
 from starlette.requests import Request
 from typing_extensions import assert_type
 
-from pydantic_ai import Agent, ModelRetry, RunContext, Tool
+from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, Tool
 from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.capabilities import PrepareTools, Thinking, WebSearch
 from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
@@ -80,6 +81,66 @@ def wrong_tool_prepare(ctx: RunContext[MyDeps], x: int, y: str) -> str:
     return f'{ctx.deps.foo} {x} {y}'
 
 
+# args_validator: matching params
+def args_validator_ok(ctx: RunContext[MyDeps], x: int, y: str) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_ok)
+def ok_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator: wrong params
+def args_validator_wrong_params(ctx: RunContext[MyDeps], a: float) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_wrong_params)  # type: ignore[arg-type]
+def wrong_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator: wrong deps type
+def args_validator_wrong_deps(ctx: RunContext[int], x: int, y: str) -> None:
+    pass
+
+
+@typed_agent.tool(args_validator=args_validator_wrong_deps)  # type: ignore[arg-type]
+def wrong_deps_tool_args_validator(ctx: RunContext[MyDeps], x: int, y: str) -> str:
+    return f'{ctx.deps.foo} {x} {y}'
+
+
+# args_validator on tool_plain: matching params
+def plain_args_validator_ok(ctx: RunContext[MyDeps], x: str) -> None:
+    pass
+
+
+@typed_agent.tool_plain(args_validator=plain_args_validator_ok)
+def ok_tool_plain_args_validator(x: str) -> str:
+    return x
+
+
+# args_validator on tool_plain: wrong params
+def plain_args_validator_wrong(ctx: RunContext[MyDeps], a: float) -> None:
+    pass
+
+
+@typed_agent.tool_plain(args_validator=plain_args_validator_wrong)  # type: ignore[arg-type]
+def wrong_tool_plain_args_validator(x: str) -> str:
+    return x
+
+
+# args_validator on tool_plain: wrong deps
+def plain_args_validator_wrong_deps(ctx: RunContext[int], x: str) -> None:
+    pass
+
+
+@typed_agent.tool_plain(args_validator=plain_args_validator_wrong_deps)  # type: ignore[arg-type]
+def wrong_deps_tool_plain_args_validator(x: str) -> str:
+    return x
+
+
 @typed_agent.tool_plain
 def ok_tool_plain(x: str) -> dict[str, str]:
     return {'x': x}
@@ -132,6 +193,9 @@ def run_sync() -> None:
     result = typed_agent.run_sync('testing', deps=MyDeps(foo=1, bar=2))
     assert_type(result, AgentRunResult[str])
     assert_type(result.output, str)
+    # `result.usage` must resolve to a concrete type, not `Any` (issue #5525)
+    _usage: RunUsage = result.usage
+    assert_type(result.usage, RunUsage)
 
 
 async def run_stream() -> None:
@@ -159,8 +223,8 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[arg-type]
-assert_type(union_agent, Agent[None, Foo | Bar])
+union_agent: Agent[object, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[arg-type]
+assert_type(union_agent, Agent[object, Foo | Bar])
 
 
 def run_sync3() -> None:
@@ -170,8 +234,8 @@ def run_sync3() -> None:
 
 
 MyUnion: TypeAlias = 'Foo | Bar'
-union_agent2: Agent[None, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
-assert_type(union_agent2, Agent[None, MyUnion])
+union_agent2: Agent[object, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
+assert_type(union_agent2, Agent[object, MyUnion])
 
 structured_dict = StructuredDict(
     {
@@ -181,7 +245,7 @@ structured_dict = StructuredDict(
     }
 )
 structured_dict_agent = Agent(output_type=structured_dict)
-assert_type(structured_dict_agent, Agent[None, dict[str, Any]])
+assert_type(structured_dict_agent, Agent[object, dict[str, Any]])
 
 
 def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> Decimal:
@@ -206,68 +270,96 @@ class MyClass:
 
 
 decimal_function_agent = Agent(output_type=foobar_ctx)
-assert_type(decimal_function_agent, Agent[None, Decimal])
+assert_type(decimal_function_agent, Agent[object, Decimal])
 
 bool_method_agent = Agent(output_type=MyClass().my_method)
-assert_type(bool_method_agent, Agent[None, bool])
+assert_type(bool_method_agent, Agent[object, bool])
 
 if MYPY:
     # mypy requires the generic parameters to be specified explicitly to be happy here
-    async_int_function_agent = Agent[None, int](output_type=foobar_plain)
-    assert_type(async_int_function_agent, Agent[None, int])
+    async_int_function_agent = Agent[object, int](output_type=foobar_plain)
+    assert_type(async_int_function_agent, Agent[object, int])
 
-    two_models_output_agent = Agent[None, Foo | Bar](output_type=[Foo, Bar])
-    assert_type(two_models_output_agent, Agent[None, Foo | Bar])
+    two_models_output_agent = Agent[object, Foo | Bar](output_type=[Foo, Bar])
+    assert_type(two_models_output_agent, Agent[object, Foo | Bar])
 
-    two_scalars_output_agent = Agent[None, int | str](output_type=[int, str])
-    assert_type(two_scalars_output_agent, Agent[None, int | str])
+    two_scalars_output_agent = Agent[object, int | str](output_type=[int, str])
+    assert_type(two_scalars_output_agent, Agent[object, int | str])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
-    complex_output_agent = Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]](
+    complex_output_agent = Agent[object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]](
         output_type=[str, Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker, TextOutput(str_to_regex)]
     )
     assert_type(
-        complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
+        complex_output_agent, Agent[object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
     )
 
     complex_deferred_output_agent = Agent[
-        None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests
+        object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests
     ](output_type=[complex_output_agent.output_type, DeferredToolRequests])
     assert_type(
         complex_deferred_output_agent,
-        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests],
+        Agent[
+            object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests
+        ],
     )
 else:
     # pyright is able to correctly infer the type here
     async_int_function_agent = Agent(output_type=foobar_plain)
-    assert_type(async_int_function_agent, Agent[None, int])
+    assert_type(async_int_function_agent, Agent[object, int])
 
     two_models_output_agent = Agent(output_type=[Foo, Bar])
-    assert_type(two_models_output_agent, Agent[None, Foo | Bar])
+    assert_type(two_models_output_agent, Agent[object, Foo | Bar])
 
     two_scalars_output_agent = Agent(output_type=[int, str])
-    assert_type(two_scalars_output_agent, Agent[None, int | str])
+    assert_type(two_scalars_output_agent, Agent[object, int | str])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
     complex_output_agent = Agent(
         output_type=[str, Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker, TextOutput(str_to_regex)]
     )
     assert_type(
-        complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
+        complex_output_agent, Agent[object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
     )
 
     complex_deferred_output_agent = Agent(output_type=[complex_output_agent.output_type, DeferredToolRequests])
     assert_type(
         complex_deferred_output_agent,
-        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests],
+        Agent[
+            object, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests
+        ],
     )
 
 
 Tool(foobar_ctx, takes_ctx=True)
 Tool(foobar_ctx)
 Tool(foobar_plain, takes_ctx=False)
-assert_type(Tool(foobar_plain), Tool[object])
 assert_type(Tool(foobar_plain), Tool)
+assert_type(Tool(foobar_plain), Tool)
+
+
+# Tool constructor with args_validator: matching params
+def tool_init_validator_ok(ctx: RunContext[int], x: str, y: int) -> None:
+    pass
+
+
+Tool(foobar_ctx, args_validator=tool_init_validator_ok)
+
+
+# Tool constructor with args_validator: wrong params
+def tool_init_validator_wrong(ctx: RunContext[int], a: float) -> None:
+    pass
+
+
+Tool(foobar_ctx, args_validator=tool_init_validator_wrong)  # type: ignore[arg-type]
+
+
+# Tool constructor with args_validator: wrong deps
+def tool_init_validator_wrong_deps(ctx: RunContext[str], x: str, y: int) -> None:
+    pass
+
+
+Tool(foobar_ctx, args_validator=tool_init_validator_wrong_deps)  # type: ignore[arg-type]
 
 # unfortunately we can't type check these cases, since from a typing perspect `foobar_ctx` is valid as a plain tool
 Tool(foobar_ctx, takes_ctx=False)
@@ -319,8 +411,8 @@ assert result.output == '{"greet":"hello a"}'
 
 if not MYPY:
     default_agent = Agent()
-    assert_type(default_agent, Agent[None, str])
-    assert_type(default_agent, Agent[None])
+    assert_type(default_agent, Agent[object, str])
+    assert_type(default_agent, Agent[object])
     assert_type(default_agent, Agent)
 
 partial_agent: Agent[MyDeps] = Agent(deps_type=MyDeps)
@@ -335,3 +427,45 @@ coro = VercelAIAdapter.dispatch_request(req, agent=Agent('test'), output_type=Fo
 coro = VercelAIAdapter.dispatch_request(
     req, agent=Agent('test', deps_type=MyDeps, output_type=Foo), deps=MyDeps(foo=1, bar=2)
 )
+
+# --- Capability type inference ---
+
+# Thinking is AbstractCapability[Any], so it works with any deps type without annotation
+Agent('test', deps_type=MyDeps, capabilities=[Thinking()])
+Agent('test', capabilities=[Thinking(effort='high')])
+
+if not MYPY:
+    # pyright can infer AgentDepsT from capabilities; mypy cannot
+    # WebSearch is NativeOrLocalTool[AgentDepsT]; with defaults, AgentDepsT is unconstrained
+    Agent('test', deps_type=MyDeps, capabilities=[WebSearch(local='duckduckgo')])
+    Agent('test', capabilities=[WebSearch(local='duckduckgo')])
+
+    # WebSearch with a deps-typed local Tool constrains AgentDepsT
+    def my_search(ctx: RunContext[MyDeps], query: str) -> str:
+        return f'{ctx.deps} {query}'
+
+    my_search_tool = Tool(my_search)
+    assert_type(my_search_tool, Tool[MyDeps])
+    Agent('test', deps_type=MyDeps, capabilities=[WebSearch(local=my_search_tool)])
+    Agent('test', deps_type=MyDeps, capabilities=[WebSearch(local=my_search)])
+
+    # PrepareTools with a deps-typed ToolsPrepareFunc constrains AgentDepsT
+
+    async def my_prepare(ctx: RunContext[MyDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tool_defs
+
+    Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(my_prepare)])
+
+    # Wrong deps type on PrepareTools should be a type error
+
+    async def wrong_prepare(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tool_defs
+
+    Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(wrong_prepare)])  # pyright: ignore[reportArgumentType,reportCallIssue]
+
+    # PrepareTools callbacks must return a list; return None from the callback is a type error
+
+    async def none_prepare(ctx: RunContext[MyDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+        return None
+
+    Agent('test', deps_type=MyDeps, capabilities=[PrepareTools(none_prepare)])  # pyright: ignore[reportArgumentType,reportCallIssue]

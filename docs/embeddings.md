@@ -77,6 +77,22 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+## Choosing a model
+
+The best embedding model depends on your constraints. Here's a starting-point cheat sheet; consult each provider's docs and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) before committing to a model for a large index.
+
+| If you want…                         | For example                                                                                                                                                                                                                                      |
+|--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| A managed API                        | `openai:text-embedding-3-small` (cheap default), `openai:text-embedding-3-large`, `voyageai:voyage-3.5`, or `cohere:embed-v4.0`                                                                                                                  |
+| No API key, private, free            | `sentence-transformers:google/embeddinggemma-300m`, `sentence-transformers:lightonai/DenseOn`, `sentence-transformers:Qwen/Qwen3-Embedding-0.6B`, or any other [Hugging Face model](https://huggingface.co/models?library=sentence-transformers) |
+| Multilingual                         | `cohere:embed-multilingual-v3.0`, `sentence-transformers:jinaai/jina-embeddings-v5-text-small-retrieval`, or `sentence-transformers:Snowflake/snowflake-arctic-embed-l-v2.0`                                                                     |
+| Specialized domain                   | `voyageai:voyage-code-3`, `voyageai:voyage-law-2`, `voyageai:voyage-finance-2`, `sentence-transformers:nomic-ai/CodeRankEmbed`, or `sentence-transformers:TechWolf/JobBERT-v3`                                                                   |
+| To run on AWS infra you already have | `bedrock:amazon.titan-embed-text-v2:0` or `bedrock:cohere.embed-v4:0`                                                                                                                                                                            |
+| To reduce index size                 | Any model with dimension control (see [Settings](#settings))                                                                                                                                                                                     |
+
+!!! tip "Switching models later"
+    Swapping a model changes the output dimension and the similarity distribution, so you'll need to re-embed (and re-index) your documents. Pick a model you're happy to stick with, or one that supports [dimension control](#settings) so you can tune the index size without changing models.
+
 ## Providers
 
 ### OpenAI
@@ -187,7 +203,7 @@ See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for th
 
 ### Google
 
-[`GoogleEmbeddingModel`][pydantic_ai.embeddings.google.GoogleEmbeddingModel] works with Google's embedding models via the Gemini API (Google AI Studio) or Vertex AI.
+[`GoogleEmbeddingModel`][pydantic_ai.embeddings.google.GoogleEmbeddingModel] works with Google's embedding models via the Gemini API (Google AI Studio) or Google Cloud (formerly known as Vertex AI).
 
 #### Install
 
@@ -210,7 +226,7 @@ You can then use the model:
 ```python {title="google_embeddings.py"}
 from pydantic_ai import Embedder
 
-embedder = Embedder('google-gla:gemini-embedding-001')
+embedder = Embedder('google:gemini-embedding-001')
 
 
 async def main():
@@ -223,27 +239,27 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
-##### Vertex AI
+##### Google Cloud
 
-To use Google's embedding models via Vertex AI instead of the Gemini API, use the `google-vertex` provider prefix:
+To use Google's embedding models via Google Cloud (formerly known as Vertex AI) instead of the Gemini API, use the `google-cloud:` provider prefix:
 
-```python {title="google_vertex_embeddings.py"}
+```python {title="google_cloud_embeddings.py"}
 from pydantic_ai import Embedder
 from pydantic_ai.embeddings.google import GoogleEmbeddingModel
-from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 # Using provider prefix
-embedder = Embedder('google-vertex:gemini-embedding-001')
+embedder = Embedder('google-cloud:gemini-embedding-001')
 
 # Or with explicit provider configuration
 model = GoogleEmbeddingModel(
     'gemini-embedding-001',
-    provider=GoogleProvider(vertexai=True, project='my-project', location='us-central1'),
+    provider=GoogleCloudProvider(project='my-project', location='us-central1'),
 )
 embedder = Embedder(model)
 ```
 
-See the [Google provider documentation](models/google.md#vertex-ai-enterprisecloud) for more details on Vertex AI authentication options, including application default credentials, service accounts, and API keys.
+See the [Google provider documentation](models/google.md#google-cloud-enterprise) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
 
 #### Dimension Control
 
@@ -254,7 +270,7 @@ from pydantic_ai import Embedder
 from pydantic_ai.embeddings import EmbeddingSettings
 
 embedder = Embedder(
-    'google-gla:gemini-embedding-001',
+    'google:gemini-embedding-001',
     settings=EmbeddingSettings(dimensions=768),
 )
 
@@ -267,6 +283,26 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
+#### Task Conditioning
+
+`gemini-embedding-2` is conditioned on the task you're embedding for by prepending a short task instruction to the input text, rather than through the [`google_task_type`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_task_type] field used by the other Google models. Pydantic AI builds this prefix for you via the `google_task` setting:
+
+```python {title="google_task.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.google import GoogleEmbeddingSettings
+
+embedder = Embedder(
+    'google:gemini-embedding-2',
+    settings=GoogleEmbeddingSettings(google_task='question answering'),
+)
+```
+
+`google_task` accepts the task names from Google's API: `'search result'`, `'question answering'`, `'fact checking'`, `'code retrieval'`, `'classification'`, `'clustering'`, and `'sentence similarity'`. For the retrieval-style (asymmetric) tasks, queries and documents are prefixed differently, so the same task applies to both sides of a pair; the remaining (symmetric) tasks prefix both inputs the same way.
+
+When you don't set `google_task`, `gemini-embedding-2` is conditioned as `'search result'`. Conditioning is on by default because Google recommends it for this model and it yields better retrieval performance than embedding raw text. To opt out and embed the text verbatim, pass `google_task='raw'`.
+
+`google_task` only applies to `gemini-embedding-2`; on any other model it is ignored with a warning (those models condition via `google_task_type` instead). Conversely, `google_task_type` is ignored on `gemini-embedding-2`, since that model conditions through the text prefix.
+
 #### Google-Specific Settings
 
 Google models support additional settings via [`GoogleEmbeddingSettings`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings]:
@@ -276,7 +312,7 @@ from pydantic_ai import Embedder
 from pydantic_ai.embeddings.google import GoogleEmbeddingSettings
 
 embedder = Embedder(
-    'google-gla:gemini-embedding-001',
+    'google:gemini-embedding-001',
     settings=GoogleEmbeddingSettings(
         dimensions=768,
         google_task_type='SEMANTIC_SIMILARITY',  # Optimize for similarity comparison
@@ -550,6 +586,27 @@ from pydantic_ai import Embedder
 embedder = Embedder('bedrock:us.amazon.titan-embed-text-v2:0')
 ```
 
+#### Using AWS Application Inference Profiles
+
+Set [`bedrock_inference_profile`][pydantic_ai.embeddings.bedrock.BedrockEmbeddingSettings.bedrock_inference_profile] to route requests through an inference profile while keeping the base model name for detecting model capabilities:
+
+```python {title="bedrock_inference_profile.py"}
+from pydantic_ai import Embedder
+from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.providers.bedrock import BedrockProvider
+
+provider = BedrockProvider(region_name='us-east-1')
+
+model = BedrockEmbeddingModel(
+    'amazon.titan-embed-text-v2:0',
+    provider=provider,
+    settings={
+        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
+    },
+)
+embedder = Embedder(model)
+```
+
 #### Using a Custom Provider
 
 For advanced configuration like explicit credentials or a custom boto3 client, you can create a [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider] directly. See the [Bedrock provider documentation](models/bedrock.md#provider-argument) for more details.
@@ -574,11 +631,12 @@ embedder = Embedder(model)
 
 ### Sentence Transformers (Local)
 
-[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [sentence-transformers](https://www.sbert.net/) library. This is ideal for:
+[`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] runs embeddings locally using the [sentence-transformers](https://www.sbert.net/) library, giving you access to the thousands of [embedding models on Hugging Face](https://huggingface.co/models?library=sentence-transformers) without any API calls. This is ideal for:
 
 - **Privacy** — Data never leaves your infrastructure
 - **Cost** — No API charges for high-volume workloads
 - **Offline use** — No internet connection required after model download
+- **Specialized domains or languages** - Pick models trained for code, multilingual, biomedical, legal, etc. from the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard)
 
 #### Install
 
@@ -594,18 +652,18 @@ pip/uv-add "pydantic-ai-slim[sentence-transformers]"
 from pydantic_ai import Embedder
 
 # Model is downloaded from Hugging Face on first use
-embedder = Embedder('sentence-transformers:all-MiniLM-L6-v2')
+embedder = Embedder('sentence-transformers:lightonai/DenseOn')
 
 
 async def main():
     result = await embedder.embed_query('Hello world')
     print(len(result.embeddings[0]))
-    #> 384
+    #> 768
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-See the [Sentence-Transformers pretrained models](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html) documentation for available models.
+[`lightonai/DenseOn`](https://huggingface.co/lightonai/DenseOn) is a strong recent 149M-parameter general-purpose model that encodes queries and documents asymmetrically: [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] and [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] automatically apply the model's `query:` / `document:` prompts. See the [Sentence Transformers pretrained models](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html) documentation and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) for more options; see also [Choosing a model](#choosing-a-model) above.
 
 #### Device Selection
 
@@ -618,7 +676,7 @@ from pydantic_ai.embeddings.sentence_transformers import (
 )
 
 embedder = Embedder(
-    'sentence-transformers:all-MiniLM-L6-v2',
+    'sentence-transformers:sentence-transformers/all-MiniLM-L6-v2',
     settings=SentenceTransformersEmbeddingSettings(
         sentence_transformers_device='cuda',  # Use GPU
         sentence_transformers_normalize_embeddings=True,  # L2 normalize
@@ -639,7 +697,7 @@ from pydantic_ai.embeddings.sentence_transformers import (
 )
 
 # Create and configure the model yourself
-st_model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+st_model = SentenceTransformer('microsoft/harrier-oss-v1-270m', device='cpu')
 
 # Wrap it for use with Pydantic AI
 model = SentenceTransformerEmbeddingModel(st_model)
@@ -746,6 +804,40 @@ Embedder.instrument_all()
 ```
 
 See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
+
+## Two-stage retrieval with rerankers
+
+For high-quality retrieval, a common pattern is **two-stage**: first use an embedding model to pull a broad shortlist of candidates cheaply, then use a **cross-encoder reranker** to score each candidate against the query more precisely. The cross-encoder reads the query and document *together*, so it's slower than an embedding lookup but dramatically more accurate, making it ideal for narrowing a top-100 recall list down to the top-5 results you actually hand to the LLM.
+
+Pydantic AI does not ship a reranker provider class, so you bring your own. The most common local option is a `CrossEncoder` from `sentence-transformers`:
+
+```python {title="rerank.py" max_py="3.13"}
+import asyncio
+from functools import cache
+
+from sentence_transformers import CrossEncoder
+
+
+@cache
+def get_reranker() -> CrossEncoder:
+    # Loaded lazily on first call, then reused.
+    return CrossEncoder('cross-encoder/ms-marco-MiniLM-L6-v2')
+
+
+async def rerank(query: str, candidates: list[str], top_k: int = 3) -> list[str]:
+    """Rerank retrieval candidates by relevance to `query`."""
+    reranker = get_reranker()
+    # CrossEncoder.rank is blocking, so run it off the event loop.
+    ranked = await asyncio.to_thread(
+        reranker.rank, query, candidates, top_k=top_k, return_documents=True
+    )
+    return [item['text'] for item in ranked]
+```
+
+Call `rerank()` on the candidates returned by your vector search (for example, in the `retrieve` tool of the [RAG example](examples/rag.md)) before handing the results to the LLM.
+
+!!! tip "Managed reranker alternatives"
+    If you'd rather not run a reranker locally, several providers offer hosted rerankers, including [Cohere Rerank](https://docs.cohere.com/docs/rerank-overview), [VoyageAI Rerank](https://docs.voyageai.com/docs/reranker), and [Jina Rerank](https://jina.ai/reranker). Call their HTTP clients or SDKs from a helper function with the same shape as `rerank()` above.
 
 ## Building Custom Embedding Models
 

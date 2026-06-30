@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, cast
@@ -11,6 +11,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
+from vcr.cassette import Cassette
 
 from pydantic_ai import (
     BinaryContent,
@@ -20,47 +21,53 @@ from pydantic_ai import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry
+from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from mistralai import (
+    from mistralai.client import Mistral
+    from mistralai.client.errors import SDKError
+    from mistralai.client.models import (
         AssistantMessage as MistralAssistantMessage,
         ChatCompletionChoice as MistralChatCompletionChoice,
+        ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionChunk as MistralCompletionChunk,
+        CompletionEvent as MistralCompletionEvent,
         CompletionResponseStreamChoice as MistralCompletionResponseStreamChoice,
         CompletionResponseStreamChoiceFinishReason as MistralCompletionResponseStreamChoiceFinishReason,
         ContentChunk as MistralContentChunk,
         DeltaMessage as MistralDeltaMessage,
         FunctionCall as MistralFunctionCall,
-        Mistral,
+        ImageURL as MistralImageURL,
+        ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
+        TextChunk,
         TextChunk as MistralTextChunk,
-        UsageInfo as MistralUsageInfo,
-    )
-    from mistralai.models import (
-        ChatCompletionResponse as MistralChatCompletionResponse,
-        CompletionEvent as MistralCompletionEvent,
-        SDKError,
         ToolCall as MistralToolCall,
+        UsageInfo as MistralUsageInfo,
+        UserMessage,
     )
-    from mistralai.types.basemodel import Unset as MistralUnset
+    from mistralai.client.types.basemodel import Unset as MistralUnset
 
     from pydantic_ai.models.mistral import (
         MistralModel,
+        MistralModelSettings,
         MistralStreamedResponse,
         _map_content,  # pyright: ignore[reportPrivateUsage]
     )
@@ -88,6 +95,7 @@ class MockMistralAI:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockCompletionEvent] | Sequence[Sequence[MockCompletionEvent]] | None = None
     index: int = 0
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     @cached_property
     def sdk_configuration(self) -> MockSdkConfiguration:
@@ -115,8 +123,9 @@ class MockMistralAI:
         return cast(Mistral, cls(stream=completions_streams))
 
     async def chat_completions_create(  # pragma: lax no cover
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> MistralChatCompletionResponse | MockAsyncStream[MockCompletionEvent]:
+        self.chat_completion_kwargs.append(kwargs)
         if stream or self.stream:
             assert self.stream is not None, 'you can only use `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], list):
@@ -194,7 +203,9 @@ def func_chunk(
 
 
 def test_init():
-    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='foobar'))
+    provider = MistralProvider(api_key='foobar')
+    m = MistralModel('mistral-large-latest', provider=provider)
+    assert m.client is provider.client
     assert m.model_name == 'mistral-large-latest'
     assert m.base_url == 'https://api.mistral.ai'
 
@@ -222,19 +233,20 @@ async def test_multiple_completions(allow_model_requests: None):
     result = await agent.run('hello')
 
     assert result.output == 'world'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
 
     result = await agent.run('hello again', message_history=result.new_messages())
     assert result.output == 'hello again'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -247,11 +259,13 @@ async def test_multiple_completions(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello again')],
@@ -267,6 +281,7 @@ async def test_multiple_completions(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -288,24 +303,25 @@ async def test_three_completions(allow_model_requests: None):
     result = await agent.run('hello')
 
     assert result.output == 'world'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
 
     result = await agent.run('hello again', message_history=result.all_messages())
     assert result.output == 'hello again'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
 
     result = await agent.run('final message', message_history=result.all_messages())
     assert result.output == 'final message'
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -321,11 +337,13 @@ async def test_three_completions(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='hello again')],
@@ -341,11 +359,13 @@ async def test_three_completions(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final message')],
@@ -361,6 +381,7 @@ async def test_three_completions(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -389,8 +410,8 @@ async def test_stream_text(allow_model_requests: None):
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 5
-        assert result.usage().output_tokens == 5
+        assert result.usage.input_tokens == 5
+        assert result.usage.output_tokens == 5
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -425,8 +446,8 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage().input_tokens == 3
-        assert result.usage().output_tokens == 3
+        assert result.usage.input_tokens == 3
+        assert result.usage.output_tokens == 3
 
 
 #####################
@@ -460,14 +481,15 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
     result = await agent.run('User prompt value')
 
     assert result.output == CityLocation(city='paris', country='france')
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 2
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 2
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -489,6 +511,7 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -501,6 +524,7 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -533,15 +557,16 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
     result = await agent.run('User prompt value')
 
     assert result.output == CityLocation(city='paris', country='france')
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
-    assert result.usage().details == {}
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
+    assert result.usage.details == {}
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -563,6 +588,7 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -575,6 +601,7 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -601,9 +628,9 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
     result = await agent.run('User prompt value')
 
     assert result.output == 42
-    assert result.usage().input_tokens == 1
-    assert result.usage().output_tokens == 1
-    assert result.usage().details == {}
+    assert result.usage.input_tokens == 1
+    assert result.usage.output_tokens == 1
+    assert result.usage.details == {}
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -613,6 +640,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                 instructions='System prompt value',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -634,6 +662,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -646,6 +675,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -750,11 +780,11 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 10
-        assert result.usage().output_tokens == 10
+        assert result.usage.input_tokens == 10
+        assert result.usage.output_tokens == 10
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_dict(allow_model_requests: None):
@@ -810,6 +840,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                {'first': ''},
                 {'first': 'O'},
                 {'first': 'On'},
                 {'first': 'One'},
@@ -836,11 +867,11 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 34
-        assert result.usage().output_tokens == 34
+        assert result.usage.input_tokens == 34
+        assert result.usage.output_tokens == 34
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_int(allow_model_requests: None):
@@ -865,11 +896,11 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot([1, 1, 1])
         assert result.is_complete
-        assert result.usage().input_tokens == 6
-        assert result.usage().output_tokens == 6
+        assert result.usage.input_tokens == 6
+        assert result.usage.output_tokens == 6
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
@@ -923,6 +954,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                [],
                 [''],
                 ['f'],
                 ['fi'],
@@ -957,11 +989,11 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 35
-        assert result.usage().output_tokens == 35
+        assert result.usage.input_tokens == 35
+        assert result.usage.output_tokens == 35
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_basemodel_with_default_params(allow_model_requests: None):
@@ -1015,6 +1047,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
+                MyTypedBaseModel(first='', second=''),
                 MyTypedBaseModel(first='O', second=''),
                 MyTypedBaseModel(first='On', second=''),
                 MyTypedBaseModel(first='One', second=''),
@@ -1041,11 +1074,11 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 34
-        assert result.usage().output_tokens == 34
+        assert result.usage.input_tokens == 34
+        assert result.usage.output_tokens == 34
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_result_type_basemodel_with_required_params(allow_model_requests: None):
@@ -1109,11 +1142,11 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
             ]
         )
         assert result.is_complete
-        assert result.usage().input_tokens == 34
-        assert result.usage().output_tokens == 34
+        assert result.usage.input_tokens == 34
+        assert result.usage.output_tokens == 34
 
         # double check cost matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 #####################
@@ -1175,9 +1208,9 @@ async def test_request_tool_call(allow_model_requests: None):
     result = await agent.run('Hello')
 
     assert result.output == 'final response'
-    assert result.usage().input_tokens == 6
-    assert result.usage().output_tokens == 4
-    assert result.usage().total_tokens == 10
+    assert result.usage.input_tokens == 6
+    assert result.usage.output_tokens == 4
+    assert result.usage.total_tokens == 10
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1187,6 +1220,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1208,6 +1242,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1220,6 +1255,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1241,6 +1277,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1253,6 +1290,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -1268,6 +1306,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1348,8 +1387,8 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
     result = await agent.run('Hello')
 
     assert result.output == {'lat': 51, 'lng': 0}
-    assert result.usage().input_tokens == 7
-    assert result.usage().output_tokens == 4
+    assert result.usage.input_tokens == 7
+    assert result.usage.output_tokens == 4
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1359,6 +1398,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1380,6 +1420,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1393,6 +1434,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1414,6 +1456,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1427,6 +1470,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1448,6 +1492,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1460,6 +1505,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1522,12 +1568,12 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
-        assert result.usage().input_tokens == 4
-        assert result.usage().output_tokens == 4
+        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.usage.input_tokens == 4
+        assert result.usage.output_tokens == 4
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == 4
+        assert result.usage.output_tokens == 4
 
     assert result.all_messages() == snapshot(
         [
@@ -1538,6 +1584,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1559,6 +1606,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 provider_response_id='x',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1572,6 +1620,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
@@ -1587,6 +1636,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 provider_response_id='x',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1599,6 +1649,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1648,12 +1699,12 @@ async def test_stream_tool_call(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
-        assert result.usage().input_tokens == 6
-        assert result.usage().output_tokens == 6
+        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.usage.input_tokens == 6
+        assert result.usage.output_tokens == 6
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == 6
+        assert result.usage.output_tokens == 6
 
     assert result.all_messages() == snapshot(
         [
@@ -1664,6 +1715,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1685,6 +1737,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 provider_response_id='x',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1698,6 +1751,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -1713,6 +1767,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 provider_response_id='x',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1775,12 +1830,12 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         v = [c async for c in result.stream_text(debounce_by=None)]
         assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
-        assert result.usage().input_tokens == 7
-        assert result.usage().output_tokens == 7
+        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.usage.input_tokens == 7
+        assert result.usage.output_tokens == 7
 
         # double check usage matches stream count
-        assert result.usage().output_tokens == 7
+        assert result.usage.output_tokens == 7
 
     assert result.all_messages() == snapshot(
         [
@@ -1791,6 +1846,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1812,6 +1868,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 provider_response_id='x',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1825,6 +1882,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1846,6 +1904,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 provider_response_id='x',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1859,6 +1918,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 instructions='this is the system prompt',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
@@ -1874,6 +1934,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 provider_response_id='x',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2044,6 +2105,7 @@ async def test_image_as_binary_content_tool_response(
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
@@ -2056,19 +2118,20 @@ async def test_image_as_binary_content_tool_response(
                 provider_response_id='20c656d7c70e4362858160d9d241ce92',
                 finish_reason='tool_call',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
-                        content='See file 241a70',
+                        content=IsInstance(BinaryImage),
                         tool_call_id='FI5qQGzDE',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(content=['This is file 241a70:', image_content], timestamp=IsDatetime()),
+                    )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2085,9 +2148,25 @@ async def test_image_as_binary_content_tool_response(
                 provider_response_id='b9df7d6167a74543aed6c27557ab0a29',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
+
+
+async def test_text_content_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+
+    part = UserPromptPart(
+        content=[
+            'Hello',
+            TextContent(content='This is some text content.', metadata={'key': 'value'}),
+        ]
+    )
+    m = await model._map_user_prompt(part)  # pyright: ignore[reportPrivateUsage]
+    assert m == snapshot(UserMessage(content=[TextChunk(text='Hello'), TextChunk(text='This is some text content.')]))
 
 
 async def test_image_url_input(allow_model_requests: None):
@@ -2119,6 +2198,7 @@ async def test_image_url_input(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -2134,6 +2214,7 @@ async def test_image_url_input(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2163,6 +2244,7 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -2178,9 +2260,38 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
+
+
+def get_mock_chat_completion_kwargs(mistral_client: Mistral) -> list[dict[str, Any]]:
+    if isinstance(mistral_client, MockMistralAI):
+        return mistral_client.chat_completion_kwargs
+    else:  # pragma: no cover
+        raise RuntimeError('Not a MockMistralAI instance')
+
+
+async def test_image_detail_vendor_metadata(allow_model_requests: None):
+    """`vendor_metadata['detail']` is forwarded to the Mistral API for image inputs."""
+    c = completion_message(MistralAssistantMessage(content='done', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'high'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'low'})
+
+    await agent.run(['Describe these images.', image_url, binary_image])
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    details = [
+        chunk.image_url.detail
+        for chunk in messages[0].content
+        if isinstance(chunk, MistralImageURLChunk) and isinstance(chunk.image_url, MistralImageURL)
+    ]
+    assert details == snapshot(['high', 'low'])
 
 
 async def test_pdf_url_input(allow_model_requests: None):
@@ -2212,6 +2323,7 @@ async def test_pdf_url_input(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -2227,6 +2339,7 @@ async def test_pdf_url_input(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2255,6 +2368,7 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -2270,6 +2384,7 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2281,7 +2396,9 @@ async def test_txt_url_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='DocumentUrl other than PDF is not supported in Mistral.'):
+    with pytest.raises(
+        NotImplementedError, match='DocumentUrl other than PDF is not supported in Mistral user prompts'
+    ):
         await agent.run(
             [
                 'hello',
@@ -2298,7 +2415,9 @@ async def test_audio_as_binary_content_input(allow_model_requests: None):
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(RuntimeError, match='BinaryContent other than image or PDF is not supported in Mistral.'):
+    with pytest.raises(
+        NotImplementedError, match='BinaryContent other than image or PDF is not supported in Mistral user prompts'
+    ):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])
 
 
@@ -2308,8 +2427,18 @@ async def test_video_url_input(allow_model_requests: None):
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='VideoUrl is not supported in Mistral.'):
+    with pytest.raises(NotImplementedError, match='VideoUrl is not supported in Mistral user prompts'):
         await agent.run(['hello', VideoUrl(url='https://www.google.com')])
+
+
+async def test_uploaded_file_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(NotImplementedError, match='UploadedFile is not supported in Mistral user prompts'):
+        await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -2346,6 +2475,7 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
                 timestamp=IsNow(tz=timezone.utc),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
@@ -2361,9 +2491,23 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
                 provider_response_id='123',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_mistral_forwards_penalties(allow_model_requests: None, mistral_api_key: str, vcr: Cassette):
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(m, model_settings=MistralModelSettings(presence_penalty=0.5, frequency_penalty=0.25))
+
+    result = await agent.run('hello')
+
+    assert result.output
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['presence_penalty'] == 0.5
+    assert sent['frequency_penalty'] == 0.25
 
 
 @pytest.mark.vcr()
@@ -2379,6 +2523,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2416,6 +2561,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 provider_response_id='resp_68bb6452990081968f5aff503a55e3b903498c8aa840cf12',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2437,6 +2583,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2455,6 +2602,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 provider_response_id='9abe8b736bff46af8e979b52334a57cd',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2484,6 +2632,7 @@ async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mist
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2524,6 +2673,7 @@ By following these steps, you can ensure a safe crossing.\
                 provider_response_id='9f9d90210f194076abeee223863eaaf0',
                 finish_reason='stop',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2684,3 +2834,41 @@ def test_map_content_handles_reference_chunk() -> None:
 
     assert text == 'Hello world'
     assert thinking == []
+
+
+async def test_stream_cancel(allow_model_requests: None):
+    stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
+    mock_client = MockMistralAI.create_stream_mock(stream)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
+                model_name='gpt-4',
+                timestamp=IsDatetime(),
+                provider_name='mistral',
+                provider_url='https://api.mistral.ai',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='x',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )

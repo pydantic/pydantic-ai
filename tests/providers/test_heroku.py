@@ -5,7 +5,7 @@ import pytest
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from .._inline_snapshot import snapshot
 from ..conftest import TestEnv, try_import
@@ -37,7 +37,7 @@ def test_heroku_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `HEROKU_INFERENCE_KEY` environment variable or pass it via `HerokuProvider(api_key=...)`'
-            'to use the Heroku provider.'
+            ' to use the Heroku provider.'
         ),
     ):
         HerokuProvider()
@@ -58,8 +58,37 @@ def test_heroku_pass_openai_client() -> None:
 def test_heroku_model_profile():
     provider = HerokuProvider(api_key='api-key')
     model = OpenAIChatModel('claude-3-7-sonnet', provider=provider)
-    assert isinstance(model.profile, OpenAIModelProfile)
-    assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert isinstance(model.profile, dict)
+    assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+
+def test_heroku_model_profile_routes_thinking_capable_families():
+    """Heroku serves reasoning-capable models under bare names; their family profiles must be applied.
+
+    Before this routing, `model_profile` returned a bare `OpenAIModelProfile` for every model, so
+    `supports_thinking` defaulted to `False`/unset and unified `thinking` settings were silently
+    dropped for Claude/DeepSeek reasoning models Heroku hosts.
+    """
+    provider = HerokuProvider(api_key='api-key')
+
+    # Anthropic-family models served by Heroku gain thinking support via anthropic_model_profile.
+    for model_name in ('claude-3-7-sonnet', 'claude-4-5-sonnet', 'claude-opus-4-5'):
+        profile = provider.model_profile(model_name)
+        assert profile is not None
+        assert profile.get('supports_thinking') is True, model_name
+        # OpenAI-compatible base is preserved.
+        assert profile.get('json_schema_transformer') == OpenAIJsonSchemaTransformer, model_name
+
+    # DeepSeek-R1 reasoning models also gain thinking support.
+    deepseek_profile = provider.model_profile('deepseek-r1')
+    assert deepseek_profile is not None
+    assert deepseek_profile.get('supports_thinking') is True
+
+    # Unknown / unmapped models fall back to the OpenAI-compatible base unchanged.
+    fallback = provider.model_profile('some-unknown-model')
+    assert fallback is not None
+    assert fallback.get('json_schema_transformer') == OpenAIJsonSchemaTransformer
+    assert fallback.get('supports_thinking') is None
 
 
 async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: None, heroku_inference_key: str):
