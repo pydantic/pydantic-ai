@@ -227,6 +227,60 @@ async def test_anthropic_code_execution_files_caching_multi_turn(
     assert second.usage.cache_read_tokens > 0
 
 
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_automatic_caching_multi_turn(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """The automatic (top-level `cache_control`) caching path also survives the upload injection.
+
+    `anthropic_cache=True` sends a request-level `cache_control` param and lets the server place the
+    breakpoint; unlike `anthropic_cache_messages`, it never mutates message blocks, so there is no
+    placement to get wrong. This pins that across multiple steps: every request carries the top-level
+    param and leaves all message blocks (including `container_upload`) untouched, and turn 2 still
+    gets a real cache read — the upload sitting in the message doesn't poison the server-side prefix.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+
+    try:
+        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[
+                NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
+            ],
+            instructions=_CACHE_INSTRUCTIONS,
+            model_settings=AnthropicModelSettings(anthropic_cache=True),
+        )
+
+        first = await agent.run(_PROMPT)
+        second = await agent.run(
+            'Use the code execution tool again to report the average of the `value` column.',
+            message_history=first.all_messages(),
+        )
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    # Every request carries the top-level `cache_control` param and leaves message blocks unmutated:
+    # no content block (least of all the `container_upload`) receives a per-block `cache_control`.
+    messages_requests = [r for r in vcr.requests if '/v1/messages' in r.uri]
+    assert len(messages_requests) == 2
+    for request in messages_requests:
+        body = json.loads(request.body)
+        assert body['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+        all_blocks = [b for m in body['messages'] for b in m['content']]
+        assert any(b['type'] == 'container_upload' for b in all_blocks)
+        assert all('cache_control' not in b for b in all_blocks)
+
+    # Cross-step cache hit: turn 1 writes the prefix, turn 2 reads it back.
+    assert first.usage.cache_write_tokens > 0
+    assert second.usage.cache_read_tokens > 0
+
+
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 async def test_openai_code_execution_files(allow_model_requests: None, openai_api_key: str, vcr: Any):
     """Upload a real file to the OpenAI Files API and have code execution read it."""
