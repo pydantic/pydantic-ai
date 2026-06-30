@@ -146,7 +146,6 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
             MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] | None
         ) = None
         self._task: asyncio.Task[AgentRunResult[Any]] | None = None
-        self._receive_finished = False
         self._result_yielded = False
         self._closed = False
 
@@ -161,16 +160,13 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
         assert self._receive_stream is not None
         assert self._task is not None
 
-        if not self._receive_finished:
-            try:
-                return await self._receive_stream.receive()
-            except anyio.EndOfStream:
-                self._receive_finished = True
-                await self._receive_stream.aclose()
-
-        self._result_yielded = True
-        result = await self._task
-        return AgentRunResultEvent(result)
+        try:
+            return await self._receive_stream.receive()
+        except anyio.EndOfStream:
+            await self._receive_stream.aclose()
+            self._result_yielded = True
+            result = await self._task
+            return AgentRunResultEvent(result)
 
     async def aclose(self) -> None:
         if self._closed:

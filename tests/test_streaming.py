@@ -5072,6 +5072,14 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     async with agent.run_stream_events(''):
         pass
 
+    empty_context = agent.run_stream_events('')
+    await empty_context.__aexit__(None, None, None)
+
+    context = agent.run_stream_events('')
+    await context.__aenter__()
+    await context.__aexit__(None, None, None)
+    await context.__aexit__(None, None, None)
+
     assert not producer_started.is_set()
 
 
