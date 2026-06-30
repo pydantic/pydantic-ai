@@ -504,11 +504,12 @@ class GroqModel(Model[AsyncGroq]):
                 )
         return tools
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
+        send_back_thinking_parts = self.profile.get('groq_send_back_thinking_parts', 'auto')
         for message in messages:
             if isinstance(message, ModelRequest):
                 async for item in self._map_user_message(message):
@@ -522,8 +523,12 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                        texts.append('\n'.join([start_tag, item.content, end_tag]))
+                        if send_back_thinking_parts == 'tags' and item.content:
+                            # Groq does not re-absorb `<think>` tags from history, so re-rendering a thinking
+                            # part as text teaches the model to mimic the format in its user-visible output.
+                            # `'auto'` drops these; `'tags'` opts back in.
+                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+                            texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # These are not currently sent back
                         pass
