@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
@@ -42,11 +43,13 @@ class AlibabaProvider(Provider[AsyncOpenAI]):
         base_profile = qwen_model_profile(model_name)
 
         # Wrap/merge into OpenAIModelProfile
-        openai_profile = OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(base_profile)
+        openai_profile = merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), base_profile
+        )
 
         # For Qwen Omni models, force URI audio input encoding
         if 'omni' in model_name.lower():
-            openai_profile = OpenAIModelProfile(openai_chat_audio_input_encoding='uri').update(openai_profile)
+            openai_profile = merge_profile(openai_profile, OpenAIModelProfile(openai_chat_audio_input_encoding='uri'))
 
         return openai_profile
 

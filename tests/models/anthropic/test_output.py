@@ -349,7 +349,7 @@ def test_strict_none_tool_basemodel_output(
     agent = Agent(model, output_type=CityInfo)
 
     @agent.tool_plain
-    def get_timezone(city: str) -> str:  # pragma: no cover
+    def get_timezone(city: str) -> str:
         return 'UTC+10:00' if city == 'Sydney' else 'UTC+1:00'
 
     agent.run_sync('Give me info about Sydney including its timezone')
