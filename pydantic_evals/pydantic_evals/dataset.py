@@ -764,8 +764,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if not schema_path.is_absolute():
                 schema_ref = str(schema_path)
                 schema_path = path.parent / schema_path
-            elif schema_path.is_relative_to(path):  # pragma: no cover
-                schema_ref = str(_get_relative_path_reference(schema_path, path))
+            elif schema_path.is_relative_to(path.parent):
+                schema_ref = str(_get_relative_path_reference(schema_path, path.parent))
             else:  # pragma: no cover
                 schema_ref = str(schema_path)
             self._save_schema(schema_path, custom_evaluator_types, custom_report_evaluator_types)

@@ -949,6 +949,19 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     assert (tmp_path / schema).exists()
 
 
+def test_serialization_to_json_with_absolute_schema_path(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
+):
+    json_path = tmp_path / 'test_cases.json'
+    schema_path = tmp_path / 'test_cases_schema.json'
+
+    example_dataset.to_file(json_path, schema_path=schema_path, fmt='json')
+
+    raw = json.loads(json_path.read_text(encoding='utf-8'))
+    assert raw['$schema'] == 'test_cases_schema.json'
+    assert schema_path.exists()
+
+
 def test_serializing_parts_with_discriminators(tmp_path: Path):
     class Foo(BaseModel):
         foo: str
