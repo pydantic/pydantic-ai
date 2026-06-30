@@ -5,6 +5,7 @@ import math
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -2346,3 +2347,19 @@ async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown(
     assert len(report.failures) == 1
     assert 'setup failed' in report.failures[0].error_message
     assert teardown_called
+
+
+async def test_lifecycle_via_partial(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that the lifecycle can be passed as a partial to provide additional configuration."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class ConfigurableLifecycle(CaseLifecycle[TaskInput, TaskOutput, TaskMetadata]):
+        def __init__(self, case: Case[TaskInput, TaskOutput, TaskMetadata], my_config: int) -> None:
+            super().__init__(case)
+            self.my_config = my_config
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        raise NotImplementedError()
+
+    lifecycle = partial(ConfigurableLifecycle, my_config=123)
+    await example_dataset.evaluate(task, lifecycle=lifecycle)
