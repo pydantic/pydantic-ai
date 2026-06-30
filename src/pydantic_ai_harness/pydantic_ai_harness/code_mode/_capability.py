@@ -10,7 +10,6 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai import AbstractToolset
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities._tool_search import ToolSearch as _ToolSearch
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse, NativeToolSearchReturnPart, SystemPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from typing_extensions import TypedDict
@@ -120,52 +119,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     keeps the system prompt shorter and is the better choice.
     """
 
-    instructions: str | None = None
-    """Extra prose appended to the built-in `run_code` description.
-
-    `None` (default) uses the built-in prose alone. When set, the text is appended after
-    the built-in prose and before the auto-generated tool catalog (TypedDict definitions +
-    function signatures), so the model still gets the Monty-tuned base guidance plus your
-    additions.
-
-    ```python
-    agent = Agent(model, capabilities=[CodeMode(
-        instructions='Project notes: prefer the `search` tool before `fetch`.',
-    )])
-    ```
-
-    To replace the built-in prose wholesale instead of appending, use
-    `dangerously_replace_instructions`. The two are mutually exclusive."""
-
-    dangerously_replace_instructions: str | None = None
-    """Fully replace the built-in `run_code` description prose (the part before the catalog).
-
-    `None` (default) keeps the built-in prose. When set, your text replaces it entirely; the
-    auto-generated tool catalog is still appended afterward, so `run_code` stays callable.
-
-    Dangerous because the built-in prose is tuned to Monty's sandbox semantics (importable
-    modules, the no-classes / no-third-party rules, the return-value contract). Replacing it
-    discards that guidance: keep your replacement accurate to the sandbox or `run_code` calls
-    will fail. To start from the real base and edit it, import
-    `default_run_code_instructions`. Mutually exclusive with `instructions`.
-
-    ```python
-    from pydantic_ai_harness.code_mode import default_run_code_instructions
-
-    agent = Agent(model, capabilities=[CodeMode(
-        dangerously_replace_instructions=default_run_code_instructions() + '\\n\\nProject notes: ...',
-    )])
-    ```"""
-
     _announced_tools: set[str] = field(default_factory=set[str], init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        if self.instructions is not None and self.dangerously_replace_instructions is not None:
-            raise UserError(
-                '`instructions` and `dangerously_replace_instructions` are mutually exclusive: '
-                '`instructions` appends to the built-in prose, `dangerously_replace_instructions` '
-                'replaces it. Set at most one.'
-            )
 
     def get_ordering(self) -> CapabilityOrdering:
         """CodeMode wraps around ToolSearch so that search_tools stays native."""
@@ -186,8 +140,6 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             dynamic_catalog=self.dynamic_catalog,
             os_access=self.os_access,
             mount=self.mount,
-            instructions=self.instructions,
-            dangerously_replace_instructions=self.dangerously_replace_instructions,
         )
 
     async def after_tool_execute(

@@ -94,7 +94,7 @@ Write and run Python code in a sandboxed environment.
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No classes**: class definitions are not supported
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`. These must be imported before use, just like in regular Python. For example: `import asyncio` then `results = await asyncio.gather(tool_one(...), tool_two(...))`. No other module is importable -- anything outside this list is unavailable. The functions listed below are already in scope; call them by name, do not import them from any module."""
+- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `datetime`, `os`, `pathlib`. These must be imported before use, just like in regular Python. For example: `import asyncio` then `results = await asyncio.gather(tool_one(...), tool_two(...))`."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -129,12 +129,7 @@ The last expression's value is automatically captured as the return value -- you
 structured data. Use `print()` only for supplementary logging or debug output.
 
 Returns the last expression's value directly. If `print()` was also called, returns \
-`{"output": "<printed text>", "result": <last expression>}`.
-
-Do not paste large data as a code literal -- a long string on one line causes an unterminated-literal \
-error; reference the variable holding a prior result instead. Tool results are already typed objects: \
-read their fields directly, do not `json.loads` them or index a string as a dict, and never pass a \
-truncation placeholder like `...` or `??` from a clamped result back as an argument.\
+`{"output": "<printed text>", "result": <last expression>}`.\
 """
 
 
@@ -152,16 +147,6 @@ def _base_description(*, has_os: bool, has_mount: bool) -> str:
     else:
         restriction = _NO_OS_RESTRICTION
     return f'{_RUN_CODE_DESCRIPTION_HEAD}\n{restriction}\n{_RUN_CODE_DESCRIPTION_TAIL}'
-
-
-def default_run_code_instructions(*, has_os: bool = False, has_mount: bool = False) -> str:
-    """The built-in `run_code` prose, so you can build on it for `CodeMode.instructions`.
-
-    Pass `has_os`/`has_mount` matching the `CodeMode` config you use them with, so the
-    OS-access restriction line matches what the sandbox actually allows. The tool catalog
-    is appended by `CodeMode` itself and is not part of this string.
-    """
-    return _base_description(has_os=has_os, has_mount=has_mount)
 
 
 def _functions_header(*, has_sync: bool, has_async: bool) -> str:
@@ -296,15 +281,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     so Tool Search discoveries don't bust the tool-definitions cache prefix.
     """
 
-    instructions: str | None = None
-    """Extra prose appended after the built-in `run_code` base prose (catalog still follows).
-    `None` uses the built-in prose alone. Set via `CodeMode.instructions`."""
-
-    dangerously_replace_instructions: str | None = None
-    """Fully replace the built-in `run_code` base prose (the tool catalog is always appended).
-    `None` keeps the built-in prose. Set via `CodeMode.dangerously_replace_instructions`.
-    Mutually exclusive with `instructions` (enforced by `CodeMode.__post_init__`)."""
-
     # init=False so `replace()` in `for_run` produces a fresh instance with _repl=None,
     # giving each agent run isolated REPL state. Lazy-initialized on first call_tool.
     _repl: MontyRepl | None = field(default=None, init=False, repr=False)
@@ -391,7 +367,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         has_os = self.os_access is not None
         has_mount = self.mount is not None
         if self.dynamic_catalog:
-            description = self._resolved_base(has_os=has_os, has_mount=has_mount)
+            description = _base_description(has_os=has_os, has_mount=has_mount)
             self._last_catalog = self._render_catalog(callable_defs)
         else:
             description = self._build_description(callable_defs, has_os=has_os, has_mount=has_mount)
@@ -664,19 +640,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             callable_defs[safe_name] = td
         return callable_defs, sanitized_to_original
 
-    def _resolved_base(self, *, has_os: bool, has_mount: bool) -> str:
-        """The base prose: a full replacement, the built-in default, or default + appended text."""
-        if self.dangerously_replace_instructions is not None:
-            return self.dangerously_replace_instructions
-        base = _base_description(has_os=has_os, has_mount=has_mount)
-        if self.instructions is None:
-            return base
-        return f'{base}\n\n{self.instructions}'
-
-    def _build_description(self, callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool) -> str:
+    @staticmethod
+    def _build_description(callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool) -> str:
         """Render the `run_code` description: base prose + TypedDicts + function signatures."""
-        base = self._resolved_base(has_os=has_os, has_mount=has_mount)
-        catalog = self._render_catalog(callable_defs)
+        base = _base_description(has_os=has_os, has_mount=has_mount)
+        catalog = CodeModeToolset._render_catalog(callable_defs)
         if not catalog:
             return base
         return base + '\n\n' + catalog
