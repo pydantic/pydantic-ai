@@ -5045,10 +5045,7 @@ async def test_run_stream_events_break_cleanup():
     # __aexit__ closes the iterator and drains the background task; no task leak, no error.
 
 
-async def test_run_stream_events_unstarted_iterator_cleanup():
-    """Entering and exiting the CM without advancing the iterator must not start the background task."""
-    producer_started = asyncio.Event()
-
+def make_cleanup_signal_test_model(producer_started: asyncio.Event) -> type[TestModel]:
     class CleanupSignalTestModel(TestModel):
         @asynccontextmanager
         async def request_stream(
@@ -5067,7 +5064,15 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
                 producer_started.set()
                 yield stream
 
-    agent = Agent(CleanupSignalTestModel(custom_output_text='hello'))
+    return CleanupSignalTestModel
+
+
+async def test_run_stream_events_unstarted_iterator_cleanup():
+    """Entering and exiting the CM without advancing the iterator must not start the background task."""
+    producer_started = asyncio.Event()
+    cleanup_signal_test_model = make_cleanup_signal_test_model(producer_started)
+
+    agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
     async with agent.run_stream_events(''):
         pass
@@ -5085,26 +5090,9 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
 
 async def test_run_stream_events_first_iteration_starts_background_task():
     producer_started = asyncio.Event()
+    cleanup_signal_test_model = make_cleanup_signal_test_model(producer_started)
 
-    class CleanupSignalTestModel(TestModel):
-        @asynccontextmanager
-        async def request_stream(
-            self,
-            messages: list[ModelMessage],
-            model_settings: models.ModelSettings | None,
-            model_request_parameters: models.ModelRequestParameters,
-            run_context: RunContext | None = None,
-        ) -> AsyncGenerator[models.StreamedResponse]:
-            async with super().request_stream(
-                messages,
-                model_settings,
-                model_request_parameters,
-                run_context,
-            ) as stream:
-                producer_started.set()
-                yield stream
-
-    agent = Agent(CleanupSignalTestModel(custom_output_text='hello'))
+    agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
     async with agent.run_stream_events('') as events:
         await anext(events)
