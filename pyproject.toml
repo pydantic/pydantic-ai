@@ -151,9 +151,9 @@ lint = [
     "pyright>=1.1.408",
     "ruff>=0.14.14",
     # The gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim) backs its
-    # Bash/Read/Write/Edit tools with harness FileSystem/Shell, so pyright needs
-    # the harness installed to resolve those types. Keep this in sync with the
-    # runner's pin (.github/scripts/pydantic-ai-runner).
+    # file/shell tools (Bash/Read/Write/Edit/Grep/Glob/LS) with harness
+    # FileSystem/Shell, so pyright needs the harness installed to resolve those
+    # types. Keep this in sync with the runner's pin (.github/scripts/pydantic-ai-runner).
     "pydantic-ai-harness>=0.4.0",
 ]
 docs = [

@@ -1,13 +1,22 @@
-"""Claude's `LS` tool — list a workspace directory's entries."""
+"""Claude's `LS` tool -- list a workspace directory's entries.
 
-from .shared import attach_context, clip, resolve
+Backed by pydantic-ai-harness's `FileSystemToolset.list_directory`: path
+containment and symlink resolution come from the harness, which lists entries
+(relative to the workspace root, with type markers and sizes) and skips
+dot-prefixed paths. The Claude `LS` signature is preserved and the
+directory-scoped AGENTS.md / CLAUDE.md context blocks are still prepended.
+"""
+
+from pydantic_ai.exceptions import ModelRetry
+
+from ._backends import filesystem
+from .shared import attach_context, clip
 
 
-def list_dir(path: str = '.') -> str:
+async def list_dir(path: str = '.') -> str:
     """List a workspace directory's entries (directories marked with `/`)."""
     try:
-        p = resolve(path)
-        listing = '\n'.join(sorted(e.name + ('/' if e.is_dir() else '') for e in p.iterdir())) or '(empty)'
-        return clip(attach_context(path) + listing)
-    except OSError as exc:
+        listing = await filesystem().list_directory(path)
+    except ModelRetry as exc:
         return f'error: {exc}'
+    return clip(attach_context(path) + listing)
