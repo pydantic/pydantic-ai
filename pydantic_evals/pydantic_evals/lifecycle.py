@@ -34,7 +34,7 @@ class CaseLifecycle(Generic[InputsT, OutputT, MetadataT]):
     2. Task runs
     3. `prepare_context()` — called after task, before evaluators; can enrich metrics/attributes
     4. Evaluators run
-    5. `teardown()` — called after evaluators complete; receives the full result
+    5. `teardown()` — called after evaluators complete; receives the full result (or `None` when interrupted)
 
     Exceptions raised by `setup()` or `prepare_context()` are caught and recorded as
     a `ReportCaseFailure`; `teardown()` is still called afterward so you can clean up.
@@ -56,7 +56,7 @@ class CaseLifecycle(Generic[InputsT, OutputT, MetadataT]):
                 ctx.metrics['custom_metric'] = 42
                 return ctx
 
-        dataset = Dataset(cases=[Case(name='test', inputs='hello')])
+        dataset = Dataset(name='lifecycle_demo', cases=[Case(name='test', inputs='hello')])
         report = dataset.evaluate_sync(lambda inputs: inputs.upper(), lifecycle=EnrichMetrics)
         print(report.cases[0].metrics['custom_metric'])
         #> 42
@@ -96,7 +96,7 @@ class CaseLifecycle(Generic[InputsT, OutputT, MetadataT]):
 
     async def teardown(
         self,
-        result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT],
+        result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT] | None,
     ) -> None:
         """Called after evaluators complete.
 
@@ -105,7 +105,8 @@ class CaseLifecycle(Generic[InputsT, OutputT, MetadataT]):
         inspection on failure).
 
         Args:
-            result: The evaluation result — either a `ReportCase` (success) or `ReportCaseFailure`.
+            result: The evaluation result — a `ReportCase` (success), `ReportCaseFailure`,
+                or `None` if the run ended without a report object (e.g. cancellation).
         """
 
     def __repr__(self) -> str:

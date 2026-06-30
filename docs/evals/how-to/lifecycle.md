@@ -14,7 +14,7 @@ Each case follows this flow:
 2. **Task runs**
 3. **`prepare_context()`** — called after task, before evaluators
 4. **Evaluators run**
-5. **`teardown()`** — called after evaluators complete
+5. **`teardown()`** — called after evaluators complete, or during cleanup if the case is interrupted
 
 ## Per-Case Setup and Teardown
 
@@ -40,12 +40,13 @@ class SetupFromMetadata(CaseLifecycle[str, str, dict]):
 
     async def teardown(
         self,
-        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict],
+        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict] | None,
     ) -> None:
         pass  # Clean up resources here
 
 
 dataset = Dataset(
+    name='setup_teardown',
     cases=[
         Case(name='no_prefix', inputs='hello', metadata={'prefix': ''}),
         Case(name='with_prefix', inputs='hello', metadata={'prefix': 'PREFIX:'}),
@@ -65,7 +66,7 @@ The case metadata drives per-case behavior without needing custom [`Case`][pydan
 
 ### Conditional Teardown
 
-The `teardown()` hook receives the full result, so you can vary cleanup logic based on success or failure — for example, keeping test environments up for manual inspection when a case fails:
+The `teardown()` hook receives the full result, so you can vary cleanup logic based on success or failure — for example, keeping test environments up for manual inspection when a case fails. The `result` can be `None` if evaluation is interrupted before the case produces a report result, so handle that branch when your cleanup depends on the case outcome:
 
 ```python
 from pydantic_evals import Case, Dataset
@@ -81,16 +82,22 @@ class ConditionalCleanup(CaseLifecycle[str, str, dict]):
 
     async def teardown(
         self,
-        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict],
+        result: ReportCase[str, str, dict] | ReportCaseFailure[str, str, dict] | None,
     ) -> None:
         keep_on_failure = (self.case.metadata or {}).get('keep_on_failure', False)
-        if isinstance(result, ReportCaseFailure) and keep_on_failure:
+        if result is None:
+            # abnormal exit
+            cleaned_up.append(self.resource_id)
+        elif isinstance(result, ReportCaseFailure) and keep_on_failure:
+            # case failed
             pass  # Keep resource for inspection
         else:
+            # case succeeded
             cleaned_up.append(self.resource_id)
 
 
 dataset = Dataset(
+    name='conditional_cleanup',
     cases=[
         Case(name='success_case', inputs='hello', metadata={'keep_on_failure': True}),
         Case(name='failure_case', inputs='fail', metadata={'keep_on_failure': True}),
@@ -137,6 +144,7 @@ class CheckLength(Evaluator):
 
 
 dataset = Dataset(
+    name='context_enrichment',
     cases=[Case(name='short', inputs='hi'), Case(name='long', inputs='hello world')],
     evaluators=[CheckLength()],
 )
@@ -166,7 +174,7 @@ class GenericMetricEnricher(CaseLifecycle):
         return ctx
 
 
-dataset = Dataset(cases=[Case(inputs='test')])
+dataset = Dataset(name='generic_lifecycle', cases=[Case(inputs='test')])
 report = dataset.evaluate_sync(lambda inputs: inputs, lifecycle=GenericMetricEnricher)
 
 print(report.cases[0].metrics['custom'])

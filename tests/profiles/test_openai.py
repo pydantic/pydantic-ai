@@ -8,13 +8,22 @@ Tests verify model profile detection for different OpenAI models, particularly:
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
+from typing import Annotated, Any
 
 import pytest
+from pydantic import BaseModel, Field
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.profiles.openai import (
+        OpenAIJsonSchemaTransformer,
+        OpenAIModelProfile,
+        openai_model_profile,
+        validate_openai_profile,
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -53,6 +62,8 @@ SAMPLING_PARAMS_CASES = [
     SamplingParamsCase(model='gpt-5.4-mini', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.4-nano', supports_reasoning=True, supports_reasoning_effort_none=True),
     SamplingParamsCase(model='gpt-5.4-pro', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.5', supports_reasoning=True, supports_reasoning_effort_none=True),
+    SamplingParamsCase(model='gpt-5.5-pro', supports_reasoning=True, supports_reasoning_effort_none=True),
     # no reasoning
     SamplingParamsCase(model='gpt-5.3-chat-latest'),
     SamplingParamsCase(model='gpt-5-chat'),
@@ -66,9 +77,9 @@ SAMPLING_PARAMS_CASES = [
 def test_sampling_params_support(case: SamplingParamsCase):
     """Test reasoning capability flags for OpenAI models."""
     profile = openai_model_profile(case.model)
-    assert isinstance(profile, OpenAIModelProfile)
-    assert profile.openai_supports_reasoning is case.supports_reasoning
-    assert profile.openai_supports_reasoning_effort_none is case.supports_reasoning_effort_none
+    assert isinstance(profile, dict)
+    assert profile.get('openai_supports_reasoning', False) is case.supports_reasoning
+    assert profile.get('openai_supports_reasoning_effort_none', False) is case.supports_reasoning_effort_none
 
 
 class TestEncryptedReasoningContent:
@@ -76,14 +87,101 @@ class TestEncryptedReasoningContent:
 
     def test_reasoning_models_support_encrypted_content(self):
         """Models with reasoning support encrypted reasoning content."""
-        for model in ['o1', 'o3', 'gpt-5', 'gpt-5.1', 'gpt-5.2', 'gpt-5.3-codex', 'gpt-5.4']:
+        for model in ['o1', 'o3', 'gpt-5', 'gpt-5.1', 'gpt-5.2', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.5']:
             profile = openai_model_profile(model)
-            assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_encrypted_reasoning_content is True
+            assert isinstance(profile, dict)
+            assert profile.get('openai_supports_encrypted_reasoning_content', False) is True
 
     def test_non_reasoning_models_no_encrypted_content(self):
         """Models without reasoning don't support encrypted reasoning content."""
         for model in ['gpt-4o', 'gpt-4o-mini', 'gpt-5-chat', 'gpt-5.3-chat-latest']:
             profile = openai_model_profile(model)
-            assert isinstance(profile, OpenAIModelProfile)
-            assert profile.openai_supports_encrypted_reasoning_content is False
+            assert isinstance(profile, dict)
+            assert profile.get('openai_supports_encrypted_reasoning_content', False) is False
+
+
+def test_send_back_thinking_parts_field_requires_thinking_field():
+    with pytest.raises(
+        UserError,
+        match='If `openai_chat_send_back_thinking_parts` is "field", `openai_chat_thinking_field` must be set to a non-None value.',
+    ):
+        validate_openai_profile(OpenAIModelProfile(openai_chat_send_back_thinking_parts='field'))
+
+
+def test_json_schema_transformer_keeps_supported_patterns():
+    class MyModel(BaseModel):
+        simple_pattern: Annotated[str, Field(pattern='^my-pattern$')]
+
+    schema_transformer = OpenAIJsonSchemaTransformer(MyModel.model_json_schema(), strict=None)
+
+    assert schema_transformer.walk() == snapshot(
+        {
+            'properties': {'simple_pattern': {'pattern': '^my-pattern$', 'type': 'string'}},
+            'required': ['simple_pattern'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert schema_transformer.is_strict_compatible is True
+
+    escaped_schema_transformer = OpenAIJsonSchemaTransformer(
+        {
+            'properties': {'escaped_literal': {'pattern': '\\(?=USD', 'type': 'string'}},
+            'required': ['escaped_literal'],
+            'type': 'object',
+        },
+        strict=None,
+    )
+    assert escaped_schema_transformer.walk() == snapshot(
+        {
+            'properties': {'escaped_literal': {'pattern': '\\(?=USD', 'type': 'string'}},
+            'required': ['escaped_literal'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert escaped_schema_transformer.is_strict_compatible is True
+
+
+def test_json_schema_transformer_removes_unsupported_regex_lookarounds():
+    json_schema: dict[str, Any] = {
+        'properties': {
+            'before': {'pattern': '(?<=USD)\\d+', 'type': 'string'},
+            'after': {'pattern': '\\d+(?=USD)', 'type': 'string'},
+            'negative_before': {'pattern': '(?<!USD)\\d+', 'type': 'string'},
+            'negative_after': {'pattern': '\\d+(?!USD)', 'type': 'string'},
+        },
+        'required': ['before', 'after', 'negative_before', 'negative_after'],
+        'type': 'object',
+    }
+
+    schema_transformer = OpenAIJsonSchemaTransformer(json_schema, strict=None)
+
+    assert schema_transformer.walk() == snapshot(
+        {
+            'properties': {
+                'before': {'pattern': '(?<=USD)\\d+', 'type': 'string'},
+                'after': {'pattern': '\\d+(?=USD)', 'type': 'string'},
+                'negative_before': {'pattern': '(?<!USD)\\d+', 'type': 'string'},
+                'negative_after': {'pattern': '\\d+(?!USD)', 'type': 'string'},
+            },
+            'required': ['before', 'after', 'negative_before', 'negative_after'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+    assert schema_transformer.is_strict_compatible is False
+
+    assert OpenAIJsonSchemaTransformer(json_schema, strict=True).walk() == snapshot(
+        {
+            'properties': {
+                'before': {'type': 'string', 'description': 'pattern=(?<=USD)\\d+'},
+                'after': {'type': 'string', 'description': 'pattern=\\d+(?=USD)'},
+                'negative_before': {'type': 'string', 'description': 'pattern=(?<!USD)\\d+'},
+                'negative_after': {'type': 'string', 'description': 'pattern=\\d+(?!USD)'},
+            },
+            'required': ['before', 'after', 'negative_before', 'negative_after'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )

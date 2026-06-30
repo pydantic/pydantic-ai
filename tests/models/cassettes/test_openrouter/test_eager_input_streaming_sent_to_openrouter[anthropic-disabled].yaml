@@ -1,0 +1,93 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '326'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: hello
+        role: user
+      model: anthropic/claude-sonnet-4-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get weather for a city
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '910'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: Hello! How can I help you today?
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: end_turn
+      created: 1779760224
+      id: gen-1779760224-sMJGzTLJPgeLJ7PAeyJ7
+      model: anthropic/claude-4.5-sonnet-20250929
+      object: chat.completion
+      provider: Amazon Bedrock
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 12
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0.00183
+        cost_details:
+          upstream_inference_completions_cost: 0.00018
+          upstream_inference_cost: 0.00183
+          upstream_inference_prompt_cost: 0.00165
+        is_byok: false
+        prompt_tokens: 550
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 562
+    status:
+      code: 200
+      message: OK
+version: 1

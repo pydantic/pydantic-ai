@@ -15,6 +15,7 @@ from pydantic_ai._agent_graph import EndStrategy
 from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
 from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints
+from pydantic_ai.agent.abstract import AgentRetries
 from pydantic_ai.settings import ModelSettings
 
 if TYPE_CHECKING:
@@ -40,11 +41,9 @@ class AgentSpec(BaseModel):
     deps_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
     model_settings: dict[str, Any] | None = None
-    retries: int = 1
-    output_retries: int | None = None
-    end_strategy: EndStrategy = 'early'
+    retries: int | AgentRetries | None = None
+    end_strategy: EndStrategy = 'graceful'
     tool_timeout: float | None = None
-    instrument: bool | None = None
     metadata: dict[str, Any] | None = None
     capabilities: list[CapabilitySpec] = []
 
@@ -147,7 +146,7 @@ class AgentSpec(BaseModel):
                     'PyYAML is required to save YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None
             dumped_data = self.model_dump(mode='json', by_alias=True, context=context, exclude_defaults=True)
-            content = yaml.dump(dumped_data, sort_keys=False)
+            content = yaml.dump(dumped_data, sort_keys=False, allow_unicode=True)
             if schema_ref:
                 content = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}\n{content}'
             path.write_text(content, encoding='utf-8')
@@ -196,11 +195,9 @@ class AgentSpec(BaseModel):
             deps_schema: dict[str, Any] | None = None
             output_schema: dict[str, Any] | None = None
             model_settings: ModelSettings | None = None
-            retries: int = 1
-            output_retries: int | None = None
-            end_strategy: EndStrategy = 'early'
+            retries: int | AgentRetries | None = None
+            end_strategy: EndStrategy = 'graceful'
             tool_timeout: float | None = None
-            instrument: bool | None = None
             metadata: dict[str, Any] | None = None
             if capability_schema_types:  # pragma: no branch
                 capabilities: list[Union[tuple(capability_schema_types)]] = []  # pyright: ignore  # noqa: UP007

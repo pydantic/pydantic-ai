@@ -147,7 +147,7 @@ case1 = Case(
     metadata={'difficulty': 'easy'},
 )
 
-dataset = Dataset(cases=[case1])
+dataset = Dataset(name='capital_quiz', cases=[case1])
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -237,6 +237,7 @@ class MyEvaluator(Evaluator[str, str]):
 
 
 dataset = Dataset(
+    name='capital_quiz',
     cases=[case1],
     evaluators=[IsInstance(type_name='str'), MyEvaluator()],  # (2)!
 )

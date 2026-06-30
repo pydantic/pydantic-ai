@@ -16,7 +16,6 @@ import traceback
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from inspect import iscoroutinefunction
 from pathlib import Path
@@ -35,6 +34,7 @@ from typing_extensions import Self, TypeVar
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
 from pydantic_evals._utils import get_event_loop
 
+from . import _task_run
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._base import BaseEvaluator
@@ -196,6 +196,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return ctx.output == ctx.expected_output
 
     dataset = Dataset(
+        name='uppercase_tests',
         cases=[
             Case(name='test1', inputs={'text': 'Hello'}, expected_output='HELLO'),
             Case(name='test2', inputs={'text': 'World'}, expected_output='WORLD'),
@@ -225,8 +226,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     ```
     """
 
-    name: str | None = None
-    """Optional name of the dataset."""
+    name: str
+    """Name of the dataset."""
     cases: list[Case[InputsT, OutputT, MetadataT]]
     """List of test cases in the dataset."""
     evaluators: list[Evaluator[InputsT, OutputT, MetadataT]] = []
@@ -237,7 +238,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def __init__(
         self,
         *,
-        name: str | None = None,
+        name: str,
         cases: Sequence[Case[InputsT, OutputT, MetadataT]],
         evaluators: Sequence[Evaluator[InputsT, OutputT, MetadataT]] = (),
         report_evaluators: Sequence[ReportEvaluator[InputsT, OutputT, MetadataT]] = (),
@@ -245,7 +246,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """Initialize a new dataset with test cases and optional evaluators.
 
         Args:
-            name: Optional name for the dataset.
+            name: Name for the dataset.
             cases: Sequence of test cases to include in the dataset.
             evaluators: Optional sequence of evaluators to apply to all cases in the dataset.
             report_evaluators: Optional sequence of report evaluators that run on the full evaluation report.
@@ -277,16 +278,15 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         else:
             return [(case, case.name or f'Case {i}', None) for i, case in enumerate(self.cases, 1)]
 
-    # TODO in v2: Make everything not required keyword-only
     async def evaluate(
         self,
         task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
+        *,
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
         retry_task: RetryConfig | None = None,
         retry_evaluators: RetryConfig | None = None,
-        *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
@@ -368,7 +368,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         progress_bar.update(task_id, advance=1)
                     return result
 
-            if (context := eval_span.context) is None:  # pragma: no cover
+            if (context := eval_span.context) is None:
                 trace_id = None
                 span_id = None
             else:
@@ -411,12 +411,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
     def evaluate_sync(
         self,
         task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
+        *,
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
         retry_task: RetryConfig | None = None,
         retry_evaluators: RetryConfig | None = None,
-        *,
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
@@ -534,7 +534,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             metadata = getattr(c, '__pydantic_generic_metadata__', {})
             if len(args := (metadata.get('args', ()) or getattr(c, '__args__', ()))) == 3:  # pragma: no branch
                 return args
-        else:  # pragma: no cover
+        else:
             warnings.warn(
                 f'Could not determine the generic parameters for {cls}; using `Any` for each.'
                 f' You should explicitly set the generic parameters via `Dataset[MyInputs, MyOutput, MyMetadata]`'
@@ -727,9 +727,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases.append(row)
         if errors:
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
-        result = cls(name=dataset_model.name, cases=cases, report_evaluators=report_evaluators)
-        if result.name is None:
-            result.name = default_name
+        name = dataset_model.name if dataset_model.name is not None else default_name
+        if name is None:
+            raise ValueError('Dataset name is required: provide one in the serialized data or via `default_name`.')
+        result = cls(name=name, cases=cases, report_evaluators=report_evaluators)
         result.evaluators = dataset_evaluators
         return result
 
@@ -772,7 +773,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         context: dict[str, Any] = {'use_short_form': True}
         if fmt == 'yaml':
             dumped_data = self.model_dump(mode='json', by_alias=True, context=context)
-            content = yaml.dump(dumped_data, sort_keys=False)
+            content = yaml.dump(dumped_data, sort_keys=False, allow_unicode=True)
             if schema_ref:  # pragma: no branch
                 yaml_language_server_line = f'{_YAML_SCHEMA_LINE_PREFIX}{schema_ref}'
                 content = f'{yaml_language_server_line}\n{content}'
@@ -932,48 +933,6 @@ def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') 
         return _get_relative_path_reference(target, source.parent, _prefix=f'{_prefix}../')
 
 
-@dataclass
-class _TaskRun:
-    """Internal class to track metrics and attributes for a task run."""
-
-    attributes: dict[str, Any] = field(init=False, default_factory=dict[str, Any])
-    metrics: dict[str, int | float] = field(init=False, default_factory=dict[str, int | float])
-
-    def record_metric(self, name: str, value: int | float) -> None:
-        """Record a metric value.
-
-        Args:
-            name: The name of the metric.
-            value: The value of the metric.
-        """
-        self.metrics[name] = value
-
-    def increment_metric(self, name: str, amount: int | float) -> None:
-        """Increment a metric value.
-
-        Args:
-            name: The name of the metric.
-            amount: The amount to increment by.
-
-        Note:
-            If the current value is 0 and the increment amount is 0, no metric will be recorded.
-        """
-        current_value = self.metrics.get(name, 0)
-        incremented_value = current_value + amount
-        if current_value == 0 and incremented_value == 0:
-            return  # Avoid recording a metric that is always zero
-        self.record_metric(name, incremented_value)
-
-    def record_attribute(self, name: str, value: Any) -> None:
-        """Record an attribute value.
-
-        Args:
-            name: The name of the attribute.
-            value: The value of the attribute.
-        """
-        self.attributes[name] = value
-
-
 async def _run_task(
     task: Callable[[InputsT], Awaitable[OutputT] | OutputT],
     case: Case[InputsT, OutputT, MetadataT],
@@ -994,11 +953,11 @@ async def _run_task(
     """
 
     async def _run_once():
-        task_run_ = _TaskRun()
-        if _CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
+        task_run_ = _task_run.TaskRun()
+        if _task_run.CURRENT_TASK_RUN.get() is not None:  # pragma: no cover
             raise RuntimeError('A task run has already been entered. Task runs should not be nested')
 
-        token = _CURRENT_TASK_RUN.set(task_run_)
+        token = _task_run.CURRENT_TASK_RUN.set(task_run_)
         try:
             with (
                 logfire_span('execute {task}', task=get_unwrapped_function_name(task)) as task_span,
@@ -1013,35 +972,18 @@ async def _run_task(
             duration_ = _get_span_duration(task_span, fallback_duration)
             return task_run_, task_output_, duration_, span_tree_
         finally:
-            _CURRENT_TASK_RUN.reset(token)
+            _task_run.CURRENT_TASK_RUN.reset(token)
 
     if retry:
         # import from pydantic_ai.retries to trigger more descriptive import error if tenacity is missing
-        from pydantic_ai.retries import retry as tenacity_retry
+        from pydantic_ai.retries import retry as tenacity_retry  # pyright: ignore[reportPrivateImportUsage]
 
         _run_once = tenacity_retry(**retry)(_run_once)
 
     task_run, task_output, duration, span_tree = await _run_once()
 
     if isinstance(span_tree, SpanTree):  # pragma: no branch
-        # Idea for making this more configurable: replace the following logic with a call to a user-provided function
-        #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
-        #   That way users can customize this logic. We'd default to a function that does the current thing but also
-        #   allow `None` to disable it entirely.
-        for node in span_tree:
-            if 'gen_ai.request.model' not in node.attributes:
-                continue  # we only want to count the below specifically for the individual LLM requests, not agent runs
-            for k, v in node.attributes.items():
-                if k == 'gen_ai.operation.name' and v == 'chat':
-                    task_run.increment_metric('requests', 1)
-                elif not isinstance(v, int | float):
-                    continue
-                elif k == 'operation.cost':
-                    task_run.increment_metric('cost', v)
-                elif k.startswith('gen_ai.usage.details.'):
-                    task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
-                elif k.startswith('gen_ai.usage.'):
-                    task_run.increment_metric(k.removeprefix('gen_ai.usage.'), v)
+        _task_run.extract_span_tree_metrics(task_run, span_tree)
 
     return EvaluatorContext[InputsT, OutputT, MetadataT](
         name=case.name,
@@ -1077,6 +1019,7 @@ async def _run_report_evaluators(
                         error_message=f'{type(e).__name__}: {e}',
                         error_stacktrace=traceback.format_exc(),
                         source=report_eval.as_spec(),
+                        error_type=type(e).__name__,
                     )
                 )
             else:
@@ -1152,7 +1095,7 @@ async def _run_task_and_evaluators(
         A ReportCase containing the evaluation results.
     """
     lc: CaseLifecycle[Any, Any, Any] | None = None
-    result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]
+    result: ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT] | None = None
     trace_id: str | None = None
     span_id: str | None = None
     with logfire_span(
@@ -1243,19 +1186,20 @@ async def _run_task_and_evaluators(
                 trace_id=trace_id,
                 span_id=span_id,
             )
-
-        # Teardown exceptions are intentionally not caught here — they propagate
-        # to the caller. If your teardown may raise and you don't want it to crash
-        # the evaluation, handle exceptions within your teardown() implementation.
-        # If you don't like this behavior, let us know and we can change it.
-        if lc is not None:
-            await lc.teardown(result)
+        finally:
+            # Teardown exceptions are intentionally not caught here — they propagate
+            # to the caller. If your teardown may raise and you don't want it to crash
+            # the evaluation, handle exceptions within your teardown() implementation.
+            # If you don't like this behavior, let us know and we can change it.
+            if lc is not None:
+                await lc.teardown(result)
 
     if isinstance(result, ReportCase):
         # Update the total duration to reflect the teardown time.
         # Note this means that modifications to this field inside the teardown will not be reflected.
         result.total_duration = _get_span_duration(case_span, time.time() - t0)
 
+    assert result is not None
     return result
 
 
@@ -1300,9 +1244,6 @@ def _group_evaluator_outputs_by_type(
     return assertions, scores, labels
 
 
-_CURRENT_TASK_RUN = ContextVar['_TaskRun | None']('_CURRENT_TASK_RUN', default=None)
-
-
 def set_eval_attribute(name: str, value: Any) -> None:
     """Set an attribute on the current task run.
 
@@ -1310,7 +1251,7 @@ def set_eval_attribute(name: str, value: Any) -> None:
         name: The name of the attribute.
         value: The value of the attribute.
     """
-    current_case = _CURRENT_TASK_RUN.get()
+    current_case = _task_run.CURRENT_TASK_RUN.get()
     if current_case is not None:  # pragma: no branch
         current_case.record_attribute(name, value)
 
@@ -1322,7 +1263,7 @@ def increment_eval_metric(name: str, amount: int | float) -> None:
         name: The name of the metric.
         amount: The amount to increment by.
     """
-    current_case = _CURRENT_TASK_RUN.get()
+    current_case = _task_run.CURRENT_TASK_RUN.get()
     if current_case is not None:  # pragma: no branch
         current_case.increment_metric(name, amount)
 

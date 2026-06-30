@@ -1,5 +1,4 @@
 import datetime
-import json
 from collections.abc import Sequence
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -27,23 +26,26 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..cassette_utils import single_request_body
+from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
     from openai.types.chat import ChatCompletion
     from openai.types.chat.chat_completion import Choice
 
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
         _map_openrouter_provider_details,  # pyright: ignore[reportPrivateUsage]
         _openrouter_settings_to_openai_settings,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
+        _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -205,7 +207,7 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
     assert tool_call_part.tool_name == 'divide'
     assert tool_call_part.args == snapshot('{"numerator": 123, "denominator": 456, "on_inf": "infinity"}')
 
-    mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
     tool_call_message = mapped_messages[0]
     assert tool_call_message['role'] == 'assistant'
     assert tool_call_message.get('content') is None
@@ -253,7 +255,7 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     )
     messages.append(await model_request(model, messages))
 
-    openai_messages = await model._map_messages(messages, None)  # type: ignore[reportPrivateUsage]
+    openai_messages = await model._map_messages(messages, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assistant_message = openai_messages[1]
     assert assistant_message['role'] == 'assistant'
@@ -277,6 +279,47 @@ async def test_openrouter_preserve_reasoning_block(allow_model_requests: None, o
     assert 'data' in reasoning_encrypted
     assert reasoning_encrypted['type'] == 'reasoning.encrypted'
     assert reasoning_encrypted['format'] == 'openai-responses-v1'
+
+
+async def test_openrouter_thinking_only_response_mapping() -> None:
+    """A `ModelResponse` containing only OpenRouter `ThinkingPart`s still produces an assistant
+    message carrying `reasoning_details`, even though the base class would skip emitting any
+    message for an otherwise-empty response.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello!')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(
+                    content='thinking summary text',
+                    provider_name='openrouter',
+                    provider_details={
+                        'type': 'reasoning.summary',
+                        'format': 'openai-responses-v1',
+                    },
+                )
+            ],
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow up?')]),
+    ]
+
+    mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assistant_message = mapped[1]
+    assert assistant_message['role'] == 'assistant'
+    assert assistant_message.get('content') is None
+    assert assistant_message['reasoning_details'] == [  # type: ignore[reportGeneralTypeIssues]
+        {
+            'type': 'reasoning.summary',
+            'id': None,
+            'format': 'openai-responses-v1',
+            'index': None,
+            'summary': 'thinking summary text',
+        }
+    ]
 
 
 async def test_openrouter_video_url_mapping() -> None:
@@ -447,8 +490,7 @@ async def test_openrouter_binary_content_video_public_api(
     )
 
     assert vcr is not None
-    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
 
     video_content_part = request_body['messages'][0]['content'][1]
     assert video_content_part['type'] == 'video_url'
@@ -458,7 +500,7 @@ async def test_openrouter_binary_content_video_public_api(
 async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
-    agent = Agent(model, instructions='Be helpful.', retries=1)
+    agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Tell me a joke.')
     assert str(exc_info.value) == snapshot(
@@ -469,11 +511,11 @@ async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_a
 async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
-    agent = Agent(model, instructions='Be helpful.', retries=1)
+    agent = Agent(model, instructions='Be helpful.', retries={'tools': 1, 'output': 1})
 
     result = await agent.run('Tell me about Venus')
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
     )
 
@@ -481,7 +523,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
 
     result = await agent.run('Tell me about Mars', model_settings=settings)
 
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             input_tokens=17,
             output_tokens=2177,
@@ -564,7 +606,7 @@ async def test_openrouter_map_messages_reasoning(allow_model_requests: None, ope
     user_message = ModelRequest.user_text_prompt('Who are you. Think about it.')
     response = await model_request(model, [user_message])
 
-    mapped_messages = await model._map_messages([user_message, response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([user_message, response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     assert len(mapped_messages) == 2
     assert mapped_messages[1]['reasoning_details'] == snapshot(  # type: ignore[reportGeneralTypeIssues]
@@ -621,7 +663,7 @@ async def test_openrouter_tool_optional_parameters(allow_model_requests: None, o
     assert tool_call_part.tool_name == 'find_education_content'
     assert tool_call_part.args == snapshot(None)
 
-    mapped_messages = await model._map_messages([response], None)  # type: ignore[reportPrivateUsage]
+    mapped_messages = await model._map_messages([response], ModelRequestParameters())  # type: ignore[reportPrivateUsage]
     tool_call_message = mapped_messages[0]
     assert tool_call_message['role'] == 'assistant'
     assert tool_call_message.get('content') == snapshot("I'll search for education content for you.")
@@ -726,7 +768,7 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
         space_count: int
 
     model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
-    agent: Agent[None, InsertedLevel] = Agent(model, output_type=InsertedLevel)
+    agent: Agent[object, InsertedLevel] = Agent(model, output_type=InsertedLevel)
 
     @agent.tool_plain
     def insert_level_with_spaces(level: InsertLevelArg | None, spaces: list[SpaceArg]) -> str:
@@ -832,6 +874,52 @@ async def test_openrouter_url_citation_annotation_validation(openrouter_api_key:
     assert text_part.content == 'According to the source, this is the answer.'
 
 
+async def test_openrouter_service_tier_completion(openrouter_api_key: str) -> None:
+    """OpenRouter providers can return service_tier values outside the OpenAI Literal."""
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('google/gemini-2.5-flash', provider=provider)
+
+    message = ChatCompletionMessage.model_construct(role='assistant', content='hi')
+    choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
+    response = ChatCompletion.model_construct(
+        id='gen-123',
+        choices=[choice],
+        created=1234567890,
+        object='chat.completion',
+        model='google/gemini-2.5-flash',
+        provider='Google',
+        service_tier='standard',
+    )
+
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+    text_part = cast(TextPart, result.parts[0])
+    assert text_part.content == 'hi'
+
+
+async def test_openrouter_service_tier_chunk() -> None:
+    """OpenRouter streaming chunks can return service_tier values outside the OpenAI Literal."""
+    data = {
+        'id': 'gen-123',
+        'choices': [
+            {
+                'index': 0,
+                'delta': {'role': 'assistant', 'content': 'hi'},
+                'finish_reason': 'stop',
+                'native_finish_reason': 'stop',
+            }
+        ],
+        'created': 1234567890,
+        'model': 'google/gemini-2.5-flash',
+        'object': 'chat.completion.chunk',
+        'provider': 'Google',
+        'service_tier': 'on_demand',
+    }
+    result = _OpenRouterChatCompletionChunk.model_validate(data)
+    assert result.service_tier == 'on_demand'
+
+
 async def test_openrouter_document_url_no_force_download(
     allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ) -> None:
@@ -853,8 +941,7 @@ async def test_openrouter_document_url_no_force_download(
 
     # Verify URL was passed directly (not downloaded and base64-encoded)
     assert vcr is not None
-    assert len(vcr.requests) == 1, 'Should only have one request (to OpenRouter, not a download)'  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    request_body = single_request_body(vcr)
     file_content = request_body['messages'][0]['content'][1]
     assert file_content == snapshot(
         {
@@ -867,9 +954,9 @@ async def test_openrouter_document_url_no_force_download(
     )
 
 
-async def test_openrouter_supported_builtin_tools() -> None:
+async def test_openrouter_supported_native_tools() -> None:
     """Test that OpenRouterModel declares support for WebSearchTool."""
-    supported = OpenRouterModel.supported_builtin_tools()
+    supported = OpenRouterModel.supported_native_tools()
     assert WebSearchTool in supported
 
 
@@ -880,7 +967,7 @@ async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) ->
     model = OpenRouterModel('openai/gpt-4.1', provider=provider)
 
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[WebSearchTool(search_context_size='high')],
+        native_tools=[WebSearchTool(search_context_size='high')],
     )
 
     new_settings, _ = model.prepare_request(None, model_request_parameters)
@@ -913,7 +1000,7 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     """Test _openrouter_settings_to_openai_settings when WebSearchTool is configured."""
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[WebSearchTool(search_context_size='high')],
+        native_tools=[WebSearchTool(search_context_size='high')],
     )
 
     result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
@@ -936,7 +1023,7 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     web_tool = WebSearchTool(search_context_size='medium')
 
     model_request_parameters = ModelRequestParameters(
-        builtin_tools=[non_web_tool, web_tool],
+        native_tools=[non_web_tool, web_tool],
     )
 
     with patch.object(model.__class__.__bases__[0], 'prepare_request', return_value=({}, model_request_parameters)):
@@ -947,3 +1034,319 @@ async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrout
     assert 'plugins' in extra_body
     assert extra_body['plugins'] == [{'id': 'web'}]
     assert extra_body['web_search_options'] == {'search_context_size': 'medium'}
+
+
+def test_openrouter_nested_provider_response() -> None:
+    """OpenRouter sometimes nests the real response inside the 'provider' dict.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    nested_completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={
+            'id': 'gen-123',
+            'choices': [
+                {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': 'Hello from nested!'},
+                    'finish_reason': 'stop',
+                    'native_finish_reason': 'STOP',
+                    'logprobs': None,
+                }
+            ],
+            'model': 'google/gemini-3-flash-preview',
+            'object': 'chat.completion',
+            'provider': 'Google',
+        },
+        created=1234567890,
+        usage=None,
+    )
+
+    model_response = model._process_response(nested_completion)  # type: ignore[reportPrivateUsage]
+
+    assert model_response.parts == snapshot([TextPart(content='Hello from nested!')])
+    assert model_response.provider_details == snapshot(
+        {
+            'downstream_provider': 'Google',
+            'finish_reason': 'STOP',
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+        }
+    )
+
+
+def test_openrouter_nested_provider_null_name() -> None:
+    """Nested provider dict with provider=None falls back to 'unknown'."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={
+            'id': 'nested-gen-1',
+            'choices': [
+                {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': 'Hi'},
+                    'finish_reason': 'stop',
+                    'native_finish_reason': 'STOP',
+                    'logprobs': None,
+                }
+            ],
+            'model': 'openai/gpt-4.1-mini',
+            'object': 'chat.completion',
+            'provider': None,
+            'created': 1234567890,
+            'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15},
+        },
+        created=1234567890,
+    )
+
+    result = model._process_response(completion)  # type: ignore[reportPrivateUsage]
+    assert result.provider_details == snapshot(
+        {
+            'downstream_provider': 'unknown',
+            'finish_reason': 'STOP',
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+        }
+    )
+
+
+def test_openrouter_provider_dict_without_choices_raises() -> None:
+    """Provider is a dict with no 'choices' key — no unwrap happens, validation fails."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider={'some_key': 'some_value'},
+        created=1234567890,
+    )
+
+    with pytest.raises(UnexpectedModelBehavior):
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+
+def test_openrouter_error_with_null_fields() -> None:
+    """Error responses with null standard fields raise ModelHTTPError.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/3994.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    error_completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider=None,
+        created=1234567890,
+        usage=None,
+        error={'code': 400, 'message': 'Invalid request parameters'},
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model._process_response(error_completion)  # type: ignore[reportPrivateUsage]
+
+    assert exc_info.value.status_code == 400
+    assert 'Invalid request parameters' in str(exc_info.value)
+
+
+def test_openrouter_malformed_error_fallthrough() -> None:
+    """Malformed error data falls through to validation, surfacing as UnexpectedModelBehavior."""
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        model=None,
+        object=None,
+        provider=None,
+        created=1234567890,
+        usage=None,
+        error='something went wrong',
+    )
+
+    with pytest.raises(UnexpectedModelBehavior):
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+
+def test_openrouter_error_with_metadata() -> None:
+    """Real-world error response with metadata field from #3994.
+
+    OpenRouter returns error code 524 with extra metadata including the raw
+    error and provider name. The extra fields should be ignored.
+    """
+    provider = OpenRouterProvider(api_key='test-key')
+    model = OpenRouterModel('google/gemini-3-flash-preview', provider=provider)
+
+    completion = ChatCompletion.model_construct(
+        id=None,
+        choices=None,
+        created=1768361801,
+        model=None,
+        object=None,
+        service_tier=None,
+        system_fingerprint=None,
+        usage=None,
+        error={
+            'message': 'Provider returned error',
+            'code': 524,
+            'metadata': {'raw': 'error code: 524', 'provider_name': 'Google'},
+        },
+        user_id='org_xxx',
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+    assert exc_info.value.status_code == 524
+    assert 'Provider returned error' in str(exc_info.value)
+
+
+async def test_openrouter_thinking_false_profile_gated_model(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """Hybrid model whose intrinsic profile reports `supports_thinking=False` —
+    `thinking=False` still reaches the wire as `reasoning.effort='none'` because
+    OpenRouter's provider profile carries `supports_thinking=True`. See
+    `test_openrouter_with_reasoning` above for the default-on baseline on glm-4.6."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('z-ai/glm-4.6', provider=provider)
+    settings = OpenRouterModelSettings(thinking=False)
+
+    response = await model_request(
+        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['reasoning'] == {'effort': 'none'}
+
+    assert not any(isinstance(part, ThinkingPart) for part in response.parts)
+
+
+async def test_openrouter_thinking_true_emits_effort_medium(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """`thinking=True` is forwarded as `reasoning={'effort': 'medium', 'enabled': True}`.
+
+    The explicit `enabled: True` matters for reasoning-optional OpenRouter routes
+    (e.g. parts of `google/gemma-*`) that silently leave reasoning disabled when
+    only `effort` is set. No-op for reasoning-by-default models."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    settings = OpenRouterModelSettings(thinking=True)
+
+    response = await model_request(
+        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['reasoning'] == {'effort': 'medium', 'enabled': True}
+
+    # Response shape — pinning that `ThinkingPart` parsing survives the new wire format.
+    assert response.parts == snapshot(
+        [
+            ThinkingPart(
+                content=IsStr(),
+                id=None,
+                signature=IsStr(),
+                provider_name='openrouter',
+                provider_details={'format': 'anthropic-claude-v1', 'index': 0, 'type': 'reasoning.text'},
+            ),
+            TextPart(content='ok'),
+        ]
+    )
+    assert response.timestamp == IsDatetime()
+    assert response.provider_response_id == IsStr()
+
+
+async def test_openrouter_thinking_false_supports_thinking_model(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """Reasoning model whose intrinsic profile reports `supports_thinking=True` —
+    `thinking=False` reaches the wire as `reasoning.effort='none'` via the
+    transformer's unified-emit path."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    settings = OpenRouterModelSettings(thinking=False)
+
+    response = await model_request(
+        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['reasoning'] == {'effort': 'none'}
+
+    assert not any(isinstance(part, ThinkingPart) for part in response.parts)
+
+
+async def test_openrouter_thinking_high_emits_effort_high(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """`thinking='high'` is forwarded as `reasoning={'effort': 'high', 'enabled': True}`.
+
+    Companion to `test_openrouter_thinking_true_emits_effort_medium` — exercises the
+    `_OPENROUTER_EFFORT_MAP['high'] → 'high'` branch on the wire. Without this cassette
+    the only wire-level effort value covered was `'medium'` (via `thinking=True`),
+    leaving the `high`/`low`/`xhigh` branches unit-only."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=provider)
+    settings = OpenRouterModelSettings(thinking='high')
+
+    await model_request(
+        model, [ModelRequest.user_text_prompt('Reply with the single word: ok')], model_settings=settings
+    )
+
+    sent = single_request_body(vcr)
+    assert sent['reasoning'] == {'effort': 'high', 'enabled': True}
+
+
+@pytest.mark.parametrize(
+    'model_name,eager_enabled,expected_eager_key',
+    [
+        ('anthropic/claude-sonnet-4-5', True, True),
+        ('anthropic/claude-sonnet-4-5', False, False),
+        ('openai/gpt-5-mini', True, False),
+    ],
+    ids=['anthropic-enabled', 'anthropic-disabled', 'non-anthropic-enabled'],
+)
+async def test_eager_input_streaming_sent_to_openrouter(
+    allow_model_requests: None,
+    openrouter_api_key: str,
+    vcr: Cassette,
+    model_name: str,
+    eager_enabled: bool,
+    expected_eager_key: bool,
+) -> None:
+    """`eager_input_streaming` should appear on the outgoing tool payload only when enabled AND routed to Anthropic."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel(model_name, provider=provider)
+    my_tool = ToolDefinition(name='get_weather', description='Get weather for a city')
+
+    await model_request(
+        model,
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=AnthropicModelSettings(anthropic_eager_input_streaming=eager_enabled),
+        model_request_parameters=ModelRequestParameters(function_tools=[my_tool], allow_text_output=True),
+    )
+
+    request_body = single_request_body(vcr)
+    tool_param = request_body['tools'][0]
+    assert tool_param['function']['name'] == 'get_weather'
+    assert ('eager_input_streaming' in tool_param) is expected_eager_key
+    if expected_eager_key:
+        assert tool_param['eager_input_streaming'] is True

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
@@ -9,7 +8,9 @@ from typing import Any
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
+from .._utils import gather
 from ..exceptions import UserError
+from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -41,11 +42,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         return f'{self.__class__.__name__}({", ".join(toolset.label for toolset in self.toolsets)})'  # pragma: no cover
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        new_toolsets = [await t.for_run(ctx) for t in self.toolsets]
+        new_toolsets = await gather(*(t.for_run(ctx) for t in self.toolsets))
         return replace(self, toolsets=new_toolsets)
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        new_toolsets = [await t.for_run_step(ctx) for t in self.toolsets]
+        new_toolsets = await gather(*(t.for_run_step(ctx) for t in self.toolsets))
         if all(new is old for new, old in zip(new_toolsets, self.toolsets)):
             return self
         return replace(self, toolsets=new_toolsets)
@@ -63,7 +64,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
             self._exit_stack = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
+        toolsets_tools = await gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):
@@ -100,3 +101,14 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
+
+    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str | InstructionPart] | None:
+        results = await gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
+        parts: list[str | InstructionPart] = []
+        for r in results:
+            if r is not None:
+                if isinstance(r, (str, InstructionPart)):
+                    parts.append(r)
+                else:
+                    parts.extend(r)
+        return parts or None

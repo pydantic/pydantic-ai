@@ -1,27 +1,31 @@
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import get_args
+from typing import Any, cast, get_args
 
 import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
+    InstructionPart,
     InstrumentationSettings,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     MultiModalContent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RequestUsage,
+    RetryPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ThinkingPartDelta,
@@ -32,6 +36,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -99,6 +104,12 @@ def test_document_url():
     document_url = DocumentUrl(url='https://example.com/document', media_type='application/pdf')
     assert document_url.media_type == 'application/pdf'
     assert document_url.format == 'pdf'
+
+
+def test_text_content():
+    text_content = TextContent(content='Pydantic AI!', metadata={'foo': 'bar'})
+    assert text_content.content == 'Pydantic AI!'
+    assert text_content.metadata == {'foo': 'bar'}
 
 
 @pytest.mark.parametrize(
@@ -332,6 +343,17 @@ def test_binary_content_base64():
     assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
 
 
+def test_from_data_uri_base64():
+    bc = BinaryContent.from_data_uri('data:image/png;base64,SGVsbG8sIHdvcmxkIQ==')
+    assert bc.data == b'Hello, world!'
+    assert bc.media_type == 'image/png'
+
+
+def test_from_data_uri_non_base64():
+    with pytest.raises(ValueError, match='must be base64-encoded'):
+        BinaryContent.from_data_uri('data:text/plain,Hello%20World')
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
@@ -500,6 +522,43 @@ def test_pre_usage_refactor_messages_deserializable():
     )
 
 
+@pytest.mark.anyio
+async def test_legacy_vendor_message_history_replays_through_agent():
+    """1.x message history serialized with `vendor_details` / `vendor_id` keys still routes through `agent.run(message_history=...)`.
+
+    Backstop for the V2-RULES rule 4 (cross-history-replay): the deprecated `vendor_*` read properties
+    are gone in v2, but the validation aliases on `provider_details` / `provider_response_id` stay so
+    stored histories load.
+    """
+    legacy_history: list[dict[str, Any]] = [
+        {
+            'parts': [{'content': 'Hi', 'part_kind': 'user-prompt'}],
+            'kind': 'request',
+        },
+        {
+            'parts': [{'content': 'Hello!', 'part_kind': 'text'}],
+            'kind': 'response',
+            'model_name': 'gpt-5',
+            'provider_name': 'openai',
+            'vendor_details': {'finish_reason': 'stop'},
+            'vendor_id': 'chatcmpl-legacy',
+        },
+    ]
+    message_history = ModelMessagesTypeAdapter.validate_python(legacy_history)
+    response = next(m for m in message_history if isinstance(m, ModelResponse))
+    assert response.provider_details == {'finish_reason': 'stop'}
+    assert response.provider_response_id == 'chatcmpl-legacy'
+
+    agent = Agent(TestModel())
+    result = await agent.run('And now?', message_history=message_history)
+
+    replayed_response = next(
+        m for m in result.all_messages() if isinstance(m, ModelResponse) and m.model_name == 'gpt-5'
+    )
+    assert replayed_response.provider_details == {'finish_reason': 'stop'}
+    assert replayed_response.provider_response_id == 'chatcmpl-legacy'
+
+
 def test_file_part_has_content():
     filepart = FilePart(content=BinaryContent(data=b'', media_type='application/pdf'))
     assert not filepart.has_content()
@@ -548,7 +607,7 @@ def test_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
     ],
 )
 def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None):
-    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    part = NativeToolCallPart(tool_name='web_search', args=args)
     assert part.has_content()
 
 
@@ -560,7 +619,7 @@ def test_builtin_tool_call_part_has_content(args: dict[str, object] | str | None
     ],
 )
 def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str | None):
-    part = BuiltinToolCallPart(tool_name='web_search', args=args)
+    part = NativeToolCallPart(tool_name='web_search', args=args)
     assert not part.has_content()
 
 
@@ -607,7 +666,9 @@ def test_file_part_serialization_roundtrip():
                 'provider_response_id': None,
                 'finish_reason': None,
                 'run_id': None,
+                'conversation_id': None,
                 'metadata': None,
+                'state': 'complete',
             }
         ]
     )
@@ -631,6 +692,59 @@ def test_model_messages_type_adapter_preserves_run_id():
     assert [message.run_id for message in deserialized] == snapshot(['run-123', 'run-123'])
 
 
+def test_model_messages_type_adapter_preserves_conversation_id():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            conversation_id='conv-abc',
+        ),
+        ModelResponse(parts=[TextPart(content='Hello!')], conversation_id='conv-abc'),
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert [message.conversation_id for message in deserialized] == snapshot(['conv-abc', 'conv-abc'])
+
+
+def test_model_messages_type_adapter_back_compat_missing_conversation_id():
+    """Histories serialized before the field existed should deserialize with conversation_id=None."""
+    pre_pr_serialized = [
+        {
+            'kind': 'request',
+            'parts': [{'part_kind': 'user-prompt', 'content': 'Hello'}],
+            'run_id': 'run-123',
+        },
+        {
+            'kind': 'response',
+            'parts': [{'part_kind': 'text', 'content': 'Hi'}],
+            'run_id': 'run-123',
+        },
+    ]
+    deserialized = ModelMessagesTypeAdapter.validate_python(pre_pr_serialized)
+    assert all(m.conversation_id is None for m in deserialized)
+
+
+def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[TextContent(content='What is the weather like today?', metadata={'foo': 'bar'})],
+                    timestamp=datetime.now(tz=timezone.utc),
+                )
+            ],
+            run_id='run-123',
+            metadata={'key': 'value'},
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    deserialized = ModelMessagesTypeAdapter.validate_python(serialized)
+
+    assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})  # type: ignore[reportUnknownMemberType]
+
+
 def test_model_response_convenience_methods():
     response = ModelResponse(parts=[])
     assert response.text == snapshot(None)
@@ -638,7 +752,7 @@ def test_model_response_convenience_methods():
     assert response.files == snapshot([])
     assert response.images == snapshot([])
     assert response.tool_calls == snapshot([])
-    assert response.builtin_tool_calls == snapshot([])
+    assert response.native_tool_calls == snapshot([])
 
     response = ModelResponse(
         parts=[
@@ -646,9 +760,9 @@ def test_model_response_convenience_methods():
             ThinkingPart(content="And then, call the 'hello_world' tool"),
             TextPart(content="I'm going to"),
             TextPart(content=' generate an image'),
-            BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+            NativeToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
             FilePart(content=BinaryImage(data=b'fake', media_type='image/jpeg')),
-            BuiltinToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
+            NativeToolReturnPart(tool_name='image_generation', content={}, tool_call_id='123'),
             TextPart(content="I'm going to call"),
             TextPart(content=" the 'hello_world' tool"),
             ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123'),
@@ -667,11 +781,11 @@ And then, call the 'hello_world' tool\
     assert response.files == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.images == snapshot([BinaryImage(data=b'fake', media_type='image/jpeg', identifier='c053ec')])
     assert response.tool_calls == snapshot([ToolCallPart(tool_name='hello_world', args={}, tool_call_id='123')])
-    assert response.builtin_tool_calls == snapshot(
+    assert response.native_tool_calls == snapshot(
         [
             (
-                BuiltinToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
-                BuiltinToolReturnPart(
+                NativeToolCallPart(tool_name='image_generation', args={}, tool_call_id='123'),
+                NativeToolReturnPart(
                     tool_name='image_generation',
                     content={},
                     tool_call_id='123',
@@ -815,7 +929,7 @@ def test_uploaded_file_identifier_property():
     # Test with URL file_id (should still be hashed)
     uploaded_file_url = UploadedFile(
         file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
-        provider_name='google-gla',
+        provider_name='google',
     )
     assert uploaded_file_url.identifier == snapshot('d8d637')
 
@@ -876,7 +990,7 @@ def test_uploaded_file_in_otel_message_parts():
             'analyze this',
             UploadedFile(
                 file_id='https://generativelanguage.googleapis.com/v1beta/files/abc123',
-                provider_name='google-gla',
+                provider_name='google',
             ),
         ]
     )
@@ -1134,7 +1248,9 @@ def test_tool_return_content_nested_multimodal():
     tool_return_part = deserialized[0].parts[0]
     assert isinstance(tool_return_part, ToolReturnPart)
 
-    content = tool_return_part.content
+    # `ToolReturnPart`'s typed `ToolSearchReturnPart` subclass narrows `content` to a
+    # `TypedDict`; cast back to a plain dict so we can probe arbitrary keys here.
+    content = cast('dict[str, Any]', tool_return_part.content)
     assert isinstance(content, dict)
 
     # Items with kind: "image-url" should be ImageUrl
@@ -1152,7 +1268,7 @@ def test_tool_return_content_nested_multimodal():
     reloaded = ModelMessagesTypeAdapter.validate_json(reserialized)
     reloaded_tool_return = reloaded[0].parts[0]
     assert isinstance(reloaded_tool_return, ToolReturnPart)
-    reloaded_content = reloaded_tool_return.content
+    reloaded_content = cast('dict[str, Any]', reloaded_tool_return.content)
     assert isinstance(reloaded_content, dict)
 
     assert isinstance(reloaded_content['images'][0], ImageUrl)
@@ -1387,3 +1503,149 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
     part = ToolCallPart(tool_name='test_tool', args='[1, 2, 3]')
     with pytest.raises(AssertionError):
         part.args_as_dict(raise_if_invalid=True)
+
+
+def test_user_prompt_part_with_text_content():
+    part = UserPromptPart(
+        content=[
+            'Hi there',
+            TextContent(content='This is text content', metadata={'key': 'value'}),
+        ]
+    )
+    assert part.content[0] == 'Hi there'
+    assert part.content[1].metadata == snapshot({'key': 'value'})  # type: ignore[reportUnknownMemberType]
+
+
+class TestInstructionParts:
+    def test_join_helper(self):
+        """InstructionPart.join produces the correct joined string."""
+        parts = [
+            InstructionPart(content='First'),
+            InstructionPart(content='Second'),
+        ]
+        assert InstructionPart.join(parts) == 'First\n\nSecond'
+        assert InstructionPart.join([]) is None
+
+    def test_join_strips_whitespace(self):
+        """InstructionPart.join strips leading/trailing whitespace."""
+        parts = [InstructionPart(content='  Hello  ')]
+        assert InstructionPart.join(parts) == 'Hello'
+
+    def test_model_request_instructions_is_plain_string(self):
+        """ModelRequest.instructions is a plain str | None field."""
+        request = ModelRequest(parts=[], instructions='Hello world')
+        assert request.instructions == 'Hello world'
+
+    def test_model_request_instructions_default_none(self):
+        request = ModelRequest(parts=[])
+        assert request.instructions is None
+
+    def test_serialization_round_trip(self):
+        """Instructions string survives serialization and deserialization."""
+        original = ModelRequest(parts=[UserPromptPart('test')], instructions='static part\n\ndynamic part')
+
+        serialized = ModelMessagesTypeAdapter.dump_json([original])
+        deserialized = ModelMessagesTypeAdapter.validate_json(serialized)
+
+        msg = deserialized[0]
+        assert isinstance(msg, ModelRequest)
+        assert msg.instructions == 'static part\n\ndynamic part'
+
+    def test_repr(self):
+        """InstructionPart repr omits default values."""
+        part = InstructionPart(content='hello')
+        assert repr(part) == "InstructionPart(content='hello')"
+        dynamic_part = InstructionPart(content='world', dynamic=True)
+        assert repr(dynamic_part) == "InstructionPart(content='world', dynamic=True)"
+
+
+def test_retry_prompt_strips_input_from_top_level_errors():
+    """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('required_field',), 'msg': 'Field required', 'input': {'wrong_field': 'value'}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' not in response
+    assert '"required_field"' in response
+
+
+def test_retry_prompt_keeps_input_for_nested_errors():
+    """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' in response
+    assert '"sub_field"' in response
+
+
+def test_retry_prompt_mixed_top_level_and_nested_errors():
+    """When both top-level and nested errors exist, only top-level input should be stripped."""
+    part = RetryPromptPart(
+        content=[
+            {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
+            {
+                'type': 'missing',
+                'loc': ('items', 0, 'nested_field'),
+                'msg': 'Field required',
+                'input': {'nested_key': 'nested_val'},
+            },
+        ],
+    )
+    response = part.model_response()
+    # Nested error's input should be present
+    assert '"nested_key"' in response
+    # But root-level input should not
+    assert '"root_key"' not in response
+
+
+def test_retry_prompt_strips_input_from_top_level_type_errors():
+    """Top-level type/value errors also have input stripped, even though it's a small scalar value."""
+    part = RetryPromptPart(
+        content=[
+            {
+                'type': 'int_parsing',
+                'loc': ('age',),
+                'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                'input': 'not_a_number',
+            },
+        ],
+    )
+    response = part.model_response()
+    assert '"input"' not in response
+    assert '"age"' in response
+
+
+def test_retry_prompt_tool_call_keeps_input_at_top_level():
+    """Tool-call retries (`tool_name` set) must preserve `input` so the model sees what args it sent."""
+    part = RetryPromptPart(
+        tool_name='evaluate_content',
+        content=[
+            {'type': 'missing', 'loc': ('content',), 'msg': 'Field required', 'input': {}},
+        ],
+    )
+    response = part.model_response()
+    assert '"input": {}' in response
+    assert '"content"' in response
+
+
+def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
+    """Tool-call retries preserve `input` for nested errors too, matching the existing NativeOutput nested behavior."""
+    part = RetryPromptPart(
+        tool_name='evaluate_content',
+        content=[
+            {
+                'type': 'string_type',
+                'loc': ('items', 0, 'name'),
+                'msg': 'Input should be a valid string',
+                'input': 42,
+            },
+        ],
+    )
+    response = part.model_response()
+    assert '"input": 42' in response
+    assert '"name"' in response

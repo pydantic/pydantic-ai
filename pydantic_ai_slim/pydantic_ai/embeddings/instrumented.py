@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -10,15 +10,15 @@ from urllib.parse import urlparse
 
 from opentelemetry.util.types import AttributeValue
 
-from pydantic_ai.models.instrumented import (
+from pydantic_ai._instrumentation import (
     ANY_ADAPTER,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
     CostCalculationFailedWarning,
-    InstrumentationSettings,
 )
+from pydantic_ai.models.instrumented import InstrumentationSettings
 
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 from .wrapper import WrapperEmbeddingModel
 
@@ -71,7 +71,7 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
         inputs: list[str],
         input_type: EmbedInputType,
         settings: EmbeddingSettings | None,
-    ) -> Iterator[Callable[[EmbeddingResult], None]]:
+    ) -> Generator[Callable[[EmbeddingResult], None]]:
         operation = 'embeddings'
         span_name = f'{operation} {self.model_name}'
 
@@ -119,11 +119,14 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     price_calculation = None
 
                     def _record_metrics():
-                        token_attributes = {
+                        metric_attributes = {
                             GEN_AI_PROVIDER_NAME_ATTRIBUTE: provider_name,
                             'gen_ai.operation.name': operation,
                             GEN_AI_REQUEST_MODEL_ATTRIBUTE: request_model,
                             'gen_ai.response.model': response_model,
+                        }
+                        token_attributes = {
+                            **metric_attributes,
                             'gen_ai.token.type': 'input',
                         }
                         tokens = result.usage.input_tokens or 0
@@ -131,20 +134,12 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                             self.instrumentation_settings.tokens_histogram.record(tokens, token_attributes)
                             if price_calculation is not None:
                                 self.instrumentation_settings.cost_histogram.record(
-                                    float(getattr(price_calculation, 'input_price', 0.0)),
-                                    token_attributes,
+                                    float(price_calculation.total_price),
+                                    metric_attributes,
                                 )
 
                     nonlocal record_metrics
                     record_metrics = _record_metrics
-
-                    if not span.is_recording():
-                        return  # pragma: lax no cover
-
-                    attributes_to_set: dict[str, AttributeValue] = {
-                        **result.usage.opentelemetry_attributes(),
-                        'gen_ai.response.model': response_model,
-                    }
 
                     try:
                         price_calculation = result.cost()
@@ -155,7 +150,16 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
-                    else:
+
+                    if not span.is_recording():
+                        return  # pragma: lax no cover
+
+                    attributes_to_set: dict[str, AttributeValue] = {
+                        **result.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': response_model,
+                    }
+
+                    if price_calculation:
                         attributes_to_set['operation.cost'] = float(price_calculation.total_price)
 
                     embeddings = result.embeddings

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast, overload
@@ -15,9 +15,8 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallPart,
-    BuiltinToolReturnPart,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -27,8 +26,11 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -37,7 +39,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -47,14 +49,17 @@ from . import (
     StreamedResponse,
     check_allow_model_requests,
 )
+from ._tool_choice import resolve_tool_choice
 
 try:
     from huggingface_hub import (
         AsyncInferenceClient,
+        ChatCompletionInputFunctionName,
         ChatCompletionInputMessage,
         ChatCompletionInputMessageChunk,
         ChatCompletionInputTool,
         ChatCompletionInputToolCall,
+        ChatCompletionInputToolChoiceClass,
         ChatCompletionInputURL,
         ChatCompletionOutput,
         ChatCompletionOutputMessage,
@@ -68,6 +73,19 @@ except ImportError as _import_error:
         'Please install `huggingface_hub` to use Hugging Face Inference Providers, '
         'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
     ) from _import_error
+
+
+@contextmanager
+def _map_api_errors(model_name: str) -> Generator[None]:
+    try:
+        yield
+    except HfHubHTTPError as e:
+        raise ModelHTTPError(
+            status_code=e.response.status_code,
+            model_name=model_name,
+            body=e.response.content,
+        ) from e
+
 
 __all__ = (
     'HuggingFaceModel',
@@ -115,15 +133,13 @@ class HuggingFaceModelSettings(ModelSettings, total=False):
 
 
 @dataclass(init=False)
-class HuggingFaceModel(Model):
+class HuggingFaceModel(Model[AsyncInferenceClient]):
     """A model that uses Hugging Face Inference Providers.
 
     Internally, this uses the [HF Python client](https://github.com/huggingface/huggingface_hub) to interact with the API.
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
-
-    client: AsyncInferenceClient = field(repr=False)
 
     _model_name: str = field(repr=False)
     _provider: Provider[AsyncInferenceClient] = field(repr=False)
@@ -149,9 +165,12 @@ class HuggingFaceModel(Model):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self.client = provider.client
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
+
+    @property
+    def client(self) -> AsyncInferenceClient:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:
@@ -192,7 +211,7 @@ class HuggingFaceModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -201,7 +220,12 @@ class HuggingFaceModel(Model):
         response = await self._completions_create(
             messages, True, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
-        yield await self._process_streamed_response(response, model_request_parameters)
+        try:
+            yield await self._process_streamed_response(response, model_request_parameters)
+        finally:
+            aclose = getattr(response, 'aclose', None)
+            if aclose is not None:  # pragma: no branch
+                await aclose()
 
     @overload
     async def _completions_create(
@@ -228,18 +252,11 @@ class HuggingFaceModel(Model):
         model_settings: HuggingFaceModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> ChatCompletionOutput | AsyncIterable[ChatCompletionStreamOutput]:
-        tools = self._get_tools(model_request_parameters)
-
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
-            tool_choice = 'required'
-        else:
-            tool_choice = 'auto'
+        tools, tool_choice = self._get_tool_choice(model_settings, model_request_parameters)
 
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
-        try:
+        with _map_api_errors(self.model_name):
             return await self.client.chat.completions.create(  # type: ignore
                 model=self._model_name,
                 messages=hf_messages,  # type: ignore
@@ -258,12 +275,6 @@ class HuggingFaceModel(Model):
                 top_logprobs=model_settings.get('top_logprobs', None),
                 extra_body=model_settings.get('extra_body'),  # type: ignore
             )
-        except HfHubHTTPError as e:
-            raise ModelHTTPError(
-                status_code=e.response.status_code,
-                model_name=self.model_name,
-                body=e.response.content,
-            ) from e
 
     def _process_response(self, response: ChatCompletionOutput) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -274,7 +285,9 @@ class HuggingFaceModel(Model):
         items: list[ModelResponsePart] = []
 
         if content:
-            items.extend(split_content_into_text_and_thinking(content, self.profile.thinking_tags))
+            items.extend(
+                split_content_into_text_and_thinking(content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS))
+            )
         if tool_calls is not None:
             for c in tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
@@ -300,12 +313,18 @@ class HuggingFaceModel(Model):
         self, response: AsyncIterable[ChatCompletionStreamOutput], model_request_parameters: ModelRequestParameters
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
-        peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        peekable_response: _utils.PeekableAsyncStream[
+            ChatCompletionStreamOutput, AsyncIterable[ChatCompletionStreamOutput]
+        ] = _utils.PeekableAsyncStream(response)
+        with _map_api_errors(self.model_name):
+            first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Streamed response ended without content or tool calls'
             )
+
+        # huggingface_hub types streaming responses as AsyncIterable, but the stream=True
+        # response is an async generator at runtime.
 
         return HuggingFaceStreamedResponse(
             model_request_parameters=model_request_parameters,
@@ -317,8 +336,45 @@ class HuggingFaceModel(Model):
             _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
-        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+    @staticmethod
+    def _get_tool_choice(
+        model_settings: HuggingFaceModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[
+        list[ChatCompletionInputTool],
+        Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None,
+    ]:
+        """Get tools and tool choice for the model.
+
+        Returns a tuple of (tools, tool_choice).
+        """
+        resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        tool_defs = model_request_parameters.tool_defs
+
+        tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
+        if resolved_tool_choice in ('auto', 'required'):
+            tool_choice = resolved_tool_choice
+        elif resolved_tool_choice == 'none':
+            # Use native 'none' mode to keep tool definitions cached while disabling tool calls
+            tool_choice = 'none'
+        elif isinstance(resolved_tool_choice, tuple):
+            tool_choice_mode, tool_names = resolved_tool_choice
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                tool_choice = ChatCompletionInputToolChoiceClass(
+                    function=ChatCompletionInputFunctionName(name=next(iter(tool_names)))
+                )
+            else:
+                # Breaks caching, but HuggingFace doesn't support limiting tools via API arg
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = tool_choice_mode
+        else:
+            assert_never(resolved_tool_choice)
+
+        if not tool_defs:
+            return [], None
+
+        tools = [HuggingFaceModel._map_tool_definition(r) for r in tool_defs.values()]
+        return tools, tool_choice
 
     async def _map_messages(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
@@ -338,13 +394,16 @@ class HuggingFaceModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.thinking_tags
+                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
-                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+                    elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # This is currently never returned from huggingface
                         pass
                     elif isinstance(item, FilePart):  # pragma: no cover
                         # Files generated by models are not sent back to models that don't themselves generate files.
+                        pass
+                    elif isinstance(item, CompactionPart):  # pragma: no cover
+                        # Compaction parts are not sent back to models that don't support compaction.
                         pass
                     else:
                         assert_never(item)
@@ -358,9 +417,13 @@ class HuggingFaceModel(Model):
                 hf_messages.append(message_param)
             else:
                 assert_never(message)
-        if instructions := self._get_instructions(messages, model_request_parameters):
-            system_prompt_count = sum(1 for m in hf_messages if getattr(m, 'role', None) == 'system')
-            hf_messages.insert(system_prompt_count, ChatCompletionInputMessage(content=instructions, role='system'))
+        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+            system_prompt_count = next(
+                (i for i, m in enumerate(hf_messages) if getattr(m, 'role', None) != 'system'), len(hf_messages)
+            )
+            hf_messages[system_prompt_count:system_prompt_count] = [
+                ChatCompletionInputMessage(content=part.content, role='system') for part in instruction_parts
+            ]
         return hf_messages
 
     @staticmethod
@@ -430,8 +493,9 @@ class HuggingFaceModel(Model):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str):
-                    content.append(ChatCompletionInputMessageChunk(type='text', text=item))  # type: ignore
+                if isinstance(item, str | TextContent):
+                    text = item if isinstance(item, str) else item.content
+                    content.append(ChatCompletionInputMessageChunk(type='text', text=text))  # type: ignore
                 elif isinstance(item, ImageUrl):
                     url = ChatCompletionInputURL(url=item.url)
                     content.append(ChatCompletionInputMessageChunk(type='image_url', image_url=url))  # type: ignore
@@ -463,50 +527,60 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
     _model_name: str
     _model_profile: ModelProfile
-    _response: AsyncIterable[ChatCompletionStreamOutput]
+    _response: _utils.PeekableAsyncStream[ChatCompletionStreamOutput, AsyncIterable[ChatCompletionStreamOutput]]
     _provider_name: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
+    async def close_stream(self) -> None:
+        try:
+            # huggingface_hub types this as AsyncIterable, but at runtime it's an
+            # async generator that exposes aclose().
+            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        except RuntimeError as exc:
+            if not _utils.is_async_generator_already_running(exc):
+                raise
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        if self._provider_timestamp is not None:  # pragma: no branch
-            self.provider_details = {'timestamp': self._provider_timestamp}
-        async for chunk in self._response:
-            self._usage += _map_usage(chunk)
+        with _map_api_errors(self._model_name):
+            if self._provider_timestamp is not None:  # pragma: no branch
+                self.provider_details = {'timestamp': self._provider_timestamp}
+            async for chunk in self._response:
+                self._usage += _map_usage(chunk)
 
-            if chunk.id:  # pragma: no branch
-                self.provider_response_id = chunk.id
+                if chunk.id:  # pragma: no branch
+                    self.provider_response_id = chunk.id
 
-            try:
-                choice = chunk.choices[0]
-            except IndexError:
-                continue
+                try:
+                    choice = chunk.choices[0]
+                except IndexError:
+                    continue
 
-            if raw_finish_reason := choice.finish_reason:
-                self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                self.finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
+                if raw_finish_reason := choice.finish_reason:
+                    self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                    self.finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
-            # Handle the text part of the response
-            content = choice.delta.content
-            if content:
-                for event in self._parts_manager.handle_text_delta(
-                    vendor_part_id='content',
-                    content=content,
-                    thinking_tags=self._model_profile.thinking_tags,
-                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                ):
-                    yield event
+                # Handle the text part of the response
+                content = choice.delta.content
+                if content:
+                    for event in self._parts_manager.handle_text_delta(
+                        vendor_part_id='content',
+                        content=content,
+                        thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
+                        ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
+                    ):
+                        yield event
 
-            for dtc in choice.delta.tool_calls or []:
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=dtc.index,
-                    tool_name=dtc.function and dtc.function.name,  # type: ignore
-                    args=dtc.function and dtc.function.arguments,
-                    tool_call_id=dtc.id,
-                )
-                if maybe_event is not None:
-                    yield maybe_event
+                for dtc in choice.delta.tool_calls or []:
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=dtc.index,
+                        tool_name=dtc.function and dtc.function.name,  # type: ignore
+                        args=dtc.function and dtc.function.arguments,
+                        tool_call_id=dtc.id,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
 
     @property
     def model_name(self) -> str:
