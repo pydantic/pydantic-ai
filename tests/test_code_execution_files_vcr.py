@@ -32,7 +32,7 @@ from .conftest import try_import
 with try_import() as anthropic_imports_successful:
     import anthropic
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as openai_imports_successful:
@@ -159,6 +159,72 @@ async def test_anthropic_code_execution_files_multi_turn(allow_model_requests: N
     # Turn 2: container reused by id, *and* the same upload block re-sent — accepted by the API.
     assert second_body['container'] == container_id
     assert second_uploads == [upload_block]
+
+
+# Large instructions so the cacheable prefix (system + tools + user text) clears Anthropic's
+# ~1024-token minimum for claude-sonnet — otherwise a cache miss would be a too-small-to-cache
+# artifact rather than a real signal. The text is request-stable across turns.
+_CACHE_INSTRUCTIONS = (
+    'You are a meticulous data analyst. Always use the code execution tool to read and compute '
+    'over any attached CSV file before answering. '
+) + ' '.join(f'Guideline {i}: prefer exact arithmetic over estimation when analyzing tabular data.' for i in range(120))
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_caching_multi_turn(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """Prompt caching survives the `container_upload` tail-injection across multiple steps.
+
+    With `anthropic_cache_messages=True`, `cache_control` is placed by reverse-scanning the last
+    message for the last *cacheable* block. Because `container_upload` is excluded from
+    `_ANTHROPIC_CACHEABLE_PARAM_TYPES` and is appended after that scan runs, the marker lands on the
+    text block and never on the `container_upload`. This pins both halves of the guarantee against
+    the live API: (a) each turn `cache_control` sits on the pre-upload text, not on the upload, and
+    (b) turn 2 gets a real cache *read* — the cached prefix is reused despite the upload sitting
+    right after the cached block, proving the injection doesn't poison the prefix.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+
+    try:
+        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[
+                NativeTool(CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')]))
+            ],
+            instructions=_CACHE_INSTRUCTIONS,
+            model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+        )
+
+        first = await agent.run(_PROMPT)
+        second = await agent.run(
+            'Use the code execution tool again to report the average of the `value` column.',
+            message_history=first.all_messages(),
+        )
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    # (a) Placement: every request's last user message ends with `text`(cache_control), then an
+    #     uncached `container_upload`. The upload block never receives `cache_control`.
+    messages_requests = [r for r in vcr.requests if '/v1/messages' in r.uri]
+    assert len(messages_requests) == 2
+    for request in messages_requests:
+        last_user_content = [m for m in json.loads(request.body)['messages'] if m['role'] == 'user'][-1]['content']
+        cached_blocks = [b for b in last_user_content if 'cache_control' in b]
+        upload_blocks = [b for b in last_user_content if b['type'] == 'container_upload']
+        # exactly one cache breakpoint, and it is the text block (not the upload)
+        assert [b['type'] for b in cached_blocks] == ['text']
+        assert upload_blocks and all('cache_control' not in b for b in upload_blocks)
+
+    # (b) Cross-step cache hit: turn 1 writes the prefix, turn 2 reads it back.
+    assert first.usage.cache_write_tokens > 0
+    assert second.usage.cache_read_tokens > 0
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
