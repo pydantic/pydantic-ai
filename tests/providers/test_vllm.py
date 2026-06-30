@@ -162,6 +162,37 @@ def test_vllm_provider_model_profile(mocker: MockerFixture) -> None:
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
+def test_vllm_provider_model_profile_handles_hf_namespaces(mocker: MockerFixture) -> None:
+    # vLLM is typically served with Hugging Face repo IDs (`org/model`), like the docs example
+    # `Qwen/Qwen3-32B`, so the family must be detected from the bare name after the namespace and that
+    # bare name passed to the profile function.
+    provider = VLLMProvider(base_url='http://localhost:8000/v1/')
+    ns = 'pydantic_ai.providers.vllm'
+    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
+    google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
+    cohere_model_profile_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
+    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
+
+    meta_profile = provider.model_profile('meta-llama/Llama-3-8B-Instruct')
+    meta_model_profile_mock.assert_called_once_with('llama-3-8b-instruct')
+    assert meta_profile is not None
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+
+    google_profile = provider.model_profile('google/gemma-3-4b-it')
+    google_model_profile_mock.assert_called_once_with('gemma-3-4b-it')
+    assert google_profile is not None
+    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
+
+    # The bare name carries the family here (the `cohereforai` org does not).
+    provider.model_profile('CohereForAI/command-r')
+    cohere_model_profile_mock.assert_called_once_with('command-r')
+
+    # Regression guard: `mistralai/Mixtral` matches via the `mistralai` org, but its bare name
+    # `mixtral-...` does not start with `mistral`, so a naive namespace-strip would drop it.
+    provider.model_profile('mistralai/Mixtral-8x7B-Instruct-v0.1')
+    mistral_model_profile_mock.assert_called_once_with('mixtral-8x7b-instruct-v0.1')
+
+
 def test_vllm_provider_model_profile_is_case_insensitive(mocker: MockerFixture) -> None:
     provider = VLLMProvider(base_url='http://localhost:8000/v1/')
     qwen_model_profile_mock = mocker.patch('pydantic_ai.providers.vllm.qwen_model_profile', wraps=qwen_model_profile)

@@ -56,10 +56,15 @@ class VLLMProvider(Provider[AsyncOpenAI]):
         }
 
         model_name = model_name.lower()
+        # vLLM model names are usually Hugging Face repo IDs like `meta-llama/Llama-3-8B`, where the family
+        # appears after the org namespace. Match the prefix against the full id (so org-based families like
+        # `mistralai/...` keep matching) and the bare name after the namespace, and pass the bare name to the
+        # profile function so its own name-based detection (e.g. `qwen_model_profile`) sees a clean model id.
+        bare_name = model_name.rpartition('/')[2]
         profile = None
         for prefix, profile_func in prefix_to_profile.items():
-            if model_name.startswith(prefix):
-                profile = profile_func(model_name)
+            if model_name.startswith(prefix) or bare_name.startswith(prefix):
+                profile = profile_func(bare_name)
 
         # `json_schema_transformer` is a fallback (the upstream model profile wins if it set one). The other
         # overrides win on top: vLLM's /v1/chat/completions endpoint supports response_format with json_schema
