@@ -1,4 +1,5 @@
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -35,7 +36,14 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.messages import (
+    INVALID_JSON_KEY,
+    MULTI_MODAL_CONTENT_TYPES,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    is_multi_modal_content,
+    narrow_message_parts,
+)
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
@@ -1651,9 +1659,9 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     assert '"name"' in response
 
 
-def test_narrow_type_returns_input_unchanged_on_invalid_data():
-    """Promotion is best-effort: data that doesn't validate against the typed subclass's
-    shape leaves the part un-narrowed instead of raising.
+def test_narrow_type_leaves_claim_free_part_unchanged_on_invalid_data():
+    """Best-effort: a kwarg `tool_kind` claim whose data doesn't validate against the typed
+    subclass leaves the (claim-free) part untouched instead of raising.
 
     Not reachable as a unit through one public flow: each part class's lenient branch sits
     behind a different producer (dict-args providers for calls, UI adapters for returns),
@@ -1670,3 +1678,67 @@ def test_narrow_type_returns_input_unchanged_on_invalid_data():
 
     native_return = NativeToolReturnPart(tool_name='tool_search', tool_call_id='c2', content='oops')
     assert NativeToolReturnPart.narrow_type(native_return, tool_kind='tool-search') is native_return
+
+
+def test_narrow_type_strips_unsubstantiated_tool_kind_set_on_part():
+    """A `tool_kind` set directly on a part whose data doesn't validate against the typed subclass
+    is stripped (rather than left on a base part), across all four part classes.
+
+    Counterpart to the kwarg case above: there the claim is never on the part, here it is, so the
+    narrower must actively clear it.
+    """
+    call = ToolCallPart(tool_name='load_capability', args={'name': 'oops'}, tool_kind='capability-load')
+    assert ToolCallPart.narrow_type(call) == replace(call, tool_kind=None)
+
+    tool_return = ToolReturnPart(
+        tool_name='load_capability', tool_call_id='c1', content='not-a-dict', tool_kind='capability-load'
+    )
+    assert ToolReturnPart.narrow_type(tool_return) == replace(tool_return, tool_kind=None)
+
+    native_call = NativeToolCallPart(tool_name='tool_search', args={'bad': 1}, tool_kind='tool-search')
+    assert NativeToolCallPart.narrow_type(native_call) == replace(native_call, tool_kind=None)
+
+    native_return = NativeToolReturnPart(
+        tool_name='tool_search', tool_call_id='c2', content='oops', tool_kind='tool-search'
+    )
+    assert NativeToolReturnPart.narrow_type(native_return) == replace(native_return, tool_kind=None)
+
+
+def test_stripped_tool_kind_part_survives_roundtrip():
+    """A base part that kept an unvalidatable `tool_kind` would be routed back to the typed subclass
+    by the discriminator and fail validation on reload; stripping it preserves the round-trip."""
+    invalid = ToolReturnPart(
+        tool_name='load_capability', tool_call_id='c1', content='not-a-dict', tool_kind='capability-load'
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolReturnPart.narrow_type(invalid)])]
+    reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
+    assert type(reloaded[0].parts[0]) is ToolReturnPart
+
+
+def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
+    """`narrow_message_parts` promotes shape-valid claims to their typed subclass and leaves parts
+    without a `tool_kind` untouched (same object), so callers can hand it a whole history."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='load_capability', tool_call_id='c1', args={'id': 'foo'}, tool_kind='capability-load'
+                ),
+                TextPart(content='hello'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='load_capability',
+                    tool_call_id='c1',
+                    content={'instructions': 'hi'},
+                    tool_kind='capability-load',
+                )
+            ]
+        ),
+    ]
+    narrowed = narrow_message_parts(messages)
+    assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
+    assert narrowed[0].parts[1] is messages[0].parts[1]
+    assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart

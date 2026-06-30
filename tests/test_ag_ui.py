@@ -1721,7 +1721,7 @@ def test_load_tool_kind_falls_back_to_call_claim() -> None:
                     ToolCall(
                         id='load-foobar',
                         function=FunctionCall(name='load_capability', arguments='{"id": "foobar"}'),
-                        encrypted_value='{"tool_kind": "capability-load"}',
+                        encrypted_value='{"pydantic_ai": {"tool_kind": "capability-load"}}',
                     )
                 ],
             ),
@@ -1744,7 +1744,7 @@ def test_load_tool_kind_error_result_stays_plain() -> None:
                     ToolCall(
                         id='load-foobar',
                         function=FunctionCall(name='load_capability', arguments='{"name": "foobar"}'),
-                        encrypted_value='{"tool_kind": "capability-load"}',
+                        encrypted_value='{"pydantic_ai": {"tool_kind": "capability-load"}}',
                     )
                 ],
             ),
@@ -1763,10 +1763,18 @@ def test_load_tool_kind_error_result_stays_plain() -> None:
 
 @pytest.mark.parametrize(
     'encrypted_value',
-    ['not json', '"a string"', '[1]', '{"tool_kind": "unknown-kind"}'],
+    [
+        'not json',
+        '"a string"',
+        '[1]',
+        # A genuine provider blob or an un-namespaced claim (no `pydantic_ai` key) is never honored.
+        '{"tool_kind": "capability-load"}',
+        # A namespaced claim with an unknown kind is rejected by the `ToolPartKind` filter.
+        '{"pydantic_ai": {"tool_kind": "unknown-kind"}}',
+    ],
 )
 def test_load_tool_kind_garbage_encrypted_value(encrypted_value: str) -> None:
-    """`encrypted_value` is client-supplied: anything malformed loads as a plain part."""
+    """`encrypted_value` is client-supplied: anything malformed or un-namespaced loads as a plain part."""
     loaded = AGUIAdapter.load_messages(
         [
             AssistantMessage(
@@ -1795,7 +1803,7 @@ def test_load_tool_kind_unparseable_result_content_stays_plain() -> None:
                     ToolCall(
                         id='load-foobar',
                         function=FunctionCall(name='load_capability', arguments='{"id": "foobar"}'),
-                        encrypted_value='{"tool_kind": "capability-load"}',
+                        encrypted_value='{"pydantic_ai": {"tool_kind": "capability-load"}}',
                     )
                 ],
             ),
@@ -1870,7 +1878,7 @@ async def test_run_stream_load_capability_tool_kind_encrypted_value(
         'timestamp': IsInt(),
         'subtype': 'tool-call',
         'entityId': 'load-1',
-        'encryptedValue': '{"tool_kind": "capability-load"}',
+        'encryptedValue': '{"pydantic_ai": {"tool_kind": "capability-load"}}',
     }
     expected: list[dict[str, Any]] = [
         {
@@ -1939,7 +1947,7 @@ async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
         'timestamp': IsInt(),
         'subtype': 'tool-call',
         'entityId': builtin_id,
-        'encryptedValue': '{"tool_kind": "tool-search"}',
+        'encryptedValue': '{"pydantic_ai": {"tool_kind": "tool-search"}}',
     }
     expected: list[dict[str, Any]] = [
         {

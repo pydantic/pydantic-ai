@@ -1313,23 +1313,25 @@ class ToolReturnPart(BaseToolReturnPart):
         """Promote a base `ToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
         Promotion is best-effort: the input is returned unchanged when neither the `tool_kind` kwarg
-        nor `part.tool_kind` resolves to a registered subclass, and also when the part's data doesn't
-        validate against the typed subclass's shape (e.g. the model emitted schema-violating args) —
-        strict validation belongs to the point of use, like the tool's args validator at execution
-        time. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone, dropping the need for an upstream
-        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
-        promotes automatically via the discriminated-union dispatch on
-        [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
+        nor `part.tool_kind` resolves to a registered subclass. When a registered subclass exists but
+        the part's data doesn't validate against its shape (e.g. forged client metadata, or a model
+        that emitted schema-violating args), the unsubstantiated `tool_kind` is stripped and the plain
+        part returned — strict validation belongs to the point of use, like the tool's args validator
+        at execution time, and a base part left carrying a `tool_kind` it can't be narrowed to would
+        not survive a [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]
+        round-trip (the discriminator routes it back to the typed subclass and fails the same way).
+        Pass `tool_kind` to inject the discriminator inline, or set it on `part` directly. Use this on
+        direct construction; Pydantic deserialization promotes automatically via the
+        discriminated-union dispatch on [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
         """
         kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
+        narrower = _TOOL_RETURN_NARROWERS.get(kind) if kind is not None else None
+        if narrower is None:
             return part
-        narrower = _TOOL_RETURN_NARROWERS.get(kind)
         try:
-            return narrower(part) if narrower else part
+            return narrower(part)
         except pydantic.ValidationError:
-            return part
+            return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
 
 @dataclass(repr=False)
@@ -1364,22 +1366,25 @@ class NativeToolReturnPart(BaseToolReturnPart):
         """Promote a base `NativeToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
         Promotion is best-effort: the input is returned unchanged when neither the `tool_kind` kwarg
-        nor `part.tool_kind` resolves to a registered subclass, and also when the part's data doesn't
-        validate against the typed subclass's shape (e.g. the model emitted schema-violating args) —
-        strict validation belongs to the point of use, like the tool's args validator at execution
-        time. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
-        deserialization promotes automatically via the discriminated-union dispatch on
-        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        nor `part.tool_kind` resolves to a registered subclass. When a registered subclass exists but
+        the part's data doesn't validate against its shape (e.g. forged client metadata, or a model
+        that emitted schema-violating args), the unsubstantiated `tool_kind` is stripped and the plain
+        part returned — strict validation belongs to the point of use, like the tool's args validator
+        at execution time, and a base part left carrying a `tool_kind` it can't be narrowed to would
+        not survive a [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]
+        round-trip (the discriminator routes it back to the typed subclass and fails the same way).
+        Pass `tool_kind` to inject the discriminator inline, or set it on `part` directly. Use this on
+        direct construction; Pydantic deserialization promotes automatically via the
+        discriminated-union dispatch on [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
         """
         kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
+        narrower = _NATIVE_RETURN_NARROWERS.get(kind) if kind is not None else None
+        if narrower is None:
             return part
-        narrower = _NATIVE_RETURN_NARROWERS.get(kind)
         try:
-            return narrower(part) if narrower else part
+            return narrower(part)
         except pydantic.ValidationError:
-            return part
+            return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -1854,23 +1859,25 @@ class ToolCallPart(BaseToolCallPart):
         """Promote a base `ToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
         Promotion is best-effort: the input is returned unchanged when neither the `tool_kind` kwarg
-        nor `part.tool_kind` resolves to a registered subclass, and also when the part's data doesn't
-        validate against the typed subclass's shape (e.g. the model emitted schema-violating args) —
-        strict validation belongs to the point of use, like the tool's args validator at execution
-        time. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone, dropping the need for an upstream
-        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
-        promotes automatically via the discriminated-union dispatch on
-        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        nor `part.tool_kind` resolves to a registered subclass. When a registered subclass exists but
+        the part's data doesn't validate against its shape (e.g. forged client metadata, or a model
+        that emitted schema-violating args), the unsubstantiated `tool_kind` is stripped and the plain
+        part returned — strict validation belongs to the point of use, like the tool's args validator
+        at execution time, and a base part left carrying a `tool_kind` it can't be narrowed to would
+        not survive a [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]
+        round-trip (the discriminator routes it back to the typed subclass and fails the same way).
+        Pass `tool_kind` to inject the discriminator inline, or set it on `part` directly. Use this on
+        direct construction; Pydantic deserialization promotes automatically via the
+        discriminated-union dispatch on [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
         """
         kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
+        narrower = _TOOL_CALL_NARROWERS.get(kind) if kind is not None else None
+        if narrower is None:
             return part
-        narrower = _TOOL_CALL_NARROWERS.get(kind)
         try:
-            return narrower(part) if narrower else part
+            return narrower(part)
         except pydantic.ValidationError:
-            return part
+            return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
 
 @dataclass(repr=False)
@@ -1922,22 +1929,25 @@ class NativeToolCallPart(BaseToolCallPart):
         """Promote a base `NativeToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
         Promotion is best-effort: the input is returned unchanged when neither the `tool_kind` kwarg
-        nor `part.tool_kind` resolves to a registered subclass, and also when the part's data doesn't
-        validate against the typed subclass's shape (e.g. the model emitted schema-violating args) —
-        strict validation belongs to the point of use, like the tool's args validator at execution
-        time. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
-        deserialization promotes automatically via the discriminated-union dispatch on
-        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        nor `part.tool_kind` resolves to a registered subclass. When a registered subclass exists but
+        the part's data doesn't validate against its shape (e.g. forged client metadata, or a model
+        that emitted schema-violating args), the unsubstantiated `tool_kind` is stripped and the plain
+        part returned — strict validation belongs to the point of use, like the tool's args validator
+        at execution time, and a base part left carrying a `tool_kind` it can't be narrowed to would
+        not survive a [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]
+        round-trip (the discriminator routes it back to the typed subclass and fails the same way).
+        Pass `tool_kind` to inject the discriminator inline, or set it on `part` directly. Use this on
+        direct construction; Pydantic deserialization promotes automatically via the
+        discriminated-union dispatch on [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
         """
         kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
+        narrower = _NATIVE_CALL_NARROWERS.get(kind) if kind is not None else None
+        if narrower is None:
             return part
-        narrower = _NATIVE_CALL_NARROWERS.get(kind)
         try:
-            return narrower(part) if narrower else part
+            return narrower(part)
         except pydantic.ValidationError:
-            return part
+            return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
 
 # Registry of typed promoters for `NativeToolCallPart` / `NativeToolReturnPart`.
@@ -2287,6 +2297,49 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
+
+
+def _narrow_response_part(part: ModelResponsePart) -> ModelResponsePart:
+    if isinstance(part, NativeToolCallPart):
+        return NativeToolCallPart.narrow_type(part)
+    if isinstance(part, NativeToolReturnPart):
+        return NativeToolReturnPart.narrow_type(part)
+    if isinstance(part, ToolCallPart):
+        return ToolCallPart.narrow_type(part)
+    return part
+
+
+def _narrow_request_part(part: ModelRequestPart) -> ModelRequestPart:
+    if isinstance(part, ToolReturnPart):
+        return ToolReturnPart.narrow_type(part)
+    return part
+
+
+def narrow_message_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Promote each tool call/return part across `messages` to its typed subclass via its `tool_kind`.
+
+    Best-effort and idempotent: a part whose `tool_kind` resolves to a registered typed subclass and
+    whose data validates against it is promoted; a part with no `tool_kind`, an unregistered one, or
+    shape-invalid data is left a base part (an unsubstantiated `tool_kind` is stripped — see
+    [`ToolCallPart.narrow_type`][pydantic_ai.messages.ToolCallPart.narrow_type]).
+
+    UI adapters reconstruct base parts from the wire format with `tool_kind` set from client-echoed
+    metadata, then call this once instead of narrowing each part inline. Pydantic deserialization of a
+    `ModelMessage` performs the same promotion via its discriminated-union dispatch; this is the
+    direct-construction equivalent for callers that build parts by hand.
+    """
+    narrowed: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            new_response_parts = [_narrow_response_part(part) for part in message.parts]
+            if any(new is not old for new, old in zip(new_response_parts, message.parts)):
+                message = replace(message, parts=new_response_parts)
+        else:
+            new_request_parts = [_narrow_request_part(part) for part in message.parts]
+            if any(new is not old for new, old in zip(new_request_parts, message.parts)):
+                message = replace(message, parts=new_request_parts)
+        narrowed.append(message)
+    return narrowed
 
 
 @dataclass(repr=False)

@@ -117,16 +117,22 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
 
 _TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
 
+_ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
+"""Top-level key our payload is nested under inside an AG-UI `encrypted_value` blob, so a genuine
+provider blob in the same slot is never mistaken for our data."""
+
 
 def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
-    """Pack a part's `tool_kind` into an AG-UI `encrypted_value` JSON blob.
+    """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
-    AG-UI has no structured per-tool metadata slot, so we deliberately reuse `encrypted_value`
-    — spec'd for encrypted reasoning, but defined as a free-form, client-echoed opaque string —
-    to carry the `tool_kind` discriminator across a round-trip. The claim is untrusted coming
-    back in (validated by `parse_encrypted_tool_kind`), and a genuine reasoning blob landing in
-    this slot simply fails to parse and degrades to a plain part. A dict rather than a bare
-    string so the format can carry more metadata later.
+    AG-UI has no generic per-tool metadata field, so we carry the `tool_kind` discriminator in
+    `encrypted_value` — the protocol's opaque, client-echoed state-continuity slot (for Zero Data
+    Retention), exposed on `ToolCall`/`ToolMessage` and streamed via
+    `ReasoningEncryptedValueEvent(subtype='tool-call')`. Our payload is nested under a `pydantic_ai`
+    key so a genuine provider blob landing in this slot (e.g. Google's encrypted thinking on a tool
+    call) is never read as our data: `parse_encrypted_tool_kind` only returns a claim when that key
+    is present. The nested dict also leaves room to carry more metadata later. The claim is untrusted
+    coming back in and degrades to a plain part if it doesn't validate.
 
     Callers gate writes on `REASONING_VERSION` (0.1.13) for symmetry across the streaming and
     non-streaming sides: the `encrypted_value` field itself landed in 0.1.11, but the streaming
@@ -134,13 +140,17 @@ def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
     0.1.13, so a single cutover keeps `tool_kind` round-tripping identically whether the history
     was built by `dump_messages` or by streaming.
     """
-    return json.dumps({'tool_kind': tool_kind}) if tool_kind is not None else None
+    if tool_kind is None:
+        return None
+    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'tool_kind': tool_kind}})
 
 
 def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
-    """Read a `tool_kind` claim from an AG-UI `encrypted_value` blob.
+    """Read a `tool_kind` claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
 
-    Client-supplied data: anything but a JSON dict with a known `ToolPartKind` reads as `None`.
+    Client-supplied and untrusted: anything that isn't a JSON object carrying
+    `{'pydantic_ai': {'tool_kind': <known ToolPartKind>}}` reads as `None`, so a genuine provider
+    encrypted blob (no `pydantic_ai` key) or a forged claim degrades to a plain part.
     """
     if not encrypted_value:
         return None
@@ -150,7 +160,10 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
         return None
     if not is_str_dict(data):
         return None
-    kind = data.get('tool_kind')
+    namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
+    if not is_str_dict(namespaced):
+        return None
+    kind = namespaced.get('tool_kind')
     return next((k for k in _TOOL_PART_KINDS if k == kind), None)
 
 

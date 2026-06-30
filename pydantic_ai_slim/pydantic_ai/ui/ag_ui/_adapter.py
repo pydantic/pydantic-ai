@@ -45,6 +45,7 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    narrow_message_parts,
 )
 from ...output import OutputDataT
 from ...tools import (
@@ -418,8 +419,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
                             # `getattr`: the `ToolCall.encrypted_value` field is absent on
                             # ag-ui-protocol < 0.1.11, and the floor is 0.1.10. The claim is
-                            # client-supplied, so it goes through the best-effort `narrow_type`
-                            # rather than onto the part directly.
+                            # client-supplied, so it's set on the base part and promoted best-effort
+                            # by the final `narrow_message_parts` pass (which strips it if it doesn't
+                            # validate against the typed subclass).
                             tool_kind = parse_encrypted_tool_kind(getattr(tool_call, 'encrypted_value', None))
                             if tool_kind is not None:
                                 tool_kinds[tool_call_id] = tool_kind
@@ -428,24 +430,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if builtin_id is not None:
                                 provider_name, original_id = builtin_id
                                 builder.add(
-                                    NativeToolCallPart.narrow_type(
-                                        NativeToolCallPart(
-                                            tool_name=tool_name,
-                                            args=tool_call.function.arguments,
-                                            tool_call_id=original_id,
-                                            provider_name=provider_name,
-                                        ),
+                                    NativeToolCallPart(
+                                        tool_name=tool_name,
+                                        args=tool_call.function.arguments,
+                                        tool_call_id=original_id,
+                                        provider_name=provider_name,
                                         tool_kind=tool_kind,
                                     )
                                 )
                             else:
                                 builder.add(
-                                    ToolCallPart.narrow_type(
-                                        ToolCallPart(
-                                            tool_name=tool_name,
-                                            tool_call_id=tool_call_id,
-                                            args=tool_call.function.arguments,
-                                        ),
+                                    ToolCallPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        args=tool_call.function.arguments,
                                         tool_kind=tool_kind,
                                     )
                                 )
@@ -474,13 +472,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             except json.JSONDecodeError:
                                 pass
                         builder.add(
-                            NativeToolReturnPart.narrow_type(
-                                NativeToolReturnPart(
-                                    tool_name=tool_name,
-                                    content=content,
-                                    tool_call_id=original_id,
-                                    provider_name=provider_name,
-                                ),
+                            NativeToolReturnPart(
+                                tool_name=tool_name,
+                                content=content,
+                                tool_call_id=original_id,
+                                provider_name=provider_name,
                                 tool_kind=tool_kind,
                             )
                         )
@@ -491,16 +487,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_call_id=tool_call_id,
                         )
                         if tool_kind is not None:
-                            # Typed return shapes are structured, so attempt promotion on parsed
-                            # content; on failure (`narrow_type` returns its input unchanged) keep
-                            # the string-content part so a degraded load matches a claim-free one.
+                            # AG-UI sends tool content as a string, but typed return subclasses need
+                            # structured content, so parse it before the final `narrow_message_parts`
+                            # pass. An unparseable claim can't be a typed return, so leave the plain
+                            # string part (matching a claim-free load).
                             try:
-                                candidate = replace(return_part, content=json.loads(tool_msg.content))
+                                return_part = replace(
+                                    return_part, content=json.loads(tool_msg.content), tool_kind=tool_kind
+                                )
                             except json.JSONDecodeError:
-                                candidate = return_part
-                            narrowed = ToolReturnPart.narrow_type(candidate, tool_kind=tool_kind)
-                            if narrowed is not candidate:
-                                return_part = narrowed
+                                pass
                         builder.add(return_part)
 
                 case ReasoningMessage() as reasoning_msg:
@@ -570,7 +566,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         stacklevel=2,
                     )
 
-        return builder.messages
+        # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
+        # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
+        return narrow_message_parts(builder.messages)
 
     @staticmethod
     def _dump_request_parts(
