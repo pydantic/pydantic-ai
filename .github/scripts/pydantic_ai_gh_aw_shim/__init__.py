@@ -56,7 +56,7 @@ ClaudeCodeToolFn: TypeAlias = Callable[..., str | Awaitable[str]]
 # `Task` is async like the harness-backed file/shell tools, but unlike them its
 # signature is fully pinned here (it takes a `RunContext`) so that consumers of
 # `build_claude_code_toolset(task=...)` pass a compatible callable.
-TaskCallable: TypeAlias = Callable[[RunContext[None], str, str], Awaitable[str]]
+TaskCallable: TypeAlias = Callable[[RunContext[object], str, str], Awaitable[str]]
 
 __all__ = [
     'MUTATING_TOOLS',
@@ -108,7 +108,7 @@ MUTATING_TOOLS = frozenset({'Bash', 'Write', 'Edit', 'MultiEdit'})
 READ_ONLY_SUBAGENT_TOOLS = frozenset({'Read', 'Grep', 'Glob', 'LS', 'TodoWrite', 'ExitPlanMode'})
 
 
-def build_claude_code_toolset(*, task: TaskCallable | None = None) -> FunctionToolset[None]:
+def build_claude_code_toolset(*, task: TaskCallable | None = None) -> FunctionToolset[object]:
     """Build the shim's Claude Code tool `FunctionToolset`.
 
     Pass `task=` to register the sub-agent dispatcher as an additional
@@ -119,7 +119,7 @@ def build_claude_code_toolset(*, task: TaskCallable | None = None) -> FunctionTo
     on the returned toolset (see `select_claude_code_toolset` in the main
     shim).
     """
-    tools: list[Tool[None]] = [Tool(fn, name=name, description=desc) for name, fn, desc in _BASE_TOOLS]
+    tools: list[Tool[object]] = [Tool(fn, name=name, description=desc) for name, fn, desc in _BASE_TOOLS]
     if task is not None:
         tools.append(
             Tool(
