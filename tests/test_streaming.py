@@ -5048,10 +5048,12 @@ async def test_run_stream_events_break_cleanup():
 async def test_run_stream_events_unstarted_iterator_cleanup():
     """Entering and exiting the CM without advancing the iterator must still drain the background task."""
     never = asyncio.Event()
+    producer_started = asyncio.Event()
     producer_finalized = asyncio.Event()
 
     async def blocking_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
         try:
+            producer_started.set()
             yield 'hello'
             await never.wait()  # pragma: no cover  # blocks until cancelled
         finally:
@@ -5060,8 +5062,7 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     agent = Agent(FunctionModel(stream_function=blocking_stream))
 
     async with agent.run_stream_events(''):
-        # Let the background task start and block on send_stream.send(); we never advance the iterator.
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(producer_started.wait(), timeout=1.0)
 
     # `aclose()` on the unstarted iterator skips its cleanup branches, so the CM body itself must
     # drain the background task; otherwise the producer's `finally` never runs.
