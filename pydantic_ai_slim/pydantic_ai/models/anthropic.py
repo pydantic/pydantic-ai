@@ -2195,10 +2195,16 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
 
 
 _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
-# The same raw Anthropic token fields all map onto first-class `RequestUsage` fields, so they're
-# excluded from the exposed `RequestUsage.details` to stop OTel consumers double-counting them against
-# the `gen_ai.usage.*` attributes (see `_map_usage` and <https://github.com/pydantic/pydantic-ai/issues/6131>).
-_FIRST_CLASS_TOKEN_KEYS = frozenset(_COMPACTION_TOKEN_KEYS)
+# Raw Anthropic token fields that map onto first-class `RequestUsage` fields, so they're excluded from the
+# exposed `RequestUsage.details` to stop OTel consumers double-counting them against the `gen_ai.usage.*`
+# attributes (see `_map_usage` and <https://github.com/pydantic/pydantic-ai/issues/6131>). Kept as its own
+# literal rather than `frozenset(_COMPACTION_TOKEN_KEYS)`: the two sets share these four keys only because the
+# compaction iteration totals happen to cover exactly the first-class token fields today, but they answer
+# independent questions ("which keys need compaction summing" vs "which keys duplicate a first-class field")
+# and must be free to diverge if Anthropic's usage schema grows.
+_FIRST_CLASS_TOKEN_KEYS = frozenset(
+    {'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'}
+)
 
 
 def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
@@ -2278,8 +2284,11 @@ def _map_usage(
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens.
     # The raw token counts are summed into the first-class `RequestUsage` fields above, so they're
-    # excluded from `details` (see docstring); `compaction_*`/`*_iterations` keys stay as they're
-    # supplementary information not represented by any first-class field.
+    # excluded from `details` (see docstring). The `compaction_iterations`/`message_iterations` counts
+    # stay as they're genuinely supplementary. The `compaction_*` token sub-totals also stay for
+    # transparency, but note they ARE folded into the first-class totals above, so a consumer summing
+    # them against `gen_ai.usage.*` still double-counts under compaction — a known, narrower residual
+    # scoped out of this fix.
     request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_for_extraction),
         provider=provider,

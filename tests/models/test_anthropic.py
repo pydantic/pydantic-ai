@@ -4309,6 +4309,12 @@ def test_streaming_usage():
     delta = BetaRawMessageDeltaEvent(delta=Delta(), usage=BetaMessageDeltaUsage(output_tokens=5), type='message_delta')
     final_usage, _ = _map_usage(delta, 'anthropic', '', 'unknown', existing_details=raw_details)
     assert final_usage == snapshot(RequestUsage(input_tokens=1, output_tokens=5))
+    # Assert the carry-forward explicitly (a snapshot refresh could silently rewrite the line above to
+    # `RequestUsage()`): the delta omits `input_tokens`, so it must be inherited from `message_start` (=1).
+    # Without it, genai-prices — which requires `input_tokens` for Anthropic — zeroes the whole RequestUsage.
+    assert final_usage.input_tokens == 1
+    # #6131: the first-class counts must not leak back into `details` (they would double-count in OTel).
+    assert 'input_tokens' not in final_usage.details and 'output_tokens' not in final_usage.details
 
 
 def test_map_usage_bedrock_start_event_without_message():
@@ -4326,9 +4332,11 @@ def test_map_usage_bedrock_start_event_without_message():
     # A `message=None` event contributes no usage of its own but must not drop the raw token counts
     # carried forward for the next delta event.
     existing_details = {'input_tokens': 7, 'output_tokens': 3}
-    assert _map_usage(start, 'anthropic', '', 'unknown', existing_details=existing_details) == snapshot(
-        (RequestUsage(), {'input_tokens': 7, 'output_tokens': 3})
-    )
+    request_usage, carried = _map_usage(start, 'anthropic', '', 'unknown', existing_details=existing_details)
+    assert (request_usage, carried) == snapshot((RequestUsage(), {'input_tokens': 7, 'output_tokens': 3}))
+    # Explicitly: the `message=None` chunk yields empty usage of its own, but the carried raw counts pass
+    # through untouched so the following delta can still inherit them.
+    assert carried == {'input_tokens': 7, 'output_tokens': 3}
 
 
 async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_model_requests: None):
@@ -4371,6 +4379,10 @@ async def test_streaming_bedrock_start_event_without_message_is_skipped(allow_mo
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.usage == snapshot(RequestUsage(input_tokens=4, output_tokens=2))
+    # Carry-forward across the real `run_stream` path, asserted explicitly so a snapshot refresh can't zero
+    # it: `input_tokens` comes from the real `message_start` (=4) and survives the `message_delta` that
+    # carries only `output_tokens`. A carry-forward regression would zero both.
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (4, 2)
     assert response.provider_response_id == 'x'
     assert response.model_name == 'claude-haiku-4-5'
 
@@ -4425,6 +4437,11 @@ def test_streaming_usage_with_compaction():
             },
         )
     )
+    # Assert the summed totals explicitly: the compaction iteration set on `message_start` (input 180,
+    # output 3, cache 4/5) must survive the delta (which carries no `iterations`) and be added back into the
+    # first-class fields — 23+180+4+5=212 input, 500+3=503 output. A snapshot refresh could otherwise hide it.
+    assert (final_usage.input_tokens, final_usage.output_tokens) == (212, 503)
+    assert (final_usage.cache_write_tokens, final_usage.cache_read_tokens) == (4, 5)
 
 
 def test_usage_otel_attributes_have_no_first_class_token_duplicates():
@@ -11139,6 +11156,10 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
             requests=1,
         )
     )
+    # The test's whole point, asserted explicitly: the ~55k compaction cache survives the delta resetting
+    # top-level `cache_creation_input_tokens` to 0. A snapshot refresh could otherwise silently drop it to 0.
+    assert usage.cache_write_tokens == 55096
+    assert usage.input_tokens == 55368
 
 
 @pytest.mark.parametrize(
