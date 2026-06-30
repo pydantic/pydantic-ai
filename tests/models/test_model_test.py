@@ -64,6 +64,21 @@ def test_custom_output_text():
         agent.run_sync('x', model=TestModel(custom_output_text='custom'))
 
 
+@pytest.mark.anyio
+async def test_provider_name_matches_streamed_response():
+    agent = Agent(model=TestModel(custom_output_text='done'))
+
+    result = await agent.run('hello')
+    run_provider_names = [m.provider_name for m in result.all_messages() if isinstance(m, ModelResponse)]
+
+    async with agent.run_stream('hello') as stream:
+        await stream.get_output()
+        stream_provider_names = [m.provider_name for m in stream.all_messages() if isinstance(m, ModelResponse)]
+
+    assert run_provider_names == ['test']
+    assert stream_provider_names == ['test']
+
+
 def test_custom_output_args():
     agent = Agent(output_type=tuple[str, str])
     result = agent.run_sync('x', model=TestModel(custom_output_args=['a', 'b']))
@@ -92,6 +107,7 @@ def test_custom_output_args():
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -144,6 +160,7 @@ def test_custom_output_args_model():
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -192,6 +209,7 @@ def test_output_type():
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -241,6 +259,7 @@ def test_tool_retry():
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -262,6 +281,7 @@ def test_tool_retry():
                 usage=RequestUsage(input_tokens=61, output_tokens=8),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -280,6 +300,7 @@ def test_tool_retry():
                 usage=RequestUsage(input_tokens=62, output_tokens=12),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
