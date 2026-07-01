@@ -373,6 +373,17 @@ Since `app` is an ASGI application, it can be used with any ASGI server:
 uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 ```
 
+### Multimodal tool returns
+
+When you persist and replay conversation history with [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] and [`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages], tool returns containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], and the other [multimodal content types](../input.md#image-audio-video-document-input) — are preserved across the round-trip when you opt in with `preserve_file_data=True`.
+
+AG-UI's `ToolMessage.content` is text-only, so the file payloads can't ride on the tool message itself. Instead they're carried in a reserved sidecar [activity message](https://docs.ag-ui.com/concepts/activities) (`activity_type='pydantic_ai_tool_return_file'`) paired to the tool return by tool call ID, and merged back into the tool return with any text content on reload: a single file with no text reloads as that file alone, otherwise as a list (text-then-files); the original interleaving order between text and files is lost. Activity types prefixed with `pydantic_ai_` are reserved for this round-trip and should be ignored by your frontend's activity handlers.
+
+With the default `preserve_file_data=False`, file content in tool returns is dropped on `dump_messages` (any text is kept). This mirrors how client-uploaded files are handled — see [Trust model](#trust-model) below.
+
+!!! note
+    This applies to history serialization. During a live streamed run, multimodal tool returns are emitted as text descriptions (e.g. `[File: image/jpeg]`) without the file payload.
+
 ### Trust model
 
 AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview.

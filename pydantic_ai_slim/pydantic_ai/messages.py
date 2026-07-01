@@ -1171,6 +1171,12 @@ else:
     )
 
 
+tool_return_content_ta: pydantic.TypeAdapter[ToolReturnContent] = pydantic.TypeAdapter(ToolReturnContent)
+"""TypeAdapter for `ToolReturnContent` — used by UI adapters to rehydrate multimodal items
+(`BinaryContent`, `ImageUrl`, etc.) from raw JSON/dict payloads carried in wire-protocol fields
+typed as `Any` (e.g. Vercel's `ToolOutputAvailablePart.output`)."""
+
+
 ToolPartKind: TypeAlias = Literal['tool-search', 'capability-load']
 """Discriminator value for the typed call/return-part subclass associated with a tool.
 

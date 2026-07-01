@@ -124,6 +124,15 @@ async def search_docs(query: str) -> ToolReturn:
 !!! note
     Protocol-control chunks such as `StartChunk`, `FinishChunk`, `StartStepChunk`, or `FinishStepChunk` are automatically filtered out — only the four data-carrying chunk types listed above are forwarded to the stream and preserved in `dump_messages`.
 
+### Multimodal tool returns
+
+Tool returns containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], and the other [multimodal content types](../input.md#image-audio-video-document-input) — are preserved across the [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] / [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] round-trip when you opt in with `preserve_file_data=True`. The Vercel data-stream tool `output` field carries structured content directly, so files are serialized inline in the output and rehydrated on load.
+
+With the default `preserve_file_data=False`, file content in tool returns is dropped on `dump_messages` (any text is kept), mirroring the AG-UI adapter and how client-uploaded files ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) are handled. On load, `load_messages` rehydrates file references from client-submitted history, then the shared sanitization step strips disallowed file URL schemes before the agent runs, per the [Trust model](#trust-model) below.
+
+!!! note
+    This applies to history serialization. During a live streamed run, multimodal tool returns are emitted as text descriptions (e.g. `[File: image/jpeg]`) without the file payload.
+
 ## Message metadata
 
 [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores it on the way back.
