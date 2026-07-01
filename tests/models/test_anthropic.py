@@ -2938,6 +2938,177 @@ async def test_uploaded_file_unsupported_media_type(allow_model_requests: None) 
         )
 
 
+async def test_uploaded_file_adds_files_api_beta_for_text_doc(allow_model_requests: None) -> None:
+    """Anthropic `UploadedFile` (document) should auto-attach `files-api-2025-04-14` to request betas.
+
+    Unit test (not VCR): cassette matchers don't pin the `betas` kwarg on the request body, so
+    a regression that drops the auto-beta would still match an existing cassette and pass green.
+    Asserting the kwarg directly on the mock client is what catches the regression.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        usage=BetaUsage(input_tokens=5, output_tokens=2),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'files-api-2025-04-14' in completion_kwargs['betas']
+
+
+async def test_uploaded_file_adds_files_api_beta_for_image(allow_model_requests: None) -> None:
+    """Anthropic `UploadedFile` with an image media type should auto-attach the Files API beta.
+
+    Unit test (not VCR): same rationale as the text-doc test — cassette matchers don't
+    distinguish between `betas` lists.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        usage=BetaUsage(input_tokens=5, output_tokens=2),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run(
+        ['Describe this image', UploadedFile(file_id='file-img123', provider_name='anthropic', media_type='image/png')]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'files-api-2025-04-14' in completion_kwargs['betas']
+
+
+async def test_no_uploaded_file_does_not_add_files_api_beta(allow_model_requests: None) -> None:
+    """Plain text-only requests must not include `files-api-2025-04-14`.
+
+    Regression guard for the proxy/compatible-provider case: the Anthropic-only beta header
+    must only be attached when the wire shape actually requires it. Unit test for the same
+    cassette-matcher reason as the positive cases.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='hi', type='text')],
+        usage=BetaUsage(input_tokens=3, output_tokens=1),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    # `betas` may be absent entirely (NOT_GIVEN/OMIT) when no betas are required.
+    betas: list[str] = completion_kwargs.get('betas') or []
+    assert 'files-api-2025-04-14' not in betas
+
+
+async def test_uploaded_file_for_other_provider_does_not_add_anthropic_files_api_beta(
+    allow_model_requests: None,
+) -> None:
+    """`UploadedFile` carrying a non-Anthropic `provider_name` should not auto-attach the beta.
+
+    The request mappers will raise their existing `UserError` for the cross-provider case,
+    but the gate that adds the beta runs before mapping — it must not return True for
+    foreign `provider_name`s, otherwise a user-supplied OpenAI `UploadedFile` accidentally
+    forwarded to `AnthropicModel` would still leak the Anthropic beta header before erroring.
+    Unit test for the same cassette-matcher reason as the positive cases.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        usage=BetaUsage(input_tokens=5, output_tokens=2),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    # Reach into the helper directly so we can assert the gate's return value without going
+    # through `agent.run` (which would hit the request mapper's existing UserError first).
+    foreign = ModelRequest(
+        parts=[
+            UserPromptPart(
+                content=['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')],
+            )
+        ]
+    )
+    assert m._messages_use_anthropic_uploaded_file([foreign]) is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_uploaded_file_user_provided_betas_are_preserved(allow_model_requests: None) -> None:
+    """User-supplied `anthropic_betas` and the auto Files API beta should be merged, not clobbered.
+
+    Unit test (not VCR): asserts the resulting `betas` set is a superset of both sources.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='ok', type='text')],
+        usage=BetaUsage(input_tokens=5, output_tokens=2),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel(
+        'claude-haiku-4-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings=AnthropicModelSettings(anthropic_betas=['custom-feature-1']),
+    )
+    agent = Agent(m)
+
+    await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert set(completion_kwargs['betas']) >= {'files-api-2025-04-14', 'custom-feature-1'}
+
+
+async def test_uploaded_file_in_tool_return_adds_files_api_beta(allow_model_requests: None) -> None:
+    """`UploadedFile` returned by a tool should also trigger the auto Files API beta.
+
+    Tool-return parts are mapped to the same `source.type='file'` wire shape as user-prompt
+    parts, so the same beta is required. Unit test (not VCR): asserts the `betas` kwarg
+    directly, since cassette matchers wouldn't catch a regression that drops the auto-beta.
+    """
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='fetch',
+                    tool_call_id='call-1',
+                    content=[UploadedFile(file_id='file-tr-1', provider_name='anthropic')],
+                )
+            ]
+        )
+    ]
+    assert m._messages_use_anthropic_uploaded_file(messages) is True  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_uploaded_file_adds_files_api_beta_to_count_tokens(allow_model_requests: None) -> None:
+    """Token counting must mirror actual request parameters — the Files API beta belongs there too.
+
+    Unit test (not VCR): the project's `models/AGENTS.md` guideline that "token counting must
+    mirror actual request parameters" is exactly the kind of internal-shape rule a VCR cassette
+    matcher cannot pin. We assert the `betas` kwarg on `messages.count_tokens` directly.
+    """
+    mock_client = cast(AsyncAnthropic, MockAnthropic())
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await m.count_tokens(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['Estimate this file', UploadedFile(file_id='file-ct-1', provider_name='anthropic')],
+                    )
+                ]
+            )
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    count_tokens_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'files-api-2025-04-14' in count_tokens_kwargs['betas']
+
+
 def test_init_with_provider():
     provider = AnthropicProvider(api_key='api-key')
     model = AnthropicModel('claude-3-opus-latest', provider=provider)
