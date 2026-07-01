@@ -1,4 +1,4 @@
-"""Persistent memory agent using Dakera — self-hosted, decay-weighted vector memory.
+r"""Persistent memory agent using Dakera — self-hosted, decay-weighted vector memory.
 
 Dakera is a self-hosted REST server that gives pydantic-ai agents persistent memory
 across process restarts. Each memory is stored as an embedding; recall uses
@@ -41,9 +41,9 @@ import httpx
 
 from pydantic_ai import Agent, RunContext
 
-DAKERA_URL = os.getenv("DAKERA_BASE_URL", "http://localhost:3300")
-DAKERA_KEY = os.getenv("DAKERA_API_KEY", "demo")
-DAKERA_NS = os.getenv("DAKERA_NAMESPACE", "pydantic-ai-agent")
+DAKERA_URL = os.getenv('DAKERA_BASE_URL', 'http://localhost:3300')
+DAKERA_KEY = os.getenv('DAKERA_API_KEY', 'demo')
+DAKERA_NS = os.getenv('DAKERA_NAMESPACE', 'pydantic-ai-agent')
 
 
 # ---------------------------------------------------------------------------
@@ -64,15 +64,15 @@ class MemoryDeps:
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    os.getenv("PYDANTIC_AI_MODEL", "openai:gpt-4o"),
+    os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o'),
     deps_type=MemoryDeps,
     system_prompt=(
-        "You are a helpful assistant with persistent memory. "
-        "Before answering questions that may require past context, "
-        "use `recall_memory` to search for relevant information. "
-        "When the user shares important facts about themselves or their preferences, "
-        "use `store_memory` to save those facts for future sessions. "
-        "Be concise and accurate."
+        'You are a helpful assistant with persistent memory. '
+        'Before answering questions that may require past context, '
+        'use `recall_memory` to search for relevant information. '
+        'When the user shares important facts about themselves or their preferences, '
+        'use `store_memory` to save those facts for future sessions. '
+        'Be concise and accurate.'
     ),
 )
 
@@ -94,11 +94,11 @@ async def store_memory(ctx: RunContext[MemoryDeps], content: str) -> str:
         Confirmation that the memory was stored.
     """
     resp = await ctx.deps.client.post(
-        "/v1/memories",
-        json={"content": content, "namespace": ctx.deps.namespace},
+        '/v1/memories',
+        json={'content': content, 'namespace': ctx.deps.namespace},
     )
     resp.raise_for_status()
-    return f"Stored: {content!r}"
+    return f'Stored: {content!r}'
 
 
 @agent.tool
@@ -120,15 +120,15 @@ async def recall_memory(
         List of memory contents ranked by relevance.
     """
     resp = await ctx.deps.client.post(
-        "/v1/memories/search",
-        json={"query": query, "namespace": ctx.deps.namespace, "limit": limit},
+        '/v1/memories/search',
+        json={'query': query, 'namespace': ctx.deps.namespace, 'limit': limit},
     )
     resp.raise_for_status()
     data = resp.json()
-    memories: list[dict[str, Any]] = data.get("memories", [])
+    memories: list[dict[str, Any]] = data.get('memories', [])
     if not memories:
-        return ["No relevant memories found."]
-    return [m["content"] for m in memories]
+        return ['No relevant memories found.']
+    return [m['content'] for m in memories]
 
 
 @agent.tool
@@ -147,14 +147,14 @@ async def forget_old_memories(
         Confirmation of how many memories were deleted.
     """
     resp = await ctx.deps.client.request(
-        "DELETE",
-        "/v1/memories",
-        json={"namespace": ctx.deps.namespace, "older_than_days": older_than_days},
+        'DELETE',
+        '/v1/memories',
+        json={'namespace': ctx.deps.namespace, 'older_than_days': older_than_days},
     )
     resp.raise_for_status()
     data = resp.json()
-    deleted = data.get("deleted", "some")
-    return f"Forgot {deleted} memories older than {older_than_days} days."
+    deleted = data.get('deleted', 'some')
+    return f'Forgot {deleted} memories older than {older_than_days} days.'
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ async def forget_old_memories(
 async def _run(prompt: str) -> str:
     async with httpx.AsyncClient(
         base_url=DAKERA_URL,
-        headers={"Authorization": f"Bearer {DAKERA_KEY}"},
+        headers={'Authorization': f'Bearer {DAKERA_KEY}'},
         timeout=15.0,
     ) as client:
         deps = MemoryDeps(client=client)
@@ -176,34 +176,34 @@ async def _run(prompt: str) -> str:
 async def _store_direct(content: str) -> None:
     async with httpx.AsyncClient(
         base_url=DAKERA_URL,
-        headers={"Authorization": f"Bearer {DAKERA_KEY}"},
+        headers={'Authorization': f'Bearer {DAKERA_KEY}'},
         timeout=15.0,
     ) as client:
         resp = await client.post(
-            "/v1/memories",
-            json={"content": content, "namespace": DAKERA_NS},
+            '/v1/memories',
+            json={'content': content, 'namespace': DAKERA_NS},
         )
         resp.raise_for_status()
-        print(f"Stored: {content!r}")
+        print(f'Stored: {content!r}')
 
 
 async def _recall_direct(query: str) -> None:
     async with httpx.AsyncClient(
         base_url=DAKERA_URL,
-        headers={"Authorization": f"Bearer {DAKERA_KEY}"},
+        headers={'Authorization': f'Bearer {DAKERA_KEY}'},
         timeout=15.0,
     ) as client:
         resp = await client.post(
-            "/v1/memories/search",
-            json={"query": query, "namespace": DAKERA_NS, "limit": 5},
+            '/v1/memories/search',
+            json={'query': query, 'namespace': DAKERA_NS, 'limit': 5},
         )
         resp.raise_for_status()
-        memories = resp.json().get("memories", [])
+        memories = resp.json().get('memories', [])
         if not memories:
-            print("No memories found.")
+            print('No memories found.')
         for i, m in enumerate(memories, 1):
-            score = m.get("score", 0.0)
-            print(f"[{i}] ({score:.2f}) {m['content']}")
+            score = m.get('score', 0.0)
+            print(f'[{i}] ({score:.2f}) {m["content"]}')
 
 
 def main() -> None:
@@ -214,33 +214,33 @@ def main() -> None:
     command = sys.argv[1]
     args = sys.argv[2:]
 
-    if command == "store":
-        content = " ".join(args)
+    if command == 'store':
+        content = ' '.join(args)
         if not content:
-            print("Usage: store <text>")
+            print('Usage: store <text>')
             sys.exit(1)
         asyncio.run(_store_direct(content))
 
-    elif command == "recall":
-        query = " ".join(args)
+    elif command == 'recall':
+        query = ' '.join(args)
         if not query:
-            print("Usage: recall <query>")
+            print('Usage: recall <query>')
             sys.exit(1)
         asyncio.run(_recall_direct(query))
 
-    elif command == "chat":
-        prompt = " ".join(args)
+    elif command == 'chat':
+        prompt = ' '.join(args)
         if not prompt:
-            print("Usage: chat <prompt>")
+            print('Usage: chat <prompt>')
             sys.exit(1)
         response = asyncio.run(_run(prompt))
         print(response)
 
     else:
-        print(f"Unknown command: {command!r}")
-        print("Commands: store, recall, chat")
+        print(f'Unknown command: {command!r}')
+        print('Commands: store, recall, chat')
         sys.exit(1)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
