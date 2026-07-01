@@ -47,6 +47,30 @@ def sanitize_message_history(
     client-submitted messages before they're passed to an agent. Use it when loading
     `message_history` from a source the application does not fully trust, such as a browser request.
 
+    By default it strips:
+
+    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s (disable with
+      `strip_system_prompts=False`). The system prompt is the server's to own; a client that can
+      inject one can override the agent's behavior. If stripping leaves a `ModelRequest` with no
+      parts, the request is dropped from history entirely.
+    - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
+      `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
+      cause the model provider to fetch the object using the server-side IAM role, so they should
+      only be accepted from trusted clients.
+    - [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values other than
+      `False` that aren't in `allowed_file_url_force_download`, resetting them to `False`. Both
+      `True` and `'allow-local'` are reset by default. Applies to file URLs in user content and
+      those nested in tool return parts.
+    - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless `preserve_file_data=True`.
+      Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
+      using the server-side IAM role. Applies to uploaded files in user content and those nested in
+      tool return parts.
+    - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s and
+      [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart]s at the end of the history
+      that aren't in `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied
+      history doesn't correspond to a paused agent run and shouldn't be executed. If stripping
+      leaves the final response with no parts, the response is dropped from history entirely.
+
     Args:
         messages: Message history to sanitize.
         strip_system_prompts: Whether to strip

@@ -312,42 +312,22 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         [`sanitize_message_history`][pydantic_ai.sanitization.sanitize_message_history] before
         passing `message_history` that came from an untrusted client.
 
-        Currently strips:
+        Delegates to
+        [`sanitize_message_history`][pydantic_ai.sanitization.sanitize_message_history] — see its
+        docstring for the full list of what's stripped — with these adapter-specific settings:
 
-        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s when
-          [`manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt] is
-          `'server'`. The agent's configured `system_prompt` is reinjected by
-          [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] on
-          the next model request. If stripping leaves a `ModelRequest` with no parts,
-          the request is dropped from history entirely.
-        - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
-          [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
-          Non-HTTP schemes like `s3://` or `gs://` cause the model provider to fetch
-          the object using the server-side IAM role, so they should only be accepted
-          from trusted frontends.
-        - [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download]
-          values other than `False` that aren't in
-          [`allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download]
-          on kept parts. By default both `True` and `'allow-local'` are reset to
-          `False`, since `'allow-local'` opts the URL out of the SSRF private-IP block
-          and `True` makes the server fetch the file itself — neither is safe to honor
-          from untrusted client input. This applies to file URLs in user content and
-          to those nested in tool return parts.
-        - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless
+        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped only when
+          [`manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt] is `'server'`,
+          and the agent's configured `system_prompt` is reinjected by
+          [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] on the next model
+          request.
+        - File URL schemes and `force_download` values are checked against
+          [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] and
+          [`allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download],
+          and [`UploadedFile`][pydantic_ai.messages.UploadedFile]s are kept only when
           [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is `True`.
-          Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model
-          provider fetches using the server-side IAM role, so it should only be accepted
-          from trusted frontends. This applies both to uploaded files in user content and
-          to those nested in tool return parts.
-        - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and
-          [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] entries at
-          the end of the history that don't have a matching entry in
-          `deferred_tool_results`. Tool calls are produced by the model on the server
-          side, so an unresolved tool call at the end of client-supplied history doesn't
-          correspond to a paused agent run and shouldn't be executed. Tool calls that
-          correspond to a resolution in `deferred_tool_results` are preserved so that
-          human-in-the-loop resumption continues to work. If stripping leaves the final
-          response with no parts, the response is dropped from history entirely.
+        - Tool calls at the end of the history are kept when they correspond to a resolution in
+          `deferred_tool_results`, so human-in-the-loop resumption continues to work.
         """
         resolved_tool_call_ids: set[str] = set()
         if deferred_tool_results is not None:
