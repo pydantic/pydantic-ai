@@ -14,10 +14,11 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from types import FrameType
+from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
 import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream
 from pydantic import TypeAdapter
 from typing_extensions import Self, TypedDict, TypeIs, TypeVar
 
@@ -114,6 +115,95 @@ class AgentRetries(TypedDict, total=False):
 
     tools: int
     output: int
+
+
+_RunStreamEventsRunner: TypeAlias = Callable[[EventStreamHandler[Any]], Awaitable[AgentRunResult[Any]]]
+"""Starts the background agent run with the internal event-forwarding handler and returns its result."""
+
+
+class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]):
+    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+        self._run_agent = run_agent
+        self._receive_stream: (
+            MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] | None
+        ) = None
+        self._task: asyncio.Task[AgentRunResult[Any]] | None = None
+        self._result_yielded = False
+        self._closed = False
+
+    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        return self
+
+    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[Any]:
+        if self._closed or self._result_yielded:
+            raise StopAsyncIteration
+
+        await self._ensure_started()
+        assert self._receive_stream is not None
+        assert self._task is not None
+
+        try:
+            return await self._receive_stream.receive()
+        except anyio.EndOfStream:
+            await self._receive_stream.aclose()
+            self._result_yielded = True
+            result = await self._task
+            return AgentRunResultEvent(result)
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+
+        self._closed = True
+        if self._task is not None:
+            await _utils.cancel_and_drain(self._task)
+        if self._receive_stream is not None:
+            await self._receive_stream.aclose()
+
+    async def _ensure_started(self) -> None:
+        if self._task is not None:
+            return
+
+        send_stream, receive_stream = anyio.create_memory_object_stream[
+            _messages.AgentStreamEvent | AgentRunResultEvent[Any]
+        ]()
+        self._receive_stream = receive_stream
+
+        async def event_stream_handler(_: RunContext[Any], events: AsyncIterable[_messages.AgentStreamEvent]) -> None:
+            async for event in events:
+                await send_stream.send(event)
+
+        async def run_agent() -> AgentRunResult[Any]:
+            async with send_stream:
+                return await self._run_agent(event_stream_handler)
+
+        self._task = asyncio.create_task(run_agent())
+
+
+class _RunStreamEventsContext(
+    AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]
+):
+    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+        self._run_agent = run_agent
+        self._iterator: _RunStreamEventsIterator | None = None
+
+    async def __aenter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        # Single-entry, matching the old `@asynccontextmanager` this replaced: re-entering would
+        # orphan a first iterator that had already started (and leak its background task), so fail
+        # loudly instead of silently, and `__aexit__` still cleans up the one live iterator.
+        if self._iterator is not None:
+            raise RuntimeError('`run_stream_events()` context manager cannot be entered more than once')
+        self._iterator = _RunStreamEventsIterator(self._run_agent)
+        return self._iterator
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if self._iterator is not None:
+            await self._iterator.aclose()
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -774,8 +864,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             final_result = FinalResult(
                                 None, final_result_event.tool_name, final_result_event.tool_call_id
                             )
-                            if yielded:
-                                raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
                             yielded = True
 
                             messages = graph_ctx.state.message_history.copy()
@@ -1166,66 +1254,29 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        @asynccontextmanager
-        async def run_stream_events_context() -> AsyncGenerator[
-            AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]
-        ]:
-            send_stream, receive_stream = anyio.create_memory_object_stream[
-                _messages.AgentStreamEvent | AgentRunResultEvent[Any]
-            ]()
+        async def run_agent(event_stream_handler: EventStreamHandler[AgentDepsT]) -> AgentRunResult[Any]:
+            return await self.run(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                metadata=metadata,
+                retries=retries,
+                infer_name=False,
+                toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
+                capabilities=capabilities,
+                spec=spec,
+            )
 
-            async def event_stream_handler(
-                _: RunContext[AgentDepsT], events: AsyncIterable[_messages.AgentStreamEvent]
-            ) -> None:
-                async for event in events:
-                    await send_stream.send(event)
-
-            async def run_agent() -> AgentRunResult[Any]:
-                async with send_stream:
-                    return await self.run(
-                        user_prompt,
-                        output_type=output_type,
-                        message_history=message_history,
-                        deferred_tool_results=deferred_tool_results,
-                        conversation_id=conversation_id,
-                        model=model,
-                        instructions=instructions,
-                        deps=deps,
-                        model_settings=model_settings,
-                        usage_limits=usage_limits,
-                        usage=usage,
-                        metadata=metadata,
-                        retries=retries,
-                        infer_name=False,
-                        toolsets=toolsets,
-                        event_stream_handler=event_stream_handler,
-                        capabilities=capabilities,
-                        spec=spec,
-                    )
-
-            task = asyncio.create_task(run_agent())
-
-            async def event_iterator() -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[Any], None]:
-                async with receive_stream:
-                    async for message in receive_stream:
-                        yield message
-                # On natural exhaustion of the receive stream, surface the run's final result.
-                # If the task raised, `await task` re-raises and propagates to the consumer.
-                result = await task
-                yield AgentRunResultEvent(result)
-
-            iterator = event_iterator()
-            try:
-                yield iterator
-            finally:
-                # Cleanup at the CM scope so it runs regardless of whether the consumer ever
-                # advanced the iterator (an unstarted async generator's body — including any
-                # try/finally inside it — never executes on `aclose()`).
-                await iterator.aclose()
-                await _utils.cancel_and_drain(task)
-                await receive_stream.aclose()
-
-        return run_stream_events_context()
+        return _RunStreamEventsContext(run_agent)
 
     @overload
     def iter(
