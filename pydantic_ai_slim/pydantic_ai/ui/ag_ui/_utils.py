@@ -144,6 +144,23 @@ def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
     return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'tool_kind': tool_kind}})
 
 
+class _EncryptedValueKwargs(TypedDict, total=False):
+    """`encrypted_value` kwarg for a `ToolCall`/`ToolMessage`, absent when there's nothing to carry."""
+
+    encrypted_value: str
+
+
+def tool_kind_encrypted_value_kwargs(tool_kind: ToolPartKind | None, *, supported: bool) -> _EncryptedValueKwargs:
+    """`ToolCall`/`ToolMessage` kwargs carrying `tool_kind` as an `encrypted_value`, or empty to omit it.
+
+    Empty when the target version predates the `encrypted_value` field (`supported=False`) or the part
+    has no `tool_kind`, so — like the streaming carrier — the field is only ever set when there's a
+    claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
+    """
+    value = tool_kind_encrypted_value(tool_kind) if supported else None
+    return {'encrypted_value': value} if value is not None else {}
+
+
 def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
     """Warn that typed tool parts' `tool_kind` will be lost when dumping below `ENCRYPTED_VALUE_VERSION`.
 

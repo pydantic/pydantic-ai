@@ -93,7 +93,7 @@ try:
         parse_builtin_tool_call_id,
         parse_encrypted_tool_kind,
         thinking_encrypted_metadata,
-        tool_kind_encrypted_value,
+        tool_kind_encrypted_value_kwargs,
         warn_tool_kind_not_persisted,
     )
 except ImportError as e:  # pragma: no cover
@@ -648,7 +648,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         content=part.model_response_str(),
                         tool_call_id=part.tool_call_id,
-                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_encrypted_value else None,
+                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
             elif isinstance(part, RetryPromptPart):
@@ -737,7 +737,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=part.tool_call_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
-                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_encrypted_value else None,
+                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
             elif isinstance(part, NativeToolCallPart):
@@ -746,7 +746,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=prefixed_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
-                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_encrypted_value else None,
+                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
                 if builtin_return := builtin_returns.get(part.tool_call_id):
@@ -755,9 +755,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=builtin_return.model_response_str(),
                             tool_call_id=prefixed_id,
-                            encrypted_value=tool_kind_encrypted_value(builtin_return.tool_kind)
-                            if use_encrypted_value
-                            else None,
+                            **tool_kind_encrypted_value_kwargs(builtin_return.tool_kind, supported=use_encrypted_value),
                         )
                     )
             elif isinstance(part, NativeToolReturnPart):

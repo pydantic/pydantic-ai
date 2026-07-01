@@ -1677,15 +1677,35 @@ def test_dump_load_roundtrip_load_capability_old_version() -> None:
     assistant_msg = ag_ui_msgs[0]
     assert isinstance(assistant_msg, AssistantMessage)
     assert assistant_msg.tool_calls is not None
-    assert assistant_msg.tool_calls[0].encrypted_value is None
+    # Omitted entirely (not set to `None`), so a pre-0.1.11 client never sees an unexpected field.
+    assert 'encrypted_value' not in assistant_msg.tool_calls[0].model_fields_set
     tool_msg = ag_ui_msgs[1]
     assert isinstance(tool_msg, ToolMessage)
-    assert tool_msg.encrypted_value is None
+    assert 'encrypted_value' not in tool_msg.model_fields_set
 
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     assert type(reloaded[0].parts[0]) is ToolCallPart
     assert type(reloaded[1].parts[0]) is ToolReturnPart
     assert parse_loaded_capabilities(reloaded) == set()
+
+
+def test_dump_omits_encrypted_value_without_tool_kind() -> None:
+    """On a supported version, a plain call/return with no `tool_kind` still omits `encrypted_value`
+    rather than emitting a bare `null` — the field is only set when there's a claim to carry."""
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='regular', tool_call_id='c1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='regular', tool_call_id='c1', content='ok')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+
+    assistant_msg = ag_ui_msgs[0]
+    assert isinstance(assistant_msg, AssistantMessage)
+    assert assistant_msg.tool_calls is not None
+    assert 'encrypted_value' not in assistant_msg.tool_calls[0].model_fields_set
+    tool_msg = ag_ui_msgs[1]
+    assert isinstance(tool_msg, ToolMessage)
+    assert 'encrypted_value' not in tool_msg.model_fields_set
 
 
 def test_dump_load_roundtrip_native_tool_search() -> None:
