@@ -939,6 +939,14 @@ class BedrockConverseModel(Model[BaseClient]):
 
         return tool_config
 
+    @staticmethod
+    def _bedrock_user_content_has_tool_result(content: list[ContentBlockUnionTypeDef]) -> bool:
+        return any('toolResult' in block for block in content)
+
+    @staticmethod
+    def _bedrock_user_content_has_attachment(content: list[ContentBlockUnionTypeDef]) -> bool:
+        return any(any(key in block for key in ('document', 'image', 'video')) for block in content)
+
     async def _map_messages(  # noqa: C901
         self,
         messages: Sequence[ModelMessage],
@@ -1125,9 +1133,23 @@ class BedrockConverseModel(Model[BaseClient]):
                 and current_message['role'] == last_message['role']
                 and current_message['role'] == 'user'
             ):
-                # Add the new user content onto the existing user message.
                 last_content = list(last_message['content'])
-                last_content.extend(current_message['content'])
+                current_content = list(current_message['content'])
+                # Anthropic models on Bedrock reject user messages that combine tool
+                # results with attachment blocks (document/image/video).
+                if (
+                    self._bedrock_user_content_has_tool_result(last_content)
+                    and self._bedrock_user_content_has_attachment(current_content)
+                ) or (
+                    self._bedrock_user_content_has_attachment(last_content)
+                    and self._bedrock_user_content_has_tool_result(current_content)
+                ):
+                    processed_messages.append(current_message)
+                    last_message = cast(dict[str, Any], current_message)
+                    continue
+
+                # Add the new user content onto the existing user message.
+                last_content.extend(current_content)
                 last_message['content'] = last_content
                 continue
 
