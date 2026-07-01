@@ -19,7 +19,8 @@ Use deterministic evaluators when you can define exact rules:
 | [`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness] | Required tool coverage | Multiset of tool names invoked |
 | [`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch] | Tool-call sequence quality | F1 against expected trajectory |
 | [`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness] | Tool argument checks | Refund `order_id`, search query |
-| [`StepEfficiency`][pydantic_evals.evaluators.StepEfficiency] | Budget discipline | Max tool calls / model requests |
+| [`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls] | Budget discipline | Tool-call budget |
+| [`MaxModelRequests`][pydantic_evals.evaluators.MaxModelRequests] | Budget discipline | Model-request budget |
 
 **Advantages:**
 

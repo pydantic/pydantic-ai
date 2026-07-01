@@ -1,4 +1,12 @@
-"""Tests for the agentic span-based evaluators."""
+"""Tests for the agentic span-based evaluators.
+
+These are unit tests over hand-built `SpanNode`/`SpanTree` fixtures rather than
+VCR/public-API agent runs: the evaluators' contract is defined in terms of the
+instrumentation span shapes (v2 and v3+), and building the spans directly lets
+us pin both naming schemes — plus malformed/edge-case spans a live run can't
+reliably produce — deterministically and without model access. All assertions
+go through the public evaluator API.
+"""
 
 from __future__ import annotations
 
@@ -14,15 +22,10 @@ with try_import() as imports_successful:
         ArgumentCorrectness,
         EvaluationReason,
         EvaluatorContext,
-        StepEfficiency,
+        MaxModelRequests,
+        MaxToolCalls,
         ToolCorrectness,
         TrajectoryMatch,
-    )
-    from pydantic_evals.evaluators.agentic import (
-        STEP_EFFICIENCY_MODEL_REQUESTS_KEY,
-        STEP_EFFICIENCY_TOOL_CALLS_KEY,
-        _extract_tool_calls,  # pyright: ignore[reportPrivateUsage]
-        _longest_common_subsequence_length,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanNode, SpanTree
@@ -116,6 +119,21 @@ def _v3_output_function_span(*, name: str, span_id: int, start_offset: float) ->
     )
 
 
+def _deferred_tool_span(*, name: str, span_id: int, start_offset: float) -> SpanNode:
+    """A tool span whose call was deferred (`ApprovalRequired`/`CallDeferred`), not executed."""
+    return _make_span(
+        name=f'execute_tool {name}',
+        span_id=span_id,
+        attributes={
+            'gen_ai.tool.name': name,
+            'logfire.msg': f'running tool: {name}',
+            'gen_ai.tool.call.arguments': '{}',
+            'pydantic_ai.tool.deferral.name': 'ApprovalRequired',
+        },
+        start_offset=start_offset,
+    )
+
+
 def _model_request_span(*, span_id: int, start_offset: float) -> SpanNode:
     return _make_span(
         name='chat',
@@ -153,24 +171,26 @@ def _ctx(
 
 
 # ---------------------------------------------------------------------------
-# _extract_tool_calls: v2 vs v3+ and output-function discrimination
+# Tool-call span detection: v2 vs v3+, output functions, deferrals, ordering
 # ---------------------------------------------------------------------------
 
 
-def test_extract_tool_calls_v2_and_v3_both_detected():
+def test_tool_spans_v2_and_v3_both_detected_in_start_order():
+    # Insert out of order; the trajectory must reflect start timestamps, and
+    # both v2 and v3+ span shapes must be detected.
     tree = _build_tree(
         [
-            _v2_tool_span(name='search', span_id=1, args='{"q": "cats"}', start_offset=0.0),
             _v3_tool_span(name='rerank', span_id=2, args='{"top_k": 3}', start_offset=0.1),
+            _v2_tool_span(name='search', span_id=1, args='{"q": "cats"}', start_offset=0.0),
         ]
     )
-    calls = _extract_tool_calls(tree)
-    assert [c.name for c in calls] == ['search', 'rerank']
-    assert calls[0].arguments == '{"q": "cats"}'
-    assert calls[1].arguments == '{"top_k": 3}'
+    result = TrajectoryMatch(expected_trajectory=['search', 'rerank'], order='exact').evaluate(_ctx(tree=tree))
+    assert result.value == 1.0
 
 
-def test_extract_tool_calls_ignores_output_function_spans():
+def test_tool_spans_ignore_output_function_spans():
+    # With allow_extra defaulting to False, passing proves the output-function
+    # spans were not counted as tool calls.
     tree = _build_tree(
         [
             _v2_tool_span(name='search', span_id=1, args='{}', start_offset=0.0),
@@ -178,22 +198,29 @@ def test_extract_tool_calls_ignores_output_function_spans():
             _v3_output_function_span(name='final_answer', span_id=3, start_offset=0.2),
         ]
     )
-    calls = _extract_tool_calls(tree)
-    assert [c.name for c in calls] == ['search']
+    result = ToolCorrectness(expected_tools=['search']).evaluate(_ctx(tree=tree))
+    assert result == EvaluationReason(value=True)
 
 
-def test_extract_tool_calls_sorts_by_start_time():
-    # Insert out of order; extraction must reorder by start timestamp.
+def test_tool_spans_ignore_deferred_tool_calls():
+    # A deferred call (ApprovalRequired/CallDeferred) never executed, so it
+    # must not count as a tool call.
     tree = _build_tree(
         [
-            _v2_tool_span(name='later', span_id=2, args='{}', start_offset=1.0),
-            _v2_tool_span(name='earlier', span_id=1, args='{}', start_offset=0.0),
+            _v2_tool_span(name='search', span_id=1, args='{}', start_offset=0.0),
+            _deferred_tool_span(name='delete_account', span_id=2, start_offset=0.1),
         ]
     )
-    assert [c.name for c in _extract_tool_calls(tree)] == ['earlier', 'later']
+    result = ToolCorrectness(expected_tools=['search']).evaluate(_ctx(tree=tree))
+    assert result == EvaluationReason(value=True)
+    # ...and the deferred call also doesn't satisfy an expectation for it.
+    result = ToolCorrectness(expected_tools=['search', 'delete_account']).evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason is not None
+    assert "missing tools: 'delete_account' (x1)" in result.reason
 
 
-def test_extract_tool_calls_ignores_unrelated_spans():
+def test_tool_spans_ignore_unrelated_spans():
     tree = _build_tree(
         [
             _make_span(name='logfire', span_id=1),
@@ -210,12 +237,14 @@ def test_extract_tool_calls_ignores_unrelated_spans():
             _v2_tool_span(name='search', span_id=4, args='{}', start_offset=0.5),
         ]
     )
-    assert [c.name for c in _extract_tool_calls(tree)] == ['search']
+    result = ToolCorrectness(expected_tools=['search']).evaluate(_ctx(tree=tree))
+    assert result == EvaluationReason(value=True)
 
 
-def test_extract_tool_calls_skips_spans_with_non_string_tool_name():
+def test_tool_spans_skip_non_string_tool_name():
     # Defensive branch: if `gen_ai.tool.name` is somehow set to a non-string
-    # value, the span should be skipped rather than crashing.
+    # value, the span should be skipped rather than crashing. Expecting no
+    # tools (with the strict default) passes only if the span was skipped.
     tree = _build_tree(
         [
             _make_span(
@@ -225,53 +254,11 @@ def test_extract_tool_calls_skips_spans_with_non_string_tool_name():
             ),
         ]
     )
-    assert _extract_tool_calls(tree) == []
+    result = ToolCorrectness(expected_tools=[]).evaluate(_ctx(tree=tree))
+    assert result == EvaluationReason(value=True)
 
 
-def test_extract_tool_calls_missing_arguments_attribute():
-    tree = _build_tree(
-        [
-            _v2_tool_span(name='noargs', span_id=1, args=None, start_offset=0.0),
-        ]
-    )
-    calls = _extract_tool_calls(tree)
-    assert len(calls) == 1
-    assert calls[0].arguments is None
-
-
-def test_extract_tool_calls_result_v2_and_v3():
-    """Both v2 (`tool_response`) and v3+ (`gen_ai.tool.call.result`) result attrs are extracted."""
-    tree = _build_tree(
-        [
-            _make_span(
-                name='running tool',
-                span_id=1,
-                attributes={
-                    'gen_ai.tool.name': 'v2_tool',
-                    'logfire.msg': 'running tool: v2_tool',
-                    'tool_arguments': '{}',
-                    'tool_response': 'v2_result',
-                },
-                start_offset=0.0,
-            ),
-            _make_span(
-                name='execute_tool v3_tool',
-                span_id=2,
-                attributes={
-                    'gen_ai.tool.name': 'v3_tool',
-                    'logfire.msg': 'running tool: v3_tool',
-                    'gen_ai.tool.call.arguments': '{}',
-                    'gen_ai.tool.call.result': 'v3_result',
-                },
-                start_offset=0.1,
-            ),
-        ]
-    )
-    calls = _extract_tool_calls(tree)
-    assert [c.result for c in calls] == ['v2_result', 'v3_result']
-
-
-def test_extract_tool_calls_v2_output_function_with_no_logfire_msg():
+def test_tool_spans_v2_output_function_with_no_logfire_msg():
     """A v2 output-function span (span name `running output function`) is excluded.
 
     This exercises the code path that skips v2 output-function spans by name
@@ -288,8 +275,8 @@ def test_extract_tool_calls_v2_output_function_with_no_logfire_msg():
             _v2_tool_span(name='search', span_id=2, args='{}', start_offset=0.1),
         ]
     )
-    calls = _extract_tool_calls(tree)
-    assert [c.name for c in calls] == ['search']
+    result = ToolCorrectness(expected_tools=['search']).evaluate(_ctx(tree=tree))
+    assert result == EvaluationReason(value=True)
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +318,7 @@ def test_tool_correctness_missing_tool():
     assert "missing tools: 'format' (x1)" in result.reason
 
 
-def test_tool_correctness_allow_extra_true_by_default():
+def test_tool_correctness_extra_fails_by_default():
     tree = _build_tree(
         [
             _v2_tool_span(name='search', span_id=1, args='{}', start_offset=0.0),
@@ -339,21 +326,21 @@ def test_tool_correctness_allow_extra_true_by_default():
         ]
     )
     evaluator = ToolCorrectness(expected_tools=['search'])
-    assert evaluator.evaluate(_ctx(tree=tree)) == EvaluationReason(value=True)
+    result = evaluator.evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason is not None
+    assert "unexpected tools: 'extra' (x1)" in result.reason
 
 
-def test_tool_correctness_allow_extra_false_fails_on_extras():
+def test_tool_correctness_allow_extra_permits_extras():
     tree = _build_tree(
         [
             _v2_tool_span(name='search', span_id=1, args='{}', start_offset=0.0),
             _v2_tool_span(name='extra', span_id=2, args='{}', start_offset=0.1),
         ]
     )
-    evaluator = ToolCorrectness(expected_tools=['search'], allow_extra=False)
-    result = evaluator.evaluate(_ctx(tree=tree))
-    assert result.value is False
-    assert result.reason is not None
-    assert "unexpected tools: 'extra' (x1)" in result.reason
+    evaluator = ToolCorrectness(expected_tools=['search'], allow_extra=True)
+    assert evaluator.evaluate(_ctx(tree=tree)) == EvaluationReason(value=True)
 
 
 def test_tool_correctness_both_missing_and_extra_reported():
@@ -362,7 +349,7 @@ def test_tool_correctness_both_missing_and_extra_reported():
             _v2_tool_span(name='unexpected', span_id=1, args='{}', start_offset=0.0),
         ]
     )
-    evaluator = ToolCorrectness(expected_tools=['wanted'], allow_extra=False)
+    evaluator = ToolCorrectness(expected_tools=['wanted'])
     result = evaluator.evaluate(_ctx(tree=tree))
     assert result.value is False
     assert result.reason is not None
@@ -381,15 +368,6 @@ def test_tool_correctness_no_span_tree():
 # ---------------------------------------------------------------------------
 # TrajectoryMatch
 # ---------------------------------------------------------------------------
-
-
-def test_longest_common_subsequence_length_basic():
-    assert _longest_common_subsequence_length(['a', 'b', 'c'], ['a', 'b', 'c']) == 3
-    assert _longest_common_subsequence_length(['a', 'b', 'c'], ['a', 'c']) == 2
-    assert _longest_common_subsequence_length(['a', 'x', 'b', 'y', 'c'], ['a', 'b', 'c']) == 3
-    assert _longest_common_subsequence_length([], ['a']) == 0
-    assert _longest_common_subsequence_length(['a'], []) == 0
-    assert _longest_common_subsequence_length([], []) == 0
 
 
 def test_trajectory_match_exact_pass():
@@ -478,6 +456,28 @@ def test_trajectory_match_in_order_second_example():
     assert 'recall=2/2=1.000' in result.reason
 
 
+def test_trajectory_match_in_order_interleaved_extras():
+    # LCS must skip over interleaved extras:
+    #   actual   = ['a', 'x', 'b', 'y', 'c']
+    #   expected = ['a', 'b', 'c']
+    #   LCS = 3, precision = 3/5, recall = 3/3 = 1.0
+    #   F1 = 2 * (3/5) * 1.0 / (3/5 + 1.0) = 0.75
+    tree = _build_tree(
+        [
+            _v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0),
+            _v2_tool_span(name='x', span_id=2, args='{}', start_offset=0.1),
+            _v2_tool_span(name='b', span_id=3, args='{}', start_offset=0.2),
+            _v2_tool_span(name='y', span_id=4, args='{}', start_offset=0.3),
+            _v2_tool_span(name='c', span_id=5, args='{}', start_offset=0.4),
+        ]
+    )
+    result = TrajectoryMatch(expected_trajectory=['a', 'b', 'c'], order='in_order').evaluate(_ctx(tree=tree))
+    assert isinstance(result.value, float)
+    assert abs(result.value - 0.75) < 1e-9
+    assert result.reason is not None
+    assert 'LCS=3' in result.reason
+
+
 def test_trajectory_match_in_order_no_match():
     tree = _build_tree([_v2_tool_span(name='x', span_id=1, args='{}', start_offset=0.0)])
     result = TrajectoryMatch(expected_trajectory=['y'], order='in_order').evaluate(_ctx(tree=tree))
@@ -496,6 +496,12 @@ def test_trajectory_match_in_order_actual_empty_expected_nonempty():
     assert result.value == 0.0
 
 
+def test_trajectory_match_in_order_expected_empty_actual_nonempty():
+    tree = _build_tree([_v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0)])
+    result = TrajectoryMatch(expected_trajectory=[], order='in_order').evaluate(_ctx(tree=tree))
+    assert result.value == 0.0
+
+
 def test_trajectory_match_any_order_full_overlap():
     tree = _build_tree(
         [
@@ -508,6 +514,13 @@ def test_trajectory_match_any_order_full_overlap():
 
 
 def test_trajectory_match_any_order_partial_overlap():
+    # Hand calculation:
+    #   actual   = ['a', 'x']
+    #   expected = ['a', 'b', 'c']
+    #   overlap  = 1 ('a')
+    #   precision = 1/2 = 0.5
+    #   recall    = 1/3 ≈ 0.3333
+    #   F1        = 2 * 0.5 * (1/3) / (0.5 + 1/3) = 0.4
     tree = _build_tree(
         [
             _v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0),
@@ -516,29 +529,60 @@ def test_trajectory_match_any_order_partial_overlap():
     )
     result = TrajectoryMatch(expected_trajectory=['a', 'b', 'c'], order='any_order').evaluate(_ctx(tree=tree))
     assert isinstance(result.value, float)
-    assert abs(result.value - 1 / 3) < 1e-9
+    assert abs(result.value - 0.4) < 1e-9
     assert result.reason is not None
-    assert '1/3' in result.reason
+    assert 'overlap=1' in result.reason
+    assert 'F1=0.400' in result.reason
+
+
+def test_trajectory_match_any_order_extras_reduce_score():
+    # Extra calls reduce precision even though order is ignored:
+    #   actual   = ['a', 'b', 'x', 'y']
+    #   expected = ['a', 'b']
+    #   overlap = 2, precision = 2/4 = 0.5, recall = 2/2 = 1.0, F1 = 2/3
+    tree = _build_tree(
+        [
+            _v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0),
+            _v2_tool_span(name='b', span_id=2, args='{}', start_offset=0.1),
+            _v2_tool_span(name='x', span_id=3, args='{}', start_offset=0.2),
+            _v2_tool_span(name='y', span_id=4, args='{}', start_offset=0.3),
+        ]
+    )
+    result = TrajectoryMatch(expected_trajectory=['a', 'b'], order='any_order').evaluate(_ctx(tree=tree))
+    assert isinstance(result.value, float)
+    assert abs(result.value - 2 / 3) < 1e-9
 
 
 def test_trajectory_match_any_order_multiset_semantics():
     # actual has one 'a'; expected requires two 'a's. Overlap counts each
-    # 'a' only once because it's a multiset intersection.
+    # 'a' only once because it's a multiset intersection:
+    #   overlap = 1, precision = 1/1 = 1.0, recall = 1/2 = 0.5, F1 = 2/3
     tree = _build_tree([_v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0)])
     result = TrajectoryMatch(expected_trajectory=['a', 'a'], order='any_order').evaluate(_ctx(tree=tree))
     assert isinstance(result.value, float)
-    assert abs(result.value - 0.5) < 1e-9
+    assert abs(result.value - 2 / 3) < 1e-9
 
 
-def test_trajectory_match_any_order_empty_expected():
-    tree = _build_tree([_v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0)])
+def test_trajectory_match_any_order_both_empty():
+    tree = _build_tree([])
     result = TrajectoryMatch(expected_trajectory=[], order='any_order').evaluate(_ctx(tree=tree))
     assert result.value == 1.0
 
 
-def test_trajectory_match_no_span_tree():
+def test_trajectory_match_any_order_expected_empty_actual_nonempty():
+    tree = _build_tree([_v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0)])
+    result = TrajectoryMatch(expected_trajectory=[], order='any_order').evaluate(_ctx(tree=tree))
+    assert result.value == 0.0
+
+
+def test_trajectory_match_no_span_tree_returns_float_zero():
+    # The degraded path must stay a score (float), not become an assertion
+    # (bool), so span-less cases don't silently vanish from score averages.
     result = TrajectoryMatch(expected_trajectory=['a']).evaluate(_ctx(tree=SpanTreeRecordingError('x')))
-    assert result.value is False
+    assert type(result.value) is float
+    assert result.value == 0.0
+    assert result.reason is not None
+    assert 'logfire' in result.reason
 
 
 # ---------------------------------------------------------------------------
@@ -688,9 +732,10 @@ def test_argument_correctness_occurrence_out_of_range():
     assert 'out of range' in result.reason
 
 
-def test_argument_correctness_include_content_false():
-    """When `include_content=False`, the arguments string isn't recorded."""
-    tree = _build_tree([_v3_tool_span(name='search', span_id=1, args=None, start_offset=0.0)])
+@pytest.mark.parametrize('span_builder', [_v2_tool_span, _v3_tool_span])
+def test_argument_correctness_include_content_false(span_builder: Any):
+    """When `include_content=False`, the arguments string isn't recorded (v2 and v3+ spans)."""
+    tree = _build_tree([span_builder(name='search', span_id=1, args=None, start_offset=0.0)])
     evaluator = ArgumentCorrectness(
         tool_name='search',
         expected_arguments={'q': 'cats'},
@@ -743,6 +788,29 @@ def test_argument_correctness_v2_span_also_works():
     assert evaluator.evaluate(_ctx(tree=tree)).value is True
 
 
+def test_argument_correctness_nested_values_compared_by_equality():
+    # Subset matching applies only to top-level keys: a nested-dict expected
+    # value must equal the actual value in full.
+    tree = _build_tree(
+        [
+            _v3_tool_span(
+                name='search',
+                span_id=1,
+                args='{"filters": {"status": "open", "priority": "high"}}',
+                start_offset=0.0,
+            ),
+        ]
+    )
+    evaluator = ArgumentCorrectness(
+        tool_name='search',
+        expected_arguments={'filters': {'status': 'open'}},
+    )
+    result = evaluator.evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason is not None
+    assert "key 'filters'" in result.reason
+
+
 def test_argument_correctness_no_span_tree():
     result = ArgumentCorrectness(tool_name='x', expected_arguments={'a': 1}).evaluate(
         _ctx(tree=SpanTreeRecordingError('x'))
@@ -751,31 +819,24 @@ def test_argument_correctness_no_span_tree():
 
 
 # ---------------------------------------------------------------------------
-# StepEfficiency
+# MaxToolCalls
 # ---------------------------------------------------------------------------
 
 
-def test_step_efficiency_no_thresholds_returns_empty():
-    tree = _build_tree([_v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0)])
-    assert StepEfficiency().evaluate(_ctx(tree=tree)) == {}
-
-
-def test_step_efficiency_tool_calls_under_budget():
+def test_max_tool_calls_under_budget():
     tree = _build_tree(
         [
             _v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0),
             _v2_tool_span(name='b', span_id=2, args='{}', start_offset=0.1),
         ]
     )
-    result = StepEfficiency(max_tool_calls=3).evaluate(_ctx(tree=tree))
-    assert set(result.keys()) == {STEP_EFFICIENCY_TOOL_CALLS_KEY}
-    reason = result[STEP_EFFICIENCY_TOOL_CALLS_KEY]
-    assert reason.value is True
-    assert reason.reason is not None
-    assert '2 tool call(s)' in reason.reason
+    result = MaxToolCalls(max_calls=3).evaluate(_ctx(tree=tree))
+    assert result.value is True
+    assert result.reason is not None
+    assert '2 tool call(s)' in result.reason
 
 
-def test_step_efficiency_tool_calls_over_budget():
+def test_max_tool_calls_over_budget():
     tree = _build_tree(
         [
             _v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0),
@@ -783,88 +844,104 @@ def test_step_efficiency_tool_calls_over_budget():
             _v2_tool_span(name='c', span_id=3, args='{}', start_offset=0.2),
         ]
     )
-    result = StepEfficiency(max_tool_calls=2).evaluate(_ctx(tree=tree))
-    assert result[STEP_EFFICIENCY_TOOL_CALLS_KEY].value is False
+    result = MaxToolCalls(max_calls=2).evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason is not None
+    assert 'budget=2' in result.reason
 
 
-def test_step_efficiency_model_requests_from_metrics():
+def test_max_tool_calls_no_span_tree():
+    result = MaxToolCalls(max_calls=2).evaluate(_ctx(tree=SpanTreeRecordingError('x')))
+    assert result.value is False
+    assert result.reason is not None
+    assert 'logfire' in result.reason
+
+
+# ---------------------------------------------------------------------------
+# MaxModelRequests
+# ---------------------------------------------------------------------------
+
+
+def test_max_model_requests_from_metrics():
     # Nothing in the tree; metrics provide the count.
     tree = _build_tree([])
-    result = StepEfficiency(max_model_requests=3).evaluate(_ctx(tree=tree, metrics={'requests': 2}))
-    assert set(result.keys()) == {STEP_EFFICIENCY_MODEL_REQUESTS_KEY}
-    reason = result[STEP_EFFICIENCY_MODEL_REQUESTS_KEY]
-    assert reason.value is True
-    assert reason.reason is not None
-    assert 'ctx.metrics' in reason.reason
+    result = MaxModelRequests(max_requests=3).evaluate(_ctx(tree=tree, metrics={'requests': 2}))
+    assert result.value is True
+    assert result.reason is not None
+    assert 'ctx.metrics' in result.reason
 
 
-def test_step_efficiency_model_requests_falls_back_to_span_count():
+def test_max_model_requests_falls_back_to_span_count():
     tree = _build_tree(
         [
             _model_request_span(span_id=1, start_offset=0.0),
             _model_request_span(span_id=2, start_offset=0.1),
+            # Not a model request; must not be counted.
+            _v2_tool_span(name='search', span_id=3, args='{}', start_offset=0.2),
         ]
     )
-    result = StepEfficiency(max_model_requests=1).evaluate(_ctx(tree=tree))
-    reason = result[STEP_EFFICIENCY_MODEL_REQUESTS_KEY]
-    assert reason.value is False
-    assert reason.reason is not None
-    assert 'from span tree' in reason.reason
+    result = MaxModelRequests(max_requests=1).evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason is not None
+    assert 'from span tree' in result.reason
 
 
-def test_step_efficiency_both_thresholds_set_and_both_over_budget():
+def test_max_model_requests_span_count_ignores_non_chat_spans():
     tree = _build_tree(
         [
-            _v2_tool_span(name='a', span_id=1, args='{}', start_offset=0.0),
-            _v2_tool_span(name='b', span_id=2, args='{}', start_offset=0.1),
-            _v2_tool_span(name='c', span_id=3, args='{}', start_offset=0.2),
-            _model_request_span(span_id=10, start_offset=0.3),
-            _model_request_span(span_id=11, start_offset=0.4),
+            _model_request_span(span_id=1, start_offset=0.0),
+            # Has the model attribute but is not a chat operation.
+            _make_span(
+                name='embeddings',
+                span_id=2,
+                attributes={'gen_ai.request.model': 'text-embedding-3-small', 'gen_ai.operation.name': 'embeddings'},
+                start_offset=0.1,
+            ),
         ]
     )
-    result = StepEfficiency(max_tool_calls=2, max_model_requests=1).evaluate(_ctx(tree=tree))
-    assert set(result.keys()) == {
-        STEP_EFFICIENCY_TOOL_CALLS_KEY,
-        STEP_EFFICIENCY_MODEL_REQUESTS_KEY,
-    }
-    assert result[STEP_EFFICIENCY_TOOL_CALLS_KEY].value is False
-    assert result[STEP_EFFICIENCY_MODEL_REQUESTS_KEY].value is False
+    result = MaxModelRequests(max_requests=1).evaluate(_ctx(tree=tree))
+    assert result.value is True
 
 
-def test_step_efficiency_no_span_tree_populates_configured_keys():
-    ctx = _ctx(tree=SpanTreeRecordingError('spans were not recorded'))
-    result = StepEfficiency(max_tool_calls=2, max_model_requests=3).evaluate(ctx)
-    assert set(result.keys()) == {
-        STEP_EFFICIENCY_TOOL_CALLS_KEY,
-        STEP_EFFICIENCY_MODEL_REQUESTS_KEY,
-    }
-    for reason in result.values():
-        assert reason.value is False
-        assert reason.reason is not None
-        assert 'logfire' in reason.reason
+def test_max_model_requests_no_span_tree():
+    result = MaxModelRequests(max_requests=3).evaluate(_ctx(tree=SpanTreeRecordingError('x')))
+    assert result.value is False
+    assert result.reason is not None
+    assert 'logfire' in result.reason
 
 
-def test_step_efficiency_no_span_tree_skips_unconfigured_keys():
-    ctx = _ctx(tree=SpanTreeRecordingError('spans were not recorded'))
-    result = StepEfficiency(max_tool_calls=5).evaluate(ctx)
-    assert set(result.keys()) == {STEP_EFFICIENCY_TOOL_CALLS_KEY}
+# ---------------------------------------------------------------------------
+# evaluation_name
+# ---------------------------------------------------------------------------
 
 
-def test_step_efficiency_no_span_tree_only_model_requests():
-    # Exercises the `max_tool_calls is None, max_model_requests is not None`
-    # branch on the SpanTreeRecordingError path.
-    ctx = _ctx(tree=SpanTreeRecordingError('spans were not recorded'))
-    result = StepEfficiency(max_model_requests=3).evaluate(ctx)
-    assert set(result.keys()) == {STEP_EFFICIENCY_MODEL_REQUESTS_KEY}
-    assert result[STEP_EFFICIENCY_MODEL_REQUESTS_KEY].value is False
+def test_evaluation_name_default_and_override():
+    evaluators = [
+        ToolCorrectness(expected_tools=['x']),
+        TrajectoryMatch(expected_trajectory=['x']),
+        ArgumentCorrectness(tool_name='x', expected_arguments={}),
+        MaxToolCalls(max_calls=1),
+        MaxModelRequests(max_requests=1),
+    ]
+    assert [e.get_default_evaluation_name() for e in evaluators] == [
+        'ToolCorrectness',
+        'TrajectoryMatch',
+        'ArgumentCorrectness',
+        'MaxToolCalls',
+        'MaxModelRequests',
+    ]
 
-
-def test_step_efficiency_metrics_non_numeric_falls_back_to_spans():
-    # If `ctx.metrics['requests']` is somehow not numeric, we should fall
-    # back to counting spans rather than crashing.
-    tree = _build_tree([_model_request_span(span_id=1, start_offset=0.0)])
-    # Pass a metric with a non-numeric sentinel; the typed signature uses
-    # int | float, but guard code must still handle unexpected values.
-    ctx = _ctx(tree=tree, metrics={})  # empty metrics -> falls back to span tree
-    result = StepEfficiency(max_model_requests=5).evaluate(ctx)
-    assert result[STEP_EFFICIENCY_MODEL_REQUESTS_KEY].value is True
+    named = [
+        ToolCorrectness(expected_tools=['x'], evaluation_name='rag_tools'),
+        TrajectoryMatch(expected_trajectory=['x'], evaluation_name='rag_trajectory'),
+        ArgumentCorrectness(tool_name='x', expected_arguments={}, evaluation_name='rag_args'),
+        MaxToolCalls(max_calls=1, evaluation_name='tool_budget'),
+        MaxModelRequests(max_requests=1, evaluation_name='request_budget'),
+    ]
+    assert [e.get_default_evaluation_name() for e in named] == [
+        'rag_tools',
+        'rag_trajectory',
+        'rag_args',
+        'tool_budget',
+        'request_budget',
+    ]

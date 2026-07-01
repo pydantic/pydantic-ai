@@ -4,11 +4,12 @@ These evaluators compare the tool-call trajectory captured in OpenTelemetry
 spans against expectations. They are deterministic and require no LLM calls,
 so they are cheap to run and produce the same score for the same trace.
 
-All four evaluators ([`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness],
+All of the evaluators in this module ([`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness],
 [`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch],
-[`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness], and
-[`StepEfficiency`][pydantic_evals.evaluators.StepEfficiency]) read from
-`ctx.span_tree` and gracefully degrade to a `False`-valued
+[`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness],
+[`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls], and
+[`MaxModelRequests`][pydantic_evals.evaluators.MaxModelRequests]) read from
+`ctx.span_tree` and gracefully degrade to a failing
 [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason] if spans were
 not captured (e.g. Logfire isn't configured).
 
@@ -17,6 +18,18 @@ not captured (e.g. Logfire isn't configured).
     (i.e. tools Pydantic AI calls itself). Provider-native or server-side
     builtin tools — such as OpenAI's file search or Anthropic's web search —
     do not create local spans and will not be counted.
+
+!!! note "What counts as a tool call"
+    Every execution *attempt* produces a span, so:
+
+    - A call the model retried (e.g. the tool raised `ModelRetry`) is counted
+      once per attempt, and each attempt's arguments are recorded separately.
+    - A call whose tool body raised an exception is still counted — its
+      arguments were recorded before the failure.
+    - A deferred call (`ApprovalRequired` / `CallDeferred`) is **not** counted:
+      it never actually executed in this run.
+    - All matching spans in the captured tree are counted, including tool
+      calls made by nested sub-agents (agent-as-tool delegation).
 """
 
 from __future__ import annotations as _annotations
@@ -24,7 +37,6 @@ from __future__ import annotations as _annotations
 import json
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import timedelta
 from typing import Any, Literal, cast
 
 from ..otel._errors import SpanTreeRecordingError
@@ -33,10 +45,14 @@ from .context import EvaluatorContext
 from .evaluator import EvaluationReason, Evaluator
 
 __all__ = (
+    'ArgumentCorrectness',
+    'ArgumentMatchMode',
+    'ArgumentOccurrence',
+    'MaxModelRequests',
+    'MaxToolCalls',
     'ToolCorrectness',
     'TrajectoryMatch',
-    'ArgumentCorrectness',
-    'StepEfficiency',
+    'TrajectoryOrder',
 )
 
 
@@ -57,15 +73,16 @@ _V2_TOOL_SPAN_NAME = 'running tool'
 _V2_OUTPUT_FUNCTION_SPAN_NAME = 'running output function'
 # v3+ span names are of the form `execute_tool {tool_name}`
 _V3_TOOL_SPAN_PREFIX = 'execute_tool '
-# v2/v3 attribute names for arguments/result
+# v2/v3 attribute names for arguments
 _V2_TOOL_ARGUMENTS_ATTR = 'tool_arguments'
 _V3_TOOL_ARGUMENTS_ATTR = 'gen_ai.tool.call.arguments'
-_V2_TOOL_RESULT_ATTR = 'tool_response'
-_V3_TOOL_RESULT_ATTR = 'gen_ai.tool.call.result'
 # v3+ marker for output-function spans: `logfire.msg` starts with this
 _OUTPUT_FUNCTION_MSG_PREFIX = 'running output function:'
-# attribute that marks a span as a model request (chat) — same as
-# `dataset._extract_span_tree_metrics` uses to count `requests`
+# set on tool spans whose call was deferred (`ApprovalRequired`/`CallDeferred`)
+# rather than executed
+_TOOL_DEFERRAL_NAME_ATTR = 'pydantic_ai.tool.deferral.name'
+# attribute that marks a span as a model request (chat) — same criteria as
+# `_task_run.extract_span_tree_metrics` uses to count the `requests` metric
 _GEN_AI_REQUEST_MODEL_ATTR = 'gen_ai.request.model'
 _GEN_AI_OPERATION_NAME_ATTR = 'gen_ai.operation.name'
 
@@ -81,21 +98,25 @@ class _ToolCallInfo:
     name: str
     arguments: str | None
     """The JSON-encoded arguments string, or `None` if `include_content=False`."""
-    result: str | None
-    """The string/JSON result, or `None` if the result isn't recorded."""
-    duration: timedelta
 
 
 def _is_tool_call_span(node: SpanNode) -> bool:
-    """Return True if this span represents a locally-executed tool call.
+    """Return True if this span represents a locally-executed tool call attempt.
 
     Output-function spans share the `gen_ai.tool.name` attribute and (in v3+)
     the `execute_tool ...` span name with regular tool spans, so they're
     discriminated by either having the dedicated v2 span name or a
     `logfire.msg` attribute starting with `'running output function:'`.
+
+    Deferred calls (`ApprovalRequired`/`CallDeferred`) produce a span with the
+    same shape but never execute, so they're excluded via the deferral marker
+    attribute.
     """
     tool_name = node.attributes.get(_GEN_AI_TOOL_NAME_ATTR)
     if not isinstance(tool_name, str):
+        return False
+    # Deferred calls never actually ran; don't count them.
+    if _TOOL_DEFERRAL_NAME_ATTR in node.attributes:
         return False
     # v2: tool calls live under `running tool`; output functions under
     # `running output function`.
@@ -128,15 +149,10 @@ def _extract_tool_call_info(node: SpanNode) -> _ToolCallInfo:
     arguments = node.attributes.get(_V3_TOOL_ARGUMENTS_ATTR)
     if arguments is None:
         arguments = node.attributes.get(_V2_TOOL_ARGUMENTS_ATTR)
-    result = node.attributes.get(_V3_TOOL_RESULT_ATTR)
-    if result is None:
-        result = node.attributes.get(_V2_TOOL_RESULT_ATTR)
 
     return _ToolCallInfo(
         name=tool_name,
         arguments=arguments if isinstance(arguments, str) else None,
-        result=result if isinstance(result, str) else None,
-        duration=node.duration,
     )
 
 
@@ -147,12 +163,17 @@ def _extract_tool_calls(span_tree: SpanTree) -> list[_ToolCallInfo]:
     return [_extract_tool_call_info(node) for node in tool_spans]
 
 
+def _count_tool_calls(span_tree: SpanTree) -> int:
+    """Count locally-executed tool-call spans in the tree."""
+    return sum(1 for node in span_tree if _is_tool_call_span(node))
+
+
 def _count_model_requests(span_tree: SpanTree) -> int:
     """Count LLM chat-request spans in the tree."""
     return sum(1 for node in span_tree if _is_model_request_span(node))
 
 
-_NO_SPAN_TREE_REASON = 'No span tree available \u2014 ensure logfire/instrumentation is configured.'
+_NO_SPAN_TREE_REASON = 'No span tree available — ensure logfire/instrumentation is configured.'
 
 
 # ---------------------------------------------------------------------------
@@ -172,17 +193,20 @@ class ToolCorrectness(Evaluator[object, object, object]):
     Args:
         expected_tools: The tool names the agent is expected to call. Order
             does not matter; duplicates are significant.
-        allow_extra: If `True` (the default), calling tools not listed in
-            `expected_tools` is still a pass. If `False`, any unexpected
-            tool call fails the check.
+        allow_extra: If `False` (the default), any tool call not listed in
+            `expected_tools` fails the check. Set to `True` to only require
+            that the expected tools were called, permitting extras.
         evaluation_name: Optional override for the reported evaluation name.
 
     Returns `EvaluationReason` with a `bool` value.
     """
 
     expected_tools: list[str]
-    allow_extra: bool = True
+    allow_extra: bool = False
     evaluation_name: str | None = field(default=None)
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluationReason:
         try:
@@ -219,7 +243,9 @@ TrajectoryOrder = Literal['exact', 'in_order', 'any_order']
 - `'exact'`: actual must equal expected (1.0) or not (0.0).
 - `'in_order'`: F1 score combining precision and recall of the longest
   common subsequence.
-- `'any_order'`: multiset overlap, i.e. `|multiset(actual) \u2229 multiset(expected)| / |expected|`.
+- `'any_order'`: F1 score combining precision and recall of the multiset
+  intersection (order is ignored, but extra and missing calls both reduce
+  the score).
 """
 
 
@@ -240,29 +266,50 @@ def _longest_common_subsequence_length(a: list[str], b: list[str]) -> int:
     return prev[len(b)]
 
 
+def _f1(precision: float, recall: float) -> float:
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
 @dataclass(repr=False)
 class TrajectoryMatch(Evaluator[object, object, object]):
     """Compare the agent's tool-call trajectory to an expected one.
 
     Args:
         expected_trajectory: The expected ordered list of tool names.
-        order: How strictly to compare — see [`TrajectoryOrder`][pydantic_evals.evaluators.agentic.TrajectoryOrder].
+        order: How strictly to compare:
+
+            - `'exact'`: actual must equal expected (1.0) or not (0.0).
+            - `'in_order'` (default): F1 computed from the longest common
+              subsequence (LCS) of the two sequences. Extra calls reduce
+              precision; missing calls reduce recall.
+            - `'any_order'`: F1 computed from the multiset intersection of the
+              two trajectories. Order is ignored, but extra and missing calls
+              still reduce the score.
         evaluation_name: Optional override for the reported evaluation name.
 
-    Returns `EvaluationReason` with a `float` value in `[0.0, 1.0]`. For
-    `order='in_order'`, the `reason` text shows the precision, recall and F1
+    Returns `EvaluationReason` with a `float` value in `[0.0, 1.0]` (including
+    when no span tree was captured, in which case the value is `0.0`). For the
+    F1-based modes, the `reason` text shows the precision, recall and F1
     numbers so the score can be reproduced from the reported mismatch.
+
+    If both the expected and actual trajectories are empty, all modes score
+    `1.0`; if only one of them is empty, all modes score `0.0`.
     """
 
     expected_trajectory: list[str]
     order: TrajectoryOrder = 'in_order'
     evaluation_name: str | None = field(default=None)
 
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluationReason:
         try:
             span_tree = ctx.span_tree
         except SpanTreeRecordingError:
-            return EvaluationReason(value=False, reason=_NO_SPAN_TREE_REASON)
+            return EvaluationReason(value=0.0, reason=_NO_SPAN_TREE_REASON)
 
         actual = [call.name for call in _extract_tool_calls(span_tree)]
         expected = list(self.expected_trajectory)
@@ -275,35 +322,29 @@ class TrajectoryMatch(Evaluator[object, object, object]):
                 reason=f'actual trajectory {actual!r} does not equal expected {expected!r}',
             )
 
+        if not actual and not expected:
+            return EvaluationReason(value=1.0, reason='both actual and expected trajectories are empty')
+
         if self.order == 'any_order':
-            expected_counter = Counter(expected)
-            actual_counter = Counter(actual)
-            if not expected_counter:
-                # Nothing expected: perfect match by convention.
-                return EvaluationReason(value=1.0, reason='expected trajectory is empty')
-            overlap = sum((expected_counter & actual_counter).values())
-            score = overlap / len(expected)
-            return EvaluationReason(
-                value=score,
-                reason=(
-                    f'multiset overlap {overlap}/{len(expected)} = {score:.3f} '
-                    f'(expected: {expected!r}, actual: {actual!r})'
-                ),
+            overlap = sum((Counter(expected) & Counter(actual)).values())
+            precision = overlap / len(actual) if actual else 0.0
+            recall = overlap / len(expected) if expected else 0.0
+            f1 = _f1(precision, recall)
+            reason = (
+                f'multiset overlap={overlap}, precision={overlap}/{len(actual)}={precision:.3f}, '
+                f'recall={overlap}/{len(expected)}={recall:.3f}, F1={f1:.3f} '
+                f'(expected: {expected!r}, actual: {actual!r})'
             )
+            return EvaluationReason(value=f1, reason=reason)
 
         # order == 'in_order'
         lcs = _longest_common_subsequence_length(actual, expected)
-        if not actual and not expected:
-            return EvaluationReason(value=1.0, reason='both actual and expected trajectories are empty')
         precision = lcs / len(actual) if actual else 0.0
         recall = lcs / len(expected) if expected else 0.0
-        if precision + recall == 0:
-            f1 = 0.0
-        else:
-            f1 = 2 * precision * recall / (precision + recall)
+        f1 = _f1(precision, recall)
         reason = (
-            f'LCS={lcs}, precision={lcs}/{len(actual) or 0}={precision:.3f}, '
-            f'recall={lcs}/{len(expected) or 0}={recall:.3f}, F1={f1:.3f} '
+            f'LCS={lcs}, precision={lcs}/{len(actual)}={precision:.3f}, '
+            f'recall={lcs}/{len(expected)}={recall:.3f}, F1={f1:.3f} '
             f'(expected: {expected!r}, actual: {actual!r})'
         )
         return EvaluationReason(value=f1, reason=reason)
@@ -337,10 +378,14 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
         expected_arguments: Expected argument keys/values.
         match_mode: `'subset'` (default) checks that every expected
             key/value is present in the actual arguments. `'exact'` requires
-            deep equality.
+            deep equality. Note that the subset comparison applies only to
+            top-level keys: an expected *value* (including a nested dict) must
+            compare equal to the actual value in full.
         occurrence: Which invocation of the tool to inspect when the tool is
             called multiple times: `'first'`, `'last'`, or a 0-based integer
-            index. A negative int is not supported.
+            index. A negative int is not supported. Note that retried
+            invocations count as separate occurrences, so with retries
+            `'first'` may select an attempt that was subsequently retried.
         evaluation_name: Optional override for the reported evaluation name.
 
     Returns `EvaluationReason` with a `bool` value. Fails gracefully with a
@@ -353,6 +398,9 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
     match_mode: ArgumentMatchMode = 'subset'
     occurrence: ArgumentOccurrence | int = 'first'
     evaluation_name: str | None = field(default=None)
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluationReason:
         try:
@@ -431,77 +479,75 @@ def _diff_arguments(actual: dict[str, Any], expected: dict[str, Any], match_mode
 
 
 # ---------------------------------------------------------------------------
-# StepEfficiency
+# MaxToolCalls / MaxModelRequests
 # ---------------------------------------------------------------------------
-
-# Keys used for the mapping returned by `StepEfficiency`. These are documented
-# and considered part of the evaluator's public contract so that reports
-# render them consistently.
-STEP_EFFICIENCY_TOOL_CALLS_KEY = 'tool_calls_under_budget'
-STEP_EFFICIENCY_MODEL_REQUESTS_KEY = 'model_requests_under_budget'
 
 
 @dataclass(repr=False)
-class StepEfficiency(Evaluator[object, object, object]):
-    """Assert the agent stayed within tool-call and/or model-request budgets.
-
-    Returns a mapping with any of these stable keys (only keys whose budget
-    is configured are returned):
-
-    - `'tool_calls_under_budget'`: set when `max_tool_calls` is provided.
-    - `'model_requests_under_budget'`: set when `max_model_requests` is provided.
-
-    Each value is an `EvaluationReason` whose `value` is `True` if the count
-    is within the budget. The stable key names make these results easy to
-    reference consistently in evals reports.
+class MaxToolCalls(Evaluator[object, object, object]):
+    """Assert that the agent made at most `max_calls` locally-executed tool calls.
 
     Args:
-        max_tool_calls: Maximum allowed locally-executed tool calls. `None`
-            disables the check.
-        max_model_requests: Maximum allowed model (chat) requests. `None`
-            disables the check. Prefers `ctx.metrics['requests']` when
-            available, otherwise counts LLM request spans directly.
-        evaluation_name: Unused — results are returned under stable keys.
+        max_calls: Maximum allowed locally-executed tool calls.
+        evaluation_name: Optional override for the reported evaluation name.
+
+    Returns `EvaluationReason` with a `bool` value.
     """
 
-    max_tool_calls: int | None = None
-    max_model_requests: int | None = None
+    max_calls: int
     evaluation_name: str | None = field(default=None)
 
-    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> dict[str, EvaluationReason]:
-        results: dict[str, EvaluationReason] = {}
-        if self.max_tool_calls is None and self.max_model_requests is None:
-            return results
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
+    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluationReason:
         try:
             span_tree = ctx.span_tree
         except SpanTreeRecordingError:
-            if self.max_tool_calls is not None:
-                results[STEP_EFFICIENCY_TOOL_CALLS_KEY] = EvaluationReason(value=False, reason=_NO_SPAN_TREE_REASON)
-            if self.max_model_requests is not None:
-                results[STEP_EFFICIENCY_MODEL_REQUESTS_KEY] = EvaluationReason(value=False, reason=_NO_SPAN_TREE_REASON)
-            return results
+            return EvaluationReason(value=False, reason=_NO_SPAN_TREE_REASON)
 
-        if self.max_tool_calls is not None:
-            tool_count = len(_extract_tool_calls(span_tree))
-            within = tool_count <= self.max_tool_calls
-            results[STEP_EFFICIENCY_TOOL_CALLS_KEY] = EvaluationReason(
-                value=within,
-                reason=f'{tool_count} tool call(s), budget={self.max_tool_calls}',
-            )
+        tool_count = _count_tool_calls(span_tree)
+        return EvaluationReason(
+            value=tool_count <= self.max_calls,
+            reason=f'{tool_count} tool call(s), budget={self.max_calls}',
+        )
 
-        if self.max_model_requests is not None:
-            metric = ctx.metrics.get('requests')
-            if isinstance(metric, int | float):
-                request_count = int(metric)
-                source = "ctx.metrics['requests']"
-            else:
-                request_count = _count_model_requests(span_tree)
-                source = 'span tree'
-            within = request_count <= self.max_model_requests
-            results[STEP_EFFICIENCY_MODEL_REQUESTS_KEY] = EvaluationReason(
-                value=within,
-                reason=(f'{request_count} model request(s) (from {source}), budget={self.max_model_requests}'),
-            )
 
-        return results
+@dataclass(repr=False)
+class MaxModelRequests(Evaluator[object, object, object]):
+    """Assert that the agent made at most `max_requests` model (chat) requests.
+
+    Prefers the `requests` value from `ctx.metrics` when available, otherwise
+    counts LLM request spans in the span tree directly (both use the same
+    criteria, so the two sources agree whenever both are populated).
+
+    Args:
+        max_requests: Maximum allowed model requests.
+        evaluation_name: Optional override for the reported evaluation name.
+
+    Returns `EvaluationReason` with a `bool` value.
+    """
+
+    max_requests: int
+    evaluation_name: str | None = field(default=None)
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
+    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluationReason:
+        try:
+            span_tree = ctx.span_tree
+        except SpanTreeRecordingError:
+            return EvaluationReason(value=False, reason=_NO_SPAN_TREE_REASON)
+
+        metric = ctx.metrics.get('requests')
+        if isinstance(metric, int | float):
+            request_count = int(metric)
+            source = "ctx.metrics['requests']"
+        else:
+            request_count = _count_model_requests(span_tree)
+            source = 'span tree'
+        return EvaluationReason(
+            value=request_count <= self.max_requests,
+            reason=f'{request_count} model request(s) (from {source}), budget={self.max_requests}',
+        )

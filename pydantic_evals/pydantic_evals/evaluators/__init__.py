@@ -1,4 +1,13 @@
-from .agentic import ArgumentCorrectness, StepEfficiency, ToolCorrectness, TrajectoryMatch
+from .agentic import (
+    ArgumentCorrectness,
+    ArgumentMatchMode,
+    ArgumentOccurrence,
+    MaxModelRequests,
+    MaxToolCalls,
+    ToolCorrectness,
+    TrajectoryMatch,
+    TrajectoryOrder,
+)
 from .common import (
     Contains,
     Equals,
@@ -32,8 +41,12 @@ __all__ = (
     # agentic
     'ToolCorrectness',
     'TrajectoryMatch',
+    'TrajectoryOrder',
     'ArgumentCorrectness',
-    'StepEfficiency',
+    'ArgumentMatchMode',
+    'ArgumentOccurrence',
+    'MaxToolCalls',
+    'MaxModelRequests',
     # context
     'EvaluatorContext',
     # evaluator
