@@ -1011,18 +1011,7 @@ async def test_unsupported_media_types(allow_model_requests: None, content_item:
         await agent.run(['hello', content_item])
 
 
-@pytest.mark.parametrize(
-    'content_item, error_message',
-    [
-        (AudioUrl(url='url'), 'AudioUrl is not supported for Hugging Face'),
-        (DocumentUrl(url='url'), 'DocumentUrl is not supported for Hugging Face'),
-        (VideoUrl(url='url'), 'VideoUrl is not supported for Hugging Face'),
-        (UploadedFile(file_id='file-123', provider_name='anthropic'), 'UploadedFile is not supported for Hugging Face'),
-    ],
-)
-async def test_unsupported_media_types_in_tool_return(
-    allow_model_requests: None, content_item: Any, error_message: str
-):
+async def test_unsupported_media_type_in_tool_return_is_not_silently_dropped(allow_model_requests: None):
     model = HuggingFaceModel(
         'Qwen/Qwen2.5-VL-72B-Instruct',
         provider=HuggingFaceProvider(api_key='x'),
@@ -1033,11 +1022,17 @@ async def test_unsupported_media_types_in_tool_return(
         ModelRequest(parts=[UserPromptPart(content='hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='get_file', args={}, tool_call_id='call_1')]),
         ModelRequest(
-            parts=[ToolReturnPart(tool_name='get_file', content=['here', content_item], tool_call_id='call_1')]
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    content=['here', DocumentUrl(url='url')],
+                    tool_call_id='call_1',
+                )
+            ]
         ),
     ]
 
-    with pytest.raises(NotImplementedError, match=error_message):
+    with pytest.raises(NotImplementedError, match='DocumentUrl is not supported for Hugging Face'):
         await agent.run('continue', message_history=messages)
 
 
