@@ -1036,106 +1036,34 @@ async def test_unsupported_media_type_in_tool_return_is_not_silently_dropped(all
         await agent.run('continue', message_history=messages)
 
 
-async def test_image_tool_return_is_forwarded_as_user_message(allow_model_requests: None):
-    tool_call = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type: ignore
-        {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type: ignore
-                {'name': 'get_image', 'arguments': '{}'}
-            ),
-            'id': 'call_1',
-            'type': 'function',
-        }
-    )
-    responses = [
-        completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type: ignore
-                {'content': None, 'role': 'assistant', 'tool_calls': [tool_call]}
+async def test_image_tool_return_is_forwarded_as_user_message():
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(api_key='x'))
+    model_request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_image',
+                content=ImageUrl(url='https://example.com/image.png'),
+                tool_call_id='call_1',
             )
-        ),
-        completion_message(ChatCompletionOutputMessage(content='done', role='assistant')),
-    ]
-    mock_client = MockHuggingFace.create_mock(responses)
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(model)
-
-    @agent.tool_plain
-    def get_image() -> ImageUrl:
-        return ImageUrl(url='https://example.com/image.png')
-
-    result = await agent.run('hello')
-
-    assert result.output == 'done'
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_1')],
-                model_name='hf-model',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_name='huggingface',
-                provider_url='https://api-inference.huggingface.co',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id='123',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_image',
-                        content=ImageUrl(url='https://example.com/image.png'),
-                        tool_call_id='call_1',
-                        timestamp=IsNow(tz=timezone.utc),
-                    )
-                ],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='done')],
-                model_name='hf-model',
-                timestamp=IsNow(tz=timezone.utc),
-                provider_name='huggingface',
-                provider_url='https://api-inference.huggingface.co',
-                provider_details={
-                    'finish_reason': 'stop',
-                    'timestamp': IsDatetime(),
-                },
-                provider_response_id='123',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
         ]
     )
-    chat_completion_kwargs = get_mock_chat_completion_kwargs(mock_client)
-    assert len(chat_completion_kwargs) == 2
-    _, follow_up_request_kwargs = chat_completion_kwargs
-    sent_messages = follow_up_request_kwargs['messages']
-    assert len(sent_messages) == 4
-    assert {k: v for k, v in asdict(sent_messages[2]).items() if v is not None} == {
-        'role': 'tool',
-        'content': 'See file 01a7df.',
-        'tool_call_id': 'call_1',
-    }
-    assert {k: v for k, v in asdict(sent_messages[3]).items() if v is not None} == snapshot(
-        {
-            'role': 'user',
-            'content': [
-                {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df:'},
-                {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
-            ],
-        }
+
+    mapped_messages = [
+        {k: v for k, v in asdict(mapped_message).items() if v is not None}
+        async for mapped_message in model._map_user_message(model_request)  # pyright: ignore[reportPrivateUsage]
+    ]
+
+    assert mapped_messages == snapshot(
+        [
+            {'role': 'tool', 'content': 'See file 01a7df.', 'tool_call_id': 'call_1'},
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df:'},
+                    {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
+                ],
+            },
+        ]
     )
 
 
