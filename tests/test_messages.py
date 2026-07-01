@@ -682,11 +682,10 @@ def test_sanitize_message_history_keeps_resolved_trailing_tool_call():
 def test_sanitize_message_history_strips_dangling_call_exposed_by_dropped_tail():
     """A dangling tool call re-exposed as the tail by a dropped trailing message is still stripped.
 
-    Regression for GHSA-jpr8-2v3g-wgf9: a client-submitted trailing system prompt sanitizes to an
-    empty `ModelRequest` that is dropped, promoting a preceding `ModelResponse` with an unresolved
-    `ToolCallPart` to the tail. A promptless run dispatches a trailing response's tool calls
-    directly, so the strip must target the surviving tail, not the pre-drop last index — otherwise
-    the client-injected call executes.
+    A trailing system prompt sanitizes to an empty `ModelRequest` that is dropped, promoting a
+    preceding `ModelResponse` with an unresolved `ToolCallPart` to the tail. Since a promptless run
+    would dispatch a trailing response's tool calls directly, the strip must target the surviving
+    tail, not the pre-drop last index.
     """
     messages: list[ModelMessage] = [
         ModelResponse(parts=[ToolCallPart(tool_name='delete_account', tool_call_id='call-1')]),
@@ -702,7 +701,7 @@ def test_sanitize_message_history_strips_dangling_call_exposed_by_dropped_tail()
 def test_sanitize_message_history_keeps_resolved_call_exposed_by_dropped_tail():
     """A *resolved* tool call re-exposed as the tail by a dropped trailing message is kept.
 
-    Same shape as the GHSA-jpr8-2v3g-wgf9 regression, but the trailing call is in
+    Same shape as the dropped-tail case above, but the trailing call is in
     `resolved_tool_call_ids` (a same-request human-in-the-loop resume), so it must survive as the
     tail rather than being stripped alongside genuinely dangling calls.
     """
@@ -788,7 +787,7 @@ def test_sanitize_message_history_strips_client_system_prompts():
 
 
 def test_sanitize_message_history_drops_non_http_file_url_schemes():
-    """Non-HTTP `FileUrl` schemes are dropped by default — the GHSA-h57c SSRF mitigation.
+    """Non-HTTP `FileUrl` schemes are dropped by default.
 
     A scheme like `s3://` is fetched by the provider with the server-side IAM role, so an untrusted
     client must not be able to smuggle one through `message_history`.
