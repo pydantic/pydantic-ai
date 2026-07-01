@@ -1,7 +1,11 @@
+from __future__ import annotations
+
+import json
 import sys
 import types
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from io import StringIO
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,6 +16,7 @@ from rich.console import Console
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -25,8 +30,9 @@ with try_import() as imports_successful:
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai._cli import ask_agent, cli, cli_agent, handle_slash_command
     from pydantic_ai._cli.web import run_web_command
+    from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
     from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
@@ -145,6 +151,25 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
+def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path):
+    """`--mcp-config` parses a Claude-Desktop-style config and connects to the MCP server.
+
+    Drives the real `load_mcp_toolsets` -> `MCPToolset` path against `tests.mcp_server` over stdio,
+    without mocking the loader under test. `TestModel` then calls the prefixed MCP tool, which the
+    streaming render loop reports as `Called tool ...`.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    config_file = tmp_path / 'mcp_servers.json'
+    config_file.write_text(
+        json.dumps({'mcpServers': {'temp': {'command': 'python', 'args': ['-m', 'tests.mcp_server']}}})
+    )
+
+    with cli_agent.override(model=TestModel(call_tools=['temp_get_weather_forecast'])):
+        assert cli(['--mcp-config', str(config_file), 'weather in Mexico City?']) == 0
+
+    assert 'Called tool temp_get_weather_forecast' in capfd.readouterr().out
+
+
 def test_no_command_defaults_to_chat(mocker: MockerFixture):
     """Test that running clai with no command defaults to chat mode."""
     # Mock _run_chat_command to avoid actual execution
@@ -189,6 +214,45 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
         assert cli(['--no-stream', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
+
+
+async def _weather_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """Stream narration text and a tool call, then a final answer once the tool has returned."""
+    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        yield 'It is '
+        yield 'sunny in Mexico City.'
+    else:
+        yield 'Let me check '
+        yield 'the weather.'
+        yield {0: DeltaToolCall(name='get_weather', json_args='{"city": "Mexico City"}', tool_call_id='call_1')}
+
+
+@pytest.mark.anyio
+async def test_streaming_with_tool_calls():
+    """The streaming CLI render loop interleaves streamed model text with tool-call indicators.
+
+    Uses a `FunctionModel` stream so the agent emits real text deltas and a tool call, exercising
+    `ask_agent`'s render loop end to end rather than `TestModel`'s canned output.
+    """
+    agent = Agent(FunctionModel(stream_function=_weather_stream))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'sunny in {city}'
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=80)
+    messages = await ask_agent(agent, 'weather?', stream=True, console=console, code_theme='monokai')
+
+    assert output.getvalue() == snapshot("""\
+Let me check the weather.                                                       \n\
+
+▌ Called tool get_weather.                                                    \n\
+
+It is sunny in Mexico City.                                                     \
+""")
+    assert isinstance(messages[-1], ModelResponse)
+    assert messages[-1].parts[-1] == TextPart(content='It is sunny in Mexico City.')
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
@@ -290,21 +354,21 @@ def test_code_theme_unset(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli([])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai')
+    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=())
 
 
 def test_code_theme_light(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=light'])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'clai')
+    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'default', 'clai', toolsets=())
 
 
 def test_code_theme_dark(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
     cli(['--code-theme=dark'])
-    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai')
+    mock_run_chat.assert_awaited_once_with(True, IsInstance(Agent), IsInstance(Console), 'monokai', 'clai', toolsets=())
 
 
 def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
