@@ -40,6 +40,9 @@ def test_grading_output():
     assert output.pass_ is True
     assert output.score == 1.0
 
+    schema = GradingOutput.model_json_schema()
+    assert schema['properties']['reason']['description'] == ('A concise 1-2 sentence justification for the verdict.')
+
 
 def test_stringify():
     """Test _stringify function."""
