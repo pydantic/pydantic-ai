@@ -974,21 +974,92 @@ async def test_thinking_part_in_history(allow_model_requests: None):
     assert [{k: v for k, v in asdict(m).items() if v is not None} for m in sent_messages] == snapshot(
         [
             {'content': 'request', 'role': 'user'},
-            {
-                'content': """\
-text 1
-
-<think>
-let me do some thinking
-</think>
-
-text 2\
-""",
-                'role': 'assistant',
-            },
+            {'content': 'text 1\n\ntext 2', 'role': 'assistant'},
             {'content': 'another request', 'role': 'user'},
         ]
     )
+
+
+async def test_huggingface_foreign_thinking_part_dropped_from_history(allow_model_requests: None):
+    """ThinkingPart from a non-HuggingFace provider must be silently dropped, not re-rendered as thinking tags.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5927.
+    Without the fix, the elif-branch in _map_messages wraps any ThinkingPart
+    that has content in <think>...</think> tags, which the model may then mimic
+    in subsequent turns (reasoning-content leak).
+    """
+    c = completion_message(ChatCompletionOutputMessage(content='Follow-up answer', role='assistant'))
+    mock_client = MockHuggingFace.create_mock(c)
+    model = HuggingFaceModel('Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(model)
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Foreign reasoning text', provider_name='anthropic'),
+                TextPart(content='First answer'),
+            ],
+            model_name='Qwen/Qwen3-235B-A22B',
+        ),
+    ]
+
+    await agent.run('Follow up', message_history=message_history)
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = kwargs['messages']
+
+    # The TextPart from the prior response must still be present.
+    assistant_contents = [m.get('content', '') for m in messages if m.get('role') == 'assistant']
+    assert any('First answer' in str(c) for c in assistant_contents)
+
+    # No message must contain the foreign reasoning content or thinking tags.
+    all_text = str(messages)
+    assert 'Foreign reasoning text' not in all_text
+    assert '<think>' not in all_text
+
+
+async def test_huggingface_foreign_thinking_part_preserved_when_flag_enabled(allow_model_requests: None):
+    """When huggingface_send_back_thinking_parts=True, non-native ThinkingParts are wrapped in thinking tags.
+
+    Regression test (positive-flag path) for https://github.com/pydantic/pydantic-ai/issues/5927.
+    """
+    from pydantic_ai.profiles.huggingface import HuggingFaceModelProfile
+
+    c = completion_message(ChatCompletionOutputMessage(content='Follow-up answer', role='assistant'))
+    mock_client = MockHuggingFace.create_mock(c)
+    profile = HuggingFaceModelProfile(
+        supports_thinking=True,
+        thinking_always_enabled=True,
+        huggingface_send_back_thinking_parts=True,
+    )
+    model = HuggingFaceModel(
+        'Qwen/Qwen3-235B-A22B',
+        provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'),
+        profile=profile,
+    )
+    agent = Agent(model)
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Foreign reasoning text', provider_name='anthropic'),
+                TextPart(content='First answer'),
+            ],
+            model_name='Qwen/Qwen3-235B-A22B',
+        ),
+    ]
+
+    await agent.run('Follow up', message_history=message_history)
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    messages = kwargs['messages']
+
+    # Foreign ThinkingPart must appear wrapped in thinking tags.
+    all_text = str(messages)
+    assert '<think>' in all_text
+    assert 'Foreign reasoning text' in all_text
 
 
 @pytest.mark.parametrize(
