@@ -9,8 +9,8 @@ import sys
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import replace
-from datetime import timezone
+from dataclasses import dataclass, replace
+from datetime import datetime as _datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -4257,7 +4257,7 @@ async def test_run_event_stream_handler_interrupted_does_not_drain():
 
     async def counting_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
         nonlocal pulled
-        while True:
+        while True:  # pragma: no cover - the test asserts this unbounded stream is never pulled
             pulled += 1
             yield 'hello'
 
@@ -4983,6 +4983,70 @@ async def test_run_stream_cancel_after_complete():
         await result.cancel()
         assert result.cancelled
         assert result.response.state == 'complete'
+
+
+async def test_testmodel_stream_cancel_reports_interrupted():
+    """Cancelling a `TestModel` sub-stream mid-iteration simulates the transport tear-down and reports interrupted.
+
+    Driven directly against `model.request_stream` (not the continuation composite, which tears segments
+    down via `close_stream` rather than `cancel`) so the stream's own `cancel()` fires the simulated
+    `httpx.StreamClosed`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
+    """
+    model = TestModel(custom_output_text='hello world')
+    params = models.ModelRequestParameters()
+
+    async with model.request_stream([ModelRequest(parts=[UserPromptPart('go')])], None, params) as stream:
+        iterator = stream.__aiter__()
+        await iterator.__anext__()
+        await stream.cancel()
+        async for _ in iterator:  # the next pull raises the simulated `StreamClosed`, suppressed by the guard
+            pass
+
+    assert stream.get().state == 'interrupted'
+
+
+async def test_stream_cancel_with_natural_drain_reports_interrupted():
+    """A `cancel()` on a stream with no live connection still drains naturally but reports interrupted.
+
+    Mirrors a local model whose `close_stream()` has nothing to tear down: iteration reaches a natural
+    `StopAsyncIteration`, so the cancel-guard's else-branch runs but `_cancelled` keeps `_finished` unset,
+    and `get()` reports `'interrupted'` rather than `'complete'`.
+    """
+
+    @dataclass
+    class _NaturalDrainStream(models.StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[Any]:
+            for _ in range(2):
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                    yield event
+
+        async def close_stream(self) -> None:
+            pass  # no live connection to tear down
+
+        @property
+        def model_name(self) -> str:
+            return 'drain'
+
+        @property
+        def provider_name(self) -> str | None:
+            return 'drain'
+
+        @property
+        def provider_url(self) -> str | None:
+            return None
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime.now(tz=timezone.utc)
+
+    stream = _NaturalDrainStream(models.ModelRequestParameters())
+    iterator = stream.__aiter__()
+    await iterator.__anext__()
+    await stream.cancel()
+    async for _ in iterator:  # drains to a natural completion while cancelled
+        pass
+
+    assert stream.get().state == 'interrupted'
 
 
 async def test_completed_streamed_response_cancel_noop():

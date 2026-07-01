@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -299,6 +300,153 @@ async def test_cancel_stops_loop_and_cancels_suspended_response() -> None:
     assert model.cancelled[0].provider_response_id == 'r1'
     assert len(model.segments) == 1  # second segment was never requested
     assert stream.get().state == 'interrupted'
+
+
+async def test_metadata_properties_track_current_segment_then_merged() -> None:
+    """`model_name`/`provider_name`/`provider_url`/`timestamp` read the in-flight segment mid-stream,
+    then fall back to the merged response once the continuation loop completes."""
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+            _Segment(
+                events=_starts((0, 'b')),
+                response=_response(
+                    parts=['b'], provider_response_id='r2', state='complete', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    assert model.model_name == 'fake'
+    assert model.system == 'fake'
+
+    stream = _composite(model)
+    iterator = stream.__aiter__()
+    # `__aiter__` is idempotent: a second call returns the already-built iterator.
+    assert stream.__aiter__() is iterator
+
+    await iterator.__anext__()  # first (suspended) segment now in flight → `_current_sub` is set
+    assert stream.model_name == 'fake'
+    assert stream.provider_name == 'fake'
+    assert stream.provider_url is None
+    assert stream.timestamp == _TIMESTAMP
+
+    async for _ in iterator:
+        pass
+    # Loop done → `_current_sub` is None, so the properties read the merged response instead.
+    assert stream.model_name == 'fake'
+    assert stream.provider_name == 'fake'
+    assert stream.provider_url is None
+    assert stream.timestamp == _TIMESTAMP
+
+
+async def test_segment_transport_error_propagates_when_not_cancelled() -> None:
+    """A genuine transport error from a segment (not caused by `cancel()`) propagates out of the composite."""
+
+    class _ExplodingStream(_FakeStream):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            raise httpx.ReadError('boom')
+            yield  # pragma: no cover - unreachable, marks this a generator
+
+    class _ExplodingModel(_FakeModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: object | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            segment = self.segments[0]
+            yield _ExplodingStream(model_request_parameters, segment.events, segment.response)
+
+    model = _ExplodingModel(
+        [
+            _Segment(
+                events=[],
+                response=_response(
+                    parts=[], provider_response_id='r1', state='complete', input_tokens=0, output_tokens=0
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+
+    with pytest.raises(httpx.ReadError, match='boom'):
+        async for _ in stream:
+            pass
+
+
+async def test_cancel_suppresses_segment_transport_error() -> None:
+    """When `cancel()` tears down an in-flight segment and the sub-stream raises a transport error, the guard suppresses it."""
+
+    class _CancelRaisingStream(_FakeStream):
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            yield self._events[0]
+            # After the first event, `cancel()` has torn the connection down, so the next pull
+            # raises a transport error — exactly what a real provider stream does mid-flight.
+            raise httpx.StreamClosed()
+
+    class _CancelRaisingModel(_FakeModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: object | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            segment = self.segments.pop(0)
+            yield _CancelRaisingStream(model_request_parameters, segment.events, segment.response)
+
+    model = _CancelRaisingModel(
+        [
+            _Segment(
+                events=_starts((0, 'a'), (1, 'b')),
+                response=_response(
+                    parts=['a', 'b'], provider_response_id='r1', state='suspended', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    iterator = stream.__aiter__()
+
+    await iterator.__anext__()  # first segment in flight
+    await stream.cancel()
+
+    # Draining resumes the closed segment, which raises the transport error; the guard suppresses it
+    # (composite is cancelled) rather than propagating.
+    async for _ in iterator:
+        pass
+
+    assert stream.get().state == 'interrupted'
+    assert len(model.cancelled) == 1
+
+
+async def test_close_stream_after_completion_cancels_job() -> None:
+    """`close_stream()` with no in-flight segment skips the sub teardown but still cancels the server-side job."""
+    model = _FakeModel(
+        [
+            _Segment(
+                events=_starts((0, 'a')),
+                response=_response(
+                    parts=['a'], provider_response_id='r1', state='complete', input_tokens=1, output_tokens=1
+                ),
+            ),
+        ]
+    )
+    stream = _composite(model)
+    async for _ in stream:
+        pass
+
+    # After the loop `_current_sub` is None, so `close_stream` goes straight to cancelling the job.
+    await stream.close_stream()
+    assert len(model.cancelled) == 1
 
 
 async def test_exceeding_max_continuations_raises() -> None:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -25,6 +25,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import Hooks
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -37,6 +38,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
@@ -194,6 +196,8 @@ async def test_streamed_accumulate_offsets_part_indices() -> None:
             _StreamSegment(texts=['C'], state='complete', provider_response_id='r2', input_tokens=3, output_tokens=4),
         ]
     )
+    assert model.model_name == 'scripted'
+    assert model.system == 'scripted'
     agent = Agent(model)
 
     events = await _collect_stream_events(agent, 'go')
@@ -396,7 +400,7 @@ async def test_cancel_mid_continuation_cancels_job_and_stops() -> None:
 
     async with agent.iter('go') as run:
         node = run.next_node
-        while not isinstance(node, End):
+        while not isinstance(node, End):  # pragma: no branch
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
                     iterator = stream.__aiter__()
@@ -515,5 +519,106 @@ async def test_error_on_first_streamed_segment_propagates() -> None:
     agent = Agent(_ExplodingModel())
 
     with pytest.raises(RuntimeError, match='stream exploded'):
-        async with agent.run_stream('go') as result:
-            await result.get_output()
+        async with agent.run_stream('go'):
+            pass
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_resume_history_without_preceding_request(stream: bool) -> None:
+    """Resuming a history whose base messages contain no `ModelRequest` leaves `resumed_request` unset.
+
+    A completed response precedes the suspended one, with no `ModelRequest` anywhere in the base
+    history, so the reverse scan for the resumed request finds nothing and falls through.
+    """
+    prior = ModelResponse(parts=[TextPart('earlier')], model_name='scripted', provider_response_id='r0')
+    suspended = _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2)
+    history: list[ModelMessage] = [prior, suspended]
+
+    if stream:
+        model: Model = _ScriptedModel(
+            segments=[
+                _StreamSegment(
+                    texts=['done'], state='complete', provider_response_id='r2', input_tokens=3, output_tokens=4
+                ),
+            ]
+        )
+    else:
+
+        def _model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('done')], provider_response_id='r2')
+
+        model = FunctionModel(_model_fn)
+
+    agent = Agent(model)
+
+    if stream:
+        async with agent.run_stream(message_history=history) as result:
+            output = await result.get_output()
+    else:
+        output = (await agent.run(message_history=history)).output
+
+    assert 'done' in output
+
+
+async def test_resume_hook_dropping_suspended_response_errors() -> None:
+    """A `before_model_request` hook that strips the trailing suspended response breaks the resume precondition."""
+    hooks = Hooks()
+
+    @hooks.on.before_model_request
+    async def _before(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        # Remove the trailing suspended response so the processed history no longer ends in one.
+        return replace(request_context, messages=request_context.messages[:-1])
+
+    suspended = _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2)
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='go')]), suspended]
+
+    agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('done')])), capabilities=[hooks])
+
+    with pytest.raises(UserError, match='must end with a suspended'):
+        await agent.run(message_history=history)
+
+
+async def test_streaming_wrap_error_propagates() -> None:
+    """A `model_request` (wrap) hook raising a non-retry error in the streaming short-circuit propagates it."""
+    hooks = Hooks()
+
+    @hooks.on.model_request
+    async def _wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+        raise RuntimeError('wrap boom')  # never calls the handler → streaming short-circuit path
+
+    model = _ScriptedModel(
+        segments=[
+            _StreamSegment(texts=['x'], state='complete', provider_response_id='r1', input_tokens=1, output_tokens=1),
+        ]
+    )
+    agent = Agent(model, capabilities=[hooks])
+
+    with pytest.raises(RuntimeError, match='wrap boom'):
+        async with agent.run_stream('go'):
+            pass
+
+
+async def test_cancel_through_wrapper_model_delegates() -> None:
+    """Cancelling a continuation on a `WrapperModel` forwards `cancel_suspended_response` to the wrapped model."""
+    inner = _ScriptedModel(
+        segments=[
+            _StreamSegment(
+                texts=['a', 'b'],
+                state='suspended',
+                provider_response_id='r1',
+                input_tokens=5,
+                output_tokens=2,
+                suspended_retry_delay=0.0,
+            ),
+            _StreamSegment(texts=['c'], state='complete', provider_response_id='r2', input_tokens=3, output_tokens=4),
+        ]
+    )
+    agent = Agent(WrapperModel(inner))
+
+    async with agent.run_stream('go') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break  # first (suspended) segment now in flight
+        await result.cancel()
+
+    assert len(inner.cancelled) == 1
+    assert inner.cancelled[0].provider_response_id == 'r1'

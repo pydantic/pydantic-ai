@@ -1304,11 +1304,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         fail fast when a segment blows the token budget, check the limit against a throwaway
         copy of the run usage plus the accumulated continuation usage.
         """
-        if not ctx.deps.usage_limits:  # pragma: no branch
-            return
-        provisional = deepcopy(ctx.state.usage)
-        provisional.incr(continuation_usage)
-        ctx.deps.usage_limits.check_tokens(provisional)
+        if ctx.deps.usage_limits:  # pragma: no branch
+            provisional = deepcopy(ctx.state.usage)
+            provisional.incr(continuation_usage)
+            ctx.deps.usage_limits.check_tokens(provisional)
 
     async def _build_retry_node(
         self,

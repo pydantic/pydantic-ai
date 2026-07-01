@@ -2277,6 +2277,17 @@ async def test_fallback_streaming_continuation_pinning() -> None:
     assert resp2.parts[0].content == 'fallback response 2'  # type: ignore[union-attr]
 
 
+async def test_fallback_cancel_suspended_response_without_pin_is_noop() -> None:
+    """Cancelling a suspended response with no continuation pin resolves no underlying model and cancels nothing."""
+    primary = FunctionModel(success_response, model_name='primary')
+    secondary = FunctionModel(success_response, model_name='fallback')
+    model = FallbackModel(primary, secondary)
+
+    # A plain suspended response carries no pin, so `_get_continuation_model` returns `None` and this
+    # is a no-op that must not raise.
+    await model.cancel_suspended_response(ModelResponse(parts=[TextPart('paused')], state='suspended'))
+
+
 async def test_fallback_streaming_pinned_continuation_still_continuing() -> None:
     """Streaming: pinned model returns state='suspended' again — pin stays (87->89 branch)."""
     call_count = 0

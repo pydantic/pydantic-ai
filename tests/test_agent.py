@@ -12321,10 +12321,13 @@ async def test_agent_graph_sleep_streaming_with_delay() -> None:
     async def custom_sleep(delay: float) -> None:
         custom_delays.append(delay)
 
+    inner = FunctionModel(stream_function=stream_fn)
     model = _SuspendingStreamModel(
-        _inner=FunctionModel(stream_function=stream_fn),
+        _inner=inner,
         _states=[('suspended', 2.5), ('complete', None)],
     )
+    assert model.model_name == inner.model_name
+    assert model.system == inner.system
     agent = Agent(model)
 
     with set_agent_graph_sleep(custom_sleep):
