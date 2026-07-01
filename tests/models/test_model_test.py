@@ -45,38 +45,24 @@ def test_response_metadata_consistent_between_run_and_run_stream():
     stream_result = agent.run_stream_sync('hello')
     list(stream_result.stream_text())
 
-    def response_metadata(message: ModelResponse) -> dict[str, object]:
-        return {
-            'model_name': message.model_name,
-            'provider_name': message.provider_name,
-            'provider_url': message.provider_url,
-            'provider_details': message.provider_details,
-            'provider_response_id': message.provider_response_id,
-            'finish_reason': message.finish_reason,
-            'state': message.state,
-        }
+    run_responses = [message for message in run_result.all_messages() if isinstance(message, ModelResponse)]
+    stream_responses = [message for message in stream_result.all_messages() if isinstance(message, ModelResponse)]
 
-    run_metadata = [
-        response_metadata(message) for message in run_result.all_messages() if isinstance(message, ModelResponse)
-    ]
-    stream_metadata = [
-        response_metadata(message) for message in stream_result.all_messages() if isinstance(message, ModelResponse)
-    ]
-
-    assert run_metadata == stream_metadata
-    assert run_metadata == snapshot(
+    expected_responses = snapshot(
         [
-            {
-                'model_name': 'test',
-                'provider_name': 'test',
-                'provider_url': None,
-                'provider_details': None,
-                'provider_response_id': None,
-                'finish_reason': None,
-                'state': 'complete',
-            }
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
         ]
     )
+    assert run_responses == expected_responses
+    assert stream_responses == expected_responses
 
 
 def test_call_one():
