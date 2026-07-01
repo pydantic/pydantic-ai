@@ -1596,6 +1596,80 @@ def test_dump_load_roundtrip_tools() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_failed_tool_return() -> None:
+    """Test that failed tool returns survive an AG-UI round-trip."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', tool_call_id='call_abc', args='{"x": 1}')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    tool_call_id='call_abc',
+                    content='error from tool',
+                    outcome='failed',
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+
+    assert reloaded == original
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'denied'])
+def test_dump_unsuccessful_tool_return_sets_ag_ui_error(outcome: Literal['failed', 'denied']) -> None:
+    """Test that unsuccessful tool returns are not emitted as clean AG-UI tool messages."""
+    ag_ui_msgs = AGUIAdapter.dump_messages(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        tool_call_id='call_abc',
+                        content='tool did not complete',
+                        outcome=outcome,
+                    )
+                ]
+            )
+        ]
+    )
+
+    assert len(ag_ui_msgs) == 1
+    tool_msg = ag_ui_msgs[0]
+    assert isinstance(tool_msg, ToolMessage)
+    assert tool_msg.error == 'tool did not complete'
+
+
+def test_load_tool_message_error_sets_failed_outcome() -> None:
+    """Test that AG-UI tool messages with error state reload as failed tool returns."""
+    reloaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='assistant_1',
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id='call_abc',
+                        type='function',
+                        function=FunctionCall(name='my_tool', arguments='{}'),
+                    )
+                ],
+            ),
+            ToolMessage(id='tool_1', content='error from tool', tool_call_id='call_abc', error='error from tool'),
+        ]
+    )
+
+    assert len(reloaded) == 2
+    assert isinstance(reloaded[1], ModelRequest)
+    tool_return = reloaded[1].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.outcome == 'failed'
+
+
 def test_dump_load_roundtrip_multiple_thinking_parts() -> None:
     """Test round-trip preserves multiple ThinkingParts with their metadata."""
     original: list[ModelMessage] = [
@@ -1828,6 +1902,7 @@ def test_dump_load_roundtrip_retry_prompt_with_tool() -> None:
     assert isinstance(retry_part, ToolReturnPart)
     assert retry_part.tool_name == 'my_tool'
     assert retry_part.tool_call_id == 'call_1'
+    assert retry_part.outcome == 'failed'
 
 
 def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
