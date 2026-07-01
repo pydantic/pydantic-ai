@@ -205,13 +205,13 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
     def as_node(self, inputs: InputT) -> JoinNode[StateT, DepsT]: ...
 
     def as_node(self, inputs: InputT | None = None) -> JoinNode[StateT, DepsT]:
-        """Create a step node with bound inputs.
+        """Create a join node with bound inputs.
 
         Args:
-            inputs: The input data to bind to this step, or None
+            inputs: The input data to bind to this join, or None
 
         Returns:
-            A [`StepNode`][pydantic_graph.step.StepNode] with this step and the bound inputs
+            A [`JoinNode`][pydantic_graph.join.JoinNode] with this join and the bound inputs
         """
         return JoinNode(self, inputs)
 

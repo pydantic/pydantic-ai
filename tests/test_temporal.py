@@ -80,14 +80,14 @@ try:
     import temporalio.api.common.v1
     from temporalio import workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
-    from temporalio.worker import Worker
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import (
@@ -229,14 +229,6 @@ async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
         f'localhost:{TEMPORAL_PORT}',
         plugins=[PydanticAIPlugin(), LogfirePlugin()],
     )
-
-
-@pytest.fixture(autouse=True)
-def _clear_mcp_tool_cache() -> None:
-    """Clear cached tool defs on module-level TemporalMCPToolset instances between tests."""
-    for toolset in complex_temporal_agent.toolsets:
-        if isinstance(toolset, TemporalMCPToolset):
-            toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
 
 
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
@@ -827,9 +819,9 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     """Verify that MCP tool caching reduces server round-trips across activities.
 
     The complex agent makes 3 model requests, each preceded by a get_tools activity.
-    With caching at the TemporalMCPToolset wrapper level, only the first get_tools activity
-    actually runs (opening an MCP connection and calling `tools/list`). Subsequent get_tools
-    calls return the wrapper's cached tool definitions without scheduling an activity at all.
+    With the run-scoped tool-defs cache, only the first get_tools activity actually runs
+    (opening an MCP connection and calling `tools/list`). Subsequent get_tools calls return
+    the run-cached tool definitions without scheduling an activity at all.
     """
 
     original_send_request = ClientSession.send_request
@@ -864,29 +856,135 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     assert methods_called.count('tools/call') == 1
 
 
-async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None):
-    """Verify that wrapper-level caching is skipped when cache_tools=False.
+def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Two model steps: call an MCP tool on the first request, return text on the second.
 
-    Runs outside the Temporal workflow (via .override()) so coverage can track
-    the TemporalMCPToolset.get_tools() code path directly.
+    Two model requests means `get_tools` is invoked twice on the MCP toolset within one run,
+    so the run-scoped cache (and the activity it does or doesn't schedule each step) is exercised.
     """
-    mcp_toolset = next(ts for ts in complex_temporal_agent.toolsets if isinstance(ts, TemporalMCPToolset))
-    wrapped = cast(MCPToolset[Any], mcp_toolset.wrapped)
+    tool_returned = any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+    if tool_returned:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('get_weather_forecast', {'location': 'Mexico City'})])
 
-    original_cache_tools = wrapped.cache_tools
-    wrapped.cache_tools = False
+
+# A holder lets the replay step swap in a freshly-constructed (cold-process) instance,
+# reproducing the worker-restart scenario from #5875.
+mcp_replay_holder: dict[str, TemporalAgent[None, str]] = {}
+
+
+def _make_mcp_replay_agent(cache_tools: bool = True) -> TemporalAgent[None, str]:
+    agent = Agent(
+        FunctionModel(_call_mcp_then_finish),
+        name='mcp_replay_agent',
+        toolsets=[
+            MCPToolset(
+                StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+                id='mcp',
+                init_timeout=20,
+                cache_tools=cache_tools,
+            )
+        ],
+    )
+    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+mcp_replay_holder['agent'] = _make_mcp_replay_agent()
+
+
+@workflow.defn
+class MCPReplayWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcp_replay_holder['agent'].run(prompt)
+        return result.output
+
+
+def _scheduled_get_tools_count(history: WorkflowHistory) -> int:
+    return sum(
+        1
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+        and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__get_tools')
+    )
+
+
+async def test_temporal_mcp_get_tools_replay_deterministic(allow_model_requests: None, client: Client):
+    """#5875 regression: `get_tools` activity scheduling must be replay-deterministic.
+
+    The tool-defs cache must not let shared-process cache warmth decide whether a workflow
+    emits a `get_tools` activity command — otherwise a history recorded on a warm worker fails
+    replay on a cold one (and vice versa) with `TMPRL1100`. Each run must independently record
+    exactly one `get_tools` activity: the #4331 within-run win (N calls collapse to one activity)
+    without leaking cache state across the replay boundary.
+    """
+    warm = _make_mcp_replay_agent()
+    mcp_replay_holder['agent'] = warm
+
+    histories: list[WorkflowHistory] = []
+    # Unsandboxed so the module-level instance (and its cache) is shared across both runs,
+    # exactly as a long-running worker process shares it in production — the condition under
+    # which #5875 records a warm run with no `get_tools` event.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPReplayWorkflow],
+        activities=warm.temporal_activities,
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        for i in range(2):
+            wf_id = f'{MCPReplayWorkflow.__name__}_{i}'
+            await client.execute_workflow(MCPReplayWorkflow.run, args=['hello'], id=wf_id, task_queue=TASK_QUEUE)
+            histories.append(await client.get_workflow_handle(wf_id).fetch_history())
+    h1, h2 = histories
+
+    # Within a run, the run-scoped cache collapses the per-step `get_tools` calls to one activity...
+    assert _scheduled_get_tools_count(h1) == 1
+    # ...and each run records it independently — run 2 does not inherit run 1's warm process cache.
+    assert _scheduled_get_tools_count(h2) == 1
+
+    def replayer() -> Replayer:
+        return Replayer(
+            workflows=[MCPReplayWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            data_converter=pydantic_data_converter,
+        )
 
     try:
-        with complex_temporal_agent.override(deps=Deps(country='Mexico')):
-            result = await complex_temporal_agent.run(
-                'Tell me: the capital of the country; the weather there; the product name',
-                deps=Deps(country='The Netherlands'),
-            )
-        assert result.output is not None
-        # Wrapper-level cache should NOT be populated when cache_tools=False
-        assert mcp_toolset._cached_tool_defs is None  # pyright: ignore[reportPrivateUsage]
+        # Direction 1: cold-recorded history (run 1) replayed after the process cache warmed
+        # (the same-process sticky-cache-eviction trigger). Holder still points at the warm instance.
+        await replayer().replay_workflow(h1)
+
+        # Direction 2: warm-recorded history (run 2) replayed on a freshly-constructed cold instance
+        # (the worker-restart trigger).
+        mcp_replay_holder['agent'] = _make_mcp_replay_agent()
+        await replayer().replay_workflow(h2)
     finally:
-        wrapped.cache_tools = original_cache_tools
+        mcp_replay_holder['agent'] = warm
+
+
+async def test_temporal_mcp_get_tools_not_cached_when_disabled(allow_model_requests: None, client: Client):
+    """With `cache_tools=False`, `get_tools` is scheduled for every model request (no run cache).
+
+    The complementary case to the run-scoped cache: each of the two model requests records its own
+    `get_tools` activity, so disabling the cache stays replay-deterministic by always scheduling.
+    """
+    agent = _make_mcp_replay_agent(cache_tools=False)
+    mcp_replay_holder['agent'] = agent
+    try:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[MCPReplayWorkflow],
+            activities=agent.temporal_activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            wf_id = f'{MCPReplayWorkflow.__name__}_no_cache'
+            await client.execute_workflow(MCPReplayWorkflow.run, args=['hello'], id=wf_id, task_queue=TASK_QUEUE)
+            history = await client.get_workflow_handle(wf_id).fetch_history()
+        assert _scheduled_get_tools_count(history) == 2
+    finally:
+        mcp_replay_holder['agent'] = _make_mcp_replay_agent()
 
 
 async def test_complex_agent_run(allow_model_requests: None):
@@ -1659,6 +1757,25 @@ async def test_temporal_agent():
             'agent__complex_agent__mcp_server__mcp__call_tool',
         ]
     )
+
+
+def test_temporal_model_request_activities_capture_deps_type():
+    """Both model-request activities must capture the real `deps_type` as the `deps` argument type.
+
+    `temporalio`'s `@activity.defn` freezes a function's type hints into `arg_types` at decoration time for
+    payload conversion, so `deps`'s annotation has to be set before decorating. If it's set afterwards (as the
+    non-streaming activity used to do), the patch is cosmetic and the activity deserializes `deps` as a raw
+    dict instead of the declared deps type.
+    """
+    model = dynamic_toolset_temporal_agent.model
+    assert isinstance(model, TemporalModel)
+
+    # `arg_types[1]` is the `deps` argument's captured type, which drives Temporal's payload conversion.
+    deps_type = DynamicToolsetDeps | None
+    request_arg_types = ActivityDefinition.must_from_callable(model.request_activity).arg_types  # pyright: ignore[reportUnknownMemberType]
+    stream_arg_types = ActivityDefinition.must_from_callable(model.request_stream_activity).arg_types  # pyright: ignore[reportUnknownMemberType]
+    assert request_arg_types is not None and request_arg_types[1] == deps_type
+    assert stream_arg_types is not None and stream_arg_types[1] == deps_type
 
 
 def test_temporal_wrapper_visit_and_replace():
@@ -3097,6 +3214,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'instrumentation_version',  # tracing config, not run state
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
+        '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -4307,7 +4425,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                         UserPromptPart(
                             content=[
                                 'Process these files and call the tool',
-                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryImage(data=b'\x89PNG', media_type='image/png', identifier='4effda'),
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
@@ -4332,6 +4450,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     usage=RequestUsage(input_tokens=61, output_tokens=2),
                     model_name='test',
                     timestamp=IsDatetime(),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4341,7 +4460,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                             tool_name='get_multimodal_content',
                             content=[
                                 'test',
-                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryImage(data=b'\x89PNG', media_type='image/png', identifier='4effda'),
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
@@ -4365,6 +4484,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     usage=RequestUsage(input_tokens=62, output_tokens=34),
                     model_name='test',
                     timestamp=IsDatetime(),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4387,11 +4507,13 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     for content in part.content_items():
                         if isinstance(content, (BinaryContent, DocumentUrl)):
                             media_types.append((type(content).__name__, content.media_type))
-        # Should have 4 items: 2 from user input, 2 from tool return
+        # Should have 4 items: 2 from user input, 2 from tool return.
+        # The image `BinaryContent` round-trips as `BinaryImage`: narrowing is applied during
+        # `MultiModalContent` validation, so it now survives the Temporal serialization boundary too.
         assert media_types == [
-            ('BinaryContent', 'image/png'),
+            ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
-            ('BinaryContent', 'image/png'),
+            ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
 
