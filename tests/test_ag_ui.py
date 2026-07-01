@@ -1852,6 +1852,75 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     assert 'Please try again' in str(retry_part.content)
 
 
+def test_dump_messages_preserves_part_order() -> None:
+    """Dumping a `ModelRequest` keeps `ToolReturnPart`s interleaved with user prompts (regression for #5964).
+
+    User content was previously buffered and emitted as a single `UserMessage` at the end, so a
+    `ToolReturnPart` following a `UserPromptPart` would be reordered after it. That produces a
+    `tool_use` block without an immediately-following `tool_result`, which providers like Anthropic
+    reject on the next request. The buffer must be flushed before each tool message so the original
+    part order survives, including user prompts on both sides of a tool return.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='suggest', args={'suggestions': ['Yes', 'No']}, tool_call_id='call_1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='Before the tool return.'),
+                ToolReturnPart(tool_name='suggest', tool_call_id='call_1', content='suggested'),
+                UserPromptPart(content='After the tool return.'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    assert [type(msg).__name__ for msg in ag_ui_msgs] == snapshot(
+        ['AssistantMessage', 'UserMessage', 'ToolMessage', 'UserMessage']
+    )
+    tool_msg = ag_ui_msgs[2]
+    assert isinstance(tool_msg, ToolMessage)
+    assert tool_msg.tool_call_id == 'call_1'
+    assert [getattr(msg, 'content', None) for msg in ag_ui_msgs[1:]] == snapshot(
+        ['Before the tool return.', 'suggested', 'After the tool return.']
+    )
+
+
+def test_dump_messages_preserves_uploaded_file_order() -> None:
+    """Text straddling an `UploadedFile` keeps its order around the emitted `ActivityMessage`.
+
+    An `UploadedFile` is emitted as an `ActivityMessage` directly, so buffered user text must be
+    flushed before it, otherwise text that precedes the file would be reordered after it (the same
+    reordering class as #5964). The text on either side is therefore split into separate
+    `UserMessage`s rather than combined into one.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Before the file.',
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic'),
+                        'After the file.',
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+
+    assert [type(msg).__name__ for msg in ag_ui_msgs] == snapshot(['UserMessage', 'ActivityMessage', 'UserMessage'])
+    before, activity, after = ag_ui_msgs
+    assert before.content == snapshot('Before the file.')
+    assert isinstance(activity, ActivityMessage)
+    assert activity.content['file_id'] == 'file-abc123'
+    assert after.content == snapshot('After the file.')
+
+
 def test_file_part_dropped_by_default() -> None:
     """Test that FilePart is silently dropped when preserve_file_data=False (default).
 
@@ -4433,6 +4502,209 @@ def test_dump_messages_legacy_binary_content() -> None:
             }
         ]
     )
+
+
+def test_multimodal_roundtrip_preserves_file_vendor_metadata() -> None:
+    """`vendor_metadata` on `FileUrl`/`BinaryContent` survives a dump -> load round-trip (ag-ui >= 0.1.15).
+
+    Regression test for #5764: the AG-UI adapter dropped `vendor_metadata`
+    (e.g. OpenAI/xAI image `detail`, Google `video_metadata`) for every
+    `ImageUrl`/`AudioUrl`/`VideoUrl`/`DocumentUrl`/`BinaryContent`, even though the adjacent
+    `UploadedFile` branch already round-tripped it. Multimodal input content carries it under
+    a `vendor_metadata` key in the typed part's `metadata` field.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(
+                            url='https://example.com/image.png',
+                            media_type='image/png',
+                            vendor_metadata={'detail': 'high'},
+                        ),
+                        AudioUrl(
+                            url='https://example.com/audio.mp3',
+                            media_type='audio/mpeg',
+                            vendor_metadata={'foo': 'bar'},
+                        ),
+                        VideoUrl(
+                            url='https://example.com/video.mp4',
+                            media_type='video/mp4',
+                            vendor_metadata={'fps': 5},
+                        ),
+                        DocumentUrl(
+                            url='https://example.com/doc.pdf',
+                            media_type='application/pdf',
+                            vendor_metadata={'foo': 'baz'},
+                        ),
+                        BinaryContent(
+                            data=b'fake_doc',
+                            media_type='application/pdf',
+                            vendor_metadata={'detail': 'low'},
+                        ),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    # The dumped `metadata` is the external contract a frontend persists and re-sends.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in ag_ui_msgs] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'image',
+                        'source': {'type': 'url', 'value': 'https://example.com/image.png', 'mime_type': 'image/png'},
+                        'metadata': {'vendor_metadata': {'detail': 'high'}},
+                    },
+                    {
+                        'type': 'audio',
+                        'source': {'type': 'url', 'value': 'https://example.com/audio.mp3', 'mime_type': 'audio/mpeg'},
+                        'metadata': {'vendor_metadata': {'foo': 'bar'}},
+                    },
+                    {
+                        'type': 'video',
+                        'source': {'type': 'url', 'value': 'https://example.com/video.mp4', 'mime_type': 'video/mp4'},
+                        'metadata': {'vendor_metadata': {'fps': 5}},
+                    },
+                    {
+                        'type': 'document',
+                        'source': {
+                            'type': 'url',
+                            'value': 'https://example.com/doc.pdf',
+                            'mime_type': 'application/pdf',
+                        },
+                        'metadata': {'vendor_metadata': {'foo': 'baz'}},
+                    },
+                    {
+                        'type': 'document',
+                        'source': {'type': 'data', 'value': 'ZmFrZV9kb2M=', 'mime_type': 'application/pdf'},
+                        'metadata': {'vendor_metadata': {'detail': 'low'}},
+                    },
+                ],
+            }
+        ]
+    )
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    assert loaded == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                identifier='01a7df',
+                                vendor_metadata={'detail': 'high'},
+                            ),
+                            AudioUrl(
+                                url='https://example.com/audio.mp3',
+                                vendor_metadata={'foo': 'bar'},
+                                _media_type='audio/mpeg',
+                            ),
+                            VideoUrl(
+                                url='https://example.com/video.mp4',
+                                media_type='video/mp4',
+                                identifier='8cb95e',
+                                vendor_metadata={'fps': 5},
+                            ),
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                identifier='e3337d',
+                                vendor_metadata={'foo': 'baz'},
+                            ),
+                            BinaryContent(
+                                data=b'fake_doc',
+                                media_type='application/pdf',
+                                identifier='42a9bb',
+                                vendor_metadata={'detail': 'low'},
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+def test_multimodal_roundtrip_file_without_vendor_metadata_stays_none() -> None:
+    """A file with no `vendor_metadata` round-trips to `None` (no spurious `metadata`)."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                        BinaryContent(data=b'fake_image', media_type='image/png'),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.15')
+    # `exclude_none` drops the `metadata` key entirely when no vendor_metadata is present.
+    assert [m.model_dump(exclude={'id'}, exclude_none=True) for m in ag_ui_msgs] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'image',
+                        'source': {'type': 'url', 'value': 'https://example.com/image.png', 'mime_type': 'image/png'},
+                    },
+                    {
+                        'type': 'image',
+                        'source': {'type': 'data', 'value': 'ZmFrZV9pbWFnZQ==', 'mime_type': 'image/png'},
+                    },
+                ],
+            }
+        ]
+    )
+
+    loaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    request = loaded[0]
+    assert isinstance(request, ModelRequest)
+    user_part = request.parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    for item in user_part.content:
+        assert getattr(item, 'vendor_metadata', None) is None
+
+
+def test_load_multimodal_rejects_invalid_vendor_metadata() -> None:
+    """A malformed `vendor_metadata` on multimodal input content is rejected on load.
+
+    The `metadata` field is typed as `Any`, so a non-`dict` client value is passed to the file
+    constructor which raises `ValidationError` here (matching the Vercel adapter), instead of
+    being stored unvalidated and crashing a provider model later.
+    """
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AGUIAdapter.load_messages(
+            [
+                UserMessage(
+                    id='msg-1',
+                    content=[
+                        ImageInputContent(
+                            source=InputContentUrlSource(
+                                type='url', value='https://example.com/image.png', mime_type='image/png'
+                            ),
+                            metadata={'vendor_metadata': 'not-a-dict'},
+                        )
+                    ],
+                )
+            ]
+        )
 
 
 def test_load_messages_unknown_type_warns() -> None:

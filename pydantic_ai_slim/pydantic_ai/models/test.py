@@ -126,6 +126,7 @@ class TestModel(Model):
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
         model_response.usage = _estimate_usage([*messages, model_response])
+        model_response.provider_name = self._system
         return model_response
 
     @asynccontextmanager
@@ -273,10 +274,14 @@ class TestModel(Model):
                                 output[part.tool_name] = part.content
                 if output:
                     return ModelResponse(
-                        parts=[TextPart(pydantic_core.to_json(output).decode())], model_name=self._model_name
+                        parts=[TextPart(pydantic_core.to_json(output).decode())],
+                        model_name=self._model_name,
                     )
                 else:
-                    return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self._model_name)
+                    return ModelResponse(
+                        parts=[TextPart('success (no tool calls)')],
+                        model_name=self._model_name,
+                    )
             else:
                 return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
         else:

@@ -28,7 +28,6 @@ from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
-    BinaryContent,
     FileUrl,
     ForceDownloadMode,
     ModelMessage,
@@ -125,24 +124,6 @@ class StateDeps(Generic[StateT]):
     """
 
     state: StateT
-
-
-def narrow_binary_images(value: ToolReturnContent) -> ToolReturnContent:
-    """Walk a validated `ToolReturnContent` and narrow image `BinaryContent` to `BinaryImage`.
-
-    After `tool_return_content_ta` rehydrates multimodal items from a wire payload they come back as
-    plain `BinaryContent`, so this restores the `BinaryImage` subclass for image media types (matching
-    `BinaryContent.from_data_uri`).
-    """
-    if isinstance(value, BinaryContent):
-        return BinaryContent.narrow_type(value)
-    if isinstance(value, Mapping):
-        mapping: Mapping[str, ToolReturnContent] = value  # pyright: ignore[reportUnknownVariableType]
-        return {key: narrow_binary_images(item) for key, item in mapping.items()}
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        sequence: Sequence[ToolReturnContent] = value  # pyright: ignore[reportUnknownVariableType]
-        return [narrow_binary_images(item) for item in sequence]
-    return value
 
 
 @dataclass

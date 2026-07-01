@@ -46,7 +46,6 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
-from .._adapter import narrow_binary_images
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     apply_message_metadata,
@@ -280,11 +279,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     if isinstance(part, TextUIPart):
                         user_prompt_content.append(part.text)
                     elif isinstance(part, FileUIPart):
+                        provider_meta = load_provider_metadata(part.provider_metadata)
+                        # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
+                        # already does, #5571/#5772): it carries only the requester's own request params and is
+                        # dict-validated by the constructors below.
+                        vendor_metadata = provider_meta.get('vendor_metadata')
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError:
                             # Check provider_metadata for UploadedFile data
-                            provider_meta = load_provider_metadata(part.provider_metadata)
                             uploaded_file_id = provider_meta.get('file_id')
                             uploaded_file_provider = provider_meta.get('provider_name')
                             if uploaded_file_id and uploaded_file_provider:
@@ -292,20 +295,44 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     file_id=uploaded_file_id,
                                     provider_name=cast(UploadedFileProviderName, uploaded_file_provider),
                                     media_type=part.media_type,
-                                    vendor_metadata=provider_meta.get('vendor_metadata'),
+                                    vendor_metadata=vendor_metadata,
                                     identifier=provider_meta.get('identifier'),
                                 )
                             else:
                                 media_type_prefix = part.media_type.split('/', 1)[0]
                                 match media_type_prefix:
                                     case 'image':
-                                        file = ImageUrl(url=part.url, media_type=part.media_type)
+                                        file = ImageUrl(
+                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                        )
                                     case 'video':
-                                        file = VideoUrl(url=part.url, media_type=part.media_type)
+                                        file = VideoUrl(
+                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                        )
                                     case 'audio':
-                                        file = AudioUrl(url=part.url, media_type=part.media_type)
+                                        file = AudioUrl(
+                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                        )
                                     case _:
-                                        file = DocumentUrl(url=part.url, media_type=part.media_type)
+                                        file = DocumentUrl(
+                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                        )
+                        else:
+                            # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
+                            # Reconstruct through the constructor so a malformed client value is rejected
+                            # here (matching the URL constructor path) instead of being stored unvalidated
+                            # and crashing a provider model later. Re-narrow afterwards so an image
+                            # round-trips back to `BinaryImage` (as `from_data_uri` returned it), not
+                            # plain `BinaryContent`.
+                            if vendor_metadata is not None:
+                                file = BinaryContent.narrow_type(
+                                    BinaryContent(
+                                        data=file.data,
+                                        media_type=file.media_type,
+                                        identifier=file.identifier,
+                                        vendor_metadata=vendor_metadata,
+                                    )
+                                )
                         user_prompt_content.append(file)
                     elif isinstance(part, DataUIPart):
                         # Contains custom data that shouldn't be sent to the model
@@ -909,9 +936,25 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
             elif isinstance(item, TextContent):
                 ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):
-                ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
+                ui_parts.append(
+                    FileUIPart(
+                        url=item.data_uri,
+                        media_type=item.media_type,
+                        # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
+                        # Google `video_metadata`); see `BinaryContent.vendor_metadata`.
+                        provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                    )
+                )
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
-                ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
+                ui_parts.append(
+                    FileUIPart(
+                        url=item.url,
+                        media_type=item.media_type,
+                        # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
+                        # Google `video_metadata`); see `FileUrl.vendor_metadata`.
+                        provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                    )
+                )
             elif isinstance(item, UploadedFile):
                 # Store uploaded file info in provider_metadata for round-trip support
                 provider_metadata = dump_provider_metadata(
@@ -946,8 +989,7 @@ def _validate_tool_output(output: Any) -> Any:
     (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
     `BinaryContent` instances with image media types are narrowed to `BinaryImage`.
     """
-    validated = tool_return_content_ta.validate_python(output)
-    return narrow_binary_images(validated)
+    return tool_return_content_ta.validate_python(output)
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:

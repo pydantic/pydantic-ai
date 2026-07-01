@@ -74,7 +74,6 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from .._adapter import narrow_binary_images
     from ._event_stream import AGUIEventStream
     from ._interrupt import (
         HAS_INTERRUPTS,
@@ -214,7 +213,7 @@ def _rehydrate_tool_return_content(content: str) -> Any:
         return content
     if not isinstance(parsed, (dict, list)):
         return content
-    return narrow_binary_images(tool_return_content_ta.validate_python(parsed))
+    return tool_return_content_ta.validate_python(parsed)
 
 
 def _merge_tool_files(content: Any, files: list[MultiModalContent]) -> Any:
@@ -565,12 +564,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         # This sidecar only ever carries items produced by our own `multi_modal_content_ta`
                         # dump, so `BinaryContent.data` is always base64 and no wire-shape coercion is needed.
                         for raw in activity_content.get('files', []):
-                            item = multi_modal_content_ta.validate_python(raw)
-                            # Narrow `BinaryContent` with an image media type to `BinaryImage` so round
-                            # trips preserve the subclass (matches `BinaryContent.from_data_uri`).
-                            if isinstance(item, BinaryContent):
-                                item = BinaryContent.narrow_type(item)
-                            bucket.append(item)
+                            # Validation narrows image `BinaryContent` to `BinaryImage` (see `MultiModalContent`).
+                            bucket.append(multi_modal_content_ta.validate_python(raw))
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
@@ -627,7 +622,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
     ) -> list[Message]:
-        """Convert a `ModelRequest` into AG-UI messages."""
+        """Convert a `ModelRequest` into AG-UI messages.
+
+        Uses a flush pattern to preserve part ordering: buffered user content is flushed before
+        each tool message, so a `ToolReturnPart` that precedes a `UserPromptPart` in the original
+        request keeps its position instead of being reordered after the user prompt.
+        """
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
         result: list[Message] = []
         system_content: list[str] = []
@@ -639,6 +639,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             | VideoInputContent
             | DocumentInputContent
         ] = []
+
+        def flush_user_content() -> None:
+            nonlocal user_content
+            if not user_content:
+                return
+            # Simplify to plain string if only a single text item.
+            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+                result.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
+            else:
+                result.append(UserMessage(id=_new_message_id(), content=user_content))
+            user_content = []
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
@@ -652,6 +663,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             # AG-UI has no native uploaded-file message type. We repurpose
                             # ActivityMessage with a reserved `pydantic_ai_*` activity_type
                             # for round-trip fidelity. See UploadedFileActivityContent.
+                            flush_user_content()
                             uploaded_content: dict[str, Any] = {
                                 'file_id': item.file_id,
                                 'provider_name': item.provider_name,
@@ -672,6 +684,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if converted is not None:
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
+                flush_user_content()
                 if preserve_file_data and part.files:
                     result.append(_tool_return_file_activity(part.tool_call_id, part.files))
                 result.append(
@@ -683,6 +696,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name:
+                    flush_user_content()
                     result.append(
                         ToolMessage(
                             id=_new_message_id(),
@@ -699,12 +713,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         messages: list[Message] = []
         if system_content:
             messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
-        if user_content:
-            # Simplify to plain string if only single text item
-            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-                messages.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
-            else:
-                messages.append(UserMessage(id=_new_message_id(), content=user_content))
+        flush_user_content()
         messages.extend(result)
         return messages
 

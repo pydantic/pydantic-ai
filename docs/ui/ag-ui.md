@@ -23,7 +23,7 @@ pip/uv-add 'pydantic-ai-slim[ag-ui]'
 
 To run the examples you'll also need:
 
-- [uvicorn](https://www.uvicorn.org/) or another ASGI compatible server
+- [uvicorn](https://uvicorn.dev) or another ASGI compatible server
 
 ```bash
 pip/uv-add uvicorn

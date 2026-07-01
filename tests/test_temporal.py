@@ -1519,6 +1519,25 @@ async def test_temporal_agent():
     )
 
 
+def test_temporal_model_request_activities_capture_deps_type():
+    """Both model-request activities must capture the real `deps_type` as the `deps` argument type.
+
+    `temporalio`'s `@activity.defn` freezes a function's type hints into `arg_types` at decoration time for
+    payload conversion, so `deps`'s annotation has to be set before decorating. If it's set afterwards (as the
+    non-streaming activity used to do), the patch is cosmetic and the activity deserializes `deps` as a raw
+    dict instead of the declared deps type.
+    """
+    model = dynamic_toolset_temporal_agent.model
+    assert isinstance(model, TemporalModel)
+
+    # `arg_types[1]` is the `deps` argument's captured type, which drives Temporal's payload conversion.
+    deps_type = DynamicToolsetDeps | None
+    request_arg_types = ActivityDefinition.must_from_callable(model.request_activity).arg_types  # pyright: ignore[reportUnknownMemberType]
+    stream_arg_types = ActivityDefinition.must_from_callable(model.request_stream_activity).arg_types  # pyright: ignore[reportUnknownMemberType]
+    assert request_arg_types is not None and request_arg_types[1] == deps_type
+    assert stream_arg_types is not None and stream_arg_types[1] == deps_type
+
+
 def test_temporal_wrapper_visit_and_replace():
     """Temporal wrapper toolsets should not be replaced by visit_and_replace."""
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
@@ -4165,7 +4184,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                         UserPromptPart(
                             content=[
                                 'Process these files and call the tool',
-                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryImage(data=b'\x89PNG', media_type='image/png', identifier='4effda'),
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
@@ -4190,6 +4209,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     usage=RequestUsage(input_tokens=61, output_tokens=2),
                     model_name='test',
                     timestamp=IsDatetime(),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4199,7 +4219,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                             tool_name='get_multimodal_content',
                             content=[
                                 'test',
-                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryImage(data=b'\x89PNG', media_type='image/png', identifier='4effda'),
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
@@ -4223,6 +4243,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     usage=RequestUsage(input_tokens=62, output_tokens=34),
                     model_name='test',
                     timestamp=IsDatetime(),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4245,11 +4266,13 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     for content in part.content_items():
                         if isinstance(content, (BinaryContent, DocumentUrl)):
                             media_types.append((type(content).__name__, content.media_type))
-        # Should have 4 items: 2 from user input, 2 from tool return
+        # Should have 4 items: 2 from user input, 2 from tool return.
+        # The image `BinaryContent` round-trips as `BinaryImage`: narrowing is applied during
+        # `MultiModalContent` validation, so it now survives the Temporal serialization boundary too.
         assert media_types == [
-            ('BinaryContent', 'image/png'),
+            ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
-            ('BinaryContent', 'image/png'),
+            ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
 

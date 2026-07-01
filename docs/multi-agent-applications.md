@@ -27,23 +27,24 @@ from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
     'openai:gpt-5.2',
+    name='joke_selection_agent',  # (2)!
     instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
         'You must return just a single joke.'
     ),
 )
-joke_generation_agent = Agent(  # (2)!
-    'google:gemini-3-flash-preview', output_type=list[str]
+joke_generation_agent = Agent(  # (3)!
+    'google:gemini-3-flash-preview', name='joke_generation_agent', output_type=list[str]
 )
 
 
 @joke_selection_agent.tool
 async def joke_factory(ctx: RunContext, count: int) -> list[str]:
-    r = await joke_generation_agent.run(  # (3)!
+    r = await joke_generation_agent.run(  # (4)!
         f'Please generate {count} jokes.',
-        usage=ctx.usage,  # (4)!
+        usage=ctx.usage,  # (5)!
     )
-    return r.output  # (5)!
+    return r.output  # (6)!
 
 
 result = joke_selection_agent.run_sync(
@@ -57,10 +58,11 @@ print(result.usage)
 ```
 
 1. The "parent" or controlling agent.
-2. The "delegate" agent, which is called from within a tool of the parent agent.
-3. Call the delegate agent from within a tool of the parent agent.
-4. Pass the usage from the parent agent to the delegate agent so the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
-5. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
+2. Passing `name` is optional but recommended when you run more than one agent: it labels each agent's run span, so naming both lets you tell the parent and delegate apart in [Logfire](logfire.md). When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict).
+3. The "delegate" agent, which is called from within a tool of the parent agent.
+4. Call the delegate agent from within a tool of the parent agent.
+5. Pass the usage from the parent agent to the delegate agent so the final [`result.usage`][pydantic_ai.agent.AgentRunResult.usage] includes the usage from both agents.
+6. Since the function returns `#!python list[str]`, and the `output_type` of `joke_generation_agent` is also `#!python list[str]`, we can simply return `#!python r.output` from the tool.
 
 _(This example is complete, it can be run "as is")_
 
@@ -99,6 +101,7 @@ class ClientAndKey:  # (1)!
 
 joke_selection_agent = Agent(
     'openai:gpt-5.2',
+    name='joke_selection_agent',
     deps_type=ClientAndKey,  # (2)!
     instructions=(
         'Use the `joke_factory` tool to generate some jokes on the given subject, '
@@ -107,6 +110,7 @@ joke_selection_agent = Agent(
 )
 joke_generation_agent = Agent(
     'google:gemini-3-flash-preview',
+    name='joke_generation_agent',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
     instructions=(
@@ -178,6 +182,12 @@ graph TD
 
 Here agents don't need to use the same deps.
 
+!!! tip "Message history between agents"
+    To give another agent the previous conversation as context, pass
+    `message_history` to its run method. See
+    [Sharing messages between agents](message-history.md#sharing-messages-between-agents)
+    for the details on instructions, system prompts, and tool context.
+
 Here we show two agents used in succession, the first to find a flight and the second to extract the user's seat preference.
 
 ```python {title="programmatic_handoff.py"}
@@ -199,6 +209,7 @@ class Failed(BaseModel):
 
 flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
     'openai:gpt-5.2',
+    name='flight_search_agent',
     output_type=FlightDetails | Failed,  # type: ignore
     instructions=(
         'Use the "flight_search" tool to find a flight '
@@ -247,6 +258,7 @@ class SeatPreference(BaseModel):
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[object, SeatPreference | Failed](  # (5)!
     'openai:gpt-5.2',
+    name='seat_preference_agent',
     output_type=SeatPreference | Failed,  # type: ignore
     instructions=(
         "Extract the user's seat preference. "
