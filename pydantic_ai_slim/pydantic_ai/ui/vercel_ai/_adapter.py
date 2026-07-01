@@ -564,8 +564,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def _load_builtin_tool_meta(
         provider_metadata: ProviderMetadata,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Use special keys (call_meta and return_meta) to load combined provider metadata."""
-        return provider_metadata.get('call_meta') or {}, provider_metadata.get('return_meta') or {}
+        """Use special keys (call_meta and return_meta) to load combined provider metadata.
+
+        `call_provider_metadata` is client-controlled, so a forged non-dict `call_meta`/`return_meta`
+        reads as an empty dict rather than crashing the downstream `.get(...)` lookups.
+        """
+        call_meta = provider_metadata.get('call_meta')
+        return_meta = provider_metadata.get('return_meta')
+        return (
+            call_meta if isinstance(call_meta, dict) else {},
+            return_meta if isinstance(return_meta, dict) else {},
+        )
 
     @staticmethod
     def _dump_request_message(msg: ModelRequest) -> tuple[list[UIMessagePart], list[UIMessagePart]]:

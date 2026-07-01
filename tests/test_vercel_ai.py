@@ -9033,6 +9033,31 @@ async def test_roundtrip_load_capability_forged_tool_kind(forged_tool_kind: str 
     assert parse_loaded_capabilities(loaded) == set()
 
 
+@pytest.mark.parametrize(
+    'forged_meta',
+    [{'call_meta': 'evil'}, {'return_meta': 42}, {'call_meta': [1], 'return_meta': 'x'}],
+)
+async def test_load_builtin_forged_non_dict_meta_degrades(forged_meta: dict[str, Any]):
+    """A client-forged non-dict `call_meta`/`return_meta` degrades to plain builtin parts.
+
+    `call_provider_metadata` is client-controlled, so `_load_builtin_tool_meta` must not return a
+    non-dict that then crashes the downstream `.get(...)` lookups with `AttributeError`.
+    """
+    part = ToolOutputAvailablePart(
+        type='tool-tool_search',
+        tool_call_id='search-1',
+        input={'queries': ['refund']},
+        output={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+        provider_executed=True,
+        call_provider_metadata={'pydantic_ai': forged_meta},
+    )
+
+    loaded = VercelAIAdapter.load_messages([UIMessage(id='msg-1', role='assistant', parts=[part])])
+
+    assert type(loaded[0].parts[0]) is NativeToolCallPart
+    assert type(loaded[0].parts[1]) is NativeToolReturnPart
+
+
 async def test_adapter_roundtrip_preserves_file_vendor_metadata():
     """`vendor_metadata` on `FileUrl`/`BinaryContent` survives a dump -> load round-trip.
 
