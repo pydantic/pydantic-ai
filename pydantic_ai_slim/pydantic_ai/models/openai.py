@@ -3374,6 +3374,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             # Track annotations by item_id and content_index
             _annotations_by_item: dict[str, list[Any]] = {}
+            # Function-call item_ids that have received a "done" signal. Stray arguments deltas
+            # arriving after the item is done (non-conforming endpoints) would otherwise corrupt
+            # the final tool-call args, so we drop them (https://github.com/pydantic/pydantic-ai/issues/5757).
+            _done_function_call_ids: set[str] = set()
             # Track `phase` (commentary | final_answer) on assistant message items, captured
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on `output_text.done`.
@@ -3427,15 +3431,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._usage += self._map_usage(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=chunk.item_id,
-                        args=chunk.delta,
-                    )
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
+                    if chunk.item_id not in _done_function_call_ids:
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=chunk.item_id,
+                            args=chunk.delta,
+                        )
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDoneEvent):
-                    pass  # there's nothing we need to do here
+                    _done_function_call_ids.add(chunk.item_id)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                     self._usage += self._map_usage(chunk.response)
