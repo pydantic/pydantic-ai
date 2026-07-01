@@ -70,10 +70,9 @@ def sanitize_message_history(
     reset_force_download_values: set[ForceDownloadMode] = set()
     dropped_uploaded_file_providers: set[str] = set()
     dangling_tool_call_names: list[str] = []
-    last_index = len(messages) - 1
 
     sanitized: list[ModelMessage] = []
-    for index, message in enumerate(messages):
+    for message in messages:
         if isinstance(message, ModelRequest):
             new_request_parts, request_stripped_system_prompt = _sanitize_request_parts(
                 message.parts,
@@ -93,8 +92,6 @@ def sanitize_message_history(
         elif isinstance(message, ModelResponse):
             new_response_parts = _sanitize_response_parts(
                 message.parts,
-                resolved_tool_call_ids=resolved_ids,
-                dangling_names=dangling_tool_call_names if index == last_index else None,
                 allowed_file_url_schemes=allowed_schemes,
                 allowed_file_url_force_download=allowed_force_download,
                 preserve_file_data=preserve_file_data,
@@ -104,10 +101,12 @@ def sanitize_message_history(
             )
             if new_response_parts:
                 sanitized.append(replace(message, parts=new_response_parts))
-            # Otherwise drop the final response entirely so we don't leave an empty
+            # Otherwise drop the response entirely so we don't leave an empty
             # `ModelResponse(parts=[])` in history.
         else:
             assert_never(message)
+
+    _strip_dangling_tail_tool_calls(sanitized, resolved_ids, dangling_tool_call_names)
 
     if stripped_system_prompt:
         warnings.warn(
@@ -168,6 +167,38 @@ def sanitize_message_history(
         )
 
     return sanitized
+
+
+def _strip_dangling_tail_tool_calls(
+    sanitized: list[ModelMessage],
+    resolved_tool_call_ids: set[str],
+    dangling_names: list[str],
+) -> None:
+    """Strip unresolved (dangling) tool calls from the surviving tail of already-sanitized history.
+
+    The tail is only known once empty messages have been dropped: a trailing `ModelRequest` that
+    sanitized to empty (e.g. a client-supplied system prompt) is gone, which can re-expose an earlier
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse] whose tool calls a promptless run would
+    dispatch directly. Anchoring on the pre-drop index would miss that re-exposed response. Walks
+    back over trailing responses so several dropped messages can't hide a dangling call, keeping
+    calls in `resolved_tool_call_ids` so a same-request human-in-the-loop resume still works.
+
+    Mutates `sanitized` (dropping/rewriting trailing responses) and appends stripped tool names to
+    `dangling_names` in place.
+    """
+    while sanitized and isinstance(tail := sanitized[-1], ModelResponse):
+        kept_parts: list[ModelResponsePart] = []
+        for part in tail.parts:
+            if isinstance(part, BaseToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
+                dangling_names.append(part.tool_name)
+            else:
+                kept_parts.append(part)
+        if len(kept_parts) == len(tail.parts):
+            break
+        if kept_parts:
+            sanitized[-1] = replace(tail, parts=kept_parts)
+            break
+        sanitized.pop()
 
 
 def _sanitize_request_parts(
@@ -346,8 +377,6 @@ def _sanitize_tool_return_content(
 def _sanitize_response_parts(
     parts: Sequence[ModelResponsePart],
     *,
-    resolved_tool_call_ids: set[str],
-    dangling_names: list[str] | None,
     allowed_file_url_schemes: set[str],
     allowed_file_url_force_download: set[ForceDownloadMode],
     preserve_file_data: bool,
@@ -355,23 +384,20 @@ def _sanitize_response_parts(
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
 ) -> list[ModelResponsePart]:
-    """Sanitize the parts of an untrusted [`ModelResponse`][pydantic_ai.messages.ModelResponse].
+    """Sanitize the file references nested in an untrusted response's tool return parts.
 
-    Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on `FileUrl`s
-    nested in tool return parts, and drops `UploadedFile`s nested in tool return parts unless
-    `preserve_file_data` is set.
-    When `dangling_names` is not `None` (i.e. this is the trailing response), also drops tool
-    calls that aren't in `resolved_tool_call_ids`, appending their names to it.
+    Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on
+    [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return parts, and drops
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile]s nested in tool return parts unless
+    `preserve_file_data` is set. Unresolved (dangling) tool calls are stripped separately, from
+    the surviving tail, by `sanitize_message_history`.
+
+    `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
+    updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
+    file providers encountered.
     """
     new_parts: list[ModelResponsePart] = []
     for part in parts:
-        if (
-            dangling_names is not None
-            and isinstance(part, BaseToolCallPart)
-            and part.tool_call_id not in resolved_tool_call_ids
-        ):
-            dangling_names.append(part.tool_name)
-            continue
         if isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
             # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
             # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
