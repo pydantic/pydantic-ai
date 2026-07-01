@@ -737,6 +737,15 @@ def test_sanitize_message_history_strips_dangling_call_but_keeps_other_tail_part
     assert tail.parts == [messages[1].parts[0]]
 
 
+def test_sanitize_message_history_drops_empty_response():
+    """An empty-parts `ModelResponse` in untrusted history is dropped, not kept as `parts=[]`."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(parts=[]),
+    ]
+    assert sanitize_message_history(messages) == [messages[0]]
+
+
 def test_sanitize_message_history_keeps_bytearray_tool_return_content():
     """A `bytearray` tool return must be left intact, not iterated into a list of ints.
 
