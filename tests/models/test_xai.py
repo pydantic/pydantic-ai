@@ -3688,7 +3688,11 @@ Fix the errors and try again.\
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
-    """Test that ThinkingPart in message history is properly mapped."""
+    """Test that ThinkingPart in message history is properly mapped.
+
+    Unsigned/foreign ThinkingParts are dropped under the default `grok_send_back_thinking_parts='auto'`
+    rather than re-rendered as `<think>` tags (which the model would mimic into its visible output).
+    """
     # First response with reasoning
     response1 = create_response(
         content='first response',
@@ -3732,18 +3736,8 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
                 'model': XAI_REASONING_MODEL,
                 'messages': [
                     {'content': [{'text': 'First question'}], 'role': 'ROLE_USER'},
-                    {
-                        'content': [
-                            {
-                                'text': """\
-<think>
-First reasoning
-</think>\
-"""
-                            }
-                        ],
-                        'role': 'ROLE_ASSISTANT',
-                    },
+                    # The unsigned ThinkingPart (provider_name unset) is dropped under the default
+                    # `grok_send_back_thinking_parts='auto'` — not re-rendered as `<think>` tags.
                     {'content': [{'text': 'first response'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'Second question <think>user think</think>'}], 'role': 'ROLE_USER'},
                 ],

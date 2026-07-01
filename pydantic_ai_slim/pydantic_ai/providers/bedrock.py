@@ -133,8 +133,24 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Default: `False`."""
     bedrock_tool_result_format: Literal['text', 'json']
     """Default: `'text'`."""
-    bedrock_send_back_thinking_parts: bool
-    """Default: `False`."""
+    # TODO(v3): drop the `True`/`False` members; this field used to be a `bool` and both are deprecated
+    # aliases kept so custom profiles built against the old type keep type-checking (`True` -> `'auto'`,
+    # `False` warns and drops signed parts). See `BedrockConverseModel._map_messages`.
+    bedrock_send_back_thinking_parts: Literal['auto', 'tags', True, False]
+    """How thinking parts in history are sent back to Bedrock. Default: `False`.
+
+    For models that round-trip native `reasoningContent` (Anthropic and DeepSeek R1 via Bedrock), signed
+    same-provider parts are always sent as native blocks, and this setting governs only the unsigned/foreign
+    parts that can't be: `'auto'` drops them, `'tags'` re-renders them as `thinking_tags` text. See
+    `AnthropicModelProfile.anthropic_send_back_thinking_parts` for why dropping is the safe default.
+
+    `False` is the default only because non-reasoning families (Nova, Llama, …) never produce signed parts,
+    so it is equivalent to `'auto'` for them. It is **deprecated** and will be removed in v3: setting it on a
+    reasoning model drops signed thinking blocks, which Anthropic-via-Bedrock rejects on tool-use turns with a
+    `ValidationException`. Use `'auto'` instead.
+
+    This field used to be a `bool`. Both bool values are **deprecated**: the old `True` is equivalent to
+    `'auto'` and warns; `False` is the (deprecated) default described above."""
     bedrock_supports_prompt_caching: bool
     """Default: `False`."""
     bedrock_supports_tool_caching: bool
@@ -214,7 +230,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     profile = merge_profile(
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
-            bedrock_send_back_thinking_parts=True,
+            bedrock_send_back_thinking_parts='auto',
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
@@ -263,7 +279,7 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     profile = deepseek_model_profile(model_name)
     if 'r1' in model_name:
         # Bedrock-specific override applies on top of the upstream DeepSeek profile.
-        return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
+        return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts='auto'))
     return profile  # pragma: no cover
 
 
@@ -292,6 +308,7 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
         _strip_builtin_tools(qwen_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_thinking_variant='qwen',
+            bedrock_send_back_thinking_parts='auto',
             supports_thinking=supports_reasoning,
             thinking_always_enabled=supports_reasoning,
             json_schema_transformer=BedrockJsonSchemaTransformer,
@@ -393,6 +410,7 @@ class BedrockProvider(Provider[BaseClient]):
             # Converse rejects `reasoning_effort='none'` — mark always-on.
             'openai': lambda _mn: BedrockModelProfile(
                 bedrock_thinking_variant='openai',
+                bedrock_send_back_thinking_parts='auto',
                 supports_thinking=True,
                 thinking_always_enabled=True,
             ),

@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+from typing import Literal
+
 from . import ModelProfile
 
 
@@ -18,6 +20,20 @@ class GroqModelProfile(ModelProfile, total=False):
     Only the qwen3 family supports this; other Groq reasoning models can at most suppress reasoning
     *output* via `reasoning_format='hidden'` while still reasoning internally.
     """
+
+    groq_send_back_thinking_parts: Literal['auto', 'tags']
+    """How thinking parts in history are sent back to the model. Default: `'auto'`.
+
+    Groq has no native thinking round-trip, so this governs all `ThinkingPart`s:
+
+    * `'auto'` (default): they are dropped. Groq does not re-absorb `<think>` tags from history, so
+    re-rendering them as text teaches the model to mimic the format in its user-visible answers, leaking
+    reasoning to end users. (Whether the leak materializes also depends on `groq_reasoning_format`: `'raw'`
+    re-absorbs the tags, while `'parsed'`/`'hidden'` do not — dropping is safe for all of them.)
+    * `'tags'`: they are re-rendered as text wrapped in the `thinking_tags`, the behavior from before this
+    setting existed.
+
+    See `AnthropicModelProfile.anthropic_send_back_thinking_parts` for more context."""
 
 
 def groq_model_profile(model_name: str) -> ModelProfile:

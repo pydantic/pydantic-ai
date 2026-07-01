@@ -58,6 +58,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import (
@@ -951,6 +952,16 @@ class BedrockConverseModel(Model[BaseClient]):
         """
         settings = model_settings or BedrockModelSettings()
         profile = self.profile
+        send_back_thinking_parts = profile.get('bedrock_send_back_thinking_parts', False)
+        if send_back_thinking_parts is True:
+            # TODO(v3): remove the `True` alias for `bedrock_send_back_thinking_parts`. It predates the
+            # `'auto'`/`'tags'` values and is equivalent to `'auto'`; kept so custom profiles built against
+            # the old `bool` field keep type-checking.
+            warnings.warn(
+                "`bedrock_send_back_thinking_parts=True` is deprecated and will be removed in v3; use 'auto' instead.",
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
@@ -1063,7 +1074,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         if (
                             item.provider_name == self.system
                             and item.signature
-                            and profile.get('bedrock_send_back_thinking_parts', False)
+                            and send_back_thinking_parts is not False
                         ):
                             reasoning_content: ReasoningContentBlockOutputTypeDef
                             if item.id == 'redacted_content':
@@ -1078,9 +1089,24 @@ class BedrockConverseModel(Model[BaseClient]):
                                     }
                                 }
                             content.append({'reasoningContent': reasoning_content})
-                        else:
+                        elif send_back_thinking_parts == 'tags' and item.content:
+                            # Bedrock (like Anthropic) does not re-absorb `<thinking>` tags from history, so
+                            # re-rendering an unsigned/foreign part as text teaches the model to mimic the
+                            # format in its user-visible output. `'auto'` drops these; `'tags'` opts back in.
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
+                        elif send_back_thinking_parts is False and item.provider_name == self.system and item.signature:
+                            # TODO(v3): remove `bedrock_send_back_thinking_parts=False` (kept for back-compat). The
+                            # `item.signature` guard makes it inert for non-reasoning families, which never produce
+                            # signed parts, so this warns only when it actually drops a signed block.
+                            warnings.warn(
+                                '`bedrock_send_back_thinking_parts=False` is deprecated and will be removed in v3. '
+                                'It drops signed thinking blocks, which Anthropic-via-Bedrock rejects on tool-use turns '
+                                "with a `ValidationException`. Use 'auto' (the default) to send signed thinking as native "
+                                'blocks and drop only unsigned/foreign parts.',
+                                PydanticAIDeprecationWarning,
+                                stacklevel=2,
+                            )
                     elif isinstance(item, NativeToolCallPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:

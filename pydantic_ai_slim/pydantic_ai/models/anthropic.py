@@ -1317,6 +1317,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        send_back_thinking_parts = self.profile.get('anthropic_send_back_thinking_parts', 'auto')
         # Whenever the current request carries any `ToolSearchTool` builtin, render any
         # local-shape `search_tools` history exchanges as Anthropic's "client-side"
         # tool-search wire — `tool_use` paired with a `tool_result` whose `content` is a
@@ -1452,9 +1453,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
-                        if (
-                            response_part.provider_name == self.system and response_part.signature is not None
-                        ):  # pragma: no branch
+                        if response_part.provider_name == self.system and response_part.signature is not None:
                             if response_part.id == 'redacted_thinking':
                                 assistant_content_params.append(
                                     BetaRedactedThinkingBlockParam(
@@ -1470,7 +1469,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                         type='thinking',
                                     )
                                 )
-                        elif response_part.content:  # pragma: no branch
+                        elif send_back_thinking_parts == 'tags' and response_part.content:
+                            # Anthropic does not re-absorb `<thinking>` tags from history, so re-rendering an
+                            # unsigned/foreign part as text teaches the model to mimic the format in its
+                            # user-visible output. `'auto'` drops these; `'tags'` opts back in.
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             assistant_content_params.append(
                                 BetaTextBlockParam(
