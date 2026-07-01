@@ -7,7 +7,7 @@ import uuid
 import warnings
 from base64 import b64decode
 from collections.abc import Sequence
-from dataclasses import KW_ONLY, dataclass, replace
+from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -21,7 +21,6 @@ from ... import ExternalToolset, ToolDefinition
 from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
-    BaseToolReturnPart,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -75,7 +74,7 @@ try:
     )
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
-    from .._adapter import narrow_binary_images, strip_tool_return_files
+    from .._adapter import narrow_binary_images
     from ._event_stream import AGUIEventStream
     from ._interrupt import (
         HAS_INTERRUPTS,
@@ -189,19 +188,6 @@ def _tool_return_file_activity(tool_call_id: str, files: Sequence[MultiModalCont
             'files': [multi_modal_content_ta.dump_python(f, mode='json') for f in files],
         },
     )
-
-
-def _tool_return_message_content(part: BaseToolReturnPart, *, preserve_file_data: bool) -> str:
-    """Build the `ToolMessage.content` string for a tool return.
-
-    `model_response_str()` already excludes top-level files (sidecar'd when preserved), but it
-    serializes files nested in a mapping or deeper list inline. With `preserve_file_data=False`
-    those are stripped so no file data reaches the client; with it they stay so they round-trip
-    via the JSON content.
-    """
-    if not preserve_file_data:
-        part = replace(part, content=strip_tool_return_files(part.content, keep_top_level_files=True))
-    return part.model_response_str()
 
 
 def _rehydrate_tool_return_content(content: str) -> Any:
@@ -518,8 +504,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if preserve_file_data:
                         # Rehydrate nested multimodal items (the discriminator runs here, not in a later
                         # `ModelMessagesTypeAdapter` pass) so `preserve_file_data=True` round-trips files
-                        # at any depth, matching the Vercel adapter. Left untouched on the default secure
-                        # path, where nested files were stripped on dump (`strip_tool_return_files`).
+                        # at any depth, matching the Vercel adapter. Left untouched on the default path.
                         content = _rehydrate_tool_return_content(content)
 
                     if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
@@ -577,11 +562,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 ' must have a non-empty tool_call_id.'
                             )
                         bucket = pending_tool_files.setdefault(sidecar_tool_call_id, [])
-                        # No JS-binary coercion here (unlike the Vercel adapter's `_coerce_js_binary_data`):
-                        # this sidecar only ever carries items produced by our own `multi_modal_content_ta`
-                        # dump, so `BinaryContent.data` is always base64. The Vercel path needs coercion
-                        # because its tool `output` is authored by frontend tools that may emit raw
-                        # `Uint8Array`/`Buffer` JSON shapes.
+                        # This sidecar only ever carries items produced by our own `multi_modal_content_ta`
+                        # dump, so `BinaryContent.data` is always base64 and no wire-shape coercion is needed.
                         for raw in activity_content.get('files', []):
                             item = multi_modal_content_ta.validate_python(raw)
                             # Narrow `BinaryContent` with an image media type to `BinaryImage` so round
@@ -635,16 +617,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         UserWarning,
                         stacklevel=2,
                     )
-
-        # A sidecar is consumed by its matching `ToolMessage` via `pending_tool_files.pop`, which only
-        # sees sidecars that arrived first. A non-empty leftover means a sidecar arrived after its tool
-        # message or had no matching one — fail closed rather than silently drop the files.
-        orphaned_tool_call_ids = sorted(tool_call_id for tool_call_id, files in pending_tool_files.items() if files)
-        if orphaned_tool_call_ids:
-            raise ValueError(
-                f'Tool return file sidecar(s) for tool call ID(s) {orphaned_tool_call_ids} had no matching '
-                'tool message; each sidecar must precede its tool message.'
-            )
 
         return builder.messages
 
@@ -705,7 +677,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
-                        content=_tool_return_message_content(part, preserve_file_data=preserve_file_data),
+                        content=part.model_response_str(),
                         tool_call_id=part.tool_call_id,
                     )
                 )
@@ -808,7 +780,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     tool_messages.append(
                         ToolMessage(
                             id=_new_message_id(),
-                            content=_tool_return_message_content(builtin_return, preserve_file_data=preserve_file_data),
+                            content=builtin_return.model_response_str(),
                             tool_call_id=prefixed_id,
                         )
                     )

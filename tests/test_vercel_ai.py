@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import inspect
 import json
 import uuid
@@ -10,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 import pytest
-from pydantic import ValidationError
 
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._run_context import RunContext
@@ -4103,127 +4101,6 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     )
 
 
-@pytest.mark.parametrize(
-    'data_payload',
-    [
-        pytest.param({'0': 0, '1': 1, '2': 2}, id='uint8array-numeric-keyed-dict'),
-        pytest.param({'type': 'Buffer', 'data': [0, 1, 2]}, id='node-buffer-shape'),
-    ],
-)
-async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_payload: Any):
-    """Frontends that JSON-stringify a `Uint8Array`/`Buffer` instead of base64-encoding it
-    still produce a usable `BinaryContent` after load.
-
-    Regression for https://github.com/pydantic/pydantic-ai/pull/5255 review comment from
-    sadra-barikbin: a deferred frontend-executed tool returned `data` as a numeric-keyed
-    dict (`JSON.stringify(uint8Array)`), and `tool_return_content_ta.validate_python`
-    raised `ValidationError: Input should be a valid bytes` because pydantic's bytes
-    validator does not accept dicts.
-    """
-    ui_messages: list[UIMessage] = [
-        UIMessage(
-            id='m1',
-            role='user',
-            parts=[TextUIPart(text='give me a file')],
-        ),
-        UIMessage(
-            id='m2',
-            role='assistant',
-            parts=[
-                ToolOutputAvailablePart(
-                    type='tool-get_file',
-                    tool_call_id='tc-1',
-                    state='output-available',
-                    input={},
-                    output={
-                        'kind': 'binary',
-                        'data': data_payload,
-                        'media_type': 'application/pdf',
-                    },
-                )
-            ],
-        ),
-    ]
-
-    reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
-    assert len(tool_returns) == 1
-    content = tool_returns[0].content
-    assert isinstance(content, BinaryContent)
-    assert content.data == b'\x00\x01\x02'
-    assert content.media_type == 'application/pdf'
-
-
-@pytest.mark.parametrize(
-    'data_payload',
-    [
-        pytest.param({'type': 'Buffer', 'data': 'not-a-list'}, id='buffer-envelope-non-list-data'),
-        pytest.param({'type': 'Buffer', 'data': [256]}, id='buffer-envelope-out-of-range-int'),
-        pytest.param({'0': 1, '2': 3}, id='uint8array-non-contiguous-indices'),
-        pytest.param({'0': 'a'}, id='uint8array-non-int-values'),
-        pytest.param({'00': 5, '1': 6}, id='uint8array-non-canonical-key'),
-        pytest.param({'0': 256}, id='uint8array-out-of-range-value'),
-    ],
-)
-async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_through(data_payload: Any):
-    """Unrecognized binary `data` shapes pass through `_js_binary_to_bytes` unchanged so
-    pydantic surfaces a clean `ValidationError` rather than the helper raising
-    `KeyError`/`TypeError` on malformed input."""
-    ui_messages: list[UIMessage] = [
-        UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
-        UIMessage(
-            id='m2',
-            role='assistant',
-            parts=[
-                ToolOutputAvailablePart(
-                    type='tool-get_file',
-                    tool_call_id='tc-1',
-                    state='output-available',
-                    input={},
-                    output={
-                        'kind': 'binary',
-                        'data': data_payload,
-                        'media_type': 'application/pdf',
-                    },
-                )
-            ],
-        ),
-    ]
-    with pytest.raises(ValidationError, match='Input should be a valid bytes'):
-        VercelAIAdapter.load_messages(ui_messages)
-
-
-async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserved():
-    """A plain user mapping that merely reuses `kind: 'binary'` (no `media_type`) stays a mapping
-    with its nested `data` untouched — JS-binary coercion is gated on the same type-specific field
-    as the core `ToolReturnContent` discriminator, so it doesn't corrupt non-multimodal user dicts."""
-    ui_messages: list[UIMessage] = [
-        UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
-        UIMessage(
-            id='m2',
-            role='assistant',
-            parts=[
-                ToolOutputAvailablePart(
-                    type='tool-get_file',
-                    tool_call_id='tc-1',
-                    state='output-available',
-                    input={},
-                    output={'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'},
-                )
-            ],
-        ),
-    ]
-
-    reloaded = VercelAIAdapter.load_messages(ui_messages)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
-    assert len(tool_returns) == 1
-    assert tool_returns[0].content == snapshot({'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'})
-
-
 async def test_adapter_tool_return_text_only_unchanged():
     """Text-only tool returns serialize as the literal string and round-trip unchanged."""
     messages = [
@@ -4349,40 +4226,6 @@ async def test_adapter_tool_return_multimodal_dropped_by_default(tiny_image: Bin
             ToolReturnPart(tool_name='get_image', tool_call_id='tc-2', content='', timestamp=IsDatetime()),
         ]
     )
-
-
-@pytest.mark.parametrize(
-    ('case_id', 'expected_output'),
-    [
-        pytest.param('nested-in-dict', snapshot({'caption': 'see image'}), id='nested-in-dict'),
-        pytest.param('nested-in-list-of-dict', snapshot(['result', {}]), id='nested-in-list-of-dict'),
-        pytest.param('nested-in-list-in-dict', snapshot({'gallery': ['caption']}), id='nested-in-list-in-dict'),
-    ],
-)
-async def test_adapter_tool_return_nested_multimodal_dropped_by_default(
-    case_id: str, expected_output: Any, tiny_image: BinaryImage
-):
-    """Files nested below the top level of a tool return are stripped on dump with the default
-    `preserve_file_data=False`, not just top-level files — no file bytes reach the client at any depth.
-
-    Regression for the nested-file leak: `BaseToolReturnPart.files`/`model_response_str()` only see
-    top-level files, so a nested `BinaryContent` was serialized inline. See `strip_tool_return_files`.
-    """
-    contents: dict[str, ToolReturnContent] = {
-        'nested-in-dict': {'caption': 'see image', 'attachment': tiny_image},
-        'nested-in-list-of-dict': ['result', {'attachment': tiny_image}],
-        'nested-in-list-in-dict': {'gallery': [tiny_image, 'caption']},
-    }
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='get_file', tool_call_id='tc-1', args={})]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='get_file', tool_call_id='tc-1', content=contents[case_id])]),
-    ]
-
-    ui_messages = VercelAIAdapter.dump_messages(messages)
-    outputs = [p.output for m in ui_messages for p in m.parts if isinstance(p, ToolOutputAvailablePart)]
-    assert outputs == [expected_output]
-    assert base64.b64encode(tiny_image.data).decode() not in json.dumps(outputs)
 
 
 async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
@@ -6140,43 +5983,6 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
     preserved_part = preserved[0].parts[0]
     assert isinstance(preserved_part, UserPromptPart)
     assert any(isinstance(item, UploadedFile) for item in preserved_part.content)
-
-
-async def test_adapter_drops_non_http_scheme_from_rehydrated_tool_return():
-    """A non-HTTP `FileUrl` rehydrated from a client tool `output` is dropped by the sanitizer.
-
-    `_validate_tool_output` rehydrates `{'kind': 'image-url', 'url': 's3://...'}` into an `ImageUrl`
-    tool return; the shared `sanitize_messages` chokepoint then drops it (content -> `None`) because
-    `s3` isn't in `allowed_file_url_schemes`, blocking server-side IAM-fetch SSRF through the new path.
-    """
-    ui_messages = [
-        UIMessage(id='m1', role='user', parts=[TextUIPart(text='get the logo')]),
-        UIMessage(
-            id='m2',
-            role='assistant',
-            parts=[
-                ToolOutputAvailablePart(
-                    type='tool-get_logo',
-                    tool_call_id='tc-1',
-                    state='output-available',
-                    input={},
-                    output={'kind': 'image-url', 'url': 's3://private-bucket/logo.png'},
-                )
-            ],
-        ),
-    ]
-    run_input = SubmitMessage(trigger='submit-message', id='req_1', messages=ui_messages)
-    agent: Agent[None, str] = Agent(model=TestModel())
-
-    loaded = VercelAIAdapter.load_messages(ui_messages)
-    loaded_return = next(p for m in loaded for p in m.parts if isinstance(p, ToolReturnPart))
-    assert loaded_return.content == ImageUrl(url='s3://private-bucket/logo.png')
-
-    adapter = VercelAIAdapter(agent=agent, run_input=run_input)
-    with pytest.warns(UserWarning, match=r"scheme\(s\) \['s3'\]"):
-        sanitized = adapter.sanitize_messages(adapter.messages)
-    sanitized_return = next(p for m in sanitized for p in m.parts if isinstance(p, ToolReturnPart))
-    assert sanitized_return.content is None
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')

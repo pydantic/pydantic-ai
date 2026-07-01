@@ -946,54 +946,8 @@ def _validate_tool_output(output: Any) -> Any:
     (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
     `BinaryContent` instances with image media types are narrowed to `BinaryImage`.
     """
-    validated = tool_return_content_ta.validate_python(_coerce_js_binary_data(output))
+    validated = tool_return_content_ta.validate_python(output)
     return narrow_binary_images(validated)
-
-
-def _coerce_js_binary_data(value: Any) -> Any:
-    """Convert `BinaryContent.data` shapes that JavaScript frontends commonly emit into `bytes`.
-
-    `JSON.stringify` produces `{'0': N, '1': N, ...}` for `Uint8Array` and
-    `{'type': 'Buffer', 'data': [N, ...]}` for Node `Buffer`. Pydantic's bytes validator
-    rejects both. We normalize them at the wire boundary so deferred frontend tools that
-    return binary data via the documented `kind: 'binary'` shape work without requiring
-    callers to base64-encode manually.
-    """
-    if isinstance(value, list):
-        return [_coerce_js_binary_data(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
-    if not isinstance(value, dict):
-        return value
-    coerced: dict[str, Any] = {k: _coerce_js_binary_data(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
-    # Gate on `media_type` (the type-specific field a real `BinaryContent` carries) so this matches
-    # the core `ToolReturnContent` discriminator: a plain user mapping that merely reuses
-    # `kind: 'binary'` stays untouched instead of having its `data` rewritten to bytes.
-    if coerced.get('kind') == 'binary' and 'media_type' in coerced:
-        coerced['data'] = _js_binary_to_bytes(coerced.get('data'))
-    return coerced
-
-
-def _js_binary_to_bytes(data: Any) -> Any:
-    """Map a JS-serialized `Uint8Array`/`Buffer` shape to `bytes`; pass through other values.
-
-    Any shape that isn't a canonical, in-range byte sequence is passed through unchanged so that
-    `tool_return_content_ta` surfaces a clean `ValidationError`, rather than this helper raising
-    `KeyError`/`ValueError` on malformed client input.
-    """
-    if not isinstance(data, dict):
-        return data
-    mapping: dict[str, Any] = data  # pyright: ignore[reportUnknownVariableType]
-    # Node Buffer: `{'type': 'Buffer', 'data': [N, ...]}`
-    if mapping.get('type') == 'Buffer':
-        buf_data: Any = mapping.get('data')
-        if isinstance(buf_data, list) and all(isinstance(b, int) and 0 <= b <= 255 for b in buf_data):  # pyright: ignore[reportUnknownVariableType]
-            return bytes(buf_data)  # pyright: ignore[reportUnknownArgumentType]
-    # Uint8Array via `JSON.stringify`: `{'0': N, '1': N, ...}`. Require canonical contiguous keys
-    # (`'0'..'n-1'`) so non-canonical keys like `'00'` pass through instead of raising `KeyError`.
-    if mapping and all(str(i) in mapping for i in range(len(mapping))):
-        values: list[Any] = [mapping[str(i)] for i in range(len(mapping))]
-        if all(isinstance(v, int) and 0 <= v <= 255 for v in values):
-            return bytes(values)
-    return data  # pyright: ignore[reportUnknownVariableType]
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:

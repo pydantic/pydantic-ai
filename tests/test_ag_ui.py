@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import importlib.metadata
 import inspect
 import json
@@ -3732,55 +3731,6 @@ def test_tool_return_multimodal_dropped_by_default(tiny_image: BinaryImage) -> N
     )
 
 
-def test_tool_return_nested_multimodal_dropped_by_default(tiny_image: BinaryImage) -> None:
-    """Files nested below the top level of a tool return are stripped on dump with the default
-    `preserve_file_data=False`, not just top-level files — no file bytes reach the client at any depth.
-
-    Regression for the nested-file leak: `model_response_str()` only excludes top-level files, so a
-    nested `BinaryContent` was serialized inline into `ToolMessage.content`. See `strip_tool_return_files`.
-    """
-    original: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='get_file', tool_call_id='tc-1', args='{}')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_file',
-                    tool_call_id='tc-1',
-                    content={'caption': 'see image', 'attachment': tiny_image},
-                )
-            ]
-        ),
-    ]
-
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=False)
-    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == snapshot([])
-    tool_contents = [m.content for m in ag_ui_msgs if isinstance(m, ToolMessage)]
-    assert tool_contents == snapshot(['{"caption":"see image"}'])
-    assert base64.b64encode(tiny_image.data).decode() not in str(tool_contents)
-
-
-def test_tool_return_file_sidecar_after_tool_message_raises(tiny_image: BinaryImage) -> None:
-    """An out-of-order (or orphan) tool-return file sidecar fails closed rather than silently dropping files.
-
-    Sidecars are consumed by `pending_tool_files.pop`, which only sees sidecars that arrived before the
-    matching `ToolMessage`; a leftover bucket means the files would otherwise be lost without a trace.
-    """
-    original: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='get_image', tool_call_id='tc-1', args='{}')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content=tiny_image)]),
-    ]
-    dumped = AGUIAdapter.dump_messages(original, preserve_file_data=True)
-    # Move the sidecar `ActivityMessage`(s) after their `ToolMessage` to simulate reordered history.
-    activities = [m for m in dumped if isinstance(m, ActivityMessage)]
-    assert activities  # the top-level file produced a sidecar
-    reordered = [m for m in dumped if not isinstance(m, ActivityMessage)] + activities
-
-    with pytest.raises(ValueError, match='had no matching'):
-        AGUIAdapter.load_messages(reordered, preserve_file_data=True)
-
-
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
     """Test multimodal `NativeToolReturnPart.content` round-trips via the sidecar `ActivityMessage`."""
     original: list[ModelMessage] = [
@@ -5119,42 +5069,6 @@ async def test_client_submitted_file_url_disallowed_scheme_stripped() -> None:
     user_part = request.parts[0]
     assert isinstance(user_part, UserPromptPart)
     assert user_part.content == ['See attached', ImageUrl(url='https://example.com/ok.png')]
-
-
-async def test_sidecar_rehydrated_tool_return_disallowed_scheme_stripped() -> None:
-    """A non-HTTP `FileUrl` rehydrated from an AG-UI sidecar `ActivityMessage` is dropped by the sanitizer.
-
-    The multimodal sidecar load path rehydrates a `DocumentUrl(url='s3://...')` into a `ToolReturnPart`;
-    the shared `sanitize_messages` chokepoint then drops it (content -> `None`) because `s3` isn't in
-    `allowed_file_url_schemes`, blocking server-side IAM-fetch SSRF through the new path. Mirrors the
-    Vercel `test_adapter_drops_non_http_scheme_from_rehydrated_tool_return` so both adapters' rehydration
-    paths are pinned to the same trust boundary.
-    """
-    agent = Agent(model=TestModel())
-    original: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='get the doc')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='get_doc', tool_call_id='tc-1', args='{}')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_doc',
-                    tool_call_id='tc-1',
-                    content=DocumentUrl(url='s3://private-bucket/payroll.pdf', media_type='application/pdf'),
-                )
-            ]
-        ),
-    ]
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
-
-    loaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
-    loaded_return = next(p for m in loaded for p in m.parts if isinstance(p, ToolReturnPart))
-    assert loaded_return.content == DocumentUrl(url='s3://private-bucket/payroll.pdf', media_type='application/pdf')
-
-    adapter = AGUIAdapter(agent=agent, run_input=create_input(UserMessage(id='msg_1', content='Hi')))
-    with pytest.warns(UserWarning, match=r"scheme\(s\).*'s3'"):
-        sanitized = adapter.sanitize_messages(loaded)
-    sanitized_return = next(p for m in sanitized for p in m.parts if isinstance(p, ToolReturnPart))
-    assert sanitized_return.content is None
 
 
 # endregion
