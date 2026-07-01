@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -11,6 +12,7 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 
@@ -72,9 +74,9 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        # Instructions resolved by `get_tools` (see `get_instructions`), keyed by workflow run id because
-        # this toolset instance is shared across concurrent workflow executions on a worker.
-        self._run_instructions: dict[str, str | InstructionPart | Sequence[str | InstructionPart] | None] = {}
+        # Instructions resolved by `get_tools`, read by `get_instructions`. Lives on the per-run copy
+        # produced by `for_run` (see below), so it needs no run-id keying and is freed with the run.
+        self._run_instructions: str | InstructionPart | Sequence[str | InstructionPart] | None = None
 
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> _GetToolsResult:
             """Activity that resolves the dynamic toolset and returns its tools and instructions."""
@@ -130,16 +132,29 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.get_tools_activity, self.call_tool_activity]
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        if not workflow.in_workflow():  # pragma: no cover
+            return await super().for_run(ctx)
+
+        # Return a fresh per-run copy so `_run_instructions` (populated by `get_tools`, read by
+        # `get_instructions`) is isolated per workflow run rather than shared on the process-wide,
+        # module-level toolset instance. The copy shares the worker-registered activity callables
+        # (shallow copy), so `execute_activity` still resolves them by name. Unlike the base
+        # `return self` — which is about wrapped-toolset *lifecycle* (managed per-activity) — this
+        # is only about per-run *state isolation*, exactly what `for_run` is documented for.
+        run_copy = copy.copy(self)
+        run_copy._run_instructions = None
+        return run_copy
+
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_instructions(ctx)
 
-        # Resolved by the `get_tools` activity, which enters the inner toolset once per run step for both
-        # tools and instructions. The framework calls `get_tools` (via `ToolManager.for_run_step`) before
-        # `get_instructions` in each request step, so the entry is populated by the time we read it here.
-        return self._run_instructions.get(workflow.info().run_id)
+        # Populated by `get_tools`, which the framework calls (via `ToolManager.for_run_step`) before
+        # `get_instructions` in each request step, so it reflects the current step by the time we read it.
+        return self._run_instructions
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         if not workflow.in_workflow():  # pragma: no cover
@@ -155,7 +170,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
             ],
             **activity_config,
         )
-        self._run_instructions[workflow.info().run_id] = result.instructions
+        self._run_instructions = result.instructions
         return {name: self._tool_for_tool_info(tool_info) for name, tool_info in result.tools.items()}
 
     async def call_tool(
