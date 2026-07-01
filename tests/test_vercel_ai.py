@@ -119,12 +119,6 @@ pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -2733,7 +2727,7 @@ async def test_tool_approval_request_emission():
             )
         }
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -2828,7 +2822,7 @@ async def test_sdk_version_5_does_not_emit_approval_chunks():
             )
         }
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -3223,7 +3217,7 @@ async def test_run_stream_with_explicit_deferred_tool_results():
     ) -> AsyncIterator[DeltaToolCalls | str]:
         yield 'File deleted successfully.'
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -3420,7 +3414,7 @@ async def test_dispatch_request_with_tool_approval():
             )
         }
 
-    agent: Agent[None, str | DeferredToolRequests] = Agent(
+    agent: Agent[object, str | DeferredToolRequests] = Agent(
         model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
     )
 
@@ -8063,7 +8057,7 @@ async def test_dynamic_system_prompt_with_vercel_adapter():
     agent = Agent(model=TestModel())
 
     @agent.system_prompt
-    def dynamic_prompt(ctx: RunContext[None]) -> str:
+    def dynamic_prompt(ctx: RunContext) -> str:
         return 'Dynamic system prompt from Vercel'
 
     request = SubmitMessage(
@@ -8704,3 +8698,180 @@ async def test_denied_builtin_tool_round_trip():
             )
         ]
     )
+
+
+async def test_adapter_roundtrip_preserves_file_vendor_metadata():
+    """`vendor_metadata` on `FileUrl`/`BinaryContent` survives a dump -> load round-trip.
+
+    Regression test for #5764: the Vercel AI adapter dropped `vendor_metadata`
+    (e.g. OpenAI/xAI image `detail`, Google `video_metadata`) for every
+    `ImageUrl`/`AudioUrl`/`VideoUrl`/`DocumentUrl`/`BinaryContent` because the
+    `FileUIPart` was built without `provider_metadata`, even though the adjacent
+    `UploadedFile` branch already round-tripped it.
+    """
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(
+                            url='https://example.com/image.png',
+                            media_type='image/png',
+                            vendor_metadata={'detail': 'high'},
+                        ),
+                        AudioUrl(
+                            url='https://example.com/audio.mp3',
+                            media_type='audio/mpeg',
+                            vendor_metadata={'foo': 'bar'},
+                        ),
+                        VideoUrl(
+                            url='https://example.com/video.mp4',
+                            media_type='video/mp4',
+                            vendor_metadata={'fps': 5},
+                        ),
+                        DocumentUrl(
+                            url='https://example.com/doc.pdf',
+                            media_type='application/pdf',
+                            vendor_metadata={'foo': 'baz'},
+                        ),
+                        BinaryContent(
+                            data=b'fake_doc',
+                            media_type='application/pdf',
+                            vendor_metadata={'detail': 'low'},
+                        ),
+                        # Image data-URI: must round-trip back to `BinaryImage` (the narrowed type
+                        # `from_data_uri` produces), not plain `BinaryContent`.
+                        BinaryContent(
+                            data=b'fake_image',
+                            media_type='image/png',
+                            vendor_metadata={'detail': 'auto'},
+                        ),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+
+    # Pin the dumped external contract: each file part carries vendor_metadata under
+    # provider_metadata['pydantic_ai'] (the shape the symmetric dump -> load relies on).
+    dumped_metadata = [
+        part.provider_metadata for message in ui_messages for part in message.parts if isinstance(part, FileUIPart)
+    ]
+    assert dumped_metadata == [
+        {'pydantic_ai': {'vendor_metadata': {'detail': 'high'}}},
+        {'pydantic_ai': {'vendor_metadata': {'foo': 'bar'}}},
+        {'pydantic_ai': {'vendor_metadata': {'fps': 5}}},
+        {'pydantic_ai': {'vendor_metadata': {'foo': 'baz'}}},
+        {'pydantic_ai': {'vendor_metadata': {'detail': 'low'}}},
+        {'pydantic_ai': {'vendor_metadata': {'detail': 'auto'}}},
+    ]
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert loaded == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            ImageUrl(
+                                url='https://example.com/image.png',
+                                media_type='image/png',
+                                identifier='01a7df',
+                                vendor_metadata={'detail': 'high'},
+                            ),
+                            AudioUrl(
+                                url='https://example.com/audio.mp3',
+                                vendor_metadata={'foo': 'bar'},
+                                _media_type='audio/mpeg',
+                            ),
+                            VideoUrl(
+                                url='https://example.com/video.mp4',
+                                media_type='video/mp4',
+                                identifier='8cb95e',
+                                vendor_metadata={'fps': 5},
+                            ),
+                            DocumentUrl(
+                                url='https://example.com/doc.pdf',
+                                media_type='application/pdf',
+                                identifier='e3337d',
+                                vendor_metadata={'foo': 'baz'},
+                            ),
+                            BinaryContent(
+                                data=b'fake_doc',
+                                media_type='application/pdf',
+                                identifier='42a9bb',
+                                vendor_metadata={'detail': 'low'},
+                            ),
+                            BinaryImage(
+                                data=b'fake_image',
+                                media_type='image/png',
+                                identifier='3d738c',
+                                vendor_metadata={'detail': 'auto'},
+                            ),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+
+
+async def test_adapter_roundtrip_file_without_vendor_metadata_stays_none():
+    """A file with no `vendor_metadata` round-trips to `None` (no spurious metadata)."""
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        ImageUrl(url='https://example.com/image.png', media_type='image/png'),
+                        BinaryContent(data=b'fake_image', media_type='image/png'),
+                    ]
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    # No vendor_metadata -> no provider_metadata emitted on the file part.
+    file_parts = [part for msg in ui_messages for part in msg.parts if isinstance(part, FileUIPart)]
+    assert len(file_parts) == 2
+    assert all(part.provider_metadata is None for part in file_parts)
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    request = loaded[0]
+    assert isinstance(request, ModelRequest)
+    user_part = request.parts[0]
+    assert isinstance(user_part, UserPromptPart)
+    assert isinstance(user_part.content, list)
+    for item in user_part.content:
+        assert getattr(item, 'vendor_metadata', None) is None
+
+
+async def test_adapter_load_binary_content_rejects_invalid_vendor_metadata():
+    """A malformed `vendor_metadata` on a data-URI `BinaryContent` is rejected on load.
+
+    The restore path reconstructs `BinaryContent` through its constructor so a non-dict
+    client value raises `ValidationError` here (matching the URL constructor path),
+    instead of being stored unvalidated and crashing a provider model later.
+    """
+    from pydantic import ValidationError
+
+    ui_messages = [
+        UIMessage(
+            id='msg-1',
+            role='user',
+            parts=[
+                FileUIPart(
+                    media_type='application/pdf',
+                    url='data:application/pdf;base64,ZGF0YQ==',
+                    provider_metadata={'pydantic_ai': {'vendor_metadata': 'not-a-dict'}},
+                ),
+            ],
+        )
+    ]
+
+    with pytest.raises(ValidationError):
+        VercelAIAdapter.load_messages(ui_messages)

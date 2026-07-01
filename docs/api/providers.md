@@ -30,8 +30,6 @@
 
 ::: pydantic_ai.providers.fireworks.FireworksProvider
 
-::: pydantic_ai.providers.grok.GrokProvider
-
 ::: pydantic_ai.providers.together.TogetherProvider
 
 ::: pydantic_ai.providers.heroku.HerokuProvider
