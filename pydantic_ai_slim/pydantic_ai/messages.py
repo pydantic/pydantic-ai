@@ -860,7 +860,13 @@ class UploadedFile:
 
 
 MultiModalContent = Annotated[
-    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile, pydantic.Discriminator('kind')
+    ImageUrl
+    | AudioUrl
+    | DocumentUrl
+    | VideoUrl
+    | Annotated[BinaryContent, pydantic.AfterValidator(BinaryImage.narrow_type)]
+    | UploadedFile,
+    pydantic.Discriminator('kind'),
 ]
 """Union of all multi-modal content types with a discriminator for Pydantic validation."""
 
