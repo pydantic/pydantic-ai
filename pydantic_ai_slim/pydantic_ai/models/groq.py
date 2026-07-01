@@ -522,8 +522,9 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                        texts.append('\n'.join([start_tag, item.content, end_tag]))
+                        if item.content and self.profile.get('groq_send_back_thinking_parts', False):
+                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+                            texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
                         # These are not currently sent back
                         pass

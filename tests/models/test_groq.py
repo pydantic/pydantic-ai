@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -66,6 +66,7 @@ with try_import() as imports_successful:
     from groq.types.completion_usage import CompletionUsage
 
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
+    from pydantic_ai.profiles.groq import GroqModelProfile
     from pydantic_ai.providers.groq import GroqProvider
 
     MockChatCompletion = chat.ChatCompletion | Exception
@@ -94,6 +95,7 @@ class MockGroq:
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
     index: int = 0
     base_url: str = 'https://api.groq.com'
+    call_args_list: list[dict[str, Any]] = field(default_factory=list)
 
     @cached_property
     def chat(self) -> Any:
@@ -112,8 +114,9 @@ class MockGroq:
         return cast(AsyncGroq, cls(stream=stream))
 
     async def chat_completions_create(
-        self, *_args: Any, stream: bool = False, **_kwargs: Any
+        self, *_args: Any, stream: bool = False, **kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
+        self.call_args_list.append(kwargs)
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
@@ -5969,3 +5972,79 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_groq_foreign_thinking_part_dropped_from_history(allow_model_requests: None):
+    """ThinkingPart from a non-Groq provider must be silently dropped, not re-rendered as thinking tags.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5927.
+    Without the fix, the elif-branch in _map_messages wraps any ThinkingPart
+    that has content in <think>...</think> tags, which the model may then mimic
+    in subsequent turns (reasoning-content leak).
+    """
+    c = completion_message(ChatCompletionMessage(content='Follow-up answer', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m)
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Foreign reasoning text', provider_name='anthropic'),
+                TextPart(content='First answer'),
+            ],
+            model_name='qwen/qwen3-32b',
+        ),
+    ]
+
+    await agent.run('Follow up', message_history=message_history)
+
+    assert len(mock_client.call_args_list) == 1
+    messages = mock_client.call_args_list[0]['messages']
+
+    # The TextPart from the prior response must still be present.
+    assistant_contents = [m.get('content', '') for m in messages if m.get('role') == 'assistant']
+    assert any('First answer' in str(c) for c in assistant_contents)
+
+    # No message must contain the foreign reasoning content or thinking tags.
+    all_text = str(messages)
+    assert 'Foreign reasoning text' not in all_text
+    assert '<think>' not in all_text
+
+
+async def test_groq_foreign_thinking_part_preserved_when_flag_enabled(allow_model_requests: None):
+    """When groq_send_back_thinking_parts=True, non-native ThinkingParts are wrapped in thinking tags.
+
+    Regression test (positive-flag path) for https://github.com/pydantic/pydantic-ai/issues/5927.
+    """
+    c = completion_message(ChatCompletionMessage(content='Follow-up answer', role='assistant'))
+    mock_client = MockGroq.create_mock(c)
+    profile = GroqModelProfile(
+        supports_thinking=True,
+        thinking_always_enabled=True,
+        groq_send_back_thinking_parts=True,
+    )
+    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(groq_client=mock_client), profile=profile)
+    agent = Agent(m)
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Foreign reasoning text', provider_name='anthropic'),
+                TextPart(content='First answer'),
+            ],
+            model_name='qwen/qwen3-32b',
+        ),
+    ]
+
+    await agent.run('Follow up', message_history=message_history)
+
+    assert len(mock_client.call_args_list) == 1
+    messages = mock_client.call_args_list[0]['messages']
+
+    # Foreign ThinkingPart must appear wrapped in thinking tags.
+    all_text = str(messages)
+    assert '<think>' in all_text
+    assert 'Foreign reasoning text' in all_text
