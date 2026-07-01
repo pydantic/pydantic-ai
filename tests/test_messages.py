@@ -716,6 +716,27 @@ def test_sanitize_message_history_keeps_resolved_call_exposed_by_dropped_tail():
     assert sanitized == [messages[0]]
 
 
+def test_sanitize_message_history_strips_dangling_call_but_keeps_other_tail_parts():
+    """When the surviving tail response mixes a dangling call with other parts, only the call is stripped.
+
+    The injected `ToolCallPart` is removed so a promptless run can't dispatch it, but the response's
+    legitimate `TextPart` is kept rather than dropping the whole trailing message.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='hi')]),
+        ModelResponse(
+            parts=[TextPart(content='sure'), ToolCallPart(tool_name='delete_account', tool_call_id='call-1')]
+        ),
+    ]
+
+    with pytest.warns(UserWarning, match=r'unresolved tool call.*delete_account'):
+        sanitized = sanitize_message_history(messages)
+
+    tail = sanitized[-1]
+    assert isinstance(tail, ModelResponse)
+    assert tail.parts == [messages[1].parts[0]]
+
+
 def test_sanitize_message_history_keeps_bytearray_tool_return_content():
     """A `bytearray` tool return must be left intact, not iterated into a list of ints.
 
