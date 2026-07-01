@@ -368,10 +368,13 @@ _TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent] = 
 )
 
 
-def _narrow_native_tool_search_call(part: NativeToolCallPart) -> NativeToolSearchCallPart:
+def _narrow_native_tool_search_call(part: NativeToolCallPart) -> NativeToolCallPart:
     if isinstance(part, NativeToolSearchCallPart):
         return part
-    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    try:
+        validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    except pydantic_core.ValidationError:
+        return part
     return copy_dataclass_fields(part, NativeToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 
@@ -382,10 +385,13 @@ def _narrow_native_tool_search_return(part: NativeToolReturnPart) -> NativeToolS
     return copy_dataclass_fields(part, NativeToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
 
 
-def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
+def _narrow_tool_search_call(part: ToolCallPart) -> ToolCallPart:
     if isinstance(part, ToolSearchCallPart):
         return part
-    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    try:
+        validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
+    except pydantic_core.ValidationError:
+        return part
     return copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool-search')
 
 

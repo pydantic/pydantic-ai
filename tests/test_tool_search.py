@@ -3619,6 +3619,20 @@ def test_narrow_type_promotes_builtin_call_to_tool_search() -> None:
     assert NativeToolCallPart.narrow_type(already_narrowed) is already_narrowed
 
 
+@pytest.mark.parametrize('args', [{'query': 'find a tool'}, {'queries': 'noop'}])
+def test_narrow_type_builtin_call_with_invalid_args_returns_input_unchanged(args: Any) -> None:
+    """Malformed tool-search args should not fail during typed narrowing."""
+    base = NativeToolCallPart(
+        tool_name='tool_search',
+        args=args,
+        tool_call_id='c1',
+        tool_kind='tool-search',
+        provider_name='anthropic',
+    )
+
+    assert NativeToolCallPart.narrow_type(base) is base
+
+
 def test_narrow_type_promotes_builtin_return_to_tool_search() -> None:
     """Direct construction of `NativeToolReturnPart` with `tool_kind='tool-search'`
     promotes to `NativeToolSearchReturnPart` via the narrowing registry."""
@@ -4125,6 +4139,19 @@ def test_narrow_type_local_promotes_with_tool_kind_set() -> None:
     narrowed = ToolCallPart.narrow_type(part)
     assert isinstance(narrowed, ToolSearchCallPart)
     assert narrowed.args == {'queries': ['mortgage']}
+
+
+@pytest.mark.parametrize('args', [{'query': 'find a tool'}, {'queries': 'noop'}])
+def test_narrow_type_local_with_invalid_args_returns_input_unchanged(args: Any) -> None:
+    """Malformed local search_tools args should reach normal tool arg validation."""
+    part = ToolCallPart(
+        tool_name='search_tools',
+        args=args,
+        tool_call_id='c1',
+        tool_kind='tool-search',
+    )
+
+    assert ToolCallPart.narrow_type(part) is part
 
 
 def test_narrow_type_local_passthrough_when_already_narrowed() -> None:
