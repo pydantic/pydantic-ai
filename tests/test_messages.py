@@ -745,6 +745,28 @@ def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
     assert deserialized[0].parts[0].content[0].metadata == snapshot({'foo': 'bar'})  # type: ignore[reportUnknownMemberType]
 
 
+def test_tool_return_part_in_model_response_roundtrip():
+    from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, ToolReturnPart
+
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolReturnPart(
+                    tool_name='my_tool',
+                    content={'result': 'success'},
+                    tool_call_id='call-abc',
+                )
+            ]
+        )
+    ]
+    py_serialized = ModelMessagesTypeAdapter.dump_python(messages, mode='python')
+    py_deserialized = ModelMessagesTypeAdapter.validate_python(py_serialized)
+    assert py_deserialized == messages
+    js_serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    js_deserialized = ModelMessagesTypeAdapter.validate_json(js_serialized)
+    assert js_deserialized == messages
+
+
 def test_model_response_convenience_methods():
     response = ModelResponse(parts=[])
     assert response.text == snapshot(None)

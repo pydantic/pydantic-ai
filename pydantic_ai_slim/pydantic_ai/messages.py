@@ -2038,6 +2038,7 @@ ModelResponsePart = Annotated[
     | Annotated[ToolSearchCallPart, pydantic.Tag('tool-search-call')]
     | Annotated[LoadCapabilityCallPart, pydantic.Tag('capability-load-call')]
     | Annotated[ToolCallPart, pydantic.Tag('tool-call')]
+    | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[NativeToolSearchCallPart, pydantic.Tag('builtin-tool-search-call')]
     | Annotated[NativeToolCallPart, pydantic.Tag('builtin-tool-call')]
     | Annotated[NativeToolSearchReturnPart, pydantic.Tag('builtin-tool-search-return')]
