@@ -864,7 +864,7 @@ MultiModalContent = Annotated[
     | AudioUrl
     | DocumentUrl
     | VideoUrl
-    | Annotated[BinaryContent, pydantic.AfterValidator(BinaryImage.narrow_type)]
+    | Annotated[BinaryContent, pydantic.AfterValidator(BinaryContent.narrow_type)]
     | UploadedFile,
     pydantic.Discriminator('kind'),
 ]
@@ -1784,7 +1784,7 @@ class CompactionPart:
 class FilePart:
     """A file response from a model."""
 
-    content: Annotated[BinaryContent, pydantic.AfterValidator(BinaryImage.narrow_type)]
+    content: Annotated[BinaryContent, pydantic.AfterValidator(BinaryContent.narrow_type)]
     """The file content of the response."""
 
     _: KW_ONLY
