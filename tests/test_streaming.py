@@ -5085,6 +5085,12 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     await context.__aexit__(None, None, None)
     await context.__aexit__(None, None, None)
 
+    reentered_context = agent.run_stream_events('')
+    await reentered_context.__aenter__()
+    with pytest.raises(RuntimeError, match='cannot be entered more than once'):
+        await reentered_context.__aenter__()
+    await reentered_context.__aexit__(None, None, None)
+
     assert not producer_started.is_set()
 
 

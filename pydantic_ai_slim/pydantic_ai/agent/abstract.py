@@ -188,6 +188,11 @@ class _RunStreamEventsContext(
         self._iterator: _RunStreamEventsIterator | None = None
 
     async def __aenter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
+        # Single-entry, matching the old `@asynccontextmanager` this replaced: re-entering would
+        # orphan a first iterator that had already started (and leak its background task), so fail
+        # loudly instead of silently, and `__aexit__` still cleans up the one live iterator.
+        if self._iterator is not None:
+            raise RuntimeError('`run_stream_events()` context manager cannot be entered more than once')
         self._iterator = _RunStreamEventsIterator(self._run_agent)
         return self._iterator
 
