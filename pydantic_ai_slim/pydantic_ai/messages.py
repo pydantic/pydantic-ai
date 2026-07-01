@@ -11,7 +11,7 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, get_args, overload
 from urllib.parse import urlparse
 
 import pydantic
@@ -1092,6 +1092,18 @@ typed-part families (e.g. web search) gain dedicated subclasses.
 Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
 `'function'`, `'output'`, `'external'`, `'unapproved'`).
 """
+
+_TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
+
+
+def parse_tool_kind(value: object) -> ToolPartKind | None:
+    """Return `value` if it's a known [`ToolPartKind`][pydantic_ai.messages.ToolPartKind], else `None`.
+
+    UI adapters use this to sanitize an untrusted client-supplied `tool_kind` claim before setting it
+    on a part: a non-hashable or unknown value degrades to `None` rather than crashing the narrower's
+    registry lookup or asserting a bogus discriminator.
+    """
+    return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
 
 
 @dataclass(repr=False)

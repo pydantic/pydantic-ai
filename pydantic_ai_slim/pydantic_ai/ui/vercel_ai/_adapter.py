@@ -42,6 +42,7 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
     narrow_message_parts,
+    parse_tool_kind,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
@@ -54,7 +55,6 @@ from ._utils import (
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
-    parse_tool_kind,
     tool_return_output,
 )
 from .request_types import (

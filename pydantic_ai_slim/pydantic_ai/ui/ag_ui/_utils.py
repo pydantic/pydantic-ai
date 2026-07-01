@@ -5,12 +5,12 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import re
-from typing import Any, Final, get_args
+from typing import Any, Final
 
 from typing_extensions import Required, TypedDict
 
 from ..._utils import is_str_dict
-from ...messages import ThinkingPart, ToolPartKind
+from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind
 
 REASONING_VERSION = (0, 1, 13)
 """AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
@@ -115,8 +115,6 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
     return encrypted
 
 
-_TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
-
 _ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
 """Top-level key our payload is nested under inside an AG-UI `encrypted_value` blob, so a genuine
 provider blob in the same slot is never mistaken for our data."""
@@ -163,8 +161,7 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
     namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
     if not is_str_dict(namespaced):
         return None
-    kind = namespaced.get('tool_kind')
-    return next((k for k in _TOOL_PART_KINDS if k == kind), None)
+    return parse_tool_kind(namespaced.get('tool_kind'))
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:
