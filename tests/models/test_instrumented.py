@@ -40,6 +40,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot, warns
@@ -2069,6 +2070,38 @@ async def test_instrumented_model_with_tools_and_finish_reason(capfire: CaptureL
     # finish_reason should be set
     assert attrs['gen_ai.response.finish_reasons'] == ('stop',)
     assert attrs['gen_ai.response.id'] == 'resp-123'
+
+
+async def test_instrumented_model_tolerates_lone_surrogates_in_request_parameters(capfire: CaptureLogfire):
+    """Lone surrogates in tool definitions / request parameters must not crash instrumentation.
+
+    `gen_ai.tool.definitions` and `model_request_parameters` are serialized on the model-request
+    span regardless of `include_content`; routing them through `safe_to_json` keeps a surrogate
+    (e.g. text decoded with `errors='surrogateescape'`) in a tool description from raising
+    `PydanticSerializationError` and crashing an otherwise-successful run.
+    """
+    tool_def = ToolDefinition(name='weather', description='get the weather before\udce4after')
+
+    model = InstrumentedModel(MyModel())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+    await model.request(
+        messages,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(function_tools=[tool_def]),
+    )
+
+    attrs = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)[0]['attributes']
+    assert attrs['gen_ai.tool.definitions'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'name': 'weather',
+                'description': 'get the weather before\udce4after',
+                'parameters': {'type': 'object', 'properties': {}},
+            }
+        ]
+    )
+    assert 'weather' in attrs['model_request_parameters']['function_tools'][0]['name']
 
 
 async def test_instrumented_model_request_error(capfire: CaptureLogfire):

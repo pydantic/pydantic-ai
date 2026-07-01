@@ -1271,7 +1271,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 assistant message with `content=None` and no `tool_calls`, which the Chat Completions
                 API rejects with a 400 error.
             """
-            if not self.texts and not self.thinkings and not self.tool_calls:
+            if not self.texts and not self.tool_calls:
                 return None
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             # Note: model responses from this model should only have one text item, so the following
