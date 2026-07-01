@@ -937,6 +937,54 @@ async def test_tool_choice_multiple_tools_filters(allow_model_requests: None) ->
     )
 
 
+async def test_xai_web_search_user_location(allow_model_requests: None) -> None:
+    """`WebSearchTool.user_location` should be forwarded to xAI's `web_search` location fields.
+
+    Not a VCR test: the xAI SDK talks gRPC (unrecordable by VCR), and the behavior under
+    test is the outgoing tool payload — the cassette matcher wouldn't catch a dropped field.
+    """
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        native_tools=[
+            WebSearchTool(
+                user_location={
+                    'city': 'San Francisco',
+                    'country': 'US',
+                    'region': 'California',
+                    'timezone': 'America/Los_Angeles',
+                }
+            )
+        ]
+    )
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'web_search': {
+                    'enable_image_understanding': False,
+                    'user_location': {
+                        'country': 'US',
+                        'city': 'San Francisco',
+                        'region': 'California',
+                        'timezone': 'America/Los_Angeles',
+                    },
+                    'enable_image_search': False,
+                }
+            }
+        ]
+    )
+
+
 async def test_xai_stream_text(allow_model_requests: None):
     stream = [get_grok_text_chunk('hello '), get_grok_text_chunk('world')]
     mock_client = MockXai.create_mock_stream([stream])

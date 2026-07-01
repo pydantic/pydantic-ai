@@ -135,6 +135,7 @@ class WebSearchTool(AbstractNativeTool):
 
     * Anthropic
     * OpenAI Responses
+    * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
     """
 
     blocked_domains: list[str] | None = None
@@ -181,13 +182,16 @@ class WebSearchUserLocation(TypedDict, total=False):
 
     * Anthropic
     * OpenAI Responses
+    * xAI
     """
 
     city: str
     """The city where the user is located."""
 
     country: str
-    """The country where the user is located. For OpenAI, this must be a 2-letter country code (e.g., 'US', 'GB')."""
+    """The country where the user is located.
+
+    For OpenAI and xAI, this must be a 2-letter ISO 3166-1 alpha-2 country code (e.g., 'US', 'GB')."""
 
     region: str
     """The region or state where the user is located."""
