@@ -44,14 +44,14 @@ with try_import() as imports_successful:
     from cohere import (
         AssistantMessageResponse,
         AsyncClientV2,
-        ChatMessageEndEventDelta,
-        ChatResponse,
         ChatContentDeltaEventDelta,
         ChatContentDeltaEventDeltaMessage,
         ChatContentDeltaEventDeltaMessageContent,
         ChatContentStartEventDelta,
         ChatContentStartEventDeltaMessage,
         ChatContentStartEventDeltaMessageContent,
+        ChatMessageEndEventDelta,
+        ChatResponse,
         ChatToolCallDeltaEventDelta,
         ChatToolCallDeltaEventDeltaMessage,
         ChatToolCallDeltaEventDeltaMessageToolCalls,
@@ -1071,9 +1071,7 @@ async def test_stream_thinking(allow_model_requests: None):
         ContentStartV2ChatStreamResponse(
             index=1,
             delta=ChatContentStartEventDelta(
-                message=ChatContentStartEventDeltaMessage(
-                    content=ChatContentStartEventDeltaMessageContent(type='text')
-                )
+                message=ChatContentStartEventDeltaMessage(content=ChatContentStartEventDeltaMessageContent(type='text'))
             ),
         ),
         ContentDeltaV2ChatStreamResponse(
