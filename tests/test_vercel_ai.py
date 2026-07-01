@@ -6,15 +6,18 @@ import uuid
 import warnings
 from collections.abc import AsyncIterator, MutableMapping
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import Mock
 
 import pytest
 
 from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai._deferred_capabilities import (
+    parse_loaded_capabilities,
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
@@ -25,11 +28,15 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -63,6 +70,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr, try_import
@@ -1850,6 +1858,167 @@ async def test_run_stream_tool_call():
             '[DONE]',
         ]
     )
+
+
+@pytest.mark.parametrize('sdk_version', [5, 6])
+async def test_run_stream_load_capability_tool_kind_metadata(sdk_version: Literal[5, 6]):
+    """Streaming chunks for a `load_capability` call carry `tool_kind` in their metadata.
+
+    The client-side `useChat` assembles its `UIMessage` from these chunks (never from
+    `dump_messages`), so without the discriminator here, persisted streaming histories
+    would reload as plain parts and `parse_loaded_capabilities()` would be empty on resume.
+    The client reads the call metadata from `tool-input-available`; `tool-input-start` also
+    carries it on v6, while v5 strips it at encoding (the v5 protocol has no slot for it).
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "refunds"}', tool_call_id='load-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        capabilities=[
+            Capability[object](
+                id='refunds',
+                description='Refund tools.',
+                instructions='Refund instructions.',
+                defer_loading=True,
+            )
+        ],
+    )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Help me with a refund')])],
+    )
+
+    adapter = VercelAIAdapter(agent, request, sdk_version=sdk_version)
+    events: list[dict[str, Any] | str] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    expectations: dict[int, list[dict[str, Any]]] = {
+        5: [
+            {'type': 'tool-input-start', 'toolCallId': 'load-1', 'toolName': 'load_capability'},
+            {'type': 'tool-input-delta', 'toolCallId': 'load-1', 'inputTextDelta': '{"id": "refunds"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'load-1',
+                'toolName': 'load_capability',
+                'input': {'id': 'refunds'},
+                'providerMetadata': {'pydantic_ai': {'tool_kind': 'capability-load'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'load-1',
+                'output': {'instructions': 'Refund instructions.'},
+            },
+        ],
+        6: [
+            {
+                'type': 'tool-input-start',
+                'toolCallId': 'load-1',
+                'toolName': 'load_capability',
+                'providerMetadata': {'pydantic_ai': {'tool_kind': 'capability-load'}},
+            },
+            {'type': 'tool-input-delta', 'toolCallId': 'load-1', 'inputTextDelta': '{"id": "refunds"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'load-1',
+                'toolName': 'load_capability',
+                'input': {'id': 'refunds'},
+                'providerMetadata': {'pydantic_ai': {'tool_kind': 'capability-load'}},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'load-1',
+                'output': {'instructions': 'Refund instructions.'},
+            },
+        ],
+    }
+    tool_events = [e for e in events if isinstance(e, dict) and e['type'].startswith('tool-')]
+    assert tool_events == expectations[sdk_version]
+
+
+@pytest.mark.parametrize('sdk_version', [5, 6])
+async def test_run_stream_native_tool_search_tool_kind_metadata(sdk_version: Literal[5, 6]):
+    """Streaming chunks for a native `tool_search` call carry `tool_kind` in their metadata.
+
+    Mirrors `test_run_stream_load_capability_tool_kind_metadata`, but for the builtin
+    (`provider_executed`) streaming path, which is a distinct code path: without the
+    discriminator here, a streaming-built history would reload as plain parts and
+    `parse_discovered_tools()` would be empty on resume. As with `load_capability`,
+    `tool-input-available` always carries it while `tool-input-start` only does on v6.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: NativeToolSearchCallPart(tool_call_id='search-1', args='{"queries": ["refund"]}')}
+            yield {
+                1: NativeToolSearchReturnPart(
+                    tool_call_id='search-1',
+                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                )
+            }
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Find me a refund tool')])],
+    )
+
+    adapter = VercelAIAdapter(agent, request, sdk_version=sdk_version)
+    events: list[dict[str, Any] | str] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    tool_input_start = {
+        'type': 'tool-input-start',
+        'toolCallId': 'search-1',
+        'toolName': 'tool_search',
+        'providerExecuted': True,
+    }
+    tool_input_available = {
+        'type': 'tool-input-available',
+        'toolCallId': 'search-1',
+        'toolName': 'tool_search',
+        'input': {'queries': ['refund']},
+        'providerExecuted': True,
+        'providerMetadata': {'pydantic_ai': {'tool_kind': 'tool-search'}},
+    }
+    tool_output_available = {
+        'type': 'tool-output-available',
+        'toolCallId': 'search-1',
+        'output': {'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+        'providerExecuted': True,
+    }
+    expectations: dict[int, list[dict[str, Any]]] = {
+        5: [
+            tool_input_start,
+            {'type': 'tool-input-delta', 'toolCallId': 'search-1', 'inputTextDelta': '{"queries": ["refund"]}'},
+            tool_input_available,
+            tool_output_available,
+        ],
+        6: [
+            {**tool_input_start, 'providerMetadata': {'pydantic_ai': {'tool_kind': 'tool-search'}}},
+            {'type': 'tool-input-delta', 'toolCallId': 'search-1', 'inputTextDelta': '{"queries": ["refund"]}'},
+            tool_input_available,
+            tool_output_available,
+        ],
+    }
+    tool_events = [e for e in events if isinstance(e, dict) and e['type'].startswith('tool-')]
+    assert tool_events == expectations[sdk_version]
 
 
 async def test_run_stream_tool_metadata_single_chunk():
@@ -8698,6 +8867,195 @@ async def test_denied_builtin_tool_round_trip():
             )
         ]
     )
+
+
+async def test_roundtrip_load_capability():
+    messages = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(
+                    tool_call_id='load-foobar',
+                    args={'id': 'foobar'},
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(
+                    tool_call_id='load-foobar',
+                    content={'instructions': '# Foo Bar'},
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert loaded == snapshot(
+        [
+            ModelResponse(
+                parts=[LoadCapabilityCallPart(args={'id': 'foobar'}, tool_call_id='load-foobar')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(
+                        content={'instructions': '# Foo Bar'}, tool_call_id='load-foobar', timestamp=IsDatetime()
+                    )
+                ]
+            ),
+        ]
+    )
+    assert parse_loaded_capabilities(loaded) == {'foobar'}
+
+
+async def test_roundtrip_load_capability_invalid_args():
+    """A load_capability call with invalid args must degrade on reload, not crash."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(
+                    tool_call_id='load-foobar',
+                    args='{"name": "foobar"}',
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart(
+                    tool_name='load_capability',
+                    tool_call_id='load-foobar',
+                    content='Field required: id',
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(
+                    tool_call_id='load-foobar',
+                    args='{"id": "foobar"}',
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+
+    assert parse_loaded_capabilities(loaded) == set()
+
+
+async def test_roundtrip_native_tool_search():
+    """Native tool-search parts keep their typed identity through dump/load.
+
+    The combined builtin metadata nests `tool_kind` under `call_meta`/`return_meta`,
+    so the load side must read it from there, not only from the top level. The typed
+    identity is what `parse_discovered_tools` dispatches on to restore discovered
+    tools when a conversation resumes.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(tool_call_id='search-1', args={'queries': ['refund']}),
+                NativeToolSearchReturnPart(
+                    tool_call_id='search-1',
+                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                ),
+            ],
+            timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    # Pin the wire location: for the builtin path `tool_kind` must nest under
+    # `call_meta`/`return_meta`, not at the top level. The outcome assertions below would
+    # still pass if a regression moved the key, since the matching read would move with it.
+    assert ui_messages == snapshot(
+        [
+            UIMessage(
+                id='ccd23c0b-ca6c-5cc3-8cb0-7bd8fc22df0e',
+                role='assistant',
+                metadata={'pydantic_ai': {'timestamp': '2026-06-15T00:00:00Z'}},
+                parts=[
+                    ToolOutputAvailablePart(
+                        type='tool-tool_search',
+                        tool_call_id='search-1',
+                        input={'queries': ['refund']},
+                        output={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                        provider_executed=True,
+                        call_provider_metadata={
+                            'pydantic_ai': {
+                                'call_meta': {'tool_kind': 'tool-search'},
+                                'return_meta': {'tool_kind': 'tool-search'},
+                            }
+                        },
+                    )
+                ],
+            )
+        ]
+    )
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+
+    assert parse_discovered_tools(loaded) == {'refund_tool'}
+    # `parse_discovered_tools` dispatches on `NativeToolSearchReturnPart`, so a non-empty
+    # result proves the return part kept its typed identity through the roundtrip. The
+    # call part's identity matters to Anthropic history replay, so pin it as well.
+    assert isinstance(loaded[0].parts[0], NativeToolSearchCallPart)
+
+
+@pytest.mark.parametrize('forged_tool_kind', ['unknown-kind', ['capability-load'], {'kind': 'capability-load'}])
+async def test_roundtrip_load_capability_forged_tool_kind(forged_tool_kind: str | list[str] | dict[str, str]):
+    """A client-forged `tool_kind` claim is validated against `ToolPartKind` before dispatch.
+
+    `call_provider_metadata` is client-controlled, so an unknown or non-hashable claim must
+    degrade to a plain part. Without validation a non-hashable claim crashes `narrow_type`'s
+    registry lookup (`dict.get` on an unhashable key). Mirrors AG-UI's
+    `test_load_tool_kind_garbage_encrypted_value`.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args={'id': 'foobar'})]),
+        ModelRequest(
+            parts=[LoadCapabilityReturnPart(tool_call_id='load-foobar', content={'instructions': '# Foo Bar'})]
+        ),
+    ]
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    # The fixture dumps to a single combined call+output part; forge the client-controlled
+    # `tool_kind` claim directly on it.
+    part = ui_messages[0].parts[0]
+    assert isinstance(part, ToolOutputAvailablePart)
+    assert part.call_provider_metadata is not None
+    part.call_provider_metadata['pydantic_ai']['tool_kind'] = forged_tool_kind
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+
+    assert type(loaded[0].parts[0]) is ToolCallPart
+    assert type(loaded[1].parts[0]) is ToolReturnPart
+    assert parse_loaded_capabilities(loaded) == set()
+
+
+@pytest.mark.parametrize(
+    'forged_meta',
+    [{'call_meta': 'evil'}, {'return_meta': 42}, {'call_meta': [1], 'return_meta': 'x'}],
+)
+async def test_load_builtin_forged_non_dict_meta_degrades(forged_meta: dict[str, Any]):
+    """A client-forged non-dict `call_meta`/`return_meta` degrades to plain builtin parts.
+
+    `call_provider_metadata` is client-controlled, so `_load_builtin_tool_meta` must not return a
+    non-dict that then crashes the downstream `.get(...)` lookups with `AttributeError`.
+    """
+    part = ToolOutputAvailablePart(
+        type='tool-tool_search',
+        tool_call_id='search-1',
+        input={'queries': ['refund']},
+        output={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+        provider_executed=True,
+        call_provider_metadata={'pydantic_ai': forged_meta},
+    )
+
+    loaded = VercelAIAdapter.load_messages([UIMessage(id='msg-1', role='assistant', parts=[part])])
+
+    assert type(loaded[0].parts[0]) is NativeToolCallPart
+    assert type(loaded[0].parts[1]) is NativeToolReturnPart
 
 
 async def test_adapter_roundtrip_preserves_file_vendor_metadata():
