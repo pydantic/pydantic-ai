@@ -1,4 +1,5 @@
 """Snowflake Cortex Inference model — unified auto-routing model."""
+
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
