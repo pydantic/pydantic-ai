@@ -345,7 +345,11 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             entered_span: AbstractSpan | None = None
             if span is None:
                 if self.auto_instrument:
-                    entered_span = stack.enter_context(logfire_span('run graph {graph.name}', graph=self))
+                    # Preformat span name so non-Logfire OTel backends show
+                    # 'run graph my_graph' instead of the literal template.
+                    # See https://github.com/pydantic/pydantic-ai/issues/3173.
+                    span_name = f'run graph {self.name}'
+                    entered_span = stack.enter_context(logfire_span(span_name, graph=self))
             else:
                 entered_span = stack.enter_context(span)  # pragma: lax no cover
             traceparent = None if entered_span is None else get_traceparent(entered_span)
@@ -899,7 +903,11 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         elif isinstance(node, Step):
             with ExitStack() as stack:
                 if self.graph.auto_instrument:
-                    stack.enter_context(logfire_span('run node {node_id}', node_id=node.id, node=node))
+                    # Preformat span name so non-Logfire OTel backends show
+                    # 'run node my_step' instead of the literal template.
+                    # See https://github.com/pydantic/pydantic-ai/issues/3173.
+                    span_name = f'run node {node.id}'
+                    stack.enter_context(logfire_span(span_name, node_id=node.id, node=node))
 
                 step_context = StepContext[StateT, DepsT, Any](state=state, deps=deps, inputs=inputs)
                 output = await node.call(step_context)
