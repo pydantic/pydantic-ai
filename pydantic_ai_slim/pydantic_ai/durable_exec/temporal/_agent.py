@@ -403,7 +403,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+                control, including the tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -548,7 +548,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+                control, including the tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -687,7 +687,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+                control, including the tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -847,7 +847,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+                control, including the tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
@@ -1041,7 +1041,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override the
                 output-validation budget, or an [`AgentRetries`][pydantic_ai.AgentRetries] dict for finer
-                control. Tool retries cannot be overridden per run. See
+                control, including the tool-retry budget (e.g. `retries={'tools': 3}`). See
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.

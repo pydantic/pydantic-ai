@@ -660,14 +660,16 @@ def test_init_tool_plain():
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
-    assert agent._function_toolset.tools['plain_tool'].max_retries == 7
+    # No explicit per-tool budget, so the agent default resolves per-run via `RunContext.max_retries`
+    # rather than baked onto the tool (contrast `test_init_tool_ctx`, where explicit `max_retries=3` wins).
+    assert agent._function_toolset.tools['plain_tool'].max_retries is None
 
     agent_infer = Agent('test', tools=[plain_tool], retries={'tools': 7, 'output': 7})
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
     assert agent_infer._function_toolset.tools['plain_tool'].takes_ctx is False
-    assert agent_infer._function_toolset.tools['plain_tool'].max_retries == 7
+    assert agent_infer._function_toolset.tools['plain_tool'].max_retries is None
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:
@@ -1377,7 +1379,8 @@ def test_function_tool_consistent_with_schema():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 def test_function_tool_from_schema_with_ctx():
@@ -1406,7 +1409,8 @@ def test_function_tool_from_schema_with_ctx():
     result = agent.run_sync('foobar', deps='Hello, ')
     assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is True
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 def test_function_tool_inconsistent_with_schema():
@@ -1453,7 +1457,8 @@ def test_async_function_tool_consistent_with_schema():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 def test_tool_retries():
