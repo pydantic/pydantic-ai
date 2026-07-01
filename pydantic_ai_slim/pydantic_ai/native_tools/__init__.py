@@ -40,8 +40,6 @@ ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '
 ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
 
-X_SEARCH_HANDLE_LIMIT = 20
-
 
 @dataclass(kw_only=True)
 class AbstractNativeTool(ABC):
@@ -285,10 +283,10 @@ class XSearchTool(AbstractNativeTool):
     def __post_init__(self) -> None:
         if self.allowed_x_handles is not None and self.excluded_x_handles is not None:
             raise ValueError('Cannot specify both allowed_x_handles and excluded_x_handles')
-        if self.allowed_x_handles and len(self.allowed_x_handles) > X_SEARCH_HANDLE_LIMIT:
-            raise ValueError(f'allowed_x_handles cannot contain more than {X_SEARCH_HANDLE_LIMIT} handles')
-        if self.excluded_x_handles and len(self.excluded_x_handles) > X_SEARCH_HANDLE_LIMIT:
-            raise ValueError(f'excluded_x_handles cannot contain more than {X_SEARCH_HANDLE_LIMIT} handles')
+        if self.allowed_x_handles and len(self.allowed_x_handles) > 20:
+            raise ValueError('allowed_x_handles cannot contain more than 20 handles')
+        if self.excluded_x_handles and len(self.excluded_x_handles) > 20:
+            raise ValueError('excluded_x_handles cannot contain more than 20 handles')
 
 
 @dataclass(kw_only=True)
