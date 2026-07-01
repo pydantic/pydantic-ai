@@ -766,7 +766,7 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
     return rewritten_schemas, all_defs
 
 
-_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\n(\{.*?\})\s*(?:\n?```|\Z)', flags=re.DOTALL)
+_MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
 
 
 def strip_markdown_fences(text: str) -> str:
@@ -801,7 +801,7 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return ()
 
 
-def get_event_loop():
+def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:  # pragma: lax no cover
