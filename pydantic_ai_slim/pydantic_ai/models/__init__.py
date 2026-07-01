@@ -290,6 +290,14 @@ class Model(ABC, Generic[InterfaceClient]):
         # noinspection PyUnreachableCode
         yield  # pragma: no cover
 
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        """Cancel a server-side suspended/background response (e.g. an OpenAI background job).
+
+        Called when a continuation is abandoned via cancellation or error. No-op by default;
+        model classes with cancellable server-side jobs override this.
+        """
+        return None
+
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         """Customize the request parameters for the model.
 
@@ -682,6 +690,11 @@ class StreamedResponse(ABC):
     provider_response_id: str | None = field(default=None, init=False)
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
+    state: ModelResponseState = field(default='complete', init=False)
+    """Lifecycle state of the response."""
+    suspended_retry_delay: float | None = field(default=None, init=False)
+    """Seconds the graph should wait before retrying a suspended response."""
+    metadata: dict[str, Any] | None = field(default=None, init=False)
 
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
@@ -774,13 +787,19 @@ class StreamedResponse(ABC):
                     if not self.cancelled:
                         raise
                 else:
-                    # Only natural `StopAsyncIteration` flips `_finished`. Early
-                    # `break` / `aclose()` (raising `GeneratorExit` at the suspended
-                    # `yield`) and any in-flight exception leave `_finished=False`
-                    # so `get()` reports the truncated response as `'incomplete'`
-                    # rather than silently stamping it `'complete'`. The cancel
-                    # branch above explicitly sets `_cancelled` (→ `'interrupted'`).
-                    self._finished = True
+                    # Only natural `StopAsyncIteration` on a stream that wasn't
+                    # cancelled flips `_finished`. Early `break` / `aclose()` (raising
+                    # `GeneratorExit` at the suspended `yield`) and any in-flight error
+                    # leave `_finished=False` so `get()` reports the truncated response
+                    # as `'incomplete'` rather than silently stamping it `'complete'`.
+                    # A `cancel()` mid-stream that still drains to a natural completion
+                    # (e.g. a local model with no live connection to tear down) must not
+                    # be recorded as finished either: `_cancelled` wins so `get()`
+                    # reports `'interrupted'`. A defensive `cancel()` *after* the stream
+                    # already finished naturally leaves `_finished=True` (set here before
+                    # `_cancelled`), so `get()` keeps `'complete'`.
+                    if not self._cancelled:
+                        self._finished = True
 
             self._event_iterator = iterator_with_cancel_guard(
                 iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
@@ -844,8 +863,10 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
-        if self._finished:
-            state: ModelResponseState = 'complete'
+        if self.state != 'complete':
+            state: ModelResponseState = self.state
+        elif self._finished:
+            state = 'complete'
         elif self._cancelled:
             state = 'interrupted'
         else:
@@ -861,6 +882,8 @@ class StreamedResponse(ABC):
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
             state=state,
+            suspended_retry_delay=self.suspended_retry_delay,
+            metadata=self.metadata,
         )
 
     @property
