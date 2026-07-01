@@ -518,7 +518,7 @@ async def test_logfire_streaming_records_time_to_first_chunk(capfire: CaptureLog
     model-request span and as a histogram metric (value is non-deterministic, so assert shape)."""
     agent = Agent(
         model=TestModel(),
-        capabilities=[Instrumentation(settings=InstrumentationSettings(version=2))],
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
     )
     async with agent.run_stream('Hello') as result:
         async for _ in result.stream_text(delta=True):
