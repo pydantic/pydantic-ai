@@ -114,7 +114,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     break
 
         async with _utils.group_by_temporal(self, debounce_by) as group_iter:
-            async for _items in group_iter:
+            async for items in group_iter:
+                if all(isinstance(item, _messages.ModelResponseResetEvent) for item in items):
+                    continue
                 yield self.response  # state='incomplete' during streaming
 
         yield self.response  # final state='complete' (or 'interrupted')
@@ -303,61 +305,87 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self, *, delta: bool = False, debounce_by: float | None = 0.1
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterable of text."""
-
-        # Define a "merged" version of the iterator that will yield items that have already been retrieved
-        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
-        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
-        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
-            # yields tuples of (text_content, part_index)
-            # we don't currently make use of the part_index, but in principle this may be useful
-            # so we retain it here for now to make possible future refactors simpler
-            msg = self.response
-            for i, part in enumerate(msg.parts):
-                if isinstance(part, _messages.TextPart) and part.content:
-                    yield part.content, i
-
-            last_text_index: int | None = None
-            async for event in self:
-                if (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.TextPart)
-                    and event.part.content
-                ):
-                    last_text_index = event.index
-                    yield event.part.content, event.index
-                elif (
-                    isinstance(event, _messages.PartDeltaEvent)
-                    and isinstance(event.delta, _messages.TextPartDelta)
-                    and event.delta.content_delta
-                ):
-                    last_text_index = event.index
-                    yield event.delta.content_delta, event.index
-                elif (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.NativeToolCallPart)
-                    and last_text_index is not None
-                ):
-                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
-                    yield '\n\n', event.index
-                    last_text_index = None
-
-        async def _stream_text_deltas() -> AsyncGenerator[str, None]:
-            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
-                async for items in group_iter:
-                    # Note: we are currently just dropping the part index on the group here
-                    yield ''.join([content for content, _ in items])
-
-        async with aclosing(_stream_text_deltas()) as deltas_iter:
+        async with aclosing(self._stream_response_text_deltas(debounce_by)) as deltas_iter:
             if delta:
                 async for text in deltas_iter:
-                    yield text
+                    if text is not None:
+                        yield text
             else:
                 # a quick benchmark shows it's faster to build up a string with concat when we're
                 # yielding at each step
                 deltas: list[str] = []
                 async for text in deltas_iter:
+                    if text is None:
+                        deltas.clear()
+                        continue
                     deltas.append(text)
                     yield ''.join(deltas)
+
+    async def _stream_response_text_delta_items(self) -> AsyncIterator[tuple[str | None, int | None]]:
+        """Yield `(text, part_index)` pairs for each text chunk in the stream.
+
+        Yields `(None, None)` when a [`ModelResponseResetEvent`][pydantic_ai.messages.ModelResponseResetEvent]
+        arrives, so the caller can clear any accumulated text from the discarded response before
+        appending text from the next candidate.
+
+        The part index is currently unused by callers, but we retain it to make possible future
+        refactors (e.g. grouping deltas by part) simpler.
+        """
+        msg = self.response
+        for i, part in enumerate(msg.parts):
+            if isinstance(part, _messages.TextPart) and part.content:
+                yield part.content, i
+
+        last_text_index: int | None = None
+        async for event in self:
+            if (
+                isinstance(event, _messages.PartStartEvent)
+                and isinstance(event.part, _messages.TextPart)
+                and event.part.content
+            ):
+                last_text_index = event.index
+                yield event.part.content, event.index
+            elif (
+                isinstance(event, _messages.PartDeltaEvent)
+                and isinstance(event.delta, _messages.TextPartDelta)
+                and event.delta.content_delta
+            ):
+                last_text_index = event.index
+                yield event.delta.content_delta, event.index
+            elif (
+                isinstance(event, _messages.PartStartEvent)
+                and isinstance(event.part, _messages.NativeToolCallPart)
+                and last_text_index is not None
+            ):
+                # Text parts that are interrupted by a built-in tool call should not be joined together directly.
+                yield '\n\n', event.index
+                last_text_index = None
+            elif isinstance(event, _messages.ModelResponseResetEvent):
+                last_text_index = None
+                yield None, None
+
+    async def _stream_response_text_deltas(self, debounce_by: float | None) -> AsyncGenerator[str | None, None]:
+        """Debounce-grouped text deltas from `_stream_response_text_delta_items`.
+
+        Each group is collapsed into at most two yields: a `None` sentinel if the group contained
+        a reset (so the consumer can clear its accumulator), followed by the joined text of any
+        remaining items in the group. This preserves reset boundaries even when multiple text
+        chunks arrive within the same debounce window.
+        """
+        async with _utils.group_by_temporal(self._stream_response_text_delta_items(), debounce_by) as group_iter:
+            async for items in group_iter:
+                reset = False
+                contents: list[str] = []
+                for content, _ in items:
+                    if content is None:
+                        reset = True
+                        contents.clear()
+                    else:
+                        contents.append(content)
+                if reset:
+                    yield None
+                if contents:
+                    yield ''.join(contents)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""

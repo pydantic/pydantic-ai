@@ -754,6 +754,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         async def stream_to_final(
                             stream: AgentStream,
                         ) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+                            # Breaks on the first `FinalResultEvent`, so a `FallbackModel`'s
+                            # later `ModelResponseResetEvent` won't reach `event_stream_handler`.
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
@@ -787,9 +789,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 by `StreamedRunResult._marked_completed`.
                                 """
                                 nonlocal final_result
-                                final_result = FinalResult(
-                                    await stream.get_output(), final_result.tool_name, final_result.tool_call_id
+                                # Relink tool ids to the accepted candidate's final result event,
+                                # in case a `FallbackModel` discarded the originally committed one.
+                                accepted_event = stream._raw_stream_response.final_result_event  # pyright: ignore[reportPrivateUsage]
+                                tool_name = accepted_event.tool_name if accepted_event else final_result.tool_name
+                                tool_call_id = (
+                                    accepted_event.tool_call_id if accepted_event else final_result.tool_call_id
                                 )
+                                final_result = FinalResult(await stream.get_output(), tool_name, tool_call_id)
 
                                 # When we get here, the `ModelRequestNode` has completed streaming after the final result was found.
                                 # When running an agent with `agent.run`, we'd then move to `CallToolsNode` to execute the tool calls and
@@ -869,7 +876,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 node = cast(_agent_graph.AgentNode[Any, Any], next_node)
 
         if not yielded:
-            raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
+            raise exceptions.AgentRunError(
+                'Agent run finished without producing a final result'
+            )  # pragma: lax no cover
 
     @overload
     def run_stream_sync(

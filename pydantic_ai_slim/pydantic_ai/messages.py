@@ -2678,10 +2678,30 @@ class FinalResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class ModelResponseResetEvent:
+    """An event indicating that the in-progress model response was discarded mid-stream and should not be accumulated as output.
+
+    Emitted by [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] when a candidate model
+    is rejected (by exception or response handler) after some of its events have already been
+    forwarded to the consumer. Subsequent events come from the next candidate; any previously
+    yielded parts from the discarded response should be cleared.
+    """
+
+    discarded_response: ModelResponse
+    """The model response being discarded. Absent from `all_messages()`, so this event is the only place a stream consumer can observe it."""
+
+    event_kind: Literal['model_response_reset'] = 'model_response_reset'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 ModelResponseStreamEvent = Annotated[
-    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
+    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent | ModelResponseResetEvent,
+    pydantic.Discriminator('event_kind'),
 ]
-"""An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
+"""An event in the model response stream."""
 
 
 @dataclass(repr=False)
