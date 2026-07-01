@@ -36,23 +36,48 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr
 
 
-def test_provider_name_consistent_between_run_and_run_stream():
-    """Regression test for #6062: agent.run() should set provider_name like run_stream()."""
+def test_response_metadata_consistent_between_run_and_run_stream():
+    """Regression test for #6062: TestModel response metadata should not depend on run mode."""
     agent = Agent(model=TestModel())
 
     run_result = agent.run_sync('hello')
-    run_provider_names = [
-        message.provider_name for message in run_result.all_messages() if isinstance(message, ModelResponse)
-    ]
 
     stream_result = agent.run_stream_sync('hello')
     list(stream_result.stream_text())
-    stream_provider_names = [
-        message.provider_name for message in stream_result.all_messages() if isinstance(message, ModelResponse)
+
+    def response_metadata(message: ModelResponse) -> dict[str, object]:
+        return {
+            'model_name': message.model_name,
+            'provider_name': message.provider_name,
+            'provider_url': message.provider_url,
+            'provider_details': message.provider_details,
+            'provider_response_id': message.provider_response_id,
+            'finish_reason': message.finish_reason,
+            'state': message.state,
+        }
+
+    run_metadata = [
+        response_metadata(message) for message in run_result.all_messages() if isinstance(message, ModelResponse)
+    ]
+    stream_metadata = [
+        response_metadata(message) for message in stream_result.all_messages() if isinstance(message, ModelResponse)
     ]
 
-    assert run_provider_names == ['test']
-    assert stream_provider_names == ['test']
+    assert (
+        run_metadata
+        == stream_metadata
+        == [
+            {
+                'model_name': 'test',
+                'provider_name': 'test',
+                'provider_url': None,
+                'provider_details': None,
+                'provider_response_id': None,
+                'finish_reason': None,
+                'state': 'complete',
+            }
+        ]
+    )
 
 
 def test_call_one():
