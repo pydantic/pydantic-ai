@@ -79,7 +79,7 @@ _P = ParamSpec('_P')
 _R = TypeVar('_R')
 
 
-def get_event_loop():
+def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
     except RuntimeError:  # pragma: lax no cover

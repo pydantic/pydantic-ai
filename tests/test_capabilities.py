@@ -646,6 +646,7 @@ def test_model_json_schema_with_capabilities():
                         'anthropic:claude-sonnet-4-5',
                         'anthropic:claude-sonnet-4-5-20250929',
                         'anthropic:claude-sonnet-4-6',
+                        'anthropic:claude-sonnet-5',
                         'bedrock:amazon.titan-text-express-v1',
                         'bedrock:amazon.titan-text-lite-v1',
                         'bedrock:amazon.titan-tg1-large',
@@ -739,6 +740,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/anthropic:claude-sonnet-4-5',
                         'gateway/anthropic:claude-sonnet-4-5-20250929',
                         'gateway/anthropic:claude-sonnet-4-6',
+                        'gateway/anthropic:claude-sonnet-5',
                         'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
                         'gateway/bedrock:anthropic.claude-3-haiku-20240307-v1:0',
                         'gateway/bedrock:eu.anthropic.claude-haiku-4-5-20251001-v1:0',
@@ -8724,7 +8726,7 @@ def test_web_fetch_with_constraints():
     assert tool.max_uses == 5
     assert tool.enable_citations is True
     assert tool.max_content_tokens == 1000
-    # Only max_uses requires builtin (domains are handled locally)
+    # `max_uses` requires native support; domains are handled locally.
     assert cap._requires_native() is True  # pyright: ignore[reportPrivateUsage]
 
 
