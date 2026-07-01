@@ -28,7 +28,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai._agent_graph import ContinueRequestNode, ModelRequestNode
+from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import InstructionPart, ModelResponseState, NativeToolCallPart, NativeToolReturnPart
@@ -293,6 +293,11 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
         )
         assert result.is_complete
 
+    # The `chat` span resolves to the inner model that actually served the request, matching the
+    # non-streaming `test_first_failed_instrumented`: even though the streamed-continuation composite
+    # opens `FallbackModel.request_stream` lazily in the consumer task, the ambient OTel context from
+    # `wrap_model_request` is re-attached around each segment so `FallbackModel`'s `get_current_span()`
+    # update lands on this span.
     assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
         [
             {
@@ -2273,11 +2278,14 @@ async def test_fallback_streaming_pinned_continuation_still_continuing() -> None
 async def test_fallback_graph_streaming_continuation_keeps_pin() -> None:
     """Graph-level streaming continuations must keep the fallback pin across multiple pauses.
 
-    `ContinueRequestNode._run_stream` builds the continuation response with `sr.get()` *after* the
+    The streamed continuation composite builds each segment's response with `sr.get()` *after* the
     stream context exits, so `FallbackModel`'s on-`__aexit__` continuation stamp is captured. If it
     built the response inside the `async with` instead, the second continuation would see a stamp-less
     suspended response, fall back to the normal chain, and re-invoke the failing primary rather than
     staying pinned to the fallback.
+
+    All segments are stitched inside a single `ModelRequestNode`, so the whole continuation chain is
+    driven by streaming that one node once.
     """
     primary_calls = 0
 
@@ -2306,7 +2314,7 @@ async def test_fallback_graph_streaming_continuation_keeps_pin() -> None:
     async with agent.iter('test') as run:
         node = run.next_node
         while not isinstance(node, End):
-            if isinstance(node, (ModelRequestNode, ContinueRequestNode)):
+            if isinstance(node, ModelRequestNode):
                 async with node.stream(run.ctx) as stream:
                     async for _ in stream:
                         pass

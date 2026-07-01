@@ -12229,8 +12229,9 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
 async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_api_key: str):
     """VCR test: background mode with streaming (run_stream).
 
-    Verifies that the ContinueRequestNode streaming path works end-to-end
-    with the OpenAI Responses API background mode.
+    Verifies that the streamed continuation path stitches an OpenAI Responses API background job
+    (suspended while queued/in progress, resumed via `retrieve(stream=True, starting_after=...)`)
+    into a single completed response end-to-end.
     """
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
@@ -12290,9 +12291,13 @@ async def test_background_mode_streaming_continuation_vcr(allow_model_requests: 
         node = await anext(node async for node in agent_run if Agent.is_model_request_node(node))
         original_request = node.request
         async with node.stream(agent_run.ctx) as request_stream:
-            # Intentionally stop reading early so background mode remains suspended.
+            # Intentionally stop reading early so the underlying background job stays suspended.
             await anext(aiter(request_stream))
-            suspended_response = request_stream.response
+            # The streamed-continuation composite reports its mid-stream snapshot as 'incomplete';
+            # the background job itself is still suspended, so reconstruct the suspended response to
+            # drive a manual model-level continuation below.
+            assert request_stream.response.state == 'incomplete'
+            suspended_response = replace(request_stream.response, state='suspended')
 
     assert original_request is not None
     assert suspended_response is not None
@@ -12336,9 +12341,12 @@ async def test_background_mode_streaming_starting_after_vcr(
         node = await anext(node async for node in agent_run if Agent.is_model_request_node(node))
         original_request = node.request
         async with node.stream(agent_run.ctx) as request_stream:
-            # Stop early so request_stream exits with state='suspended' and continuation metadata.
+            # Stop early: the composite reports 'incomplete' mid-stream while the background job is
+            # still suspended. Reconstruct the suspended response (carrying the continuation metadata)
+            # to drive a manual model-level continuation with `starting_after`.
             await anext(aiter(request_stream))
-            suspended_response = request_stream.response
+            assert request_stream.response.state == 'incomplete'
+            suspended_response = replace(request_stream.response, state='suspended')
 
     assert original_request is not None
     assert suspended_response is not None
@@ -12560,7 +12568,7 @@ async def test_background_max_continuations(allow_model_requests: None):
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(50\\)'):
+    with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum of 50 times'):
         await agent.run(
             'test',
             model_settings=OpenAIResponsesModelSettings(openai_background=True, openai_background_poll_interval=0),

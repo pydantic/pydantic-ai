@@ -53,7 +53,7 @@ from pydantic_ai import (
     capture_run_messages,
     set_agent_graph_sleep,
 )
-from pydantic_ai._agent_graph import ContinueRequestNode
+from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -11345,7 +11345,7 @@ def test_continuation_merges_parts_and_usage_across_response_ids() -> None:
 
 
 def test_agent_graph_sleep_default_uses_asyncio(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When no custom sleep is registered, ContinueRequestNode uses asyncio.sleep."""
+    """When no custom sleep is registered, the continuation loop uses asyncio.sleep."""
     call_count = 0
     slept_delays: list[float] = []
 
@@ -11394,35 +11394,72 @@ def test_agent_graph_sleep_custom_function() -> None:
     assert custom_delays == [5.0]
 
 
+@dataclass
+class _SuspendingStreamModel(Model):
+    """Wraps a `FunctionModel` and, per streaming call, forces its streamed response into a
+    scripted `state`/`suspended_retry_delay` so the continuation composite drives real segments."""
+
+    _inner: FunctionModel
+    _states: list[tuple[Literal['suspended', 'complete'], float | None]]
+    _call: int = 0
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator[StreamedResponse]:
+        state, delay = self._states[min(self._call, len(self._states) - 1)]
+        self._call += 1
+        async with self._inner.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as streamed_response:
+            streamed_response.state = state
+            streamed_response.suspended_retry_delay = delay
+            yield streamed_response
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:  # pragma: no cover - streaming-only helper
+        raise NotImplementedError
+
+    @property
+    def model_name(self) -> str:
+        return self._inner.model_name
+
+    @property
+    def system(self) -> str:
+        return self._inner.system
+
+
 async def test_agent_graph_sleep_streaming_with_delay() -> None:
     """Streaming continuation path also uses the pluggable sleep when suspended_retry_delay is set."""
-    request_count = 0
-    stream_count = 0
     custom_delays: list[float] = []
 
     async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        nonlocal stream_count
-        stream_count += 1
         yield 'done'
-
-    def result_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal request_count
-        request_count += 1
-        return ModelResponse(parts=[TextPart('paused')], state='suspended', suspended_retry_delay=2.5)
 
     async def custom_sleep(delay: float) -> None:
         custom_delays.append(delay)
 
-    agent = Agent(FunctionModel(result_fn, stream_function=stream_fn))
+    model = _SuspendingStreamModel(
+        _inner=FunctionModel(stream_function=stream_fn),
+        _states=[('suspended', 2.5), ('complete', None)],
+    )
+    agent = Agent(model)
 
     with set_agent_graph_sleep(custom_sleep):
         async with agent.iter('test') as run:
             node = run.next_node
             while not isinstance(node, End):
-                if isinstance(node, ContinueRequestNode):
+                if isinstance(node, ModelRequestNode):
                     async with node.stream(run.ctx) as stream:
-                        async for _ in stream:
-                            pass
+                        await stream.get_output()
                 node = await run.next(node)
 
     assert 2.5 in custom_delays

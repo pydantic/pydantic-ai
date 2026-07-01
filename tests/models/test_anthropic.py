@@ -49,6 +49,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
+from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
@@ -66,6 +67,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
@@ -11776,7 +11778,7 @@ async def test_pause_turn_exceeds_max_continuations(allow_model_requests: None):
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum continuations \\(50\\)'):
+    with pytest.raises(UnexpectedModelBehavior, match='suspended more than the maximum of 50 times'):
         await agent.run('test prompt', usage_limits=UsageLimits(request_limit=None))
 
 
@@ -11810,20 +11812,86 @@ async def test_pause_turn_web_search_vcr(allow_model_requests: None, anthropic_a
 
     result = await agent.run(prompt)
 
-    # With ContinueRequestNode, pause_turn responses are merged into the final response
-    # and no longer appear as separate messages in the history.
-    # Verify the agent completed successfully (which exercises the continuation path).
+    # `pause_turn` responses are stitched into the final merged response by the continuation loop,
+    # so they no longer appear as separate messages in the history. Verify the agent completed
+    # successfully, which exercises the (non-streaming) continuation path end-to-end.
     assert result.output
 
 
-async def test_pause_turn_streaming_continuation(allow_model_requests: None):
-    """Test that pause_turn works with iter() + stream(), exercising ContinueRequestNode streaming."""
-    from pydantic_ai._agent_graph import ContinueRequestNode
-    from pydantic_graph import End
+@pytest.mark.vcr()
+async def test_pause_turn_web_search_streaming_vcr(allow_model_requests: None, anthropic_api_key: str):
+    """Real streamed `pause_turn` continuation: server-side web search pauses the turn mid-stream.
 
-    # First response: pause_turn (non-streaming, via ModelRequestNode.run())
-    c1 = completion_message([BetaTextBlock(text='first', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-    c1.stop_reason = 'pause_turn'
+    The streamed-continuation composite stitches every `messages.create(stream=True)` segment (the
+    paused turn echoed back) into one `AgentStream`. Because Anthropic `pause_turn` continuations
+    *accumulate* fresh parts, the stitched `PartStartEvent` indices must strictly increase across the
+    pause (each new part offset past all prior ones, no index collision), and the final merged
+    response must be a single coherent turn. This validates the accumulate reindex rule against real
+    provider part-indexing.
+    """
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
+
+    prompt = (
+        'Run a series of web searches to gather up-to-date context. '
+        'Do 6 separate searches, one at a time, and do not answer until all searches are complete. '
+        'Queries: '
+        '1) "San Francisco weather today", '
+        '2) "San Francisco sunrise time today", '
+        '3) "Golden Gate Bridge traffic today", '
+        '4) "San Francisco air quality today", '
+        '5) "San Francisco events this week", '
+        '6) "San Francisco ferry schedule today". '
+        '7) "prevailing information on quantum computing today", '
+        '8) "latest news on the stock market today", '
+        '9) "latest news on the weather in San Francisco today", '
+        '10) "latest news on the traffic in San Francisco today", '
+        '11) "latest news on the air quality in San Francisco today", '
+        '12) "latest news on the events in San Francisco this week", '
+        '13) "latest news on the ferry schedule in San Francisco today", '
+        '14) "latest news on the quantum computing in San Francisco today", '
+        '15) "latest news on the stock market in San Francisco today", '
+        'After the searches, provide a concise summary.'
+    )
+
+    part_start_indices: list[int] = []
+    request_stream_count = 0
+    merged: ModelResponse | None = None
+    async with agent.iter(prompt) as agent_run:
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if isinstance(node, ModelRequestNode):
+                async with node.stream(agent_run.ctx) as stream:
+                    request_stream_count += 1
+                    async for event in stream:
+                        if isinstance(event, PartStartEvent):
+                            part_start_indices.append(event.index)
+                    merged = stream.response
+            node = await agent_run.next(node)
+
+    # The whole paused turn is stitched inside one `ModelRequestNode`, streamed once.
+    assert request_stream_count == 1
+    # Accumulate reindexing: each stitched part gets a strictly higher index than the previous one,
+    # so segments from before and after the pause never collide.
+    assert part_start_indices == sorted(set(part_start_indices))
+    assert part_start_indices[0] == 0
+    assert len(part_start_indices) > 1  # the turn spans multiple parts across the pause
+    # The stitched result is a single coherent, completed turn.
+    assert merged is not None
+    assert merged.state == 'complete'
+    assert agent_run.result
+    assert agent_run.result.output
+
+
+async def test_pause_turn_streaming_continuation(allow_model_requests: None):
+    """`pause_turn` continuations are stitched into one streamed response with offset part indices.
+
+    Every segment is streamed inside a single `ModelRequestNode`, so streaming that node once drives
+    the whole `suspended → suspended → complete` chain. Because each `pause_turn` segment accumulates
+    (fresh `provider_response_id`), the streamed `PartStartEvent` indices increase across segments and
+    the final merged response carries all parts in order.
+    """
 
     def _make_stream(text: str, stop_reason: str) -> list[BetaRawMessageStreamEvent]:
         return [
@@ -11853,46 +11921,68 @@ async def test_pause_turn_streaming_continuation(allow_model_requests: None):
             BetaRawMessageStopEvent(type='message_stop'),
         ]
 
-    # stream[0] is a placeholder (index 0 uses messages_ path for the initial non-streaming request).
-    # stream[1]: streaming continuation returns pause_turn again (covers line 1172).
-    # stream[2]: streaming continuation returns end_turn (final).
+    # All three segments are streamed: the composite opens one `request_stream` per segment as it
+    # stitches `pause_turn → pause_turn → end_turn` into a single streamed response.
     mock_client = cast(
         AsyncAnthropic,
         MockAnthropic(
-            messages_=[c1],
-            stream=[[], _make_stream('second', 'pause_turn'), _make_stream('done', 'end_turn')],
+            stream=[
+                _make_stream('first', 'pause_turn'),
+                _make_stream('second', 'pause_turn'),
+                _make_stream('done', 'end_turn'),
+            ],
         ),
     )
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
 
-    continuation_count = 0
+    part_start_indices: list[int] = []
     async with agent.iter('test prompt') as agent_run:
         node = agent_run.next_node
         while not isinstance(node, End):
-            if isinstance(node, ContinueRequestNode):
-                continuation_count += 1
-                # Exercise the streaming path on ContinueRequestNode
+            if isinstance(node, ModelRequestNode):
                 async with node.stream(agent_run.ctx) as stream:
-                    async for _event in stream:
-                        pass
-            # Advance: for ContinueRequestNode this returns cached _result (line 1118)
+                    async for event in stream:
+                        if isinstance(event, PartStartEvent):
+                            part_start_indices.append(event.index)
             node = await agent_run.next(node)
 
-    assert continuation_count == 2
+    # Each `pause_turn` segment appends a fresh text part, so the stitched indices increase.
+    assert part_start_indices == snapshot([0, 1, 2])
     assert agent_run.result
     assert agent_run.result.output == snapshot('firstseconddone')
 
 
 async def test_pause_turn_streaming_continuation_stream_error(allow_model_requests: None):
-    """Test that an error during streaming continuation propagates and cancels the wrap task."""
-    from pydantic_ai._agent_graph import ContinueRequestNode
-    from pydantic_graph import End
+    """An error mid-stream during a `pause_turn` continuation propagates cleanly out of the node."""
 
-    c1 = completion_message([BetaTextBlock(text='first', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-    c1.stop_reason = 'pause_turn'
+    # First segment streams a `pause_turn`, the continuation segment raises mid-stream.
+    def _make_stream(text: str, stop_reason: str) -> list[MockRawMessageStreamEvent]:
+        return [
+            BetaRawMessageStartEvent(
+                type='message_start',
+                message=BetaMessage(
+                    id=f'msg_{text}',
+                    model='claude-3-5-haiku-123',
+                    role='assistant',
+                    type='message',
+                    content=[],
+                    stop_reason=None,
+                    usage=BetaUsage(input_tokens=10, output_tokens=0),
+                ),
+            ),
+            BetaRawContentBlockStartEvent(
+                type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text=text)
+            ),
+            BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+            BetaRawMessageDeltaEvent(
+                type='message_delta',
+                delta=Delta(stop_reason=cast(Any, stop_reason)),
+                usage=BetaMessageDeltaUsage(input_tokens=10, output_tokens=5),
+            ),
+            BetaRawMessageStopEvent(type='message_stop'),
+        ]
 
-    # Continuation stream that raises mid-stream
     error_stream: list[MockRawMessageStreamEvent] = [
         BetaRawMessageStartEvent(
             type='message_start',
@@ -11911,7 +12001,7 @@ async def test_pause_turn_streaming_continuation_stream_error(allow_model_reques
 
     mock_client = cast(
         AsyncAnthropic,
-        MockAnthropic(messages_=[c1], stream=[[], error_stream]),
+        MockAnthropic(stream=[_make_stream('first', 'pause_turn'), error_stream]),
     )
     model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(model)
@@ -11919,7 +12009,7 @@ async def test_pause_turn_streaming_continuation_stream_error(allow_model_reques
     async with agent.iter('test prompt') as agent_run:
         node = agent_run.next_node
         while not isinstance(node, End):
-            if isinstance(node, ContinueRequestNode):
+            if isinstance(node, ModelRequestNode):
                 with pytest.raises(RuntimeError, match='stream exploded'):
                     async with node.stream(agent_run.ctx) as stream:
                         async for _event in stream:
