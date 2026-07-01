@@ -203,6 +203,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     prompt: str | Sequence[_messages.UserContent] | None
     new_message_index: int
+    resumed_request: _messages.ModelRequest | None
     resumed_request_index: int | None
 
     model: models.Model
@@ -634,7 +635,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # SkipModelRequest in stream path: yield an empty stream and finish handling
             # new_message_index wasn't updated in _prepare_request, fix it here
             ctx.deps.new_message_index = _first_new_message_index(
-                ctx.state.message_history, ctx.state.run_id, resumed_request_index=ctx.deps.resumed_request_index
+                ctx.state.message_history,
+                ctx.state.run_id,
+                resumed_request=ctx.deps.resumed_request,
+                resumed_request_index=ctx.deps.resumed_request_index,
             )
             self._did_stream = True
             ctx.state.usage.requests += 1
@@ -819,7 +823,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         except exceptions.SkipModelRequest as e:
             # new_message_index wasn't updated in _prepare_request, fix it here
             ctx.deps.new_message_index = _first_new_message_index(
-                ctx.state.message_history, ctx.state.run_id, resumed_request_index=ctx.deps.resumed_request_index
+                ctx.state.message_history,
+                ctx.state.run_id,
+                resumed_request=ctx.deps.resumed_request,
+                resumed_request_index=ctx.deps.resumed_request_index,
             )
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
@@ -945,22 +952,29 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         if self.is_resuming_without_prompt:
             # No separate user-prompt request this run: the trailing request that arrived via
-            # `message_history` *is* the request being sent, so it's prior context, not new. Pin its
-            # position (it's the last message here, before the model output is appended) so the
-            # boundary survives a capability or processor rebuilding it in place — a change to its
-            # identity, `parts`, `timestamp`, `instructions`, or `metadata` would defeat re-matching.
+            # `message_history` *is* the request being sent, so it's prior context, not new. Track it
+            # two ways so `_first_new_message_index` can exclude it however capabilities/processors
+            # mutate the list: by object (identity/value, survives reordering and removal) and by
+            # position (survives an in-place rebuild that changes its fields). It's the last message
+            # here, before the model output is appended, so its index is `len(messages) - 1`.
+            ctx.deps.resumed_request = self.request
             ctx.deps.resumed_request_index = len(messages) - 1
         elif ctx.deps.resumed_request_index is not None:
             # Later steps (e.g. a tool-call loop) may prepend/truncate/rebuild messages ahead of the
             # resumed request, shifting it. Translate the pinned index by the net count change; drop
-            # it (falling back to run_id detection) if processing removed the resumed request itself.
+            # it (falling back to object/value matching, then run_id) if processing removed the
+            # resumed request itself. The object reference is left untouched — it still points at the
+            # step-1 request, so identity/value matching keeps working across steps.
             shifted = ctx.deps.resumed_request_index - (messages_before_processing - len(messages))
             ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
-            messages, ctx.state.run_id, resumed_request_index=ctx.deps.resumed_request_index
+            messages,
+            ctx.state.run_id,
+            resumed_request=ctx.deps.resumed_request,
+            resumed_request_index=ctx.deps.resumed_request_index,
         )
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
@@ -1685,22 +1699,58 @@ def _first_new_message_index(
     messages: list[_messages.ModelMessage],
     run_id: str,
     *,
+    resumed_request: _messages.ModelRequest | None,
     resumed_request_index: int | None,
 ) -> int:
     """Return the first index that should be included in `new_messages()`.
 
     When resuming from `message_history` without a new user prompt, the trailing
     `ModelRequest` is prior context even though the framework stamps it with the current
-    `run_id` for adapter bookkeeping. Its position is pinned while the request is being
-    prepared (`resumed_request_index`), so the boundary is tracked by position rather than
-    by re-matching a request object that a capability or history processor may have rebuilt
-    in place — a rewrite that changes its identity, `parts`, `timestamp`, `instructions`, or
-    `metadata` would otherwise defeat the match and leak the request into `new_messages()`.
-    Otherwise the boundary is the first message carrying the current `run_id`.
+    `run_id` for adapter bookkeeping, so it must be excluded. A capability or history processor
+    can mutate the message list before this runs, so the resumed request is located by trying
+    progressively looser fallbacks, each robust to a different kind of mutation:
+
+    1. Object identity (`is`) — survives reordering, insertion, and removal of *other* messages.
+    2. Value match (`_is_same_request`) — survives loss of identity (e.g. a deep-copying
+       processor) as long as the request's fields are unchanged.
+    3. Position (`resumed_request_index`, pinned while preparing the request) — survives an
+       in-place rebuild that changes the request's fields (e.g. system-prompt reinjection),
+       which defeats both matches above.
+
+    Falling back to the first message carrying the current `run_id` is the last resort. Note the
+    layers cover different *single* mutations: a rebuild that also shifts the request's position
+    by adding/removing messages after it on the same step defeats all three, and detection falls
+    back to `run_id` (which includes the resumed request); this is rarer than any layer's own
+    blind spot and no built-in capability triggers it.
     """
-    if resumed_request_index is not None:
+    if resumed_request is not None:
+        for index, message in enumerate(messages):
+            if message is resumed_request:
+                return index + 1
+
+        for index in range(len(messages) - 1, -1, -1):
+            if _is_same_request(messages[index], resumed_request):
+                return index + 1
+
+    if resumed_request_index is not None and 0 <= resumed_request_index < len(messages):
         return resumed_request_index + 1
+
     return _first_run_id_index(messages, run_id)
+
+
+def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRequest) -> bool:
+    if not isinstance(message, _messages.ModelRequest):
+        return False
+    if message is request:  # pragma: no cover
+        return True
+    # Intentionally excludes `run_id`: the resumed request may not have `run_id` set yet when
+    # this comparison is performed.
+    return (
+        message.parts == request.parts
+        and message.timestamp == request.timestamp
+        and message.instructions == request.instructions
+        and message.metadata == request.metadata
+    )
 
 
 def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:

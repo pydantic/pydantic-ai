@@ -1915,6 +1915,55 @@ async def test_history_processor_truncation_during_resumed_tool_loop_keeps_run_m
     assert not _user_request_present(result.new_messages())
 
 
+async def test_history_processor_removes_message_after_resumed_request_excludes_resumed_request():
+    """
+    A history processor can remove a message positioned *after* the resumed request on a later step
+    (here dropping the model's tool-call response once the tool result is in history). The pinned
+    position can't follow a removal after the resumed request, but the resumed request object is
+    left untouched, so identity matching still excludes it from new_messages(). Guards against the
+    regression a purely position-based boundary would introduce — object matching and position
+    matching each cover mutations the other misses.
+    """
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    def drop_tool_call_response(messages: list[ModelMessage]) -> list[ModelMessage]:
+        # Only once the tool result is back: drop the model's tool-call response, which sits after
+        # the resumed request — a count change after it that the pinned index cannot track.
+        has_tool_return = any(
+            isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in messages
+        )
+        if not has_tool_return:
+            return messages
+        first_response = next((m for m in messages if isinstance(m, ModelResponse)), None)
+        return [m for m in messages if m is not first_response]
+
+    agent = Agent(
+        model=FunctionModel(model_function, model_name='test'),
+        capabilities=[ProcessHistory(drop_tool_call_response)],
+    )
+
+    @agent.tool
+    async def my_tool(_ctx: RunContext) -> str:
+        return 'tool result'
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Original prompt')])])
+
+    assert captured_messages == result.all_messages()
+    # The tool-call response was dropped, but the resumed request stays excluded via identity
+    # matching; only the messages after it are new.
+    assert result.new_messages() == result.all_messages()[1:]
+    assert not _user_request_present(result.new_messages())
+
+
 async def test_history_processor_insert_and_replace_resumed_request_excludes_resumed_request(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
