@@ -599,7 +599,7 @@ def test_instructions_with_structured_output(
                     ]
                 )
             ),
-            'gen_ai.system_instructions': '[{"type": "text", "content": "Here are some instructions"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"Here are some instructions"}]',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -2462,7 +2462,7 @@ def test_static_function_instructions_in_agent_run_span(
                     ]
                 )
             ),
-            'gen_ai.system_instructions': '[{"type": "text", "content": "Here are some instructions"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"Here are some instructions"}]',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -2528,7 +2528,7 @@ def test_instructions_from_history_when_model_request_fails_before_instrumentati
 
     summary = get_logfire_summary()
     assert summary.attributes[0]['gen_ai.system_instructions'] == snapshot(
-        '[{"type": "text", "content": "Instructions from history"}]'
+        '[{"type":"text","content":"Instructions from history"}]'
     )
 
 
@@ -2654,7 +2654,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                     ]
                 )
             ),
-            'gen_ai.system_instructions': '[{"type": "text", "content": "This is step 2"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"This is step 2"}]',
             'pydantic_ai.variable_instructions': True,
             'logfire.json_schema': IsJson(
                 snapshot(
@@ -2796,7 +2796,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                 )
             ),
             'pydantic_ai.new_message_index': 2,
-            'gen_ai.system_instructions': '[{"type": "text", "content": "Instructions for the current agent run"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"Instructions for the current agent run"}]',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -2905,7 +2905,7 @@ async def test_run_stream(
                     ]
                 )
             ),
-            'gen_ai.system_instructions': '[{"type": "text", "content": "Instructions for the current agent run"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"Instructions for the current agent run"}]',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {

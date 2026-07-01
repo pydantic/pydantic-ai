@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import itertools
-import json
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -12,12 +11,14 @@ from genai_prices.types import PriceCalculation
 from opentelemetry.metrics import MeterProvider, get_meter_provider
 from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provider
 from opentelemetry.util.types import AttributeValue
+from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     TOKEN_HISTOGRAM_BOUNDARIES,
     get_instructions,
     open_model_request_span,
+    safe_to_json,
 )
 
 from .. import _otel_messages
@@ -189,10 +190,10 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
-            'gen_ai.output.messages': json.dumps([output_message]),
+            'gen_ai.input.messages': safe_to_json(self.messages_to_otel_messages(input_messages)).decode(),
+            'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
-            'logfire.json_schema': json.dumps(
+            'logfire.json_schema': to_json(
                 {
                     'type': 'object',
                     'properties': {
@@ -202,14 +203,16 @@ class InstrumentationSettings:
                         'model_request_parameters': {'type': 'object'},
                     },
                 }
-            ),
+            ).decode(),
         }
         span.set_attributes(attributes)
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:
             return {
-                'gen_ai.system_instructions': json.dumps([_otel_messages.TextPart(type='text', content=instructions)]),
+                'gen_ai.system_instructions': safe_to_json(
+                    [_otel_messages.TextPart(type='text', content=instructions)]
+                ).decode(),
             }
         return {}
 

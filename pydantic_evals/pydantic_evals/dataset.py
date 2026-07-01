@@ -290,7 +290,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
-        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
+        lifecycle: (
+            type[CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | None
+        ) = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -420,7 +424,11 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         task_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         repeat: int = 1,
-        lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
+        lifecycle: (
+            type[CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
+            | None
+        ) = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -764,8 +772,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if not schema_path.is_absolute():
                 schema_ref = str(schema_path)
                 schema_path = path.parent / schema_path
-            elif schema_path.is_relative_to(path):  # pragma: no cover
-                schema_ref = str(_get_relative_path_reference(schema_path, path))
+            elif schema_path.is_relative_to(path.parent):
+                schema_ref = str(_get_relative_path_reference(schema_path, path.parent))
             else:  # pragma: no cover
                 schema_ref = str(schema_path)
             self._save_schema(schema_path, custom_evaluator_types, custom_report_evaluator_types)
@@ -903,7 +911,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return nxt(self)
 
 
-def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:  # pragma: no cover
+def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:
     """Get a relative path reference from source to target.
 
     Recursively resolve a relative path to target from source, adding '..' as needed.
@@ -925,11 +933,11 @@ def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') 
     # This is useful for creating a relative path reference from a source file to a target file.
     # For example, if source is '/a/b/c.py' and target is '/a/d/e.py', the relative path reference
     # would be '../../d/e.py'.
-    if not target.is_absolute():
-        target = target.resolve()
+    if not target.is_absolute():  # pragma: no branch
+        target = target.resolve()  # pragma: no cover
     try:
         return Path(f'{_prefix}{Path(target).relative_to(source)}')
-    except ValueError:
+    except ValueError:  # pragma: no cover
         return _get_relative_path_reference(target, source.parent, _prefix=f'{_prefix}../')
 
 
@@ -1077,7 +1085,11 @@ async def _run_task_and_evaluators(
     retry_evaluators: RetryConfig | None,
     *,
     source_case_name: str | None = None,
-    lifecycle: type[CaseLifecycle[InputsT, OutputT, MetadataT]] | None = None,
+    lifecycle: (
+        type[CaseLifecycle[InputsT, OutputT, MetadataT]]
+        | Callable[[Case[InputsT, OutputT, MetadataT]], CaseLifecycle[InputsT, OutputT, MetadataT]]
+        | None
+    ) = None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
