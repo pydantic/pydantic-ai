@@ -1226,7 +1226,46 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """
-                    )
+                    ),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'queries': ['weather in San Francisco today']},
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=[
+                            {
+                                'domain': None,
+                                'title': 'Weather information for San Francisco, CA, US',
+                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'timeanddate.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'weather.gov',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'wunderground.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                            },
+                            {
+                                'domain': None,
+                                'title': 'accuweather.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                            },
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
                 ],
                 usage=RequestUsage(
                     input_tokens=119,
@@ -1343,6 +1382,64 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """
                 ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather in San Francisco today']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                previous_part_kind='text',
+            ),
+            PartEndEvent(
+                index=1,
+                part=NativeToolCallPart(
+                    tool_name='web_search',
+                    args={'queries': ['weather in San Francisco today']},
+                    tool_call_id=IsStr(),
+                    provider_name='google',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=2,
+                part=NativeToolReturnPart(
+                    tool_name='web_search',
+                    content=[
+                        {
+                            'domain': None,
+                            'title': 'Weather information for San Francisco, CA, US',
+                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'timeanddate.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'weather.gov',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'wunderground.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                        },
+                        {
+                            'domain': None,
+                            'title': 'accuweather.com',
+                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                        },
+                    ],
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                ),
+                previous_part_kind='builtin-tool-call',
             ),
         ]
     )

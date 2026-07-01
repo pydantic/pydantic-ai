@@ -32,6 +32,9 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
+    ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -3257,6 +3260,63 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
     )
 
     assert stream.metadata == {'source': 'run-context'}
+
+
+@pytest.mark.parametrize(
+    ('leading_text', 'trailing_text'),
+    [
+        pytest.param('final answer', None, id='trailing-native-pair-preserves-prior-text'),
+        pytest.param('pre-tool text', 'final answer', id='later-text-resets-text-before-native-pair'),
+    ],
+)
+async def test_agent_stream_text_output_with_native_tool_parts(leading_text: str, trailing_text: str | None) -> None:
+    parts: list[ModelResponsePart] = [
+        TextPart(leading_text),
+        NativeToolCallPart(
+            tool_name='web_search',
+            args={'queries': ['query']},
+            tool_call_id='web-search-call',
+            provider_name='test',
+        ),
+        NativeToolReturnPart(
+            tool_name='web_search',
+            content=[{'uri': 'https://example.com', 'title': 'Example'}],
+            tool_call_id='web-search-call',
+            provider_name='test',
+        ),
+    ]
+    if trailing_text is not None:
+        parts.append(TextPart(trailing_text))
+    response = ModelResponse(parts=parts, model_name='test')
+
+    assert await _make_text_output_agent_stream(response).validate_response_output(response) == 'final answer'
+
+
+def _make_text_output_agent_stream(response: ModelResponse) -> AgentStream[None, str]:
+    stream_response = ModelTestStreamedResponse(
+        model_request_parameters=models.ModelRequestParameters(),
+        _model_name='test',
+        _structured_response=response,
+        _messages=[],
+        _provider_name='test',
+    )
+    stream_response.final_result_event = FinalResultEvent(tool_name=None, tool_call_id=None)
+    output_schema = TextOutputSchema[str](
+        text_processor=TextOutputProcessor(),
+        allows_deferred_tools=False,
+        allows_image=False,
+        allows_none=False,
+    )
+    return AgentStream(
+        _raw_stream_response=stream_response,
+        _output_schema=output_schema,
+        _model_request_parameters=models.ModelRequestParameters(),
+        _output_validators=[],
+        _run_ctx=RunContext(deps=None, model=TestModel(), usage=RunUsage()),
+        _usage_limits=None,
+        _tool_manager=ToolManager(toolset=MagicMock()),
+        _root_capability=CombinedCapability([]),
+    )
 
 
 def _make_run_result(*, metadata: dict[str, Any] | None) -> AgentRunResult[str]:

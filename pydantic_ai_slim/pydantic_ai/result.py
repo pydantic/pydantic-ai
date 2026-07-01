@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -254,13 +254,16 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
             elif text_processor := self._output_schema.text_processor:
                 text = ''
-                for part in message.parts:
+                for index, part in enumerate(message.parts):
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
-                        text = ''
+                        if allow_partial or _has_text_part_after(message.parts, index):
+                            # Text parts before a built-in tool call are essentially thoughts,
+                            # not part of the final result output, so we reset the accumulated text.
+                            # If the native tool pair trails all text, it is provider metadata for
+                            # the already-streamed output and should not erase that output.
+                            text = ''
 
                 run_ctx = replace(self._run_ctx, partial_output=allow_partial)
                 return await run_output_with_hooks(
@@ -925,6 +928,10 @@ def _get_usage_checking_stream_response(
         return _usage_checking_iterator()
     else:
         return aiter(stream_response)
+
+
+def _has_text_part_after(parts: Sequence[_messages.ModelResponsePart], index: int) -> bool:
+    return any(isinstance(part, _messages.TextPart) for part in parts[index + 1 :])
 
 
 def _get_deferred_tool_requests(
