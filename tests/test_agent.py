@@ -169,6 +169,11 @@ requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not instal
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
 
+# Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
+# near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
+# configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
+READINESS_WAIT_TIMEOUT = 10
+
 
 def test_result_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -6639,8 +6644,8 @@ class TestMultipleToolCalls:
             return 'done'  # pragma: no cover
 
         task = asyncio.create_task(agent.run('test'))
-        await asyncio.wait_for(first_done.wait(), timeout=1)
-        await asyncio.wait_for(pending_started.wait(), timeout=1)
+        await asyncio.wait_for(first_done.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        await asyncio.wait_for(pending_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -6966,7 +6971,7 @@ async def test_tool_execution_cancellation_captures_partial_request() -> None:
                 captured = list(messages)
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(first_done.wait(), timeout=1)
+    await asyncio.wait_for(first_done.wait(), timeout=READINESS_WAIT_TIMEOUT)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -9080,8 +9085,8 @@ async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks(
         return 'done'  # pragma: no cover
 
     task = asyncio.create_task(agent.run('call tools'))
-    await asyncio.wait_for(completed_tool_finished.wait(), timeout=1)
-    await asyncio.wait_for(pending_tool_started.wait(), timeout=1)
+    await asyncio.wait_for(completed_tool_finished.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    await asyncio.wait_for(pending_tool_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -9114,7 +9119,7 @@ async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellatio
     agent = Agent(TestModel(), capabilities=[WrapRunCapability()])
 
     task = asyncio.create_task(agent.run('test'))
-    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -9163,11 +9168,11 @@ async def test_parallel_tool_outer_cancellation_waits_for_tool_cleanup():
         return 'done'  # pragma: no cover
 
     task = asyncio.create_task(agent.run('call tools'))
-    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
     task.cancel()
 
-    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
     assert not task.done()
     cleanup_can_finish.set()
 
