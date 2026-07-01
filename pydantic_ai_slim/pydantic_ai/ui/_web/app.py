@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TypeVar
@@ -47,6 +48,37 @@ def _get_cache_dir() -> Path:
     return cache_dir
 
 
+def _read_cached_file(cache_file: Path) -> bytes | None:
+    """Return cached file contents, or `None` if it is missing or empty.
+
+    An empty file is treated as a miss (a truncated/partial write left by a prior crash)
+    so the caller refetches instead of serving an incomplete payload.
+    """
+    try:
+        content = cache_file.read_bytes()
+    except FileNotFoundError:
+        return None
+    return content or None
+
+
+def _write_cached_file(cache_file: Path, content: bytes) -> None:
+    """Write `content` to `cache_file` atomically via a same-directory temp file + `os.replace`.
+
+    The temp file lives in `cache_file.parent` (same filesystem, so the rename is atomic) and is
+    unlinked on any failure — including a write failure or interruption — so a crashed write can
+    never leave the destination existing-but-incomplete nor leak a temp file.
+    """
+    with tempfile.NamedTemporaryFile(dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False) as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        try:
+            tmp_file.write(content)
+            tmp_file.flush()
+            os.replace(tmp_path, cache_file)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+
 async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
     """Get UI HTML content from the specified source or default CDN.
 
@@ -65,15 +97,15 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
         cache_dir = _get_cache_dir()
         cache_file = cache_dir / f'{CHAT_UI_VERSION}.html'
 
-        if cache_file.exists():
-            return cache_file.read_bytes()
+        if content := _read_cached_file(cache_file):
+            return content
 
         async with httpx.AsyncClient() as client:
             response = await client.get(DEFAULT_HTML_URL)
             response.raise_for_status()
             content = response.content
 
-        cache_file.write_bytes(content)
+        _write_cached_file(cache_file, content)
         return content
 
     # Handle Path instances
@@ -89,15 +121,15 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
         url_hash = hashlib.sha256(html_source.encode()).hexdigest()[:16]
         cache_file = cache_dir / f'url_{url_hash}.html'
 
-        if cache_file.exists():
-            return cache_file.read_bytes()
+        if content := _read_cached_file(cache_file):
+            return content
 
         async with httpx.AsyncClient() as client:
             response = await client.get(html_source)
             response.raise_for_status()
             content = response.content
 
-        cache_file.write_bytes(content)
+        _write_cached_file(cache_file, content)
         return content
 
     # Handle local file paths (strings)
