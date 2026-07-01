@@ -34,11 +34,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
 
+      # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim),
+      # which imports pydantic-ai-harness. The harness depends on pydantic-ai-slim,
+      # whose name is shadowed by the workspace member, so keeping it in the
+      # universal lock breaks the lowest-direct re-resolution. Install it into the
+      # synced venv out-of-band instead (--no-deps: pydantic-ai-slim is already
+      # present from the workspace). Keep the pin in sync with the runner's
+      # (.github/scripts/pydantic-ai-runner).
+      - run: uv pip install --no-deps "pydantic-ai-harness>=0.4.0"
+
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: --all-files --verbose
         env:
           SKIP: no-commit-to-branch
+          # pre-commit hooks shell out via `uv run`; without this they would
+          # re-sync the venv and drop the out-of-band harness install above.
+          UV_NO_SYNC: "1"
 
       - run: uv build --all-packages
       - run: ls -lh dist/
