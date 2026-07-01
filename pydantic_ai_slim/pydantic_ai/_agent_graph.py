@@ -158,6 +158,15 @@ class GraphAgentState:
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
+    mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = dataclasses.field(
+        default_factory=dict[str, dict[str, ToolDefinition]]
+    )
+    """Per-run cache of durable-execution MCP toolset tool definitions, keyed by toolset `id`.
+
+    Shared by reference into every `RunContext` this run (see `build_run_context`), where it is
+    exposed as the private `_mcp_tool_defs_cache` field. Recreated per run and reconstructed
+    identically on durable replay/recovery, which is what keeps the Temporal/DBOS MCP wrappers'
+    `get_tools` scheduling replay-deterministic."""
 
     def check_incomplete_tool_call(self) -> None:
         """Raise `IncompleteToolCall` if the last model response was truncated mid-tool-call."""
@@ -1492,12 +1501,14 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
-    # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the
-    # shared identity of `loaded_capability_ids`/`discovered_tool_names` (see the invariant on
-    # `GraphAgentDeps.loaded_capability_ids`). Never add either set here — forking the object would
-    # silently break in-step capability loads / tool reveals.
+    # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
+    # identity of the mutable members passed by reference above — `loaded_capability_ids`,
+    # `discovered_tool_names`, `pending_messages`, `_mcp_tool_defs_cache` (see the invariant on
+    # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking the
+    # object would silently break in-step capability loads / tool reveals / message enqueues / tool-defs caching.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 
