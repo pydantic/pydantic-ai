@@ -34,6 +34,7 @@ from ..messages import (
     FinalResultEvent,
     ModelMessage,
     ModelResponse,
+    ModelResponseState,
     ModelResponseStreamEvent,
     PartDeltaEvent,
     PartEndEvent,
@@ -134,10 +135,15 @@ class _ContinuationStreamedResponse(StreamedResponse):
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream every segment as one continuous event stream.
 
-        Sub-streams already emit fully-formed `PartStart`/`PartDelta`/`PartEnd` and
-        `FinalResultEvent`s, so the only wrapper applied here is the cancel-guard
-        (reproducing the base `_finished`/`_cancelled` transitions); reindexing and
-        final-result capture happen inside `_get_event_iterator`.
+        This intentionally bypasses the base `StreamedResponse.__aiter__`'s `iterator_with_final_event`
+        / `iterator_with_part_end` wrappers: each sub-stream is already wrapped by them, so it emits
+        fully-formed `PartStart`/`PartDelta`/`PartEnd` and `FinalResultEvent`s. The composite only
+        applies reindexing + final-result capture (inside `_get_event_iterator`) and the cancel-guard
+        (reproducing the base `_finished`/`_cancelled` transitions) on top.
+
+        One minor semantic gap: `PartEndEvent.next_part_kind` is `None` at each sub-stream boundary
+        (a segment can't see the next segment's first part), whereas a single-segment stream would
+        populate it. This is acceptable because parts never merge across segment boundaries.
         """
         if self._event_iterator is None:
             self._segment_iterator = self._get_event_iterator()
@@ -265,8 +271,12 @@ class _ContinuationStreamedResponse(StreamedResponse):
 
     def get(self) -> ModelResponse:
         """Build the live merged [`ModelResponse`][pydantic_ai.messages.ModelResponse] across all segments so far."""
+        # The composite resolves the whole suspended → … → complete chain, so it never surfaces
+        # `'suspended'`: it's `'complete'` once the loop exits, `'interrupted'` if cancelled, and
+        # `'incomplete'` while a segment is still in flight.
+        state: ModelResponseState
         if self._finished:
-            state: Literal['complete', 'incomplete', 'interrupted'] = 'complete'
+            state = 'complete'
         elif self._cancelled:
             state = 'interrupted'
         else:

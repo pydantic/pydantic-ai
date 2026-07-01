@@ -3,6 +3,12 @@
 These drive the composite directly with a scripted fake model (no HTTP, no cassettes) to
 pin down the provider-agnostic stitching behavior: part-index reindexing across segments,
 merged snapshots/usage, live state transitions, cancellation, and the continuation limit.
+
+These are unit tests rather than VCR tests for two reasons: `FunctionModel` can't emit a
+*suspended streaming* segment (the input a real continuation needs), and a cassette wouldn't
+reliably protect this behavior anyway — our VCR matchers aren't sensitive to the reindex
+payload, so a regression in the accumulate-vs-replace offset boundary could still match an
+existing recording and pass green. Asserting the stitched indices directly is what catches it.
 """
 
 from __future__ import annotations

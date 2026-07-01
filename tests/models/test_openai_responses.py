@@ -61,7 +61,7 @@ from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, Tes
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import AsyncOpenAI, omit
     from openai.types import responses as resp
     from openai.types.responses import (
         ResponseCreatedEvent,
@@ -11518,6 +11518,54 @@ async def test_stream_cancel(allow_model_requests: None):
     )
 
 
+async def test_cancel_suspended_response_only_cancels_background_jobs(allow_model_requests: None):
+    """`cancel_suspended_response` calls `responses.cancel` only for background jobs.
+
+    Unit-style guard test: `responses.cancel` 400s on a non-background response, so the guard must
+    reliably tell them apart. It keys off the explicit `provider_details['background']` marker (stamped
+    from the API's own `response.background` field), not the `suspended_retry_delay` poll interval — so
+    a normal interrupted streamed response that happens to carry a delay is left untouched.
+    """
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    cancel_ids = cast(MockOpenAIResponses, mock_client).cancel_ids
+
+    # A normal streamed response interrupted by `cancel()` (no background marker) must NOT be cancelled,
+    # even if it happens to carry a `suspended_retry_delay`.
+    await model.cancel_suspended_response(
+        ModelResponse(
+            parts=[],
+            provider_name='openai',
+            provider_response_id='resp_normal',
+            suspended_retry_delay=1.0,
+            state='interrupted',
+        )
+    )
+    assert cancel_ids == []
+
+    # A background job (explicit `background` marker) IS cancelled server-side.
+    await model.cancel_suspended_response(
+        ModelResponse(
+            parts=[],
+            provider_name='openai',
+            provider_response_id='resp_bg',
+            provider_details={'background': True},
+        )
+    )
+    assert cancel_ids == ['resp_bg']
+
+    # A background response from a different provider is left to that provider to cancel.
+    await model.cancel_suspended_response(
+        ModelResponse(
+            parts=[],
+            provider_name='other',
+            provider_response_id='resp_other',
+            provider_details={'background': True},
+        )
+    )
+    assert cancel_ids == ['resp_bg']
+
+
 async def test_openai_responses_null_text(allow_model_requests: None):
     """Test that ResponseOutputText with text=null (from gateways like Bifrost) is handled gracefully."""
     c = response_message(
@@ -12384,7 +12432,7 @@ async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: s
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
                 provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -12438,7 +12486,7 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
                 provider_response_id='resp_01b4d93abce33afe00698b9df44be4819bb99fff16d77a0236',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -12470,7 +12518,7 @@ async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
                 provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -12519,7 +12567,7 @@ async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_details={'timestamp': IsDatetime(), 'background': True, 'finish_reason': 'completed'},
                 provider_response_id='resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01',
                 finish_reason='stop',
                 suspended_retry_delay=1.0,
@@ -12715,7 +12763,8 @@ async def test_background_mode_streaming_without_starting_after_vcr(
     assert len(retrieve_kwargs) == 1
     assert retrieve_kwargs[0]['response_id'] == suspended_response.provider_response_id
     assert retrieve_kwargs[0]['stream'] is False
-    assert 'starting_after' not in retrieve_kwargs[0]
+    # No resumable sequence cursor here, so `starting_after` is passed as the `omit` sentinel (not sent).
+    assert retrieve_kwargs[0]['starting_after'] is omit
 
 
 async def test_background_queued_then_completed(allow_model_requests: None):

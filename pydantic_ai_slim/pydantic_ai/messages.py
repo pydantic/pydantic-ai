@@ -129,7 +129,10 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
   while iteration is in flight.
 - `'suspended'`: the model paused mid-turn and expects a continuation request.
-  Used by Anthropic `pause_turn` and OpenAI background mode.
+  Used by Anthropic `pause_turn` and OpenAI background mode. Pydantic AI issues these continuations
+  transparently for both `agent.run` and `agent.run_stream`, merging every segment into a single
+  completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
+  history is never left in this state.
 - `'interrupted'`: streaming was explicitly stopped via
   [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel] before the model
   finished generating.

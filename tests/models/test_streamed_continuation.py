@@ -1,9 +1,13 @@
 """End-to-end tests for streamed model continuations driven through the full agent graph.
 
-`FunctionModel` cannot emit a *suspended streaming* segment, so these tests use a small scripted
-streaming model (`_ScriptedModel`) whose `request`/`request_stream` return a `suspended → complete`
-chain. Driving `agent.run`/`agent.run_stream`/`agent.iter` against it exercises the continuation
-loop inside `ModelRequestNode`: the streamed composite stitches every segment into one `AgentStream`,
+These are unit tests rather than VCR tests for two reasons: `FunctionModel` cannot emit a
+*suspended streaming* segment (the input a real continuation needs), and a cassette wouldn't
+reliably protect this behavior anyway — our VCR matchers aren't sensitive to the reindex payload,
+so a regression in the accumulate-vs-replace offset boundary could still match an existing recording
+and pass green. So these tests use a small scripted streaming model (`_ScriptedModel`) whose
+`request`/`request_stream` return a `suspended → complete` chain. Driving
+`agent.run`/`agent.run_stream`/`agent.iter` against it exercises the continuation loop inside
+`ModelRequestNode`: the streamed composite stitches every segment into one `AgentStream`,
 model-request hooks fire once around the whole chain, usage is summed once, and cancellation kills
 the server-side job without requesting further segments.
 """

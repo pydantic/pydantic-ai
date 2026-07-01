@@ -404,6 +404,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     # `pause_turn`, OpenAI background mode) and persisted. Resume it in
                     # `ModelRequestNode`, which re-issues the suspended turn and stitches the
                     # continuation into a single response with hooks firing once around the chain.
+                    # `request` is an empty placeholder to satisfy `ModelRequestNode`'s dataclass:
+                    # it is intentionally NOT appended to history (the suspended response is the real
+                    # tail that gets echoed back), and nothing is sent for it. `_resume_suspended`
+                    # drives `_prepare_resume_request` instead of the normal `_prepare_request` path.
                     return ModelRequestNode[DepsT, NodeRunEndT](
                         request=_messages.ModelRequest(parts=[]), _resume_suspended=last_message
                     )
@@ -959,8 +963,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             messages, req_ctx.model_settings, req_ctx.model_request_parameters
                         )
                     except BaseException:
-                        # Includes `CancelledError`: kill any server-side suspended/background
-                        # job before propagating so it doesn't leak.
+                        # The broad catch is deliberate: `BaseException` also covers `CancelledError`,
+                        # `KeyboardInterrupt`, and `SystemExit`, and we must cancel the server-side
+                        # suspended/background job before letting any of them propagate so it doesn't leak.
                         if response is not None:
                             await req_ctx.model.cancel_suspended_response(response)
                         raise

@@ -1731,6 +1731,17 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
+def _background_retry_delay(settings: OpenAIResponsesModelSettings, state: ModelResponseState) -> float | None:
+    """Poll interval to stamp on a suspended background response, or `None` if it doesn't apply.
+
+    A response only enters `'suspended'` in background mode, so this is the single place that
+    couples "background + suspended" to the `suspended_retry_delay` the continuation loop sleeps on.
+    """
+    if settings.get('openai_background') and state == 'suspended':
+        return settings.get('openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL)
+    return None
+
+
 @dataclass(init=False)
 class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
@@ -1796,12 +1807,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Cancel a suspended background response by cancelling its server-side job.
 
         `responses.cancel` only applies to background responses; calling it on an ordinary
-        (foreground) response returns a 400. `suspended_retry_delay` is set exactly when a
-        response was suspended in background mode, so it distinguishes a cancellable background
-        job from a normal streamed response that happens to be interrupted by `cancel()`.
+        (foreground) response returns a 400. The `provider_details['background']` marker is
+        stamped from the API's own `response.background` field (see `_process_response` and
+        `OpenAIResponsesStreamedResponse._track_background`), so it explicitly and reliably
+        distinguishes a cancellable background job from a normal streamed response that happens
+        to be interrupted by `cancel()` — no need to infer background mode from the
+        `suspended_retry_delay` poll interval.
         """
         if (
-            response.suspended_retry_delay is not None
+            (response.provider_details or {}).get('background')
             and response.provider_response_id
             and response.provider_name == self.system
         ):
@@ -1933,13 +1947,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return response
 
         result = self._process_response(response, settings, model_request_parameters)
-        if settings.get('openai_background') and result.state == 'suspended':
-            result = replace(
-                result,
-                suspended_retry_delay=settings.get(
-                    'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
-                ),
-            )
+        if (delay := _background_retry_delay(settings, result.state)) is not None:
+            result = replace(result, suspended_retry_delay=delay)
         return result
 
     async def count_tokens(
@@ -2020,10 +2029,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     model_request_parameters=model_request_parameters,
                     _model_response=self._process_response(response, settings, model_request_parameters),
                 )
-                if settings.get('openai_background') and sr.state == 'suspended':
-                    sr.suspended_retry_delay = settings.get(
-                        'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
-                    )
+                if (delay := _background_retry_delay(settings, sr.state)) is not None:
+                    sr.suspended_retry_delay = delay
                 yield sr
                 return
             response = await self._responses_retrieve(
@@ -2045,10 +2052,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 model_request_parameters,
                 expected_model_name=previous_model_name,
             )
-            if settings.get('openai_background') and sr.state == 'suspended':
-                sr.suspended_retry_delay = settings.get(
-                    'openai_background_poll_interval', _DEFAULT_OPENAI_BACKGROUND_POLL_INTERVAL
-                )
+            if (delay := _background_retry_delay(settings, sr.state)) is not None:
+                sr.suspended_retry_delay = delay
             yield sr
 
     def _process_response(  # noqa: C901
@@ -2212,6 +2217,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['timestamp'] = number_to_datetime(response.created_at)
         if response.conversation:
             provider_details['conversation_id'] = response.conversation.id
+        if response.background:
+            # Mark the response as a cancellable server-side background job (see
+            # `cancel_suspended_response`), independent of the `suspended_retry_delay` poll interval.
+            provider_details['background'] = True
 
         state = _response_status_to_state(response.status)
         if refusal_text is not None:
@@ -2510,16 +2519,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         include = self._build_include(model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
         with _map_api_errors(self.model_name):
-            retrieve_kwargs: dict[str, Any] = {}
-            if starting_after is not None:
-                retrieve_kwargs['starting_after'] = starting_after
             return await self.client.responses.retrieve(
                 response_id=response_id,
                 include=include or OMIT,
+                starting_after=starting_after if starting_after is not None else OMIT,
                 stream=stream,
                 timeout=timeout,
                 extra_headers=extra_headers,
-                **retrieve_kwargs,
             )
 
     def _translate_thinking(
@@ -3593,6 +3599,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def _set_state(self, status: ResponseStatus | None) -> None:
         self.state = _response_status_to_state(status)
 
+    def _track_background(self, response: responses.Response) -> None:
+        """Mark a background job so `cancel_suspended_response` can cancel it server-side.
+
+        `responses.cancel` only works on background jobs; an explicit `background` marker (stamped
+        from the API's own `response.background` field on every status event, so it survives the
+        stream ending suspended, resuming via `retrieve`, or completing) keeps the cancel guard
+        robust, rather than inferring background mode from the `suspended_retry_delay` poll interval.
+        """
+        if response.background:
+            self.provider_details = {**(self.provider_details or {}), 'background': True}
+
     async def close_stream(self) -> None:
         await self._response.source.close()
 
@@ -3648,6 +3665,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseCreatedEvent):
                     self._set_state(chunk.response.status)
+                    self._track_background(chunk.response)
                     if chunk.response.id:  # pragma: no branch
                         self.provider_response_id = chunk.response.id
                     self._store_conversation_id(chunk.response)
@@ -3670,6 +3688,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
                     self._usage += self._map_usage(chunk.response)
                     self._set_state(chunk.response.status)
+                    # A resumed `retrieve(stream=True)` segment has no `ResponseCreatedEvent`, so stamp
+                    # the background marker here too (its first event is `in_progress`/`queued`).
+                    self._track_background(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):  # pragma: no cover
                     self._usage += self._map_usage(chunk.response)
