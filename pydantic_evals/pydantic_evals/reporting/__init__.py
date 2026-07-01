@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import StringIO
-from typing import Any, Generic, Literal, Protocol, cast
+from typing import Any, Generic, Literal, Protocol
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console, Group, RenderableType
@@ -56,7 +56,7 @@ __all__ = (
     'TableResult',
 )
 
-from ..evaluators.evaluator import EvaluatorFailure
+from ..evaluators.evaluator import EvaluationScalar, EvaluatorFailure
 
 MISSING_VALUE_STR = '[i]<missing>[/i]'
 EMPTY_CELL_STR = '-'
@@ -511,7 +511,6 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             )
             console.print(failures_table, style='red')
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def console_table(
         self,
         baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
@@ -534,7 +533,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         duration_config: RenderNumberConfig | None = None,
         include_reasons: bool = False,
         with_title: bool = True,
-    ) -> Table:
+    ) -> RenderableType:
         """Return a table containing the data from this report.
 
         If a baseline is provided, returns a diff between this report and the baseline report.
@@ -636,7 +635,6 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
         return None
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def failures_table(
         self,
         *,
@@ -647,7 +645,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_error_stacktrace: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
-    ) -> Table:
+    ) -> RenderableType:
         """Return a table containing the failures in this report."""
         renderer = EvaluationRenderer(
             include_input=include_input,
@@ -933,6 +931,7 @@ _DEFAULT_DURATION_CONFIG = RenderNumberConfig(
 
 
 T = TypeVar('T')
+ScalarT = TypeVar('ScalarT', bound=EvaluationScalar)
 
 
 @dataclass(kw_only=True)
@@ -960,7 +959,6 @@ class ReportCaseRenderer:
     metric_renderers: Mapping[str, _NumberRenderer]
     duration_renderer: _NumberRenderer
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_base_table(self, title: str) -> Table:
         """Build and return a Rich Table for the diff output."""
         table = Table(title=title, show_lines=True)
@@ -987,7 +985,6 @@ class ReportCaseRenderer:
             table.add_column('Durations' if self.include_total_duration else 'Duration', justify='right')
         return table
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_failures_table(self, title: str) -> Table:
         """Build and return a Rich Table for the failures output."""
         table = Table(title=title, show_lines=True)
@@ -1021,10 +1018,10 @@ class ReportCaseRenderer:
             row.append(self.output_renderer.render_value(None, case.output) or EMPTY_CELL_STR)
 
         if self.include_scores:
-            row.append(self._render_dict({k: v for k, v in case.scores.items()}, self.score_renderers))
+            row.append(self._render_eval_result_dict(case.scores, self.score_renderers))
 
         if self.include_labels:
-            row.append(self._render_dict({k: v for k, v in case.labels.items()}, self.label_renderers))
+            row.append(self._render_eval_result_dict(case.labels, self.label_renderers))
 
         if self.include_metrics:
             row.append(self._render_dict(case.metrics, self.metric_renderers))
@@ -1261,16 +1258,27 @@ class ReportCaseRenderer:
 
     def _render_dict(
         self,
-        case_dict: Mapping[str, EvaluationResult[T] | T],
+        case_dict: Mapping[str, T],
         renderers: Mapping[str, _AbstractRenderer[T]],
+        *,
+        include_names: bool = True,
+    ) -> str:
+        diff_lines = [
+            renderers[key].render_value(key if include_names else None, val) for key, val in case_dict.items()
+        ]
+        return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
+
+    def _render_eval_result_dict(
+        self,
+        case_dict: Mapping[str, EvaluationResult[ScalarT]],
+        renderers: Mapping[str, _AbstractRenderer[ScalarT]],
         *,
         include_names: bool = True,
     ) -> str:
         diff_lines: list[str] = []
         for key, val in case_dict.items():
-            value = cast(EvaluationResult[T], val).value if isinstance(val, EvaluationResult) else val
-            rendered = renderers[key].render_value(key if include_names else None, value)
-            if self.include_reasons and isinstance(val, EvaluationResult) and (reason := val.reason):
+            rendered = renderers[key].render_value(key if include_names else None, val.value)
+            if self.include_reasons and (reason := val.reason):
                 rendered += f'\n  Reason: {reason}\n'
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
@@ -1447,7 +1455,6 @@ class EvaluationRenderer:
             duration_renderer=duration_renderer,
         )
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_table(self, report: EvaluationReport, *, with_title: bool = True) -> Table:
         """Build a table for the report.
 
@@ -1473,7 +1480,6 @@ class EvaluationRenderer:
 
         return table
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_diff_table(
         self, report: EvaluationReport, baseline: EvaluationReport, *, with_title: bool = True
     ) -> Table:
@@ -1540,7 +1546,6 @@ class EvaluationRenderer:
 
         return table
 
-    # TODO(DavidM): in v2, change the return type here to RenderableType
     def build_failures_table(self, report: EvaluationReport) -> Table:
         case_renderer = self._get_case_renderer(report)
         table = case_renderer.build_failures_table('Case Failures')

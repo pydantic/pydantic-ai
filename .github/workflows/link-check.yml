@@ -1,0 +1,34 @@
+name: Link check
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # weekly on Monday
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check links
+        id: lychee
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
+        with:
+          args: --no-progress --config .github/workflows/lychee.toml './docs/**/*.md' './*.md'
+          fail: false
+
+      - name: Open issue on broken links
+        if: steps.lychee.outputs.exit_code != 0
+        uses: peter-evans/create-issue-from-file@e8ef132d6df98ed982188e460ebb3b5d4ef3a9cd # v5.0.1
+        with:
+          title: Broken links found in docs
+          content-filepath: ./lychee/out.md
+          labels: docs

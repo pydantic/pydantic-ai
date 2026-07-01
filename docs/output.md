@@ -96,7 +96,7 @@ Here's an example of using a union return type, which will register multiple out
 ```python {title="colors_or_sizes.py"}
 from pydantic_ai import Agent
 
-agent = Agent[None, list[str] | list[int]](
+agent = Agent[object, list[str] | list[int]](
     'openai:gpt-5-mini',
     output_type=list[str] | list[int],  # type: ignore # (1)!
     instructions='Extract either colors or sizes from the shapes provided.',
@@ -175,7 +175,7 @@ def run_sql_query(query: str) -> list[Row]:
     raise ModelRetry(f"Unsupported query: '{query}'.")
 
 
-sql_agent = Agent[None, list[Row] | SQLFailure](
+sql_agent = Agent[object, list[Row] | SQLFailure](
     'openai:gpt-5.2',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
@@ -207,7 +207,7 @@ class RouterFailure(BaseModel):
     explanation: str
 
 
-router_agent = Agent[None, list[Row] | RouterFailure](
+router_agent = Agent[object, list[Row] | RouterFailure](
     'openai:gpt-5.2',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
@@ -326,7 +326,7 @@ If you'd like to change the name of the output tool, pass a custom description t
 
 When using output tools, each tool gets its own retry counter — the output side of the agent retry budget (set with [`AgentRetries`][pydantic_ai.agent.AgentRetries] via `Agent(retries={'output': N})`, or per-run via `agent.run(retries={'output': N})`) is the *default per-tool limit*. To override the limit for an individual output tool, pass [`max_retries`][pydantic_ai.output.ToolOutput.max_retries] on `ToolOutput`: `ToolOutput(Fruit, max_retries=2)`. See [How output retries are enforced](agent.md#how-output-retries-are-enforced) for the relationship to the text-output path's global budget.
 
-To dynamically modify or filter the available output tools during an agent run, you can define an agent-wide `prepare_output_tools` function that will be called ahead of each step of a run. This function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions, following the same return-value rules as the [`prepare_tools` function](tools-advanced.md#prepare-tools). This is analogous to `prepare_tools` for non-output tools.
+To dynamically modify or filter the available output tools during an agent run, you can define an agent-wide `prepare_output_tools` function that will be called ahead of each step of a run. This function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns the output tool definitions to expose for that step. Return `[]` to expose no output tools. This is analogous to the [`prepare_tools` function](tools-advanced.md#prepare-tools) for non-output tools.
 
 ```python {title="tool_output.py"}
 from pydantic import BaseModel
@@ -362,25 +362,34 @@ _(This example is complete, it can be run "as is")_
 
 ##### Parallel Output Tool Calls
 
-When the model calls other tools in parallel with an output tool, you can control how tool calls are executed by setting the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy]:
-
-- `'early'` (default): Output tools are executed first. Once a valid final result is found, remaining function and output tool calls are skipped
-- `'graceful'`: Output tools are executed first. Once a valid final result is found, remaining output tool calls are skipped, but function tools are still executed
-- `'exhaustive'`: Output tools are executed first, then all function tools are executed. The first valid output tool result becomes the final output
-
-| Strategy | Function tools | Output tools |
-|---|---|---|
-| `'early'` (default) | Skip remaining | Skip remaining |
-| `'graceful'` | Execute all | Skip remaining |
-| `'exhaustive'` | Execute all | Execute all (first valid result wins) |
-
-The `'graceful'` and `'exhaustive'` strategies are useful when function tools have important side effects (like logging, sending notifications, or updating metrics) that should always execute. Use `'graceful'` over `'exhaustive'` when you want to avoid executing additional output tools unnecessarily — for example, when output tools have side effects that should only fire once.
+An [output tool](#tool-output) call is what ends a run and produces its final result. When a model emits one in the *same* response as other tool calls, the agent's [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides what happens to the rest. Most agents never need to think about this, since most responses don't mix an output tool with other tools — but when one does, `end_strategy` controls how those calls run and which one becomes the final result.
 
 !!! warning "Priority of output and deferred tools in streaming methods"
     The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
 
-    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output.
+    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
 
+| Strategy | Output tools | Function tools — output succeeded | Function tools — every output failed |
+|---|---|---|---|
+| `'graceful'` (default) | Run in emission order; first success is the final result, later output tools skipped | Run, in parallel where possible, in emission order | Run; the run continues |
+| `'early'` | Run in emission order; the run ends at the first success | Skipped | Run; the run continues |
+| `'exhaustive'` | All run, in parallel; first valid result by emission order wins | Run, in parallel | Run; the run continues |
+
+`'graceful'` is the default and the right choice for most agents: function tools the model requested alongside an output tool still run, so their side effects happen and their results are available to the model if the run continues. Only the first successful output tool is used; later output tools are skipped so their side effects don't fire more than once.
+
+Choose `'early'` to end the run the instant an output tool succeeds — function tools requested in the same response are then skipped entirely. This is the fastest option when you never need those function tools to run once you have a result.
+
+Choose `'exhaustive'` to run every tool, including additional output tools whose results won't be used. This gives the model full visibility that each tool ran, at the cost of executing output-tool side effects that are ultimately discarded.
+
+When *every* output tool fails, function tools run and the run continues under all three strategies: there is no result to end on, so the output failures go back to the model as retries and the function tools the model also asked for are run, letting it react to both on the next round.
+
+##### Retrying after a tool failure
+
+Under the `'graceful'` and `'exhaustive'` [end strategies](#parallel-output-tool-calls), function tools requested alongside an output tool still run. If one of them raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] (or its arguments fail validation) in the same response as a successful output tool, the output result is **not** used as the final result. Instead, the retry is sent back to the model so it can correct the problem, since the output may have been based on the failed tool call. This does not apply under `'early'`, where function tools don't run once an output succeeds, nor when [streaming](#parallel-output-tool-calls), where the first matching output is committed immediately.
+
+##### Controlling output tool parallelism
+
+Like function tools, [output tools](#tool-output) run concurrently. Under the `'exhaustive'` [end strategy](#parallel-output-tool-calls), where multiple output tools can run in parallel, you can make an output tool a barrier with [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] — useful when you want all of a response's function tools to finish before the output tool runs. This is the output-tool counterpart of the `sequential=True` flag for function tools; see [Parallel tool calls & concurrency](tools-advanced.md#parallel-tool-calls-concurrency) for how the barrier behaves and how to run an entire run's tools serially.
 
 #### Native Output
 
@@ -889,15 +898,14 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Cancelling Streams
 
-Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] should be used as an async context manager so cleanup runs deterministically when you stop consuming events.
+Sometimes you need to stop a streaming response before it completes: a user clicks "stop generating" in a chat UI, you've received enough data to make a decision, or you want to avoid receiving more tokens. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`iter()`][pydantic_ai.agent.Agent.iter] support explicit cancellation by closing the underlying model stream. [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager, so cleanup runs deterministically when you stop consuming events — leaving the `async with` block cancels the background run task.
 
 !!! note "Model support"
-    [`OutlinesModel`][pydantic_ai.models.outlines.OutlinesModel] and the deprecated [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] do not currently support stream cancellation.
     The Google, xAI, and Hugging Face SDKs expose streaming only as async iterators, which limits when [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] can interrupt an in-flight chunk read. See the [Google](models/google.md#streaming-cancellation), [xAI](models/xai.md#streaming-cancellation), and [Hugging Face](models/huggingface.md#streaming-cancellation) provider docs for the recommended pattern.
 
 #### Cleaning up `run_stream_events`
 
-[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns an [`AgentEventStream`][pydantic_ai.result.AgentEventStream] that should be used as an async context manager:
+[`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] is an async context manager that yields an async iterator over events:
 
 ```python {title="stream_cancel_run_stream_events.py"}
 from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
@@ -906,17 +914,16 @@ agent = Agent('openai:gpt-5.2')
 
 
 async def main():
-    async with agent.run_stream_events('Write a long essay about Python') as stream:  # (1)!
-        async for event in stream:
+    async with agent.run_stream_events('Write a long essay about Python') as events:
+        async for event in events:
             if isinstance(event, PartStartEvent):
                 print(f'Started: {event.part!r}')
                 #> Started: TextPart(content='Python is a ')
             elif isinstance(event, FinalResultEvent):
-                break  # (2)!
+                break  # (1)!
 ```
 
-1. Use `async with` to ensure proper cleanup of the background task and HTTP connection. Iterating `run_stream_events()` directly without `async with` is deprecated.
-2. Breaking out of the loop leaves the `async with` block, which closes the event stream and runs cleanup.
+1. Breaking out of the loop leaves the `async with` block, which cancels the background run task and closes the HTTP connection.
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -985,7 +992,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 #### Message History After Cancellation
 
-When a stream is cancelled, the response is recorded with `state='interrupted'` in the message history. The history includes any partial content that was received before cancellation:
+When a stream is cancelled mid-generation, the response is recorded with `state='interrupted'` in the message history. The history includes any partial content that was received before cancellation:
 
 ```python {title="stream_cancel_history.py"}
 from pydantic_ai import Agent
@@ -1013,7 +1020,7 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
     Pydantic AI does not clean up incomplete tool calls in interrupted responses. Passing interrupted history directly into another run can therefore fail or lead to retries if the model was in the middle of emitting a tool call when cancellation happened. For now, applications that reuse interrupted history should inspect `state='interrupted'` responses and apply their own policy.
 
 !!! info "Usage tracking for cancelled streams"
-    Token usage reported by `usage()` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.
+    Token usage reported by `usage` after cancellation is partial and provider-dependent. Pydantic AI stops pulling from the stream immediately, so final usage events may never arrive; some provider SDKs may also continue generation server-side after the local stream is closed. Do not rely on cancelled-stream usage for cost-critical accounting.
     For OpenAI chat completions, [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings] can improve in-stream usage reporting by requesting cumulative usage data with each chunk, but cancelled-stream usage is still best-effort.
 
 ## Examples
