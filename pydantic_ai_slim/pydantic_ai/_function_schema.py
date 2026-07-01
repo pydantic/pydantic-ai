@@ -154,7 +154,8 @@ def function_schema(  # noqa: C901
             if takes_ctx and index == 0:
                 # should be the `context` argument, skip
                 continue
-            annotation = type_hints.get(name, Any)
+            # TODO warn?
+            annotation = Any
         else:
             annotation = type_hints[name]
 
