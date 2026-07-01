@@ -1406,6 +1406,59 @@ Fix the errors and try again.\
             )
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_failed_tool_call_emits_execute_tool_span(
+    get_logfire_summary: Callable[[], LogfireSummary], include_content: bool
+) -> None:
+    """A tool call that fails argument validation (or names an unknown tool) still emits an
+    `execute_tool` span, marked ERROR, just like a call that fails during execution."""
+
+    def call_failing_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('add', {'x': 'not-an-int', 'y': 2}),  # fails schema validation
+                    ToolCallPart('does_not_exist', {}),  # hallucinated tool name
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    my_agent = Agent(
+        model=FunctionModel(call_failing_tools),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content))],
+    )
+
+    @my_agent.tool_plain
+    def add(x: int, y: int) -> int:
+        return x + y
+
+    my_agent.run_sync('go')
+
+    summary = get_logfire_summary()
+    tool_spans = {
+        attrs['gen_ai.tool.name']: attrs
+        for attrs in summary.attributes.values()
+        if attrs.get('gen_ai.operation.name') == 'execute_tool'
+    }
+
+    # Both the bad-args call and the unknown-tool call produce an ERROR-level execute_tool span
+    # (logfire.level_num 17 == error), even though neither tool body ran.
+    assert set(tool_spans) == {'add', 'does_not_exist'}
+    assert tool_spans['add']['logfire.level_num'] == 17
+    assert tool_spans['does_not_exist']['logfire.level_num'] == 17
+
+    if include_content:
+        # The retry prompt the model will see is recorded as the tool result.
+        assert 'validation error' in tool_spans['add']['gen_ai.tool.call.result']
+        assert 'Fix the errors and try again.' in tool_spans['add']['gen_ai.tool.call.result']
+        assert 'Unknown tool name' in tool_spans['does_not_exist']['gen_ai.tool.call.result']
+    else:
+        # Content is excluded, so the result/args are never recorded on the span.
+        assert 'gen_ai.tool.call.result' not in tool_spans['add']
+        assert 'gen_ai.tool.call.arguments' not in tool_spans['add']
+
+
 class WeatherInfo(BaseModel):
     temperature: float
     description: str
