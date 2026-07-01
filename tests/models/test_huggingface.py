@@ -1041,6 +1041,62 @@ async def test_unsupported_media_types_in_tool_return(
         await agent.run('continue', message_history=messages)
 
 
+async def test_image_tool_return_is_forwarded_as_user_message(allow_model_requests: None):
+    tool_call = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type: ignore
+        {
+            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type: ignore
+                {'name': 'get_image', 'arguments': '{}'}
+            ),
+            'id': 'call_1',
+            'type': 'function',
+        }
+    )
+    responses = [
+        completion_message(
+            ChatCompletionOutputMessage.parse_obj_as_instance(  # type: ignore
+                {'content': None, 'role': 'assistant', 'tool_calls': [tool_call]}
+            )
+        ),
+        completion_message(ChatCompletionOutputMessage(content='done', role='assistant')),
+    ]
+    mock_client = MockHuggingFace.create_mock(responses)
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_image() -> ImageUrl:
+        return ImageUrl(url='https://example.com/image.png')
+
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[1]
+    sent_messages = kwargs['messages']
+    assert [{k: v for k, v in asdict(message).items() if v is not None} for message in sent_messages] == snapshot(
+        [
+            {'role': 'user', 'content': 'hello'},
+            {
+                'role': 'assistant',
+                'tool_calls': [
+                    {
+                        'function': {'name': 'get_image', 'parameters': None, 'description': None},
+                        'id': 'call_1',
+                        'type': 'function',
+                    }
+                ],
+            },
+            {'role': 'tool', 'content': 'See file 01a7df.', 'tool_call_id': 'call_1'},
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df:'},
+                    {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
+                ],
+            },
+        ]
+    )
+
+
 @pytest.mark.vcr()
 async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
