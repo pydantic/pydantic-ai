@@ -3,19 +3,18 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast, overload
+from functools import cached_property
+from typing import Any, Literal, cast, get_args, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
-from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
@@ -50,6 +49,7 @@ from ..native_tools import (
     WebFetchTool,
     WebSearchTool,
 )
+from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
 from ..profiles.google import GoogleModelProfile
 from ..providers import Provider, infer_provider
@@ -177,10 +177,10 @@ _FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
-_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = _utils.get_args(_GOOGLE_IMAGE_SIZE)
+_GOOGLE_IMAGE_SIZES: tuple[_GOOGLE_IMAGE_SIZE, ...] = get_args(_GOOGLE_IMAGE_SIZE)
 
 _GOOGLE_IMAGE_OUTPUT_FORMAT = Literal['png', 'jpeg', 'webp']
-_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = _utils.get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
+_GOOGLE_IMAGE_OUTPUT_FORMATS: tuple[_GOOGLE_IMAGE_OUTPUT_FORMAT, ...] = get_args(_GOOGLE_IMAGE_OUTPUT_FORMAT)
 
 
 # Accept both the current name (`google-cloud` / `google`) and the pre-v2 names
@@ -213,28 +213,6 @@ Controls Google Cloud HTTP headers for [Provisioned Throughput](https://cloud.go
 - `'priority_only'`: [Priority PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/priority-paygo) only (`X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: priority`). Bypasses PT.
 
 Not every model or region supports every value; see the linked Google docs.
-"""
-
-GoogleVertexServiceTier = GoogleCloudServiceTier
-"""Deprecated alias for [`GoogleCloudServiceTier`][pydantic_ai.models.google.GoogleCloudServiceTier].
-
-Use `GoogleCloudServiceTier` instead — Google Cloud is the new name for the platform formerly
-known as Vertex AI.
-"""
-
-GoogleServiceTier = Literal[
-    'pt_then_on_demand',
-    'pt_only',
-    'pt_then_flex',
-    'pt_then_priority',
-    'on_demand',
-    'flex_only',
-    'priority_only',
-]
-"""Deprecated alias for service tier values.
-
-Use [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] for Gemini API (GLA)
-or [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier] for Google Cloud.
 """
 
 
@@ -313,27 +291,6 @@ class GoogleModelSettings(ModelSettings, total=False):
     headers sent, and links to Google docs.
     """
 
-    google_vertex_service_tier: GoogleCloudServiceTier
-    """Deprecated: use `google_cloud_service_tier`. Will be removed in v2."""
-
-    google_service_tier: GoogleServiceTier
-    """Deprecated: use `service_tier` for Gemini API (GLA) or `google_cloud_service_tier` for Google Cloud."""
-
-
-def _get_deprecated_google_service_tier(model_settings: GoogleModelSettings) -> GoogleServiceTier | None:
-    """Return `google_service_tier`, emitting a `DeprecationWarning` when it is set."""
-    if (deprecated := model_settings.get('google_service_tier')) is not None:
-        # stacklevel=2 points at the resolver (caller of this helper); the warning text already
-        # names the field so users can identify the source from the message itself.
-        warnings.warn(
-            '`google_service_tier` is deprecated; use `google_cloud_service_tier` for Google Cloud '
-            'or the top-level `service_tier` for the Gemini API (GLA).',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return deprecated
-    return None
-
 
 def _warn_on_cached_content_strips(
     cached_content: str | None,
@@ -360,23 +317,6 @@ def _warn_on_cached_content_strips(
         )
 
 
-def _get_deprecated_google_vertex_service_tier(model_settings: GoogleModelSettings) -> GoogleCloudServiceTier | None:
-    """Return `google_vertex_service_tier`, emitting a `PydanticAIDeprecationWarning` when it is set.
-
-    Google retired the "Vertex AI" brand for "Google Cloud"; the field is renamed accordingly. The old
-    key keeps working in 1.x but warns; v2 will drop it.
-    """
-    if (deprecated := model_settings.get('google_vertex_service_tier')) is not None:
-        warnings.warn(
-            '`google_vertex_service_tier` is deprecated; use `google_cloud_service_tier` instead. '
-            'Google Cloud is the new name for the platform formerly known as Vertex AI.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return deprecated
-    return None
-
-
 _GlaServiceTier = Literal['standard', 'flex', 'priority']
 _TOP_LEVEL_TO_GLA_SERVICE_TIER: dict[ServiceTier, _GlaServiceTier] = {
     'default': 'standard',
@@ -388,12 +328,9 @@ _TOP_LEVEL_TO_GLA_SERVICE_TIER: dict[ServiceTier, _GlaServiceTier] = {
 def _resolve_gla_service_tier(model_settings: GoogleModelSettings) -> _GlaServiceTier | None:
     """Resolve the value to send as `service_tier` on a Gemini API (GLA) request.
 
-    The deprecated `google_service_tier` only covers Vertex-shaped values, so on GLA we
-    ignore it (after triggering the warning) and map the top-level `service_tier`
-    (`'default'` → `'standard'`, `'flex'`/`'priority'` pass through, `'auto'` is dropped
-    so the server picks the default).
+    Maps the top-level `service_tier` (`'default'` → `'standard'`, `'flex'`/`'priority'`
+    pass through, `'auto'` is dropped so the server picks the default).
     """
-    _get_deprecated_google_service_tier(model_settings)
     if unified := model_settings.get('service_tier'):
         return _TOP_LEVEL_TO_GLA_SERVICE_TIER.get(unified)
     return None
@@ -414,17 +351,12 @@ _TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER: dict[ServiceTier, GoogleCloudServiceTie
 def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> GoogleCloudServiceTier:
     """Resolve the Google Cloud tier to use for this request.
 
-    Per-provider `google_cloud_service_tier` wins, then the deprecated `google_vertex_service_tier`
-    (with warning), then the deprecated `google_service_tier` (with warning), then the top-level
-    `service_tier` mapped via [`_TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER`][]. Defaults to
-    `'pt_then_on_demand'` so Google Cloud's built-in PT-with-spillover behavior is the baseline.
+    Per-provider `google_cloud_service_tier` wins, then the top-level `service_tier` mapped via
+    [`_TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER`][]. Defaults to `'pt_then_on_demand'` so Google
+    Cloud's built-in PT-with-spillover behavior is the baseline.
     """
     if tier := model_settings.get('google_cloud_service_tier'):
         return tier
-    if vertex_tier := _get_deprecated_google_vertex_service_tier(model_settings):
-        return vertex_tier
-    if deprecated := _get_deprecated_google_service_tier(model_settings):
-        return deprecated
     if top_level := model_settings.get('service_tier'):
         return _TOP_LEVEL_TO_GOOGLE_CLOUD_SERVICE_TIER[top_level]
     return 'pt_then_on_demand'
@@ -492,7 +424,7 @@ class GoogleModel(Model[Client]):
             provider = infer_provider('gateway/google-cloud' if provider == 'gateway' else provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> Client:
@@ -520,9 +452,9 @@ class GoogleModel(Model[Client]):
             return _GEMINI_API_PROVIDER_NAMES
         return frozenset({self.system})  # pragma: no cover
 
-    @property
-    def _resolved_profile(self) -> GoogleModelProfile:
-        return GoogleModelProfile.from_profile(self.profile)
+    @cached_property
+    def profile(self) -> GoogleModelProfile:
+        return cast(GoogleModelProfile, super().profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -539,7 +471,7 @@ class GoogleModel(Model[Client]):
         if (
             user_native_tools
             and model_request_parameters.output_tools
-            and not self._resolved_profile.google_supports_tool_combination
+            and not self.profile.get('google_supports_tool_combination', False)
         ):
             # Pre-Gemini-3 models reject `output_tools + native_tools` together. Force prompted
             # output (the only mode that doesn't add a tool to the request); raise if the caller
@@ -592,7 +524,11 @@ class GoogleModel(Model[Client]):
         )
         if self._provider.name not in _GEMINI_API_PROVIDER_NAMES:
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
-            config.update(  # pragma: lax no cover
+            # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
+            # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
+            # `AnthropicModel.count_tokens`, which strips native tools because Anthropic's endpoint rejects them (#5704);
+            # don't copy that strip here.
+            config.update(
                 system_instruction=generation_config.get('system_instruction'),
                 tools=cast(list[ToolDict], generation_config.get('tools')),
                 # Annoyingly, GenerationConfigDict has fewer fields than GenerateContentConfigDict, and no extra fields are allowed.
@@ -632,7 +568,7 @@ class GoogleModel(Model[Client]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
@@ -700,7 +636,9 @@ class GoogleModel(Model[Client]):
         tools: list[ToolDict] = []
         image_config: ImageConfigDict | None = None
         if model_request_parameters.native_tools:
-            if model_request_parameters.function_tools and not self._resolved_profile.google_supports_tool_combination:
+            if model_request_parameters.function_tools and not self.profile.get(
+                'google_supports_tool_combination', False
+            ):
                 raise UserError('This model does not support function tools and built-in tools at the same time.')
 
             for tool in model_request_parameters.native_tools:
@@ -714,7 +652,7 @@ class GoogleModel(Model[Client]):
                     file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
                     tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
-                    if not self.profile.supports_image_output:
+                    if not self.profile.get('supports_image_output', False):
                         raise UserError(
                             "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
                         )
@@ -760,19 +698,27 @@ class GoogleModel(Model[Client]):
         else:
             tool_choice_mode = resolved_tool_choice
 
-        function_calling_config: FunctionCallingConfigDict = {'mode': function_calling_config_modes[tool_choice_mode]}
-        if allowed_function_names:
-            function_calling_config['allowed_function_names'] = allowed_function_names
-        tool_config = ToolConfigDict(function_calling_config=function_calling_config)
+        tool_config = ToolConfigDict()
+        # A `function_calling_config` only governs function tools. Gemini rejects one that has no
+        # `function_declarations` to apply to ('Function calling config is set without function_declarations'),
+        # which happens when only native tools (e.g. web search) are configured, so only set it when there
+        # are function tools.
+        if tool_defs:
+            function_calling_config: FunctionCallingConfigDict = {
+                'mode': function_calling_config_modes[tool_choice_mode]
+            }
+            if allowed_function_names:
+                function_calling_config['allowed_function_names'] = allowed_function_names
+            tool_config['function_calling_config'] = function_calling_config
 
-        # `include_server_side_tool_invocations` makes Gemini emit explicit `tool_call`/`tool_response`
-        # parts for WebSearchTool, WebFetchTool, FileSearchTool. Pre-Gemini-3 models reject the field
-        # ('Tool call context circulation is not enabled'); CodeExecutionTool uses its own
-        # `executable_code`/`code_execution_result` parts; ImageGenerationTool runs through `image_config`.
+        # `include_server_side_tool_invocations` is required on Gemini 3+ when any built-in (server-side)
+        # tool is combined with function calling; pre-Gemini-3 models reject the field ('Tool call context
+        # circulation is not enabled'). ImageGenerationTool runs through `image_config` and is excluded.
         emits_tool_call_invocations = any(
-            isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool)) for t in model_request_parameters.native_tools
+            isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool, CodeExecutionTool))
+            for t in model_request_parameters.native_tools
         )
-        if emits_tool_call_invocations and self._resolved_profile.google_supports_server_side_tool_invocations:
+        if emits_tool_call_invocations and self.profile.get('google_supports_server_side_tool_invocations', False):
             tool_config['include_server_side_tool_invocations'] = True
 
         tools: list[ToolDict] = [
@@ -784,7 +730,7 @@ class GoogleModel(Model[Client]):
         if not tools:
             return None, None, image_config
 
-        return tools, tool_config, image_config
+        return tools, tool_config or None, image_config
 
     @overload
     async def _generate_content(
@@ -839,14 +785,12 @@ class GoogleModel(Model[Client]):
         thinking = model_request_parameters.thinking
         if thinking is None:
             return None
-        # Don't use `self._resolved_profile`: `tests/test_thinking.py` invokes this as an
-        # unbound method with a `FunctionModel` carrying a `GoogleModelProfile`.
-        profile = GoogleModelProfile.from_profile(self.profile)
+        profile = self.profile
         if thinking is False:
-            if profile.google_supports_thinking_level:
+            if profile.get('google_supports_thinking_level', False):
                 return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
             return ThinkingConfigDict(thinking_budget=0)
-        if profile.google_supports_thinking_level:
+        if profile.get('google_supports_thinking_level', False):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             level_map: dict[ThinkingEffort, str] = {
@@ -876,7 +820,7 @@ class GoogleModel(Model[Client]):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools, tool_config, image_config = self._get_tool_config(model_request_parameters, model_settings)
-        if model_request_parameters.function_tools and not self.profile.supports_tools:
+        if model_request_parameters.function_tools and not self.profile.get('supports_tools', True):
             raise UserError('Tools are not supported by this model.')
 
         # `google_cached_content` will strip `tools` (and `tool_config` / `system_instruction`)
@@ -888,7 +832,9 @@ class GoogleModel(Model[Client]):
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
-            if model_request_parameters.function_tools and not self._resolved_profile.google_supports_tool_combination:
+            if model_request_parameters.function_tools and not self.profile.get(
+                'google_supports_tool_combination', False
+            ):
                 raise UserError(
                     'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
                 )
@@ -897,13 +843,13 @@ class GoogleModel(Model[Client]):
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
         elif model_request_parameters.output_mode == 'prompted' and not effective_tools:
-            if not self.profile.supports_json_object_output:
+            if not self.profile.get('supports_json_object_output', False):
                 raise UserError('JSON output is not supported by this model.')
             response_mime_type = 'application/json'
         system_instruction, contents = await self._map_messages(messages, model_request_parameters)
 
         modalities: list[str] = [Modality.TEXT.value]
-        if self.profile.supports_image_output:
+        if self.profile.get('supports_image_output', False):
             modalities.append(Modality.IMAGE.value)
             if not model_request_parameters.allow_text_output:
                 modalities.remove(Modality.TEXT.value)
@@ -968,41 +914,41 @@ class GoogleModel(Model[Client]):
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         candidate = response.candidates[0] if response.candidates else None
 
-        vendor_id = response.response_id
+        provider_response_id = response.response_id
         finish_reason: FinishReason | None = None
-        vendor_details: dict[str, Any] = {}
+        provider_details: dict[str, Any] = {}
 
         raw_finish_reason = candidate.finish_reason if candidate else None
         if raw_finish_reason and candidate:  # pragma: no branch
-            vendor_details = {'finish_reason': raw_finish_reason.value}
+            provider_details = {'finish_reason': raw_finish_reason.value}
             # Add safety ratings to provider details
             if candidate.safety_ratings:
-                vendor_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
+                provider_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
             block_reason = response.prompt_feedback.block_reason
-            vendor_details['block_reason'] = block_reason.value
+            provider_details['block_reason'] = block_reason.value
             if response.prompt_feedback.block_reason_message:
-                vendor_details['block_reason_message'] = response.prompt_feedback.block_reason_message
+                provider_details['block_reason_message'] = response.prompt_feedback.block_reason_message
             if response.prompt_feedback.safety_ratings:
-                vendor_details['safety_ratings'] = [
+                provider_details['safety_ratings'] = [
                     r.model_dump(by_alias=True) for r in response.prompt_feedback.safety_ratings
                 ]
             finish_reason = 'content_filter'
 
         if response.create_time is not None:  # pragma: no branch
-            vendor_details['timestamp'] = response.create_time
+            provider_details['timestamp'] = response.create_time
 
         if (
             response.sdk_http_response
             and response.sdk_http_response.headers
             and (service_tier := response.sdk_http_response.headers.get('x-gemini-service-tier'))
         ):
-            vendor_details['service_tier'] = service_tier.lower()
+            provider_details['service_tier'] = service_tier.lower()
 
         # Add traffic_type to provider_details for Flex PayGo verification
         if response.usage_metadata and response.usage_metadata.traffic_type:
-            vendor_details['traffic_type'] = response.usage_metadata.traffic_type.value
+            provider_details['traffic_type'] = response.usage_metadata.traffic_type.value
 
         if candidate is None or candidate.content is None or candidate.content.parts is None:
             parts = []
@@ -1010,8 +956,8 @@ class GoogleModel(Model[Client]):
             parts = candidate.content.parts or []
 
         if candidate and (logprob_results := candidate.logprobs_result):
-            vendor_details['logprobs'] = logprob_results.model_dump(mode='json')
-            vendor_details['avg_logprobs'] = candidate.avg_logprobs
+            provider_details['logprobs'] = logprob_results.model_dump(mode='json')
+            provider_details['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
         grounding_metadata = candidate.grounding_metadata if candidate else None
@@ -1024,8 +970,8 @@ class GoogleModel(Model[Client]):
             self._provider.name,
             self._provider.base_url,
             usage,
-            vendor_id=vendor_id,
-            vendor_details=vendor_details or None,
+            provider_response_id=provider_response_id,
+            provider_details=provider_details or None,
             finish_reason=finish_reason,
             url_context_metadata=url_context_metadata,
         )
@@ -1055,7 +1001,7 @@ class GoogleModel(Model[Client]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
-        supports_tool_combination = self._resolved_profile.google_supports_tool_combination
+        supports_tool_combination = self.profile.get('google_supports_tool_combination', False)
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -1137,7 +1083,7 @@ class GoogleModel(Model[Client]):
         parts after the function_response (fallback strategy).
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
-        supported_mime_types = self._resolved_profile.google_supported_mime_types_in_tool_returns
+        supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
 
         function_response_parts: list[FunctionResponsePartDict] = []
         fallback_parts: list[PartDict] = []
@@ -1310,7 +1256,7 @@ class GeminiStreamedResponse(StreamedResponse):
             self.provider_details = {'timestamp': self._provider_timestamp}
         try:
             async for chunk in self._response:
-                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url)
+                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
 
                 if (
                     chunk.sdk_http_response
@@ -1813,8 +1759,8 @@ def _process_response_from_parts(
     provider_name: str,
     provider_url: str,
     usage: usage.RequestUsage,
-    vendor_id: str | None,
-    vendor_details: dict[str, Any] | None = None,
+    provider_response_id: str | None,
+    provider_details: dict[str, Any] | None = None,
     finish_reason: FinishReason | None = None,
     url_context_metadata: UrlContextMetadata | None = None,
 ) -> ModelResponse:
@@ -1846,8 +1792,8 @@ def _process_response_from_parts(
         parts=items,
         model_name=model_name,
         usage=usage,
-        provider_response_id=vendor_id,
-        provider_details=vendor_details,
+        provider_response_id=provider_response_id,
+        provider_details=provider_details,
         provider_name=provider_name,
         provider_url=provider_url,
         finish_reason=finish_reason,
@@ -1878,10 +1824,15 @@ def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclaration
     return f
 
 
-def _metadata_as_usage(response: GenerateContentResponse, provider: str, provider_url: str) -> usage.RequestUsage:
+def _metadata_as_usage(
+    response: GenerateContentResponse,
+    provider: str,
+    provider_url: str,
+    existing_usage: usage.RequestUsage | None = None,
+) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
-        return usage.RequestUsage()
+        return existing_usage or usage.RequestUsage()
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
@@ -1906,13 +1857,36 @@ def _metadata_as_usage(response: GenerateContentResponse, provider: str, provide
                 continue
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
 
-    return usage.RequestUsage.extract(
+    # Gemini streams usage as cumulative snapshots, but a field reported on an earlier chunk can be
+    # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see #5205).
+    # Merge with the usage accumulated so far so those values survive instead of being overwritten with 0.
+    if existing_usage:
+        details = {**existing_usage.details, **details}
+
+    new_usage = usage.RequestUsage.extract(
         response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='google',
         details=details,
     )
+
+    # `extract` derives the typed token fields from the raw `usage_metadata`, not from the merged
+    # `details`, so a field a later cumulative chunk dropped stays zeroed; backfill it from the usage
+    # so far. A later-chunk 0 means "dropped", safe only because Gemini usage_metadata is cumulative/
+    # monotonic (a real 0 never overwrites a prior non-zero). Unlike Anthropic's `_map_usage`, we can't
+    # re-extract from the merged `details`: Google's genai-prices mapping reads the raw API keys, not
+    # the keys stored in `details`, so `details` alone can't reconstruct the typed fields here.
+    if existing_usage:
+        new_usage.input_tokens = new_usage.input_tokens or existing_usage.input_tokens
+        new_usage.cache_write_tokens = new_usage.cache_write_tokens or existing_usage.cache_write_tokens
+        new_usage.cache_read_tokens = new_usage.cache_read_tokens or existing_usage.cache_read_tokens
+        new_usage.output_tokens = new_usage.output_tokens or existing_usage.output_tokens
+        new_usage.input_audio_tokens = new_usage.input_audio_tokens or existing_usage.input_audio_tokens
+        new_usage.cache_audio_read_tokens = new_usage.cache_audio_read_tokens or existing_usage.cache_audio_read_tokens
+        new_usage.output_audio_tokens = new_usage.output_audio_tokens or existing_usage.output_audio_tokens
+
+    return new_usage
 
 
 def _map_executable_code(executable_code: ExecutableCode, provider_name: str, tool_call_id: str) -> NativeToolCallPart:

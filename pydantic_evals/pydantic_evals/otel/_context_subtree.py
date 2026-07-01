@@ -12,7 +12,7 @@ except ImportError as e:  # pragma: lax no cover
     _IMPORT_ERROR = e
 
     @contextmanager
-    def context_subtree() -> typing.Iterator[SpanTree | SpanTreeRecordingError]:
+    def context_subtree() -> typing.Generator[SpanTree | SpanTreeRecordingError]:
         """See the docstring for `pydantic_evals.otel._context_in_memory_span_exporter.context_subtree` for more detail.
 
         This is the fallback implementation that is used if you don't have opentelemetry installed.

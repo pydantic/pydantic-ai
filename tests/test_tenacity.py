@@ -651,26 +651,27 @@ class TestIntegration:
             if response.status_code == 429:
                 raise httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
+        sleep_calls: list[float] = []
+
+        def sleep(seconds: int | float) -> None:
+            sleep_calls.append(float(seconds))
+
         config = RetryConfig(
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             wait=wait_retry_after(max_wait=0.1),  # Cap at 0.1 seconds for tests
             stop=stop_after_attempt(3),
+            sleep=sleep,
             reraise=True,
         )
         transport = TenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
 
-        # Time the request to ensure max_wait was respected
-        start_time = time.time()
         result = transport.handle_request(request)
-        end_time = time.time()
 
         assert result is mock_response_success
         assert mock_transport.handle_request.call_count == 2
-        # Should have waited at least max_wait (0.1s), with generous upper bound for CI load
-        duration = end_time - start_time
-        assert 0.05 <= duration <= 2.0
+        assert sleep_calls == [0.1]
 
 
 class TestConnectionPool:

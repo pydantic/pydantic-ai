@@ -11,7 +11,7 @@ from pydantic_ai.providers import Provider
 
 try:
     from xai_sdk import AsyncClient
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `xai-sdk` package to use the xAI provider, '
         'you can use the `xai` optional group — `pip install "pydantic-ai-slim[xai]"`'
@@ -56,6 +56,8 @@ class XaiProvider(Provider[AsyncClient]):
 
     @property
     def base_url(self) -> str:
+        # Canonical pricing/identity label, not the transport host: the xAI SDK is gRPC and the actual
+        # channel target is set via `api_host`. This URL is used for usage/price lookup and telemetry only.
         return 'https://api.x.ai/v1'
 
     @property
@@ -69,10 +71,9 @@ class XaiProvider(Provider[AsyncClient]):
         return grok_model_profile(model_name)
 
     @overload
-    def __init__(self) -> None: ...
-
-    @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(
+        self, *, api_key: str | None = None, api_host: str | None = None, timeout: float | None = None
+    ) -> None: ...
 
     @overload
     def __init__(self, *, xai_client: AsyncClient) -> None: ...
@@ -81,6 +82,8 @@ class XaiProvider(Provider[AsyncClient]):
         self,
         *,
         api_key: str | None = None,
+        api_host: str | None = None,
+        timeout: float | None = None,
         xai_client: AsyncClient | None = None,
     ) -> None:
         """Create a new xAI provider.
@@ -88,7 +91,12 @@ class XaiProvider(Provider[AsyncClient]):
         Args:
             api_key: The API key to use for authentication, if not provided, the `XAI_API_KEY` environment variable
                 will be used if available.
-            xai_client: An existing `xai_sdk.AsyncClient` to use.  This takes precedence over `api_key`.
+            api_host: The API host to use for the xAI SDK client.
+            timeout: The client-level default timeout for the xAI SDK client, in seconds, applied to all requests
+                made through it. This is distinct from `ModelSettings.timeout`, which overrides the timeout for an
+                individual request.
+            xai_client: An existing `xai_sdk.AsyncClient` to use. This takes precedence over `api_key`, `api_host`,
+                and `timeout`.
         """
         self._lazy_client: _LazyAsyncClient | None = None
         if xai_client is not None:
@@ -100,5 +108,10 @@ class XaiProvider(Provider[AsyncClient]):
                     'Set the `XAI_API_KEY` environment variable or pass it via `XaiProvider(api_key=...)`'
                     ' to use the xAI provider.'
                 )
-            self._lazy_client = _LazyAsyncClient(api_key=api_key)
+            client_kwargs: dict[str, str | float] = {'api_key': api_key}
+            if api_host is not None:
+                client_kwargs['api_host'] = api_host
+            if timeout is not None:
+                client_kwargs['timeout'] = timeout
+            self._lazy_client = _LazyAsyncClient(**client_kwargs)
             self._client = None  # type: ignore[assignment]

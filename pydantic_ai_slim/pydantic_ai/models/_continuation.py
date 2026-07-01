@@ -28,6 +28,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from .._run_context import RunContext
 from ..exceptions import UnexpectedModelBehavior
 from ..messages import (
     FinalResultEvent,
@@ -38,8 +39,9 @@ from ..messages import (
     PartEndEvent,
     PartStartEvent,
 )
+from ..settings import ModelSettings
 from ..usage import RequestUsage
-from . import Model, ModelSettings, RunContext, StreamedResponse
+from . import Model, StreamedResponse
 
 __all__ = ['MAX_CONTINUATIONS', 'MergeMode', 'merge_mode', 'merge_responses', '_ContinuationStreamedResponse']
 
@@ -147,8 +149,10 @@ class _ContinuationStreamedResponse(StreamedResponse):
     ) -> AsyncIterator[ModelResponseStreamEvent]:
         # Mirror `StreamedResponse.__aiter__`'s cancel-guard: suppress transport
         # errors caused by `cancel()` tearing down an in-flight sub-stream, and only
-        # flip `_finished` on a natural `StopAsyncIteration` so an early `break`/
-        # `aclose()`/in-flight error leaves `get()` reporting `'incomplete'`.
+        # flip `_finished` on a natural `StopAsyncIteration` of a stream that wasn't
+        # cancelled, so an early `break`/`aclose()`/in-flight error — or a `cancel()`
+        # that still drains to completion — leaves `get()` reporting `'incomplete'`/
+        # `'interrupted'` rather than `'complete'`.
         try:
             async for event in iterator:
                 yield event
@@ -156,7 +160,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
             if not self.cancelled:
                 raise
         else:
-            self._finished = True
+            if not self._cancelled:
+                self._finished = True
 
     async def _get_event_iterator(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:
         iteration = 0
@@ -247,7 +252,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
         return merged
 
     @property
-    def usage(self) -> RequestUsage:  # type: ignore[override]
+    def usage(self) -> RequestUsage:
         """Live usage across all segments so far, including the in-flight sub-stream.
 
         The composite's `_usage` is only refreshed when a segment completes, so — unlike a
@@ -260,10 +265,10 @@ class _ContinuationStreamedResponse(StreamedResponse):
 
     def get(self) -> ModelResponse:
         """Build the live merged [`ModelResponse`][pydantic_ai.messages.ModelResponse] across all segments so far."""
-        if self._cancelled:
-            state: Literal['complete', 'incomplete', 'interrupted'] = 'interrupted'
-        elif self._finished:
-            state = 'complete'
+        if self._finished:
+            state: Literal['complete', 'incomplete', 'interrupted'] = 'complete'
+        elif self._cancelled:
+            state = 'interrupted'
         else:
             state = 'incomplete'
 

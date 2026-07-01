@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -48,14 +48,11 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
-from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, openai_model_profile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
@@ -97,12 +94,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 
@@ -116,7 +107,7 @@ async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: 
 
 
 @asynccontextmanager
-async def _openai_conversation(openai_api_key: str) -> AsyncIterator[tuple['AsyncOpenAI', str]]:
+async def _openai_conversation(openai_api_key: str) -> AsyncGenerator[tuple['AsyncOpenAI', str]]:
     async with AsyncOpenAI(api_key=openai_api_key) as async_client:
         conversation = await async_client.conversations.create()
         try:
@@ -730,7 +721,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 
     settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
 
-    events = [event async for event in agent.run_stream_events(prompt, model_settings=settings)]
+    async with agent.run_stream_events(prompt, model_settings=settings) as event_stream:
+        events = [event async for event in event_stream]
     annotation_event = next(
         event
         for event in events
@@ -755,7 +747,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
 
     model2 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
-    events2 = [event async for event in agent2.run_stream_events(prompt)]
+    async with agent2.run_stream_events(prompt) as event_stream2:
+        events2 = [event async for event in event_stream2]
     assert not any(
         (
             isinstance(event, PartDeltaEvent)
@@ -775,7 +768,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     model3 = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key=openai_api_key))
     agent3 = Agent(model3, instructions='Answer directly.')
     settings3 = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
-    events3 = [event async for event in agent3.run_stream_events('What is 2+2?', model_settings=settings3)]
+    async with agent3.run_stream_events('What is 2+2?', model_settings=settings3) as event_stream3:
+        events3 = [event async for event in event_stream3]
     assert not any(
         (
             isinstance(event, PartDeltaEvent)
@@ -1837,24 +1831,6 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'weather: San Francisco, CA', 'type': 'search'},
-                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content={'sources': [{'type': 'api', 'name': 'oai-weather'}], 'status': 'completed'},
-                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -1958,7 +1934,9 @@ def test_model_profile_strict_not_supported():
     m = OpenAIResponsesModel(
         'gpt-4o',
         provider=OpenAIProvider(api_key='foobar'),
-        profile=replace(openai_model_profile('gpt-4o'), openai_supports_strict_tool_definition=False),
+        profile=merge_profile(
+            openai_model_profile('gpt-4o'), OpenAIModelProfile(openai_supports_strict_tool_definition=False)
+        ),
     )
     tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
@@ -5537,57 +5515,6 @@ I\
                     provider_name='openai',
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n = pow(123456, 123)\\nlen(str(n))"}',
-                    tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"str(n)[:100], str(n)[-100:]"}',
-                    tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args='{"container_id":"cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e","code":"n"}',
-                    tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed'},
-                    tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -7475,23 +7402,6 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     content=IsStr(), id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args="{\"container_id\":\"cntr_68dd936a4cfc81908bdd4f2a2f542b5c0a0e691ad2bfd833\",\"code\":\"import numpy as np\\r\\nimport matplotlib.pyplot as plt\\r\\n\\r\\n# Data\\r\\nx = np.linspace(-5, 5, 1001)\\r\\ny = x**2\\r\\n\\r\\n# Plot\\r\\nfig, ax = plt.subplots(figsize=(6, 4))\\r\\nax.plot(x, y, label='y = x^2', color='#1f77b4')\\r\\nxi = np.arange(-5, 6)\\r\\nyi = xi**2\\r\\nax.scatter(xi, yi, color='#d62728', s=30, zorder=3, label='integer points')\\r\\n\\r\\nax.set_xlabel('x')\\r\\nax.set_ylabel('y')\\r\\nax.set_title('Parabola y = x^2 for x in [-5, 5]')\\r\\nax.grid(True, alpha=0.3)\\r\\nax.set_xlim(-5, 5)\\r\\nax.set_ylim(0, 26)\\r\\nax.legend()\\r\\n\\r\\nplt.tight_layout()\\r\\n\\r\\n# Save image\\r\\nout_path = '/mnt/data/y_eq_x_squared_plot.png'\\r\\nfig.savefig(out_path, dpi=200)\\r\\n\\r\\nout_path\"}",
-                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'status': 'completed', 'logs': ["'/mnt/data/y_eq_x_squared_plot.png'"]},
-                    tool_call_id='ci_06c1a26fd89d07f20068dd937636948197b6c45865da36d8f7',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
-            ),
         ]
     )
 
@@ -7798,28 +7708,6 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     provider_name='openai',
                 ),
                 previous_part_kind='file',
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='image_generation',
-                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
-                    provider_name='openai',
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='image_generation',
-                    content={
-                        'status': 'completed',
-                        'background': 'opaque',
-                        'quality': 'high',
-                        'size': '1024x1536',
-                        'revised_prompt': IsStr(),
-                    },
-                    tool_call_id='ig_00d13c4dbac420df0068dd91af3070819f86da82a11b9239c2',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                )
             ),
         ]
     )
@@ -9430,6 +9318,365 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
     )
 
 
+async def test_openai_responses_model_mcp_list_tools_stream_backfills_missing_results(
+    allow_model_requests: None, openai_api_key: str
+):
+    """With multiple MCP servers, OpenAI Responses streaming only emits `output_item.done` for the
+
+    last `mcp_list_tools` item; the earlier items' results arrive only in the final
+    `response.completed` payload. Verify every server's discovery call gets a result part during
+    streaming (the earlier ones backfilled from `response.completed`), with no duplicate for the
+    last item that appears in both `output_item.done` and `response.completed`. See #5419.
+    """
+    m = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        capabilities=[
+            NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')),
+            NativeTool(MCPServerTool(id='microsoft_learn', url='https://learn.microsoft.com/api/mcp')),
+            NativeTool(MCPServerTool(id='gitmcp', url='https://gitmcp.io/pydantic/pydantic-ai')),
+        ],
+    )
+
+    streamed_list_tools_results: list[NativeToolReturnPart] = []
+    async with agent.iter(
+        user_prompt='List the names of the tools available from each connected MCP server, then stop. Do not call any tools.'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        if (
+                            isinstance(event, PartStartEvent)
+                            and isinstance(event.part, NativeToolReturnPart)
+                            and event.part.tool_call_id.startswith('mcpl_')
+                        ):
+                            streamed_list_tools_results.append(event.part)
+
+    assert agent_run.result is not None
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='List the names of the tools available from each connected MCP server, then stop. Do not call any tools.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='mcp_server:deepwiki',
+                        args={'action': 'list_tools'},
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d53c819dbb0f25635141142d',
+                        provider_name='openai',
+                    ),
+                    NativeToolCallPart(
+                        tool_name='mcp_server:microsoft_learn',
+                        args={'action': 'list_tools'},
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d640819d9ec49d5fdfab8a5c',
+                        provider_name='openai',
+                    ),
+                    NativeToolCallPart(
+                        tool_name='mcp_server:gitmcp',
+                        args={'action': 'list_tools'},
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d794819da28402187d7e0600',
+                        provider_name='openai',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='mcp_server:gitmcp',
+                        content={
+                            'tools': [
+                                {
+                                    'input_schema': {'type': 'object'},
+                                    'name': 'fetch_pydantic_ai_documentation',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Fetch entire documentation file from GitHub repository: pydantic/pydantic-ai. Useful for general questions. Always call this tool first if asked about pydantic/pydantic-ai.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'query': {
+                                                'type': 'string',
+                                                'description': 'The search query to find relevant documentation',
+                                            }
+                                        },
+                                        'required': ['query'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
+                                    },
+                                    'name': 'search_pydantic_ai_documentation',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Semantically search within the fetched documentation from GitHub repository: pydantic/pydantic-ai. Useful for specific queries.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'query': {
+                                                'type': 'string',
+                                                'description': 'The search query to find relevant code files',
+                                            },
+                                            'page': {
+                                                'type': 'number',
+                                                'description': 'Page number to retrieve (starting from 1). Each page contains 30 results.',
+                                            },
+                                        },
+                                        'required': ['query'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
+                                    },
+                                    'name': 'search_pydantic_ai_code',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Search for code within the GitHub repository: "pydantic/pydantic-ai" using the GitHub Search API (exact match). Returns matching files for you to query further if relevant.',
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'url': {
+                                                'type': 'string',
+                                                'description': 'The URL of the document or page to fetch',
+                                            }
+                                        },
+                                        'required': ['url'],
+                                        'additionalProperties': False,
+                                        '$schema': 'http://json-schema.org/draft-07/schema#',
+                                    },
+                                    'name': 'fetch_generic_url_content',
+                                    'annotations': {'read_only': False},
+                                    'description': 'Generic tool to fetch content from any absolute URL, respecting robots.txt rules. Use this to retrieve referenced urls (absolute urls) that were mentioned in previously fetched documentation.',
+                                },
+                            ],
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d794819da28402187d7e0600',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content="""\
+Here are the available tools from each connected MCP server:
+
+---
+
+**mcp_deepwiki**
+- read_wiki_structure
+- read_wiki_contents
+- ask_question
+
+---
+
+**mcp_microsoft_learn**
+- microsoft_docs_search
+- microsoft_code_sample_search
+- microsoft_docs_fetch
+
+---
+
+**mcp_gitmcp**
+- fetch_pydantic_ai_documentation
+- search_pydantic_ai_documentation
+- search_pydantic_ai_code
+- fetch_generic_url_content
+
+---\
+""",
+                        id='msg_034c5e93e2fa45ad006a2c2b77483c819dbedc979fa0978d17',
+                        provider_name='openai',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='mcp_server:deepwiki',
+                        content={
+                            'tools': [
+                                {
+                                    'input_schema': {
+                                        'properties': {'repoName': {'type': 'string'}},
+                                        'required': ['repoName'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'read_wiki_structure',
+                                    'annotations': {'read_only': False},
+                                    'description': """\
+Get a list of documentation topics for a GitHub repository.
+
+Args:
+    repoName: GitHub repository in owner/repo format (e.g. "facebook/react")\
+""",
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {'repoName': {'type': 'string'}},
+                                        'required': ['repoName'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'read_wiki_contents',
+                                    'annotations': {'read_only': False},
+                                    'description': """\
+View documentation about a GitHub repository.
+
+Args:
+    repoName: GitHub repository in owner/repo format (e.g. "facebook/react")\
+""",
+                                },
+                                {
+                                    'input_schema': {
+                                        'properties': {
+                                            'repoName': {
+                                                'anyOf': [
+                                                    {'type': 'string'},
+                                                    {'items': {'type': 'string'}, 'type': 'array'},
+                                                ]
+                                            },
+                                            'question': {'type': 'string'},
+                                        },
+                                        'required': ['repoName', 'question'],
+                                        'type': 'object',
+                                    },
+                                    'name': 'ask_question',
+                                    'annotations': {'read_only': False},
+                                    'description': """\
+Ask any question about a GitHub repository and get an AI-powered, context-grounded response.
+
+Args:
+    repoName: GitHub repository or list of repositories (max 10) in owner/repo format
+    question: The question to ask about the repository\
+""",
+                                },
+                            ],
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d53c819dbb0f25635141142d',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='mcp_server:microsoft_learn',
+                        content={
+                            'tools': [
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'query': {
+                                                'description': 'a query or topic about Microsoft/Azure products, services, platforms, developer tools, frameworks, or APIs',
+                                                'type': 'string',
+                                                'default': None,
+                                            }
+                                        },
+                                    },
+                                    'name': 'microsoft_docs_search',
+                                    'annotations': {'read_only': True},
+                                    'description': """\
+Search official Microsoft/Azure documentation to find the most relevant and trustworthy content for a user's query. This tool returns up to 10 high-quality content chunks (each max 500 tokens), extracted from Microsoft Learn and other official sources. Each result includes the article title, URL, and a self-contained content excerpt optimized for fast retrieval and reasoning. Always use this tool to quickly ground your answers in accurate, first-party Microsoft/Azure knowledge.
+
+## Follow-up Pattern
+To ensure completeness, use microsoft_docs_fetch when high-value pages are identified by search. The fetch tool complements search by providing the full detail. This is a required step for comprehensive results.\
+""",
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'query': {
+                                                'description': 'a descriptive query, SDK name, method name or code snippet related to Microsoft/Azure products, services, platforms, developer tools, frameworks, APIs or SDKs',
+                                                'type': 'string',
+                                            },
+                                            'language': {
+                                                'description': 'Optional parameter specifying the programming language of code snippets to retrieve. Can significantly improve search quality if provided. Eligible values: csharp javascript typescript python powershell azurecli al sql java kusto cpp go rust ruby php',
+                                                'type': 'string',
+                                                'default': None,
+                                            },
+                                        },
+                                        'required': ['query'],
+                                    },
+                                    'name': 'microsoft_code_sample_search',
+                                    'annotations': {'read_only': True},
+                                    'description': """\
+Search for code snippets and examples in official Microsoft Learn documentation. This tool retrieves relevant code samples from Microsoft documentation pages providing developers with practical implementation examples and best practices for Microsoft/Azure products and services related coding tasks. This tool will help you use the **LATEST OFFICIAL** code snippets to empower coding capabilities.
+
+## When to Use This Tool
+- When you are going to provide sample Microsoft/Azure related code snippets in your answers.
+- When you are **generating any Microsoft/Azure related code**.
+
+## Usage Pattern
+Input a descriptive query, or SDK/class/method name to retrieve related code samples. The optional parameter `language` can help to filter results.
+
+Eligible values for `language` parameter include: csharp javascript typescript python powershell azurecli al sql java kusto cpp go rust ruby php\
+""",
+                                },
+                                {
+                                    'input_schema': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'url': {
+                                                'description': 'URL of the Microsoft documentation page to read',
+                                                'type': 'string',
+                                            }
+                                        },
+                                        'required': ['url'],
+                                    },
+                                    'name': 'microsoft_docs_fetch',
+                                    'annotations': {'read_only': True},
+                                    'description': """\
+Fetch and convert a Microsoft Learn documentation webpage to markdown format. This tool retrieves the latest complete content of Microsoft documentation webpages including Azure, .NET, Microsoft 365, and other Microsoft technologies.
+
+## When to Use This Tool
+- When search results provide incomplete information or truncated content
+- When you need complete step-by-step procedures or tutorials
+- When you need troubleshooting sections, prerequisites, or detailed explanations
+- When search results reference a specific page that seems highly relevant
+- For comprehensive guides that require full context
+
+## Usage Pattern
+Use this tool AFTER microsoft_docs_search when you identify specific high-value pages that need complete content. The search tool gives you an overview; this tool gives you the complete picture.
+
+## URL Requirements
+- The URL must be a valid HTML documentation webpage from the microsoft.com domain
+- Binary files (PDF, DOCX, images, etc.) are not supported
+
+## Output Format
+markdown with headings, code blocks, tables, and links preserved.\
+""",
+                                },
+                            ],
+                            'error': None,
+                        },
+                        tool_call_id='mcpl_034c5e93e2fa45ad006a2c2b74d640819d9ec49d5fdfab8a5c',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1199, output_tokens=103, details={'reasoning_tokens': 0}),
+                model_name='gpt-4.1-2025-04-14',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                provider_response_id='resp_034c5e93e2fa45ad006a2c2b74c2e4819dafbd93fcd1b49697',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Each server's discovery call produced exactly one result during streaming: the last item via
+    # `output_item.done`, the earlier two backfilled from `response.completed` (and not duplicated).
+    streamed_server_results = [part.tool_name for part in streamed_list_tools_results]
+    assert sorted(streamed_server_results) == snapshot(
+        ['mcp_server:deepwiki', 'mcp_server:gitmcp', 'mcp_server:microsoft_learn']
+    )
+
+
 async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel(
         'o4-mini',
@@ -9638,7 +9885,9 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
     model = OpenAIResponsesModel(
         'gpt-5',
         provider=OpenAIProvider(api_key=openai_api_key),
-        profile=replace(openai_model_profile('gpt-5'), openai_responses_requires_function_call_status_none=True),
+        profile=merge_profile(
+            openai_model_profile('gpt-5'), OpenAIModelProfile(openai_responses_requires_function_call_status_none=True)
+        ),
     )
     agent = Agent(model)
 
@@ -10302,6 +10551,61 @@ async def test_openai_responses_raw_cot_sent_in_multiturn(allow_model_requests: 
     )
 
 
+async def test_openai_responses_unified_thinking_with_send_reasoning_ids(allow_model_requests: None):
+    """Unified `thinking` and `openai_send_reasoning_ids` compose across a 2-turn round-trip.
+
+    The unified `thinking='high'` (not `openai_reasoning_effort`) drives `reasoning.effort='high'` on the wire,
+    and the reasoning item it yields is replayed on turn 2 with its provider id intact because
+    `openai_send_reasoning_ids=True`. Locks that the unified setting and reasoning-id replay don't interfere.
+    """
+    c1 = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[Summary(text='thinking about it', type='summary_text')],
+                encrypted_content='enc_123',
+                type='reasoning',
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg_456',
+                content=cast(list[Content], [ResponseOutputText(text='9', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        settings=OpenAIResponsesModelSettings(thinking='high', openai_send_reasoning_ids=True),
+    )
+    agent = Agent(model=model)
+
+    result1 = await agent.run('What is 2+2?')
+    await agent.run('Add 5 to that', message_history=result1.all_messages())
+
+    turn1_kwargs, turn2_kwargs = get_mock_responses_kwargs(mock_client)
+    # Unified `thinking` drives `reasoning.effort` on the wire for both turns.
+    assert turn1_kwargs['reasoning'] == {'effort': 'high'}
+    assert turn2_kwargs['reasoning'] == {'effort': 'high'}
+    # The turn-1 reasoning item is replayed on turn 2 with its provider id intact.
+    turn2_reasoning = [m for m in turn2_kwargs['input'] if m.get('type') == 'reasoning']
+    assert [m['id'] for m in turn2_reasoning] == ['rs_123']
+
+
 async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_model_requests: None, openai_api_key: str):
     async_client = AsyncOpenAI(api_key=openai_api_key)
 
@@ -10620,24 +10924,6 @@ async def test_openai_responses_model_file_search_tool_stream(
                     index=2,
                     part=TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                 ),
-                BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                    part=NativeToolCallPart(
-                        tool_name='file_search',
-                        args={'queries': ['What is the capital of France?']},
-                        tool_call_id=IsStr(),
-                        id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
-                        provider_name='openai',
-                    )
-                ),
-                BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                    result=NativeToolReturnPart(
-                        tool_name='file_search',
-                        content={'status': 'completed'},
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    )
-                ),
             ]
         )
 
@@ -10872,38 +11158,6 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
             {'role': 'user', 'content': 'Hello'},
         ]
     )
-
-
-@pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
-async def test_openai_responses_system_prompt_role(
-    allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
-) -> None:
-    """`openai_system_prompt_role` profile setting drives the role used for `SystemPromptPart`s on the Responses API."""
-    c = response_message(
-        [
-            ResponseOutputMessage(
-                id='msg_1',
-                content=cast(list[Content], [ResponseOutputText(text='world', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
-    )
-    mock_client = MockOpenAIResponses.create_mock(c)
-    profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role)
-    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
-    agent = Agent(model, system_prompt='some instructions')
-
-    result = await agent.run('hello')
-    assert result.output == 'world'
-
-    expected_role = system_prompt_role or 'system'
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    assert kwargs['input'] == [
-        {'content': 'some instructions', 'role': expected_role},
-        {'content': 'hello', 'role': 'user'},
-    ]
 
 
 async def test_reasoning_summary_auto(allow_model_requests: None, openai_api_key: str):
@@ -11518,7 +11772,8 @@ async def test_openai_responses_compact_stateful_mode_stream(allow_model_request
         'Now a 300-word story about a bear in a cave. Be very descriptive.',
         'What is 2+2?',
     ]:
-        events = [event async for event in agent.run_stream_events(question, message_history=message_history)]
+        async with agent.run_stream_events(question, message_history=message_history) as event_stream:
+            events = [event async for event in event_stream]
         all_events.extend(events)
         final = next(e for e in reversed(events) if isinstance(e, AgentRunResultEvent))
         last_output = final.result.output
@@ -12066,13 +12321,13 @@ async def test_openai_responses_phase_live(allow_model_requests: None, openai_ap
 
 def test_openai_responses_phase_profile_flag():
     """Profile flag tracks the documented set of supporting models."""
-    assert cast(Any, openai_model_profile('gpt-5.5')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.4')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.3-codex')).openai_supports_phase is True
-    assert cast(Any, openai_model_profile('gpt-5.3')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-5.2')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-5')).openai_supports_phase is False
-    assert cast(Any, openai_model_profile('gpt-4o')).openai_supports_phase is False
+    assert openai_model_profile('gpt-5.5').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.4').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.3-codex').get('openai_supports_phase', False) is True
+    assert openai_model_profile('gpt-5.3').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-5.2').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-5').get('openai_supports_phase', False) is False
+    assert openai_model_profile('gpt-4o').get('openai_supports_phase', False) is False
 
 
 def _text_response(text: str, *, status: ResponseStatus = 'completed') -> resp.Response:

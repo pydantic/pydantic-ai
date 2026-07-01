@@ -1,0 +1,196 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '406'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 20000
+      messages:
+      - content:
+        - text: What is the top news story today? Use web search.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      thinking:
+        budget_tokens: 16384
+        type: enabled
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        max_uses: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '17154'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-4260e91c71e01b9f142364e57097039b-1c8f492d22edf441-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: EpIECm4IDhgCKkAvMnN3K6PQm7o+3I2zdGVSdHb0t++BMzbP2tvtxI6ogC0pOiWsV72tmvc663rTNngw3UuYre/95S+9N50iFcroMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIMzyB+U3AWoR+nzmm4GgzBSk03Cb99Fmafo/giMPlgabyK9PzA2X0ngoz2t5gHhNsH4sE6+/xVLrRdarzWdCezdUUuz+mGfoZ2VO/COyrRAmXbq4GFJQQAo2V1GO6l2/4Lr5nnFdkRY73Qd7QActvzmIU4WX0GMF2z611TFyggDddDcBLgTziCFSfYf/pMKUdd2xu9Zd0HqPk+gARJiY9NLjhc7C4o91CRubYWCsyZ7oFlOjg8Z5cHjlvcR/SseZqq2s2GLqy/g+BP7sW2JOi3VVw2A0Pa8UnY5CgKiR35SRLwHA4z3fdEWu4BpRLcJZcQXoMhb4Ld7/teuabigxzgIEO5TZL+/gECevO5MVC/Pi8ljpxgXkrPDwSMw0tye3cI7oSk2QZhG9xq6xQcS7Or5+EMCG43AwC9yWZf/bdWlmjAYZFb05NL5nPoShze7oBOZrHvfBTE8MzxR1cG4O3ULRYKSoktniofc+ZhhFCIOVCAisAeXsApBUBX99hBPUjuwEZwMdpa0Lh3p/2qNXZTirOoaKsXUtrXLLUytQkGK6UYAQ==
+        thinking: |-
+          The user is asking me to find the top news story today. They've explicitly asked me to use web search. Today's date is June 09, 2026 according to the system prompt.
+
+          I should search for current top news stories. I'll search for something like "top news today" or "breaking news today" to get the most current information.
+        type: thinking
+      - id: srvtoolu_01L6M2kEPRMgZveqQYRxQuih
+        input:
+          query: top news today
+        name: web_search
+        type: server_tool_use
+      - caller:
+          type: direct
+        content:
+        - encrypted_content: EqQJCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDN5EpynygyKGvdTU1hoM3jjl+kKTv7xO1ud4IjBoqlIkTRfEAmhfCMocvxiPRMuGDeS8AH78xyWhB8A7NCUzFsUgVIbDLOlSYzLLxxUqpwhzJplvubYYi0RXmd+TxpRDH1bDcNmrbeLOnwc0qyK1i5+pZANTy3+nj2syhV/LE8BKMRdpAO3S7spWmdyoNQZs8u6X1EeAX9zVv0w9gpFOqLtKbufpaWiFB2AK4W8mBvKRBt/IanJyt6SCJ4qB6fY0XX3yTOlhkfIr4CKLuIlE6zVkZUW3qXRdFr0KJd8zq/jL/JM2oruDC4jGme6g0x5RfT0M+AJ6GU1J8Fz4tO+gu+d8VQz4Xn0eyBRZrFsZug2h5HxG2lCalcspky7BBDOU6EBs1LizUQR2PFy9yHZYkdICszB/9kvhRKYKYBqFWSatDRvnyfh7aEnfb0kNs6GK+oB76mxB9Qbs1zVvraEsrVNtY7RL3jbaWId1Gb9gWwhKQI+T0rePhRU85xO7i3XtvpStBYSYgHxansVDDM9ullo1xwnpuIpHiGD6BZLCygcxLoD1E+TJOpkotctG0uRthSXLYE19d0VUWvQKWkKuN6RYAyB8r4DKf8zCtZDaoLBNGMpA5HdxnBUkjR5NYmIxHGeqmRyhUqF/BsNCbFpzIrJS4D0Bee6Q62+mgDcXQ8hiaI9QlskfILgtZhXnoMKw9LtfhpXoHpa4meRvXmGJwGN601sku91uUkGWZeGX+45dkI5q/QEIcEjhuOkBBgmtReGMZ2O0/tzi3AKIpTKx94ABkwNNJ8IKxzNQgM9hJfMzmlGM3zMIylT4YUaaXhZ9R+pnb8nu/ll6ZhStvqPOIs7cHfo4cH76+Irg5gecKwAwtf4eTen6olbeQcUvwWVpMBVE5Fnr+xVXTBRMzlmaaGK1Zzti54l/yYJmUzRpydNv1god7Faz+fZszF4Ph1JZgb/0eWrxIk+PKfcKEeN4VSkOLqUjIp2x80E8Lh/TRw3ht5pzO5yzGZ6ZAgWkdSAU9pc2S+UibJnvAuljqHjC4ABhsmPEl25CSDoBw0zJe0cWFfre7EUvyQ/Cewq1PkRrJG/LWAd0HN1ukrZQvvoCkfKc4T71UHH6CWAKOcZL/86/QE38P/xgA6A/wnWXaX9UQNt0+CsRoYCBNDHLC+xHAG94/BMB8LOePqsiG4ZwkEakGVahTHT82mX7h5QoekwIOJhZk22sMhJ1NAvGt/Y7v6nKNnvtAp3JtrQcMZhbubeaw5H46B/cTbseICMw+JjIEl+zWGEKmFrescmSqXMyDeIEDO0MddkWj0gGRRXqhGXBvEopYzEwa0clQ7pWOSXviQcb5vuREOz3Y0iSbIoDu/vZz07CGCCDXE8doFMWltL8U4VR7xhRgfcwuBA47AneRHp4D6eoHP9gVHk68jiO+q2Kl6uqgd6B8wW/eh5T+VvI6ZF6qb8bhjW4YRgWFV62WuSzEtvcE/+B0nRV+Lp/ScCGNpPfXc2ZkAwxEYUX4rdk0FSGgGDPGAM=
+          page_age: null
+          title: LA mayoral race heads to November runoff as Karen Bass faces Mamdani-style socialist
+          type: web_search_result
+          url: https://www.foxnews.com/politics/la-mayoral-race-heads-november-runoff-karen-bass-faces-mamdani-style-socialist
+        - encrypted_content: EsgDCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDLOpfOrkZBAsrWYdPxoML7IUIPEa7IB27SStIjA7ya7F9x6GszHSS5DuER9ym23iYGHrMCgK6BQ3sNmFJYjjKfj5qnKQaVPhnwm0dP0qywKfJ47cpbCmjuFyqVDezaN60hkxZG//bPiwivofVLQbn70iqPzQ71IO7tDKLhOGYIJ3/2NaETFn4vWK1wZPCh72uG0Ap3Gl0UE9/x4wzxAbeEktszijGL51kmqsMrOqV6GyiN2KqeuLRxGKgpmKe0lBkKhfzELIgJmqNcxw6ATtZc5GT9r4lGiZ9L96gEjGovWES6NHtLNeLvhJXndulU73m/3Bd4eF5f+NUtfceEO6KXbeAxSncfy1SCqEP6/uqJxLTrht0xO2efuUfihNMCwSJ/9GNukwmJJpQXxPV7XsAoii9vgHkXyzqkqezB2QDrU42nalX7W74mgJYoGiqlABBIWJBB0WZoQQIPsR4vEJYKwTVm+AbSzUcLEnjw8b7aZIxhnKgjjW846zrzRFNKCqoLfUMR8/rualdvHXVwpCLNcSt0ce6q7+vDPfGAM=
+          page_age: null
+          title: Federal judge strikes down Trump's $100K H-1B visa fee, ruling it an unconstitutional tax
+          type: web_search_result
+          url: https://www.foxnews.com/politics/federal-judge-strikes-trumps-100k-h-1b-visa-fee-ruling-unconstitutional-tax
+        - encrypted_content: ErYDCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDDPU4gnmKzfFlZgy1RoMcbhxu1BE2MlW5iiyIjDOLgIeb2lnIPKgHSkXolxKHl11pL7qgGqx1rcQ2TsS6ei0h3ZdIxNnUODwliIZSmkquQKqVCw7vIJXoWk20sUJp4SpHkg2sbfa00iUcY+Ae5V56E6/rlnCTL53GJUh7E+Grx+3rKzLM2QUWjBtbF/RBiu/QtagUWrNgXOOwuhoGxQKhnlUsP7HEizIGjPoHAz/XJzpTSamPCuaARjoosmN/dH5EyR4VEiW2PHuFjOM7X1fml92nyE/XU80n/PnD6vtujxSBApeujMDZckeB7ZYKh0WPy5ZvOcO/REBK0sg/f3O1x2fCwBNhZuX3Xxfl3vtxH+1ePqQ6OVFzRZ8uL/b8o8rbX08UHc+QJ6EisbRcYZGAykTbkBBQHHBFjmFwySXWbznfSR9uRkHTZko6Dk+TDbrwcNUjP5Dx52E4/xaA9UhJjPez4OO5i9toi8cs2i8HV6egWx/8mBwz9SD5NspiNUGtNiwisvQYCVTGAM=
+          page_age: null
+          title: Iran and Israel say attacks halted after Trump tells both to stop 'shooting'
+          type: web_search_result
+          url: https://www.cbsnews.com/live-updates/iran-war-trump-israel-strikes-ceasefire-lebanon-beirut/
+        - encrypted_content: EroDCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDCFopwBynxcyuXzIkhoMfyzV7iEOCILRCaMRIjCzQ9ZVXBOy1FjnvL0EJxacoP7h+vQdGuHeOBLtru/3Ol6PefrjhMZu/VzZhDVzyycqvQL2pGT1iuhwTQnK5vBqtK9G1H/SFUFBIyfasdKmXmz0XWkZvY/JrXv2rc6MORy7cJHMhW3lnFEBR9PaTa+nFLrULveMYUPp/2e9T2hcXXmWSAIe7u1ivGNZ8pehq/csfJznfg+cNNCsk8QIzqtOFrjeIhEu+h+D9aFOEivRsNh4GGZVXKSmAgvMLgGMWZ3E8a63T6fjuylRM396fnWj//bpTs53KvvUCVeVyEqeYbda7MT1+lzm85PyfpALj7cubC54VZQ2z6BWAC8Md46tfdsIHdmdol5dCoudjfLyX5lt25D2UM9hM3+/esz6IW+PxvuhFcSjdoxSVoe07Lm7YQgQ0eXsfgRlPEW4j3t1VStdEpddeUfBaa9YQIHRVqPAJkcE4AM1dfDjAPgNlOHzzLtXt8F5TuYuvcdUv8zSfxgD
+          page_age: null
+          title: Maine Democrats decide fate of Senate candidate dogged by explosive allegations
+          type: web_search_result
+          url: https://www.foxnews.com/politics/maine-democrats-decide-fate-senate-candidate-dogged-explosive-allegations
+        - encrypted_content: ErUCCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDKWV/GKYSFIqiR/ZcBoMULz6NM+HODdsSmXQIjDxcIKR7rNJljRL53U2If4GErmZzJJtXaGsvi4UpD5gfjoyqDBow/uBKmxS0NM+FvYquAFgpIk3TRhMsk5vbMVyeJScBCXBEgk+BenEkckxy9Bn9G2zLEuaM8ZRIvWqFungti3UIKCu2QeFp/jX0TQ34ibVjZW1id21qEkjTBLQI/JJxdhdCebgq9UJSOGYWETMLYhvyJEessPtb6/ZDhHDfmBWVwLTqvJUrndTcwpcsWleVyaAGAczHmZuVxWniH0JsQ/2Mjxlok+3uX4HGZ7VOClbeUTxlclNrufi+C1M6+I/AVNz+2Btpt3AGAM=
+          page_age: 18 hours ago
+          title: Google News
+          type: web_search_result
+          url: https://news.google.com/
+        - encrypted_content: EroDCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDG1jI5aDd5R/emW5YBoMwDFeER7aBfjJSmzDIjDSaOe6MR0ki5UXW8JwHPkdw8mapw+8KFPk5/3JBfJ6L3RP2wK/6GwlMMQEt4mlg6UqvQJUakqhavzxmqEx1cUDdo2e6lAZU88W8vXAc+hlYTGO9FNBHYJsQ9hCvndr/CHPb+OdE2vrYMO9wPv1W8F1/GUL2aix1XQt4GNTgfRaqXXPyhXk8t1PQ0y94z0JKnJ9UPYFelkycuRCxsi57xpJDLdRhJ7LLb0PBmo4VNF4mT4sP7FkK9MpVenVMlvW79xgG2IdHRsQUiwlBRrYYi9vKqw1krcktv5goFxFStOn/qPePnadBAmAnUQYnJ/UlbIEfUS5TMsk7ntwMt8gxVbDFz5KZUj9fcaJL1bksgewCkrmd4w+PQgb2Zjt95chuss+MueZyTXbuEqUAPQoz0sLbmEv8LKos+DgfJAPdeAD4KWWbfkWrGNobjo/spgOp9bSZrQb6MK0RPjFpqB8U/Y05Pli1CyG6LSPXrqeMR1kDRgD
+          page_age: 15 hours ago
+          title: NBC News - Breaking Headlines and Video Reports on World, U.S. and Local Angles | NBC News
+          type: web_search_result
+          url: https://www.nbcnews.com/
+        - encrypted_content: EsYCCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDC7fqZnYkfcNvNqS6RoM5mfouLx05h/FSzM6IjA2dxt98AMfgVeORWcNLzVY+djoOTsrdjRR8K9pUGyG/6QTaH2YBBBqKgRqAcKXtqMqyQFc5AdPKoUlsfADMPyo6bATWbmKBZmMGtSMfy/HQvf2uFBI3pWPhoCJ1xwrqeVw6FnYEgHK+js6X0pcYRE3rs6zWuET9mIeHbzjMJIRO+cfVYKv/sG15T4a/7Z/2cLGRiLBF909VawAffqBAmgSc2YEpJf2ZsIbn6caln/I+wB7R5wHiCUnGyaMW6qumt2fEMMAdZvLClhbQNzb9B369ARQSTjxSz8zRwL3jTpyvBL0ctLt8my/g62esIVGumhgyk7piEMZdHvjQRAYAw==
+          page_age: 2 hours ago
+          title: Fox News - Breaking News Updates | Latest News Headlines | Photos & News Videos
+          type: web_search_result
+          url: https://www.foxnews.com/
+        - encrypted_content: EqkICioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDPRSsjdxWJIbLbCqIxoM/Eydd9DKnKnj8REJIjDzJGvQq7+rMK7mfGlZFYTgIUmYn18S1Ngi3LAc8j/1etRzttdVD6mF/UNTP1AfKKsqrAeEYkvMppM9lBnJ7CAbHZsALREMAcPRuePf4DW4Kyz9TOq8hTE/NGLbJYAI6LEbWejXYKpZy93FVpb6gk55fyHRmLdg9T2g+/fvxoxMeIY7Dn+5w1Yi9u0U7+1aNzsnftpHw4nETKlWvRhGTmdI7VwepkYFL0MXysGSquPN3Oc74lAjKaME1Jvr6cbgy7aZ7tHFQkDrRU5jgW3hRBYMK9ufUFYx/jbB9nwcEccgl/Or/L4GE+ATZHKMR9OOjqlxchxBqJ04yzDIRfkfW+hIRjya6L8pgNmUu+vSLbUvYpoog48ZEzOa481E3bKreiSL3f0F/VP5sW5fSWDdghM7p2/Jg4eld4+diGnqKHq3o1qz9P0TWfpQL9pY1DpUs+Qh9HFMrPec/U0vuaDR2bVfIJSIrvWrUK8B5sK55QlTDRBA4aLkuDLwyMhmQNDAZv2k0x8OykzFknzuDu7yBj590hykvoq2mcv3EWs9mGCmz4JOLjYvwdhDArAkDblvcdEMaMfAy+4mwOUOuEkzlcCoC7r5omb89TF1u/i+srX4ycJ1PUkrA4mItzIrxULVDwieIIy9mbVIeTMOW/rygM4VQYYBYP4QPscjJVFpUnSam3JJrn0JmotAxR3Iutp6DKJ54J7mkH69SO5s5d6lGuVHpKGJMKRpXVp0roLFqjDDcRCJhNaNeYjK1Fv6e7I5FxbUOLDKZ2BSsWpnj0a+2DkLGYeJjHgzZCAhS+VgrZM0d49/uJFM7LC9uGFLcQkBt1XmKR47eAhgLg7GzFUm8wWy01sGXM1R197e6O2l/VMLm9vNPoZfgB7JUeNgtoi4QKXfVJmVnkvsHqpK7gXnvD5s1PMQKqH5s6TdplL9vqR3+vMIKxLYExIhfcTQthPdtV85sWp7x9IVYAGcny8UgkX4/nP7fY/MGgJ31TqxaQ0JJsrK1JdKLlDS4Cf8RGFZPn3b64jl0IHcdMyLP1IxNjZQtt9lzNmLULKgAw+eo8cLbW22DdmUdmnYpte7NHNUxAASlpvUv8albQeD/YP59M815rRXXsBdL6romhTPUnoK5GMgK9alfe/9FlyKLAQ+aCqH/YorMH0LB3p2XXz+PJshhyy33B9us1vVPnE4gVZBs0Nvc6HB+21vRwaW6bwdsKJG2P7K6sN+eH9Ueno0XLl3wqVUmPfa5CkdC1whQSUr7cislf6IdAsuPTBrMJbyZqv924wip+xznnnA4/WfuP2oBAe9vR2A6OFsYwDxJ92WGAM=
+          page_age: 1 hour ago
+          title: Breaking News, Latest News and Videos | CNN
+          type: web_search_result
+          url: https://www.cnn.com/
+        - encrypted_content: ErMICioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDA4QzpPBtfYDyaBdAhoMMn3epLeaONoYIBYnIjAVSNFfo5TpQCN13mtN2lPQNHVwR5JAN4XM/GIHBsoXotIGdbnQP8hYLdEAH0wR0F0qtgeaBh/dFvS95qZXUwU9LaXf0bMiWHRJbhMFZwnJoifJk8oTq6JVqHVJqV2G98y8c63s/2r6E9HVlliMTOrgxI4VkMnzdNW5JKfTa1wO9LmrYCQXpZrL+C2U35jfdPhQI4cSadZJ6c10VjAyf+hSGlUYA5QdfcI08j8Pw91x+7F3oGTjJkT2dd6dUTXMHm16RDebbDQupHPoumw0HF5iY8hhPAMjmpP4mHQVHgvcDQ7jqeRGsakWW41zAJHvBfCKNa1inMx0vRcoxDkNDr34igDQPXB++Vd6ED4cIqHS7JYEtWUr+BISywO9RfUMQQSbGB7gJfENu7Db7K41BJ9ojztb1+ZkCjkudn2GmuArad0SYdU0fTWv4TYOEpzFgH9xgPxhdXHizc/hHWaff/tmy2xa/LzLHZ13IIRGpPRoH99sLTFBdRTNekYyOmWgloq01ksRyELt2FEeMTke0msI2+MuoHhs18fT3d9zEvQkEQj/1DmMB1FoO5uYMd8nz3719zJDKzqTflYCIKnGZIo2wuxvCWSGmdgAdO+TM3KwAkCojGy5YHKoFkicCTYL6fY7dodLUyXpQr5p497FJdXA/1oXDvT1NexRQDWqtXTb/PqaLrtTxYv3nqHSPRDXgd+WTIOdldQcK5XMDdiB/Gj7LDLV6dd9qB/94xNYrmqr8HruejAvfKFT6jpqIC1fCjaOH7J5h/4fjViPx0HjgiNALxJgq7OzTeg8xrdAVTWxJ1o/hThz+n4XwucMh0/n8nWxf+SEps4QBM9htm+tSdK9VAJZgqUHrdKk2ob/kOnt7Nmk0Wa528/l/fWvqebgKS8+R4thr0fExbKDbMRqHasDl4gISYRjCK+DMyPZ4HNYTXuX4+ruQRhaCqGn/SguAidnRoTDGrUcY3QDus9FtWLs23mdnLuZbT3CSMTHmd5FeNJJyEffxao7KNqr/5N3NaaEob2hvWcp71Rlux4OR+VxIl7NnVcc8UJALY4VMH+VaxGHsIVvjkkGegs63q3yf1wWO46H9tnmnHpBfPj0D0A2b92RoYxj9wQpVziUidjGvOj9w0cxvhjdgixUlAPqOtEz4/31ZB+c0KL6d36cpyWq+6TtzFCkpy7rFQjnMFuvkG0cj7cqsQb1Kz1kdqTUp9X/jyu95mCPmU6FhwvwOPMPV/gZSPXrGQRQfjaWPEDW9BEXAtDGGsBDUrrD6aEVNjZBsPOjI6Jfn5pNothKjnr3ME2urQbBWAgwMWwGIBozUFDz2KyNbQNOwxgD
+          page_age: 13 hours ago
+          title: The Washington Post - Breaking news and latest headlines, U.S. news, world news, and video
+          type: web_search_result
+          url: https://www.washingtonpost.com/
+        - encrypted_content: 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
+          page_age: 4 hours ago
+          title: CBS News | Breaking news, top stories & today's latest headlines
+          type: web_search_result
+          url: https://www.cbsnews.com/
+        tool_use_id: srvtoolu_01L6M2kEPRMgZveqQYRxQuih
+        type: web_search_tool_result
+      - text: Based on today's search results, the top news story appears to be **
+        type: text
+      - citations:
+        - cited_text: |-
+            BREAKING NEWS: Iran and Israel say attacks halted after Trump tells both to stop 'shooting'
+
+            Iran and Israel declare a halt to fighting as President T...
+          encrypted_index: Eo8BCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDLqFcchGmRGNbzffjBoMXmWqEC3e9fxiYBdAIjCfD71DN3ap06Guw4ghUSEPz6kOWkVdlujNf0ZbpO5nw/wtAiOzBQDAWMWi1E2FEEsqE3q4vj0f5IKZ6p5yqzBP5tbyppoYBA==
+          title: Iran and Israel say attacks halted after Trump tells both to stop 'shooting'
+          type: web_search_result_location
+          url: https://www.cbsnews.com/live-updates/iran-war-trump-israel-strikes-ceasefire-lebanon-beirut/
+        text: Iran and Israel declaring a halt to fighting after President Trump tells both to stop "shooting," with both
+          countries seeking an immediate ceasefire after a major escalation
+        type: text
+      - text: "**. This is the most recent breaking news from just 5 hours ago.\n\nOther major stories today include:\n\n- "
+        type: text
+      - citations:
+        - cited_text: |-
+            BREAKING NEWS: Federal judge strikes down Trump's $100K H-1B visa fee, ruling it an unconstitutional tax
+
+            Federal judge strikes down Trump H-1B fee ru...
+          encrypted_index: Eo8BCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDKKXQRw50uZhuy5hqBoMMieYge27MUuM6TQOIjCNNzsk0Y+CPv9W67yepGLbUAR6MCj/i0iIJLKoTl+m+KIJaRjOAFqHBk6Z6T7Y1IgqE3ouOL+u20R69kXwz/6ENUXJ/yAYBA==
+          title: Federal judge strikes down Trump's $100K H-1B visa fee, ruling it an unconstitutional tax
+          type: web_search_result_location
+          url: https://www.foxnews.com/politics/federal-judge-strikes-trumps-100k-h-1b-visa-fee-ruling-unconstitutional-tax
+        text: A federal judge striking down Trump's $100,000 H-1B visa fee, ruling it an unconstitutional tax that exceeded
+          executive authority
+        type: text
+      - text: "\n\n- "
+        type: text
+      - citations:
+        - cited_text: |-
+            BREAKING NEWS: LA mayoral race heads to November runoff as Karen Bass faces Mamdani-style socialist
+
+            During the race, Raman pitched herself as a hopef...
+          encrypted_index: Eo8BCioIEBgCIiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTESDGanWU3AkU4xlBFFEBoMR1xP7X9xOrh6p/TIIjDREQTmS7mXrK11CertuIcv88XYmjMuWtyp+Zepg9iKyUgN1hVj04AdqJFVpobuXKkqEzJhF3CYtH9rp0HG5joc3RvHT5UYBA==
+          title: LA mayoral race heads to November runoff as Karen Bass faces Mamdani-style socialist
+          type: web_search_result_location
+          url: https://www.foxnews.com/politics/la-mayoral-race-heads-november-runoff-karen-bass-faces-mamdani-style-socialist
+        text: The LA mayoral race heading to a November runoff with incumbent Karen Bass facing a socialist challenger
+        type: text
+      - text: |2-
+
+
+          - Primary elections being held today in several states, including Maine's contested Senate race
+
+          The Iran-Israel ceasefire development appears to be the most significant international news breaking today.
+        type: text
+      id: msg_01Rzh728rV96uEswBPJiJ4dE
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 7744
+        output_tokens: 353
+        output_tokens_details:
+          thinking_tokens: 80
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 1
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
