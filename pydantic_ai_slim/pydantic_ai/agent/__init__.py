@@ -38,7 +38,6 @@ from .. import (
 )
 from .._agent_graph import (
     CallToolsNode,
-    ContinueRequestNode,
     EndStrategy,
     HistoryProcessor,
     ModelRequestNode,
@@ -118,7 +117,6 @@ __all__ = (
     'AgentRunResult',
     'NativeToolFunc',
     'CallToolsNode',
-    'ContinueRequestNode',
     'EndStrategy',
     'EventStreamHandler',
     'EventStreamProcessor',

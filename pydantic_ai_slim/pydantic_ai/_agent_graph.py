@@ -16,7 +16,11 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, get_instructions as _get_history_instructions
+from pydantic_ai._instrumentation import (
+    DEFAULT_INSTRUMENTATION_VERSION,
+    capture_current_context,
+    get_instructions as _get_history_instructions,
+)
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -34,6 +38,15 @@ from ._deferred_capabilities import parse_loaded_capabilities
 from ._instructions import normalize_toolset_instructions
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
+
+# `_ContinuationStreamedResponse` is an intentionally-exported member of the private
+# `_continuation` module (see its `__all__`); the leading underscore is a module-privacy
+# marker, not a within-package one, so the private-usage check doesn't apply here.
+from .models._continuation import (
+    MAX_CONTINUATIONS,
+    _ContinuationStreamedResponse,  # pyright: ignore[reportPrivateUsage]
+    merge_responses,
+)
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
@@ -59,7 +72,6 @@ __all__ = (
     'UserPromptNode',
     'ModelRequestNode',
     'CallToolsNode',
-    'ContinueRequestNode',
     'build_run_context',
     'capture_run_messages',
     'set_agent_graph_sleep',
@@ -72,9 +84,6 @@ T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
 EndStrategy = Literal['early', 'graceful', 'exhaustive']
-
-_MAX_CONTINUATIONS = 50
-"""Maximum number of continuations allowed for incomplete responses (e.g., Anthropic pause_turn)."""
 
 AgentGraphSleepFunc = Callable[[float], Awaitable[None]]
 """Type for async sleep functions used by the agent graph."""
@@ -177,7 +186,6 @@ class GraphAgentState:
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     output_retries_used: int = 0
     run_step: int = 0
-    continuations: int = 0
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     conversation_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     """The unique identifier of the conversation this run belongs to.
@@ -373,6 +381,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                                 combined_content.extend(part.content)
                         ctx.deps.prompt = combined_content
             elif isinstance(last_message, _messages.ModelResponse):
+                if last_message.state == 'suspended' and self.user_prompt is None:
+                    # The history ends in a turn a provider paused mid-flight (Anthropic
+                    # `pause_turn`, OpenAI background mode) and persisted. Resume it in
+                    # `ModelRequestNode`, which re-issues the suspended turn and stitches the
+                    # continuation into a single response with hooks firing once around the chain.
+                    return ModelRequestNode[DepsT, NodeRunEndT](
+                        request=_messages.ModelRequest(parts=[]), _resume_suspended=last_message
+                    )
                 if self.user_prompt is None:
                     # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
                     run_context = replace(
@@ -636,6 +652,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     request: _messages.ModelRequest
     is_resuming_without_prompt: bool = False
 
+    _: dataclasses.KW_ONLY
+
+    _resume_suspended: _messages.ModelResponse | None = None
+    """A suspended `ModelResponse` from a prior run to resume, when the run's `message_history`
+    ends in a provider-paused turn (Anthropic `pause_turn`, OpenAI background mode). Set by
+    `UserPromptNode`; the continuation loop echoes it back to complete the turn."""
+
     _result: CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT] | None = field(
         repr=False, init=False, default=None
     )
@@ -700,15 +723,40 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ) -> _messages.ModelResponse:
             nonlocal _handler_response
             with set_current_run_context(run_context):
-                async with req_ctx.model.request_stream(
-                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters, run_context
-                ) as sr:
+                # Stitch the (possibly suspended → complete) segments into one continuous
+                # stream. The composite opens a `model.request_stream(...)` per segment as
+                # it's iterated, so the whole chain is presented as a single `AgentStream`
+                # and the model-request hooks wrap it once. `ctx.state.usage.requests` is
+                # bumped once here: continuations aren't separate request steps.
+                sr = _ContinuationStreamedResponse(
+                    model_request_parameters=req_ctx.model_request_parameters,
+                    model=req_ctx.model,
+                    model_settings=req_ctx.model_settings,
+                    base_messages=req_ctx.messages,
+                    run_context=run_context,
+                    max_continuations=MAX_CONTINUATIONS,
+                    sleep_func=_agent_graph_sleep,
+                    check_usage=lambda continuation_usage: self._check_continuation_usage(ctx, continuation_usage),
+                    initial_suspended_response=self._resume_suspended,
+                    # The composite opens each segment lazily in the consumer task, which doesn't share
+                    # this task's OTel context (where `wrap_model_request` opened the `chat` span). Capture
+                    # it here so re-attaching it around each segment keeps `get_current_span()`-driven span
+                    # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
+                    segment_context=capture_current_context(),
+                )
+                try:
                     self._did_stream = True
                     ctx.state.usage.requests += 1
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
                     await stream_done.wait()
+                finally:
+                    # Deterministically tear down an in-flight segment's connection once the
+                    # consumer has stopped (mirrors the pre-stitching `async with request_stream`
+                    # teardown; a no-op after a fully-drained stream). Server-side cancellation
+                    # stays on the `AgentStream.cancel()` → `close_stream()` path.
+                    await sr.aclose()
             response = sr.get()
             _handler_response = response
             return response
@@ -827,7 +875,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _metadata_getter=lambda: ctx.state.metadata,
         )
 
-    async def _make_request(
+    async def _make_request(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         if self._result is not None:
@@ -849,13 +897,50 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
             nonlocal _handler_response
+            # Loop over any suspended → complete continuation segments (Anthropic `pause_turn`,
+            # OpenAI background mode), echoing each suspended response back and merging the
+            # segments into one response. Only the final merged response is returned, so
+            # `wrap_model_request` spans the whole chain and `after_model_request` sees just
+            # the final response. Continuations are not separate request steps, so usage is
+            # committed exactly once by `_finish_handling` → `_append_response`.
+            iteration = 0
+            response = self._resume_suspended
             with set_current_run_context(run_context):
-                response = await req_ctx.model.request(
-                    req_ctx.messages, req_ctx.model_settings, req_ctx.model_request_parameters
-                )
-                response = _narrow_tool_call_parts(response, req_ctx.model_request_parameters)
-                _handler_response = response
-                return response
+                while True:
+                    if response is None:
+                        messages = req_ctx.messages
+                    elif response.state == 'suspended':
+                        iteration += 1
+                        if iteration > MAX_CONTINUATIONS:
+                            raise exceptions.UnexpectedModelBehavior(
+                                f'Model response was suspended more than the maximum of {MAX_CONTINUATIONS} times'
+                            )
+                        if delay := response.suspended_retry_delay:
+                            await _agent_graph_sleep(delay)
+                        messages = [*req_ctx.messages, response]
+                    else:
+                        return response
+
+                    try:
+                        new_response = await req_ctx.model.request(
+                            messages, req_ctx.model_settings, req_ctx.model_request_parameters
+                        )
+                    except BaseException:
+                        # Includes `CancelledError`: kill any server-side suspended/background
+                        # job before propagating so it doesn't leak.
+                        if response is not None:
+                            await req_ctx.model.cancel_suspended_response(response)
+                        raise
+
+                    new_response = _narrow_tool_call_parts(new_response, req_ctx.model_request_parameters)
+                    if response is None:
+                        response = new_response
+                    else:
+                        response = merge_responses(response, new_response)
+                        # Enforce token limits early against a provisional total so a runaway
+                        # continuation can't blow the budget; the total is committed once later.
+                        self._check_continuation_usage(ctx, response.usage)
+                    _handler_response = response
 
         request_context = ModelRequestContext(
             model=model,
@@ -899,6 +984,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         list[_messages.ModelMessage],
         RunContext[DepsT],
     ]:
+        if self._resume_suspended is not None:
+            return await self._prepare_resume_request(ctx)
+
         self.request.timestamp = now_utc()
         if not self.is_resuming_without_prompt:
             self.request.run_id = self.request.run_id or ctx.state.run_id
@@ -1013,6 +1101,95 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return model, model_settings or None, model_request_parameters, messages, run_context
 
+    async def _prepare_resume_request(
+        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
+    ) -> tuple[
+        models.Model,
+        ModelSettings | None,
+        models.ModelRequestParameters,
+        list[_messages.ModelMessage],
+        RunContext[DepsT],
+    ]:
+        """Prepare a request that resumes a turn the provider paused mid-flight.
+
+        Unlike `_prepare_request`, the `message_history` already ends in the suspended
+        `ModelResponse` (there is no new `ModelRequest` to append). The suspended response is
+        split off as the continuation seed — the loop echoes it back itself, so it must not be
+        part of the base history handed to the model. Instructions are rehydrated from the
+        recorded `ModelRequest` rather than re-evaluated, since a continuation completes the
+        same logical turn and providers (e.g. Anthropic) require the exact prior history back.
+        """
+        assert self._resume_suspended is not None
+
+        ctx.state.run_step += 1
+
+        _refresh_loaded_capability_ids(ctx)
+        _refresh_discovered_tool_names(ctx)
+
+        run_context = build_run_context(ctx)
+        run_context = replace(
+            run_context,
+            retry=ctx.state.output_retries_used,
+            max_retries=ctx.deps.tool_manager.default_max_retries,
+        )
+        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        instructions = _get_history_instructions(ctx.state.message_history)
+        instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
+
+        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
+        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
+        run_context.model_settings = model_settings
+
+        # Show the hooks the exact history that will be echoed back (ending in the suspended
+        # response), then split that response off as the continuation seed.
+        request_context = ModelRequestContext(
+            model=ctx.deps.model,
+            messages=ctx.state.message_history[:],
+            model_settings=model_settings,
+            model_request_parameters=model_request_parameters,
+        )
+        self.last_request_context = request_context
+        request_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
+        self.last_request_context = request_context
+        model = request_context.model
+        messages = request_context.messages
+        model_settings = request_context.model_settings
+        model_request_parameters = request_context.model_request_parameters
+
+        if not (
+            messages
+            and isinstance(suspended := messages[-1], _messages.ModelResponse)
+            and suspended.state == 'suspended'
+        ):
+            raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
+
+        # The loop re-appends the suspended response itself, so hand it the base history
+        # ending in the `ModelRequest` that triggered the turn.
+        self._resume_suspended = suspended
+        base_messages = messages[:-1]
+
+        # `resumed_request` = the request that triggered the paused turn, so `new_messages()`
+        # yields just the completed (merged) response.
+        for message in reversed(base_messages):
+            if isinstance(message, _messages.ModelRequest):
+                ctx.deps.resumed_request = message
+                break
+
+        # `ctx.state.message_history` is the same list used by `capture_run_messages`, so
+        # replace its contents (dropping the suspended response) rather than the reference;
+        # `_finish_handling` then appends the final merged response after the base history.
+        ctx.state.message_history[:] = base_messages
+        ctx.deps.new_message_index = _first_new_message_index(
+            base_messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+        )
+
+        ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
+        ctx.state.last_model_request_parameters = model_request_parameters
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+
+        return model, model_settings or None, model_request_parameters, base_messages, run_context
+
     async def _finish_handling(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -1076,6 +1253,25 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
         ctx.state.message_history.append(response)
 
+    @staticmethod
+    def _check_continuation_usage(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        continuation_usage: _usage.RequestUsage,
+    ) -> None:
+        """Enforce token limits mid-turn against a provisional total during continuations.
+
+        Continuation segments accumulate usage but aren't committed to `ctx.state.usage`
+        until the final merged response is appended exactly once by `_append_response` (so a
+        continuation isn't double-counted, nor counted as a separate request step). To still
+        fail fast when a segment blows the token budget, check the limit against a throwaway
+        copy of the run usage plus the accumulated continuation usage.
+        """
+        if not ctx.deps.usage_limits:  # pragma: no branch
+            return
+        provisional = deepcopy(ctx.state.usage)
+        provisional.incr(continuation_usage)
+        ctx.deps.usage_limits.check_tokens(provisional)
+
     async def _build_retry_node(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -1111,21 +1307,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     """
 
     _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, init=False, repr=False)
-    _next_node: (
-        ModelRequestNode[DepsT, NodeRunEndT]
-        | ContinueRequestNode[DepsT, NodeRunEndT]
-        | End[result.FinalResult[NodeRunEndT]]
-        | None
-    ) = field(default=None, init=False, repr=False)
+    _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
+        default=None, init=False, repr=False
+    )
     _stream_error: BaseException | None = field(default=None, init=False, repr=False)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> (
-        ModelRequestNode[DepsT, NodeRunEndT]
-        | ContinueRequestNode[DepsT, NodeRunEndT]
-        | End[result.FinalResult[NodeRunEndT]]
-    ):
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         async with self.stream(ctx):
             pass
         if self._next_node is not None:
@@ -1158,12 +1347,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             output_schema = ctx.deps.output_schema
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                if self.model_response.state == 'suspended':
-                    # Some providers (e.g. Anthropic pause_turn, OpenAI background mode) pause mid-turn
-                    # and expect us to continue.
-                    self._next_node = ContinueRequestNode[DepsT, NodeRunEndT](self.model_response)
-                    return
-
                 is_empty = not self.model_response.parts
                 is_thinking_only = not is_empty and all(
                     isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
@@ -1456,214 +1639,6 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> End[result.FinalResult[NodeRunEndT]]:
         return End(self.final_result)
-
-
-@dataclasses.dataclass
-class ContinueRequestNode(AgentNode[DepsT, NodeRunEndT]):
-    """A node that makes a single continuation request and transitions accordingly.
-
-    This handles providers that pause mid-turn (e.g. Anthropic `pause_turn`, OpenAI background mode).
-    Each node makes one continuation request: if the response is still suspended, it transitions
-    to a new `ContinueRequestNode`; if complete, it transitions to `CallToolsNode`.
-    This keeps each continuation visible as a discrete graph node transition.
-
-    Continuations are not treated as ordinary agent model requests.
-    Hooks (wrap_model_request, before_model_request, after_model_request) are intentionally
-    not run here because: the message history ends in a suspended ModelResponse (not a
-    ModelRequest), Anthropic requires the exact same history back, and OpenAI calls
-    a retrieve endpoint.
-
-    For the same reason, instructions are reused from the recorded `ModelRequest` in history
-    rather than re-evaluated from instruction providers, so dynamic instructions are not
-    refreshed mid-turn: a continuation completes the same logical request, and Anthropic
-    requires the exact prior history echoed back.
-
-    Note: `agent.run_stream()` advances this node via `run()` (non-streaming), not `stream()`.
-    The `stream()` method is available for users who manually iterate the graph via `agent.iter()`
-    and want streaming events from continuation requests.
-    """
-
-    model_response: _messages.ModelResponse
-
-    _result: CallToolsNode[DepsT, NodeRunEndT] | ContinueRequestNode[DepsT, NodeRunEndT] | None = field(
-        repr=False, init=False, default=None
-    )
-    _did_stream: bool = field(repr=False, init=False, default=False)
-
-    async def run(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> CallToolsNode[DepsT, NodeRunEndT] | ContinueRequestNode[DepsT, NodeRunEndT]:
-        if self._result is not None:
-            return self._result
-
-        if self._did_stream:
-            raise exceptions.AgentRunError('You must finish streaming before calling run()')  # pragma: no cover
-
-        self._check_continuation_limit(ctx)
-        if delay := self.model_response.suspended_retry_delay:
-            await _agent_graph_sleep(delay)
-
-        run_context, model_settings, model_request_parameters = await self._prepare_continuation_request(ctx)
-
-        try:
-            with set_current_run_context(run_context):
-                new_response = await ctx.deps.model.request(
-                    ctx.state.message_history, model_settings, model_request_parameters
-                )
-        except Exception:
-            self._rewind_suspended(ctx)
-            raise
-
-        merged_response = self._process_response(ctx, new_response)
-
-        if new_response.state == 'suspended':
-            self._result = ContinueRequestNode(merged_response)
-        else:
-            self._result = CallToolsNode(merged_response)
-        return self._result
-
-    @asynccontextmanager
-    async def stream(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[AsyncIterator[_messages.AgentStreamEvent]]:
-        """Make a single continuation request with streaming, yielding model response events."""
-        assert not self._did_stream, 'stream() should only be called once per node'
-
-        stream = self._run_stream(ctx)
-        yield stream
-
-        # Run the stream to completion if it was not finished:
-        async for _event in stream:
-            pass
-
-    async def _run_stream(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> AsyncIterator[_messages.AgentStreamEvent]:
-        self._check_continuation_limit(ctx)
-        if delay := self.model_response.suspended_retry_delay:
-            await _agent_graph_sleep(delay)
-
-        run_context, model_settings, model_request_parameters = await self._prepare_continuation_request(ctx)
-
-        try:
-            with set_current_run_context(run_context):
-                async with ctx.deps.model.request_stream(
-                    ctx.state.message_history, model_settings, model_request_parameters, run_context
-                ) as sr:
-                    self._did_stream = True
-                    async for event in sr:
-                        yield event
-            # Build the response after the stream context exits, not inside it: wrappers like
-            # `FallbackModel` stamp continuation metadata on `__aexit__` (after their `yield`),
-            # so calling `sr.get()` inside the `async with` would miss it and break re-pinning on
-            # the next continuation. This matches `ModelRequestNode._streaming_handler`.
-            new_response = sr.get()
-        except Exception:
-            self._rewind_suspended(ctx)
-            raise
-
-        merged_response = self._process_response(ctx, new_response)
-
-        if new_response.state == 'suspended':
-            self._result = ContinueRequestNode(merged_response)
-        else:
-            self._result = CallToolsNode(merged_response)
-
-    @staticmethod
-    async def _prepare_continuation_request(
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-    ) -> tuple[RunContext[DepsT], ModelSettings, models.ModelRequestParameters]:
-        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
-        run_context = build_run_context(ctx)
-        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
-
-        # Continuation requests reuse history ending in a suspended ModelResponse.
-        # Rehydrate instruction parts from the recorded ModelRequest.instructions
-        # instead of calling instruction providers again for the current run.
-        # Model.prepare_request may append prompted output instructions afterward.
-        instructions = _get_history_instructions(ctx.state.message_history)
-        instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
-        model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts=instruction_parts)
-        return run_context, model_settings, model_request_parameters
-
-    def _check_continuation_limit(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> None:
-        # Check before incrementing so `continuations` reflects the number of continuations
-        # actually attempted (it reads `_MAX_CONTINUATIONS`, not `+ 1`, on the error path).
-        if ctx.state.continuations >= _MAX_CONTINUATIONS:
-            raise exceptions.UnexpectedModelBehavior(
-                f'Exceeded maximum continuations ({_MAX_CONTINUATIONS}) for incomplete responses'
-            )
-        ctx.state.continuations += 1
-
-    @staticmethod
-    def _rewind_suspended(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]) -> None:
-        """Remove the suspended response from history so it remains valid for reuse."""
-        if (  # pragma: no branch
-            ctx.state.message_history
-            and isinstance(ctx.state.message_history[-1], _messages.ModelResponse)
-            and ctx.state.message_history[-1].state == 'suspended'
-        ):
-            ctx.state.message_history.pop()
-
-    def _process_response(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        new_response: _messages.ModelResponse,
-    ) -> _messages.ModelResponse:
-        """Process a continuation response: track usage, merge, update history.
-
-        Returns the merged response.
-        """
-        ctx.state.usage.incr(new_response.usage)
-        if ctx.deps.usage_limits:  # pragma: no branch
-            ctx.deps.usage_limits.check_tokens(ctx.state.usage)
-
-        merged_response = self._merge_response(self.model_response, new_response)
-        merged_response.run_id = merged_response.run_id or ctx.state.run_id
-        merged_response.conversation_id = merged_response.conversation_id or ctx.state.conversation_id
-
-        # Intentionally replace the last message in-place: the suspended ModelResponse in message_history
-        # is progressively updated as continuation responses are merged, so users inspecting
-        # message_history after the run see the final merged response rather than each intermediate one.
-        assert isinstance(ctx.state.message_history[-1], _messages.ModelResponse), (
-            f'Expected last message to be ModelResponse, got {type(ctx.state.message_history[-1])}'
-        )
-        ctx.state.message_history[-1] = merged_response
-
-        return merged_response
-
-    @staticmethod
-    def _merge_response(existing: _messages.ModelResponse, new: _messages.ModelResponse) -> _messages.ModelResponse:
-        """Merge a new response into an existing one.
-
-        If same `provider_response_id`, replace entirely with the new response.
-        If the model changed between responses, replace entirely (incompatible responses should not be merged).
-        Otherwise, accumulate parts, sum usage, and use other fields from the new response.
-        """
-        # Same response ID → the new response is a full replacement (e.g. OpenAI background retrieve).
-        if existing.provider_response_id and existing.provider_response_id == new.provider_response_id:
-            return new
-
-        # Different model → replace (accumulating parts from different models is always wrong).
-        # When either model_name is None/empty, we fall through to accumulation — this is intentional
-        # because providers may not always populate model_name on continuation responses.
-        if existing.model_name and new.model_name and existing.model_name != new.model_name:
-            return new
-
-        # Same model, different response → accumulate parts and sum usage.
-        # Preserve existing provider response IDs when continuation responses omit them
-        # (e.g. resumed OpenAI streams that start after a sequence number).
-        merged_usage = existing.usage + new.usage
-        return replace(
-            new,
-            parts=[*existing.parts, *new.parts],
-            usage=merged_usage,
-            provider_response_id=new.provider_response_id or existing.provider_response_id,
-        )
-
-    __repr__ = dataclasses_no_defaults_repr
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
@@ -2405,7 +2380,6 @@ def build_agent_graph(
         g.node(UserPromptNode[DepsT, OutputT]),
         g.node(ModelRequestNode[DepsT, OutputT]),
         g.node(CallToolsNode[DepsT, OutputT]),
-        g.node(ContinueRequestNode[DepsT, OutputT]),
         g.node(
             SetFinalResult[DepsT, OutputT],
         ),
