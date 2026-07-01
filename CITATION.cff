@@ -3,16 +3,20 @@ title: Pydantic AI
 message: 'If you use this software, please cite it as below.'
 type: software
 authors:
-  - family-names: Colvin
-    given-names: Samuel
-  - family-names: Trylesinski
-    given-names: Marcelo
-  - family-names: Montague
-    given-names: David
-  - family-names: Hall
-    given-names: Alex
   - family-names: Maan
     given-names: Douwe
+  - family-names: Sanchez
+    given-names: David
+  - family-names: Vardhan
+    given-names: Aditya
+  - family-names: Montague
+    given-names: David
+  - family-names: Trylesinski
+    given-names: Marcelo
+  - family-names: Hall
+    given-names: Alex
+  - family-names: Colvin
+    given-names: Samuel
 repository-code: 'https://github.com/pydantic/pydantic-ai'
 url: 'https://ai.pydantic.dev'
 abstract: >-
@@ -29,5 +33,3 @@ keywords:
   - genai
   - pydantic
 license: MIT
-version: v2.0.0
-date-released: 2026-06-23
