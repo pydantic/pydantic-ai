@@ -12284,7 +12284,7 @@ class _SuspendingStreamModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         state, delay = self._states[min(self._call, len(self._states) - 1)]
         self._call += 1
         async with self._inner.request_stream(

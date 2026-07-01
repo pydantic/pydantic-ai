@@ -14,7 +14,7 @@ the server-side job without requesting further segments.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -141,7 +141,7 @@ class _ScriptedModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         self.request_stream_calls += 1
         segment = self._segments.pop(0)
         yield _ScriptedStreamedResponse(model_request_parameters, _segment=segment)
@@ -509,7 +509,7 @@ async def test_error_on_first_streamed_segment_propagates() -> None:
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any] | None = None,
-        ) -> AsyncIterator[StreamedResponse]:
+        ) -> AsyncGenerator[StreamedResponse]:
             yield _ExplodingStream(model_request_parameters)
 
     agent = Agent(_ExplodingModel())

@@ -13,7 +13,7 @@ existing recording and pass green. Asserting the stitched indices directly is wh
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models._continuation import _ContinuationStreamedResponse  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.models._continuation import _ContinuationStreamedResponse
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -145,7 +145,7 @@ class _FakeModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: object | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         segment = self.segments.pop(0)
         yield _FakeStream(model_request_parameters, segment.events, segment.response)
 
