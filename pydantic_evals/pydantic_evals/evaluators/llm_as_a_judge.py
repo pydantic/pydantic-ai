@@ -12,7 +12,9 @@ from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
+    'GEvalOutput',
     'GradingOutput',
+    'judge_g_eval',
     'judge_input_output',
     'judge_input_output_expected',
     'judge_output',
@@ -263,3 +265,90 @@ def _build_prompt(
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections)  # type: ignore[arg-type]
     return sections
+
+
+class GEvalOutput(BaseModel):
+    """The output of a G-Eval grading operation.
+
+    G-Eval asks the judge to emit a short chain-of-thought `reason` followed by an
+    integer `score` in a user-specified range (see [`judge_g_eval`][pydantic_evals.evaluators.llm_as_a_judge.judge_g_eval]).
+    """
+
+    reason: str
+    score: int
+
+
+_judge_g_eval_agent = Agent(
+    name='judge_g_eval',
+    system_prompt=dedent(
+        """
+        You are a rigorous evaluator scoring LLM outputs using the G-Eval framework.
+
+        Follow the evaluation steps exactly, then return a JSON object with this structure:
+        {"reason": string, "score": integer}
+
+        - `reason`: a concise chain-of-thought summary of how you applied the evaluation steps.
+        - `score`: a single integer within the score range specified in the prompt.
+
+        Do not include any other keys or prose outside the JSON object.
+        """
+    ),
+    output_type=GEvalOutput,
+)
+
+
+async def judge_g_eval(
+    output: Any,
+    criteria: str,
+    evaluation_steps: Sequence[str],
+    score_range: tuple[int, int] = (1, 5),
+    inputs: Any | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+) -> GEvalOutput:
+    """Judge an output using a G-Eval style chain-of-thought prompt.
+
+    This is a simplified implementation of G-Eval (Liu et al., 2023, "G-Eval: NLG Evaluation using
+    GPT-4 with Better Human Alignment"). The original paper computes an expectation over the
+    distribution of score tokens using log-probs. We skip that step and simply ask the model for
+    a direct integer score. This keeps the evaluator provider-agnostic at the cost of some
+    correlation with human judgments.
+
+    Args:
+        output: The output being evaluated.
+        criteria: The aspect being evaluated (e.g. "coherence", "fluency").
+        evaluation_steps: Explicit chain-of-thought steps the judge should follow.
+        score_range: Inclusive `(min, max)` integer score range.
+        inputs: Optional inputs/context to show alongside the output.
+        model: The model to use. If not specified, the default judge model is used.
+        model_settings: Optional model settings.
+
+    Returns:
+        A [`GEvalOutput`][pydantic_evals.evaluators.llm_as_a_judge.GEvalOutput] containing
+        the judge's reasoning and integer score.
+
+    Raises:
+        ValueError: If `score_range` is invalid, or if the judge returns a score outside it.
+    """
+    if score_range[0] >= score_range[1]:
+        raise ValueError(f'`score_range` must satisfy min < max, got {score_range!r}')
+
+    numbered_steps = '\n'.join(f'{i}. {step}' for i, step in enumerate(evaluation_steps, start=1))
+    rubric = '\n'.join(
+        [
+            f'Evaluation criteria: {criteria}',
+            '',
+            'Evaluation steps (apply each step in order):',
+            numbered_steps,
+            '',
+            f'Produce a single integer score between {score_range[0]} and {score_range[1]} inclusive,',
+            f'where {score_range[0]} is the worst and {score_range[1]} is the best according to the criteria.',
+        ]
+    )
+    user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
+    result = (
+        await _judge_g_eval_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
+    ).output
+    if not score_range[0] <= result.score <= score_range[1]:
+        raise ValueError(f'Judge returned score {result.score}, outside the requested `score_range` {score_range!r}')
+    return result
