@@ -538,10 +538,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ) -> list[Message]:
         """Convert a `ModelRequest` into AG-UI messages.
 
-        Uses a flush pattern to preserve part ordering: buffered user content is flushed to
-        an AssistantMessage-adjacent position before each tool message, so a `ToolReturnPart`
-        that follows a `UserPromptPart` in the original request keeps its place instead of
-        being reordered after the user prompt.
+        Uses a flush pattern to preserve part ordering: buffered user content is flushed before
+        each tool message, so a `ToolReturnPart` that precedes a `UserPromptPart` in the original
+        request keeps its position instead of being reordered after the user prompt.
         """
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
         result: list[Message] = []

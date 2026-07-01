@@ -1889,6 +1889,38 @@ def test_dump_messages_preserves_part_order() -> None:
     )
 
 
+def test_dump_messages_preserves_uploaded_file_order() -> None:
+    """Text straddling an `UploadedFile` keeps its order around the emitted `ActivityMessage`.
+
+    An `UploadedFile` is emitted as an `ActivityMessage` directly, so buffered user text must be
+    flushed before it, otherwise text that precedes the file would be reordered after it (the same
+    reordering class as #5964). The text on either side is therefore split into separate
+    `UserMessage`s rather than combined into one.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Before the file.',
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic'),
+                        'After the file.',
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+
+    assert [type(msg).__name__ for msg in ag_ui_msgs] == snapshot(['UserMessage', 'ActivityMessage', 'UserMessage'])
+    before, activity, after = ag_ui_msgs
+    assert before.content == snapshot('Before the file.')
+    assert isinstance(activity, ActivityMessage)
+    assert activity.content['file_id'] == 'file-abc123'
+    assert after.content == snapshot('After the file.')
+
+
 def test_file_part_dropped_by_default() -> None:
     """Test that FilePart is silently dropped when preserve_file_data=False (default).
 
