@@ -1303,9 +1303,6 @@ def test_multi_modal_content_types_matches_union():
 def test_binary_image_narrowed_wherever_multimodal_content_is_validated(mode: str):
     """An image `BinaryContent` narrows to `BinaryImage` on validation of any `MultiModalContent`
     (here via `UserPromptPart`), not just `FilePart.content`; non-image `BinaryContent` is left as-is.
-
-    Single-sources the narrowing that UI adapters and the Temporal `CallToolResult` path previously
-    applied by hand, so every `MultiModalContent`/`ToolReturnContent` consumer gets it for free.
     """
     image = BinaryContent(data=b'\x89PNG', media_type='image/png')
     audio = BinaryContent(data=b'\x00\x01', media_type='audio/mpeg')
