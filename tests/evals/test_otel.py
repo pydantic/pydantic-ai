@@ -230,6 +230,24 @@ async def test_span_node_matches(span_tree: SpanTree):
     assert not child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'normal'}))
 
 
+async def test_span_query_matches_json_encoded_attributes(span_tree: SpanTree):
+    root_node = span_tree.roots[0]
+    root_node.attributes.update(
+        {
+            'serialized_dict': '{"tool": {"name": "search"}, "ids": [1, 2]}',
+            'serialized_list': '["alpha", {"score": 1}]',
+            'malformed_json': '{"tool":',
+            'json_string': '"plain"',
+        }
+    )
+
+    assert root_node.matches({'has_attributes': {'serialized_dict': {'tool': {'name': 'search'}, 'ids': [1, 2]}}})
+    assert root_node.matches({'has_attributes': {'serialized_list': ['alpha', {'score': 1}]}})
+    assert not root_node.matches({'has_attributes': {'serialized_dict': {'tool': {'name': 'search'}, 'ids': [1, 3]}}})
+    assert not root_node.matches({'has_attributes': {'malformed_json': {'tool': {'name': 'search'}}}})
+    assert not root_node.matches({'has_attributes': {'json_string': 'plain'}})
+
+
 async def test_span_tree_repr(span_tree: SpanTree):
     assert repr(SpanTree()) == snapshot('<SpanTree />')
     assert str(span_tree) == snapshot('<SpanTree num_roots=1 total_spans=6 />')

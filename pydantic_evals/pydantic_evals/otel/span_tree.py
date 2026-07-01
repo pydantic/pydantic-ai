@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -20,6 +21,17 @@ AttributeValue = str | bool | int | float | Sequence[str] | Sequence[bool] | Seq
 
 
 __all__ = 'SpanNode', 'SpanTree', 'SpanQuery'
+
+
+def _attribute_matches(actual: AttributeValue | None, expected: Any) -> bool:
+    if actual == expected:
+        return True
+    if isinstance(actual, str) and isinstance(expected, (dict, list)):
+        try:
+            return json.loads(actual) == expected
+        except ValueError:
+            return False
+    return False
 
 
 class SpanQuery(TypedDict, total=False):
@@ -267,7 +279,7 @@ class SpanNode:
 
         # Attribute conditions
         if (has_attributes := query.get('has_attributes')) and not all(
-            self.attributes.get(key) == value for key, value in has_attributes.items()
+            _attribute_matches(self.attributes.get(key), value) for key, value in has_attributes.items()
         ):
             return False
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(
