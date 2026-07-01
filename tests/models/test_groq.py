@@ -5969,3 +5969,22 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_groq_web_search_tool_domain_filters(allow_model_requests: None):
+    """WebSearchTool.allowed_domains and blocked_domains are forwarded to the Groq API as search_settings."""
+    c = completion_message(ChatCompletionMessage(content='ok', role='assistant'))
+    captured: dict[str, Any] = {}
+
+    class CapturingMockGroq(MockGroq):
+        async def chat_completions_create(self, *_args: Any, stream: bool = False, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return c
+
+    mock_client = cast(AsyncGroq, CapturingMockGroq(completions=c))
+    m = GroqModel('compound-beta', provider=GroqProvider(groq_client=mock_client))
+    agent = Agent(m, capabilities=[NativeTool(WebSearchTool(allowed_domains=['example.com'], blocked_domains=['bad.com']))])
+    result = await agent.run('test')
+
+    assert result.output == 'ok'
+    assert captured.get('search_settings') == {'include_domains': ['example.com'], 'exclude_domains': ['bad.com']}
