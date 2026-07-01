@@ -14,7 +14,6 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from dataclasses import dataclass
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
@@ -118,30 +117,13 @@ class AgentRetries(TypedDict, total=False):
     output: int
 
 
-@dataclass
-class _RunStreamEventsConfig(Generic[AgentDepsT]):
-    agent: AbstractAgent[AgentDepsT, Any]
-    user_prompt: str | Sequence[_messages.UserContent] | None
-    output_type: OutputSpec[Any] | None
-    message_history: Sequence[_messages.ModelMessage] | None
-    deferred_tool_results: DeferredToolResults | None
-    conversation_id: str | None
-    model: models.Model | models.KnownModelName | str | None
-    instructions: _instructions.AgentInstructions[AgentDepsT]
-    deps: AgentDepsT
-    model_settings: AgentModelSettings[AgentDepsT] | None
-    usage_limits: _usage.UsageLimits | None
-    usage: _usage.RunUsage | None
-    metadata: AgentMetadata[AgentDepsT] | None
-    retries: int | AgentRetries | None
-    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None
-    capabilities: Sequence[AgentCapability[AgentDepsT]] | None
-    spec: dict[str, Any] | AgentSpec | None
+_RunStreamEventsRunner: TypeAlias = Callable[[EventStreamHandler[Any]], Awaitable[AgentRunResult[Any]]]
+"""Starts the background agent run with the internal event-forwarding handler and returns its result."""
 
 
 class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]):
-    def __init__(self, config: _RunStreamEventsConfig[Any]) -> None:
-        self._config = config
+    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+        self._run_agent = run_agent
         self._receive_stream: (
             MemoryObjectReceiveStream[_messages.AgentStreamEvent | AgentRunResultEvent[Any]] | None
         ) = None
@@ -182,7 +164,6 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
         if self._task is not None:
             return
 
-        config = self._config
         send_stream, receive_stream = anyio.create_memory_object_stream[
             _messages.AgentStreamEvent | AgentRunResultEvent[Any]
         ]()
@@ -194,26 +175,7 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
 
         async def run_agent() -> AgentRunResult[Any]:
             async with send_stream:
-                return await config.agent.run(
-                    config.user_prompt,
-                    output_type=config.output_type,
-                    message_history=config.message_history,
-                    deferred_tool_results=config.deferred_tool_results,
-                    conversation_id=config.conversation_id,
-                    model=config.model,
-                    instructions=config.instructions,
-                    deps=config.deps,
-                    model_settings=config.model_settings,
-                    usage_limits=config.usage_limits,
-                    usage=config.usage,
-                    metadata=config.metadata,
-                    retries=config.retries,
-                    infer_name=False,
-                    toolsets=config.toolsets,
-                    event_stream_handler=event_stream_handler,
-                    capabilities=config.capabilities,
-                    spec=config.spec,
-                )
+                return await self._run_agent(event_stream_handler)
 
         self._task = asyncio.create_task(run_agent())
 
@@ -221,12 +183,12 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
 class _RunStreamEventsContext(
     AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]
 ):
-    def __init__(self, config: _RunStreamEventsConfig[Any]) -> None:
-        self._config = config
+    def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
+        self._run_agent = run_agent
         self._iterator: _RunStreamEventsIterator | None = None
 
     async def __aenter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
-        self._iterator = _RunStreamEventsIterator(self._config)
+        self._iterator = _RunStreamEventsIterator(self._run_agent)
         return self._iterator
 
     async def __aexit__(
@@ -1287,10 +1249,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        return _RunStreamEventsContext(
-            _RunStreamEventsConfig(
-                agent=self,
-                user_prompt=user_prompt,
+        async def run_agent(event_stream_handler: EventStreamHandler[AgentDepsT]) -> AgentRunResult[Any]:
+            return await self.run(
+                user_prompt,
                 output_type=output_type,
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
@@ -1303,11 +1264,14 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
+                infer_name=False,
                 toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
             )
-        )
+
+        return _RunStreamEventsContext(run_agent)
 
     @overload
     def iter(
