@@ -489,7 +489,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         binary_content = BinaryContent.from_data_uri(url)
                         vendor_metadata = activity_content.get('vendor_metadata')
-                        if vendor_metadata is not None:
+                        # `vendor_metadata` is client-supplied and typed `Any`; assignment on the
+                        # (non-`validate_assignment`) `BinaryContent` dataclass bypasses validation,
+                        # so ignore anything that isn't a dict rather than let it reach the provider.
+                        if is_str_dict(vendor_metadata):
                             binary_content.vendor_metadata = vendor_metadata
                         builder.add(
                             FilePart(

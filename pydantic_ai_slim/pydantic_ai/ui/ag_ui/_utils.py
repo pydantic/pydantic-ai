@@ -51,7 +51,7 @@ class FileActivityContent(TypedDict, total=False):
     id: str
     provider_name: str
     provider_details: dict[str, Any]
-    vendor_metadata: Any
+    vendor_metadata: dict[str, Any]
 
 
 class UploadedFileActivityContent(TypedDict, total=False):
@@ -61,7 +61,7 @@ class UploadedFileActivityContent(TypedDict, total=False):
     provider_name: Required[str]
     media_type: str
     identifier: str
-    vendor_metadata: Any
+    vendor_metadata: dict[str, Any]
 
 
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')

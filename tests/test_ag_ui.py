@@ -3968,6 +3968,24 @@ def test_dump_messages_file_part_without_vendor_metadata() -> None:
     assert 'vendor_metadata' not in activity_msgs[0].content
 
 
+def test_load_messages_file_part_ignores_non_dict_vendor_metadata() -> None:
+    """Test load_messages ignores client-supplied vendor_metadata that isn't a dict.
+
+    `vendor_metadata` is typed `Any` in the wire schema and set on a `BinaryContent` that
+    doesn't validate on assignment, so a malformed value must not reach the model.
+    """
+    data_uri = BinaryImage(data=b'generated file content', media_type='image/png').data_uri
+    content: dict[str, Any] = {'url': data_uri, 'media_type': 'image/png', 'vendor_metadata': 'not-a-dict'}
+
+    reloaded = AGUIAdapter.load_messages(
+        [ActivityMessage(id='activity-1', activity_type='pydantic_ai_file', content=content)],
+        preserve_file_data=True,
+    )
+    file_parts = [part for message in reloaded for part in message.parts if isinstance(part, FilePart)]
+    assert len(file_parts) == 1
+    assert file_parts[0].content.vendor_metadata is None
+
+
 # endregion
 
 
