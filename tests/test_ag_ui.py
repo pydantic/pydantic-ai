@@ -1852,6 +1852,75 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
     assert 'Please try again' in str(retry_part.content)
 
 
+def test_dump_messages_preserves_part_order() -> None:
+    """Dumping a `ModelRequest` keeps `ToolReturnPart`s interleaved with user prompts (regression for #5964).
+
+    User content was previously buffered and emitted as a single `UserMessage` at the end, so a
+    `ToolReturnPart` following a `UserPromptPart` would be reordered after it. That produces a
+    `tool_use` block without an immediately-following `tool_result`, which providers like Anthropic
+    reject on the next request. The buffer must be flushed before each tool message so the original
+    part order survives, including user prompts on both sides of a tool return.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='suggest', args={'suggestions': ['Yes', 'No']}, tool_call_id='call_1'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='Before the tool return.'),
+                ToolReturnPart(tool_name='suggest', tool_call_id='call_1', content='suggested'),
+                UserPromptPart(content='After the tool return.'),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+
+    assert [type(msg).__name__ for msg in ag_ui_msgs] == snapshot(
+        ['AssistantMessage', 'UserMessage', 'ToolMessage', 'UserMessage']
+    )
+    tool_msg = ag_ui_msgs[2]
+    assert isinstance(tool_msg, ToolMessage)
+    assert tool_msg.tool_call_id == 'call_1'
+    assert [getattr(msg, 'content', None) for msg in ag_ui_msgs[1:]] == snapshot(
+        ['Before the tool return.', 'suggested', 'After the tool return.']
+    )
+
+
+def test_dump_messages_preserves_uploaded_file_order() -> None:
+    """Text straddling an `UploadedFile` keeps its order around the emitted `ActivityMessage`.
+
+    An `UploadedFile` is emitted as an `ActivityMessage` directly, so buffered user text must be
+    flushed before it, otherwise text that precedes the file would be reordered after it (the same
+    reordering class as #5964). The text on either side is therefore split into separate
+    `UserMessage`s rather than combined into one.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Before the file.',
+                        UploadedFile(file_id='file-abc123', provider_name='anthropic'),
+                        'After the file.',
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
+
+    assert [type(msg).__name__ for msg in ag_ui_msgs] == snapshot(['UserMessage', 'ActivityMessage', 'UserMessage'])
+    before, activity, after = ag_ui_msgs
+    assert before.content == snapshot('Before the file.')
+    assert isinstance(activity, ActivityMessage)
+    assert activity.content['file_id'] == 'file-abc123'
+    assert after.content == snapshot('After the file.')
+
+
 def test_file_part_dropped_by_default() -> None:
     """Test that FilePart is silently dropped when preserve_file_data=False (default).
 
