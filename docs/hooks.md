@@ -150,7 +150,7 @@ Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
 !!! note
-    These hooks fire on the request that starts a model turn, **not** on continuation requests. When a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode), the agent finishes the turn with follow-up requests that don't run these hooks.
+    These hooks fire **once per model turn**, even when a provider pauses mid-turn (Anthropic `pause_turn`) or returns a background response (OpenAI background mode) and the agent transparently continues it. `before_model_request` runs before the turn starts, `wrap_model_request` wraps the whole turn including any continuations, and `after_model_request` receives the single completed [`ModelResponse`][pydantic_ai.messages.ModelResponse].
 
 ### Tool validation hooks
 
