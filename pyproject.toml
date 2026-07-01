@@ -13,7 +13,7 @@ bump = true
 [project]
 name = "pydantic-ai"
 dynamic = ["version", "dependencies", "optional-dependencies"]
-description = "Agent Framework / shim to use Pydantic with LLMs"
+description = "AI Agent Framework, the Pydantic way"
 authors = [
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
     { name = "David Sanchez", email = "david.sanchez@pydantic.dev" },
