@@ -3688,7 +3688,11 @@ Fix the errors and try again.\
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
-    """Test that ThinkingPart in message history is properly mapped."""
+    """Test that ThinkingPart in message history is properly mapped.
+
+    Native xAI ThinkingParts WITHOUT a signature (provider_name=None) are dropped from history
+    rather than being re-rendered as <think>…</think> tags (which would leak into model output).
+    """
     # First response with reasoning
     response1 = create_response(
         content='first response',
@@ -3732,18 +3736,7 @@ async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
                 'model': XAI_REASONING_MODEL,
                 'messages': [
                     {'content': [{'text': 'First question'}], 'role': 'ROLE_USER'},
-                    {
-                        'content': [
-                            {
-                                'text': """\
-<think>
-First reasoning
-</think>\
-"""
-                            }
-                        ],
-                        'role': 'ROLE_ASSISTANT',
-                    },
+                    # Unsigned ThinkingPart (provider_name=None) is dropped — not re-rendered as <think> tags.
                     {'content': [{'text': 'first response'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'Second question <think>user think</think>'}], 'role': 'ROLE_USER'},
                 ],
@@ -5689,6 +5682,82 @@ async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: No
     for m in assistant_msgs:
         for part in m.get('content', []):
             assert '<think>' not in part.get('text', '')
+
+
+async def test_xai_foreign_thinking_part_dropped_from_history(allow_model_requests: None):
+    """ThinkingPart from a non-xai provider must be silently dropped, not re-rendered as thinking tags.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/5927.
+    Without the fix the elif-branch in _map_thinking_part wraps any ThinkingPart
+    that has content in <think>…</think> tags, which the model then mimics in
+    subsequent turns (reasoning-content leak).
+    """
+    response = create_response(content='Follow-up answer', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    # History contains a ThinkingPart produced by *another* provider (e.g. Anthropic).
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Foreign reasoning text', provider_name='anthropic'),
+                TextPart(content='First answer'),
+            ],
+            model_name=XAI_REASONING_MODEL,
+        ),
+    ]
+
+    await agent.run('Follow up', message_history=message_history)
+
+    kwargs_list = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs_list) == 1
+    messages = kwargs_list[0]['messages']
+
+    # The TextPart from the prior response must still be present.
+    assistant_texts = [m['content'][0]['text'] for m in messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert 'First answer' in assistant_texts
+
+    # No message must contain the foreign reasoning content.
+    all_text = str(messages)
+    assert 'Foreign reasoning text' not in all_text
+    assert '<think>' not in all_text
+
+
+async def test_xai_foreign_thinking_part_preserved_when_flag_enabled(allow_model_requests: None):
+    """When grok_send_back_thinking_parts=True, non-native ThinkingParts are wrapped in thinking tags.
+
+    Regression test (positive-flag path) for https://github.com/pydantic/pydantic-ai/issues/5927.
+    """
+    response = create_response(content='Follow-up answer', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+
+    # Explicit profile that opts-in to re-sending foreign thinking parts.
+    profile = GrokModelProfile(grok_send_back_thinking_parts=True)
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client), profile=profile)
+    agent = Agent(m)
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Foreign reasoning text', provider_name='anthropic'),
+                TextPart(content='First answer'),
+            ],
+            model_name=XAI_REASONING_MODEL,
+        ),
+    ]
+
+    await agent.run('Follow up', message_history=message_history)
+
+    kwargs_list = get_mock_chat_create_kwargs(mock_client)
+    messages = kwargs_list[0]['messages']
+
+    # Foreign ThinkingPart must appear wrapped in thinking tags.
+    all_text = str(messages)
+    assert '<think>' in all_text
+    assert 'Foreign reasoning text' in all_text
 
 
 # End of tests
