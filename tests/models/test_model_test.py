@@ -63,10 +63,9 @@ def test_response_metadata_consistent_between_run_and_run_stream():
         response_metadata(message) for message in stream_result.all_messages() if isinstance(message, ModelResponse)
     ]
 
-    assert (
-        run_metadata
-        == stream_metadata
-        == [
+    assert run_metadata == stream_metadata
+    assert run_metadata == snapshot(
+        [
             {
                 'model_name': 'test',
                 'provider_name': 'test',
