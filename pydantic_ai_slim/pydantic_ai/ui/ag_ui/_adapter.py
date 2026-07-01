@@ -7,7 +7,7 @@ import uuid
 import warnings
 from base64 import b64decode
 from collections.abc import Sequence
-from dataclasses import KW_ONLY, dataclass, replace
+from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -84,6 +84,7 @@ try:
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
         DEFAULT_AG_UI_VERSION,
+        ENCRYPTED_VALUE_VERSION,
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
@@ -93,6 +94,7 @@ try:
         parse_encrypted_tool_kind,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value,
+        warn_tool_kind_not_persisted,
     )
 except ImportError as e:  # pragma: no cover
     raise ImportError(
@@ -352,6 +354,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
         tool_kinds: dict[str, ToolPartKind] = {}  # Tool call ID to `tool_kind` claim mapping.
+        # `ToolCall`/`ToolMessage.encrypted_value` only exists on the installed model from 0.1.11
+        # onward; older versions drop the client's claim, so the field is only read when present.
+        use_encrypted_value = parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION
         for msg in messages:
             match msg:
                 case UserMessage(content=content):
@@ -417,12 +422,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_name = tool_call.function.name
                             tool_calls[tool_call_id] = tool_name
 
-                            # `getattr`: the `ToolCall.encrypted_value` field is absent on
-                            # ag-ui-protocol < 0.1.11, and the floor is 0.1.10. The claim is
-                            # client-supplied, so it's set on the base part and promoted best-effort
-                            # by the final `narrow_message_parts` pass (which strips it if it doesn't
-                            # validate against the typed subclass).
-                            tool_kind = parse_encrypted_tool_kind(getattr(tool_call, 'encrypted_value', None))
+                            # The claim is client-supplied, so it's set on the base part and promoted
+                            # best-effort by the final `narrow_message_parts` pass (which strips it if
+                            # it doesn't validate against the typed subclass).
+                            tool_kind = (
+                                parse_encrypted_tool_kind(tool_call.encrypted_value) if use_encrypted_value else None
+                            )
                             if tool_kind is not None:
                                 tool_kinds[tool_call_id] = tool_kind
 
@@ -458,9 +463,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # results stay untyped — typed return parts imply success to their readers.
                     tool_kind = None
                     if tool_msg.error is None:
-                        tool_kind = parse_encrypted_tool_kind(
-                            getattr(tool_msg, 'encrypted_value', None)
-                        ) or tool_kinds.get(tool_call_id)
+                        encrypted_tool_kind = (
+                            parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
+                        )
+                        tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
 
                     builtin_id = parse_builtin_tool_call_id(tool_call_id)
                     if builtin_id is not None:
@@ -481,23 +487,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                         )
                     else:
-                        return_part = ToolReturnPart(
-                            tool_name=tool_name,
-                            content=tool_msg.content,
-                            tool_call_id=tool_call_id,
+                        # AG-UI sends tool content as a string; the final `narrow_message_parts` pass
+                        # parses it into a typed return subclass when the `tool_kind` claim validates,
+                        # and leaves the plain string part (dropping the claim) when it doesn't.
+                        builder.add(
+                            ToolReturnPart(
+                                tool_name=tool_name,
+                                content=tool_msg.content,
+                                tool_call_id=tool_call_id,
+                                tool_kind=tool_kind,
+                            )
                         )
-                        if tool_kind is not None:
-                            # AG-UI sends tool content as a string, but typed return subclasses need
-                            # structured content, so parse it before the final `narrow_message_parts`
-                            # pass. An unparsable claim can't be a typed return, so leave the plain
-                            # string part (matching a claim-free load).
-                            try:
-                                return_part = replace(
-                                    return_part, content=json.loads(tool_msg.content), tool_kind=tool_kind
-                                )
-                            except json.JSONDecodeError:
-                                pass
-                        builder.add(return_part)
 
                 case ReasoningMessage() as reasoning_msg:
                     try:
@@ -579,10 +579,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ) -> list[Message]:
         """Convert a `ModelRequest` into AG-UI messages."""
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
-        # `ToolMessage.encrypted_value` landed in 0.1.11, but `tool_kind` writes gate on
-        # REASONING_VERSION (0.1.13) for symmetry with the streaming carrier — see
+        # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) landed in 0.1.11 — see
         # `tool_kind_encrypted_value`.
-        use_reasoning = parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION
+        use_encrypted_value = parse_ag_ui_version(ag_ui_version) >= ENCRYPTED_VALUE_VERSION
         result: list[Message] = []
         system_content: list[str] = []
         user_content: list[
@@ -631,7 +630,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         content=part.model_response_str(),
                         tool_call_id=part.tool_call_id,
-                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_reasoning else None,
+                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_encrypted_value else None,
                     )
                 )
             elif isinstance(part, RetryPromptPart):
@@ -676,10 +675,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_calls_list: list[ToolCall] = []
         tool_messages: list[ToolMessage] = []
 
-        # `encrypted_value` landed on ToolCall/ToolMessage in 0.1.11, but `tool_kind` writes gate
-        # on REASONING_VERSION (0.1.13) for symmetry with the streaming carrier — see
+        version = parse_ag_ui_version(ag_ui_version)
+        # `ReasoningMessage` is a REASONING_* type (0.1.13+); the `tool_kind` carrier
+        # `ToolCall`/`ToolMessage.encrypted_value` landed earlier in 0.1.11 — see
         # `tool_kind_encrypted_value`.
-        use_reasoning = parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION
+        use_reasoning = version >= REASONING_VERSION
+        use_encrypted_value = version >= ENCRYPTED_VALUE_VERSION
 
         builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)}
 
@@ -722,7 +723,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=part.tool_call_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
-                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_reasoning else None,
+                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_encrypted_value else None,
                     )
                 )
             elif isinstance(part, NativeToolCallPart):
@@ -731,7 +732,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=prefixed_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
-                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_reasoning else None,
+                        encrypted_value=tool_kind_encrypted_value(part.tool_kind) if use_encrypted_value else None,
                     )
                 )
                 if builtin_return := builtin_returns.get(part.tool_call_id):
@@ -741,7 +742,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             content=builtin_return.model_response_str(),
                             tool_call_id=prefixed_id,
                             encrypted_value=tool_kind_encrypted_value(builtin_return.tool_kind)
-                            if use_reasoning
+                            if use_encrypted_value
                             else None,
                         )
                     )
@@ -796,8 +797,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
-        - `tool_kind` is lost when `ag_ui_version < '0.1.13'` (its `encrypted_value` carrier is
-          gated on the 0.1.13 reasoning cutover), so typed tool parts reload as their base classes.
+        - `tool_kind` is lost when `ag_ui_version < '0.1.11'` (before its `encrypted_value` carrier
+          existed), so typed tool parts reload as their base classes.
         - `tool_kind` is not restored on error/denied tool returns (a typed return implies
           success to its readers), so those reload as plain `ToolReturnPart`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
@@ -817,6 +818,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             A list of AG-UI Message objects.
         """
         result: list[Message] = []
+
+        if parse_ag_ui_version(ag_ui_version) < ENCRYPTED_VALUE_VERSION and any(
+            isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
+            and part.tool_kind is not None
+            for msg in messages
+            for part in msg.parts
+        ):
+            warn_tool_kind_not_persisted(ag_ui_version)
 
         for msg in messages:
             if isinstance(msg, ModelRequest):

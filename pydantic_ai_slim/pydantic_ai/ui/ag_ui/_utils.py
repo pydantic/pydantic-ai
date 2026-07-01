@@ -5,12 +5,21 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import re
+import warnings
 from typing import Any, Final
 
 from typing_extensions import Required, TypedDict
 
 from ..._utils import is_str_dict
 from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind
+
+ENCRYPTED_VALUE_VERSION = (0, 1, 11)
+"""AG-UI version that added the `encrypted_value` field to `ToolCall` and `ToolMessage`.
+
+Gates the field-based `tool_kind` round-trip in `dump_messages`/`load_messages`. The streaming
+carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated on
+`REASONING_VERSION` (0.1.13) — see `tool_kind_encrypted_value`.
+"""
 
 REASONING_VERSION = (0, 1, 13)
 """AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
@@ -132,15 +141,34 @@ def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
     is present. The nested dict also leaves room to carry more metadata later. The claim is untrusted
     coming back in and degrades to a plain part if it doesn't validate.
 
-    Callers gate writes on `REASONING_VERSION` (0.1.13) for symmetry across the streaming and
-    non-streaming sides: the `encrypted_value` field itself landed in 0.1.11, but the streaming
-    carrier (`ReasoningEncryptedValueEvent`) is a `REASONING_*` event the codebase only emits from
-    0.1.13, so a single cutover keeps `tool_kind` round-tripping identically whether the history
-    was built by `dump_messages` or by streaming.
+    The field-based paths (`dump_messages`/`load_messages`) gate on `ENCRYPTED_VALUE_VERSION`
+    (0.1.11), where the `encrypted_value` field itself landed. The streaming path carries the same
+    payload in a `ReasoningEncryptedValueEvent` — a `REASONING_*` event the codebase only emits from
+    `REASONING_VERSION` (0.1.13) — so a 0.1.11/0.1.12 client sees `tool_kind` survive a
+    `dump_messages` round-trip but not a purely streaming one; either way the claim is best-effort and
+    a dropped one just re-narrows server-side on the next run.
     """
     if tool_kind is None:
         return None
     return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'tool_kind': tool_kind}})
+
+
+def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
+    """Warn that a typed part's `tool_kind` can't be persisted below `ENCRYPTED_VALUE_VERSION`.
+
+    Emitted from `dump_messages` when a history carries typed tool parts but the target AG-UI version
+    predates the `encrypted_value` carrier (0.1.11). Without it, features like lazy capabilities and
+    tool search silently forget their state across a round-trip; the warning surfaces the cause and
+    points at the fix (upgrade the client) instead of degrading quietly.
+    """
+    warnings.warn(
+        f'ag-ui-protocol {ag_ui_version} predates the `encrypted_value` field (added in 0.1.11), so '
+        'the `tool_kind` of typed tool parts (e.g. lazy capabilities, tool search) cannot be carried '
+        'across a dump/load round-trip and those parts will reload as their base classes. Upgrade the '
+        'client to ag-ui-protocol >= 0.1.11 to preserve it.',
+        UserWarning,
+        stacklevel=3,
+    )
 
 
 def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:

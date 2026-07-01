@@ -1609,10 +1609,10 @@ def test_dump_load_roundtrip_tools() -> None:
 
 
 def test_dump_load_roundtrip_load_capability() -> None:
-    """Typed `load_capability` parts keep their identity through dump/load on >= 0.1.13.
+    """Typed `load_capability` parts keep their identity through dump/load on >= 0.1.11.
 
-    Without `tool_kind` round-tripping via `encrypted_value`, a resuming agent would
-    forget its loaded capabilities.
+    The `encrypted_value` carrier landed in 0.1.11, so `tool_kind` survives from there; without it a
+    resuming agent would forget its loaded capabilities. Dumped at exactly 0.1.11 to pin the floor.
     """
     original: list[ModelMessage] = [
         ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
@@ -1621,7 +1621,7 @@ def test_dump_load_roundtrip_load_capability() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.13')
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     _sync_timestamps(original, reloaded)
 
@@ -1660,7 +1660,10 @@ def test_dump_load_roundtrip_load_capability_invalid_args() -> None:
 
 
 def test_dump_load_roundtrip_load_capability_old_version() -> None:
-    """On < 0.1.13, `tool_kind` is skipped (no `encrypted_value` field) and typed parts reload as base classes."""
+    """On < 0.1.11, `tool_kind` is skipped (no `encrypted_value` field) and typed parts reload as base classes.
+
+    Dumping a typed part below the floor warns, since the round-trip silently forgets loaded state.
+    """
     original: list[ModelMessage] = [
         ModelResponse(parts=[LoadCapabilityCallPart(tool_call_id='load-foobar', args='{"id": "foobar"}')]),
         ModelRequest(
@@ -1668,7 +1671,8 @@ def test_dump_load_roundtrip_load_capability_old_version() -> None:
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
+    with pytest.warns(UserWarning, match=r'ag-ui-protocol 0\.1\.10 predates the `encrypted_value` field'):
+        ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
 
     assistant_msg = ag_ui_msgs[0]
     assert isinstance(assistant_msg, AssistantMessage)
@@ -1685,7 +1689,7 @@ def test_dump_load_roundtrip_load_capability_old_version() -> None:
 
 
 def test_dump_load_roundtrip_native_tool_search() -> None:
-    """Native tool-search parts keep their typed identity through dump/load on >= 0.1.13."""
+    """Native tool-search parts keep their typed identity through dump/load on >= 0.1.11."""
     original: list[ModelMessage] = [
         ModelResponse(
             parts=[

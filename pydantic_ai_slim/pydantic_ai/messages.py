@@ -1106,6 +1106,25 @@ def parse_tool_kind(value: object) -> ToolPartKind | None:
     return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
 
 
+_ReturnPartT = TypeVar('_ReturnPartT', bound='BaseToolReturnPart')
+
+
+def _structure_return_content(part: _ReturnPartT) -> _ReturnPartT:
+    """Parse a return part's JSON-string `content` into structured form ahead of narrowing.
+
+    Some UI wire formats (e.g. AG-UI) transmit tool results as JSON strings, but a typed return
+    subclass carries structured content. Parsing here — driven by `narrow_type` before it hands the
+    part to a registered narrower — lets each narrower validate structured content uniformly. A
+    non-JSON string is returned unchanged for the narrower to reject via its normal validation.
+    """
+    if isinstance(part.content, str):
+        try:
+            return replace(part, content=pydantic_core.from_json(part.content))
+        except ValueError:
+            pass
+    return part
+
+
 @dataclass(repr=False)
 class BaseToolReturnPart:
     """Base class for tool return parts."""
@@ -1341,7 +1360,7 @@ class ToolReturnPart(BaseToolReturnPart):
         if narrower is None:
             return part
         try:
-            return narrower(part)
+            return narrower(_structure_return_content(part))
         except pydantic.ValidationError:
             return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
@@ -1394,7 +1413,7 @@ class NativeToolReturnPart(BaseToolReturnPart):
         if narrower is None:
             return part
         try:
-            return narrower(part)
+            return narrower(_structure_return_content(part))
         except pydantic.ValidationError:
             return replace(part, tool_kind=None) if part.tool_kind is not None else part
 

@@ -1704,6 +1704,20 @@ def test_narrow_type_strips_unsubstantiated_tool_kind_set_on_part():
     assert NativeToolReturnPart.narrow_type(native_return) == replace(native_return, tool_kind=None)
 
 
+def test_narrow_type_upgrades_json_string_content():
+    """A typed return whose content arrives as a JSON string (as UI adapters transmit it) is parsed
+    and promoted to its typed subclass with structured content, not left as a base part."""
+    tool_return = ToolReturnPart(
+        tool_name='load_capability',
+        tool_call_id='c1',
+        content='{"instructions": "hi"}',
+        tool_kind='capability-load',
+    )
+    narrowed = ToolReturnPart.narrow_type(tool_return)
+    assert type(narrowed) is LoadCapabilityReturnPart
+    assert narrowed.content == {'instructions': 'hi'}
+
+
 def test_stripped_tool_kind_part_survives_roundtrip():
     """A base part that kept an unvalidatable `tool_kind` would be routed back to the typed subclass
     by the discriminator and fail validation on reload; stripping it preserves the round-trip."""
