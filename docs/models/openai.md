@@ -376,7 +376,7 @@ agent = Agent(model)
 
 #### Models that accept only one leading system message
 
-Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to: combining agent `instructions` with [`PromptedOutput`][pydantic_ai.output.PromptedOutput] can produce two consecutive leading system messages.
+Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to, since more than one leading system message can be produced in several ways.
 
 Set `openai_chat_supports_multiple_system_messages=False` on the model's [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (as shown above) to merge the leading run of system messages into one, joined with two newlines, before the request is sent. The merge is lossless, so it's safe to enable whenever a backend rejects multiple system messages.
 
