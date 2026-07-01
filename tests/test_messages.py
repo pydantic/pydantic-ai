@@ -1,4 +1,5 @@
 import sys
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -1396,6 +1397,45 @@ def test_tool_return_dict_reusing_kind_without_type_field_stays_mapping(content:
     ]
 
     loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+    part = loaded[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.content == content
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        # Reserved `kind` + a type-specific field, but not a valid instance of that type:
+        pytest.param({'kind': 'binary', 'media_type': 'text/plain', 'text': 'hello'}, id='binary-without-data'),
+        pytest.param(
+            {'kind': 'uploaded-file', 'file_id': 'abc', 'status': 'ready'}, id='uploaded-file-without-provider'
+        ),
+        pytest.param({'kind': 'image-url', 'media_type': 'image/png', 'note': 'x'}, id='image-url-without-url'),
+    ],
+)
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_tool_return_dict_reusing_kind_with_type_field_stays_mapping(content: dict[str, str], mode: str):
+    """A user dict that reuses a `kind` value AND carries a type field (`media_type`/`url`/`file_id`)
+    but isn't a valid instance of that type must stay a plain mapping, not raise.
+
+    The discriminator gates such a dict into the `multimodal` branch on the `kind`+field heuristic;
+    `_validate_multimodal_or_passthrough` falls back to the raw dict when `MultiModalContent` validation
+    fails, and `_serialize_multimodal_or_passthrough` dumps it without a spurious serializer warning —
+    together matching the pre-discriminator behavior where these fell through to the `Any` arm.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')  # a `PydanticSerializationUnexpectedValue` warning would fail here
+        if mode == 'json':
+            loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+        else:
+            loaded = ModelMessagesTypeAdapter.validate_python(
+                ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+            )
+
     part = loaded[0].parts[0]
     assert isinstance(part, ToolReturnPart)
     assert part.content == content

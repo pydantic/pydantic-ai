@@ -1111,6 +1111,35 @@ def _tool_return_content_discriminator(value: Any) -> str:
     return 'any'
 
 
+def _validate_multimodal_or_passthrough(value: Any, handler: pydantic.ValidatorFunctionWrapHandler) -> Any:
+    """Validate a `multimodal`-tagged value as `MultiModalContent`, falling back to the raw value.
+
+    The discriminator gates a dict into the `multimodal` branch on a matching `kind` plus a
+    type-specific field, but that's a heuristic: a user tool-return dict that merely reuses one of
+    our `kind` values and happens to carry a `media_type`/`url`/`file_id` key (e.g.
+    `{'kind': 'binary', 'media_type': 'text/plain'}`) would otherwise raise a hard `ValidationError`.
+    Returning it unchanged keeps such dicts as plain mappings, matching the pre-discriminator behavior
+    where they fell through to the `Any` arm rather than being force-validated as multimodal content.
+    """
+    try:
+        return handler(value)
+    except pydantic.ValidationError:
+        return value
+
+
+def _serialize_multimodal_or_passthrough(value: Any, handler: pydantic.SerializerFunctionWrapHandler) -> Any:
+    """Serialize a `multimodal`-tagged value, passing non-`MultiModalContent` values through as-is.
+
+    Mirror of `_validate_multimodal_or_passthrough`: a passthrough dict left as a plain mapping (see
+    there) is still routed to the `multimodal` branch by the discriminator on serialization, where the
+    `MultiModalContent` serializer would emit a spurious `PydanticSerializationUnexpectedValue` warning.
+    Serializing it as a plain value avoids that while real `MultiModalContent` instances dump normally.
+    """
+    if isinstance(value, MULTI_MODAL_CONTENT_TYPES):
+        return handler(value)
+    return value
+
+
 if TYPE_CHECKING:
     # Simpler type for static analysis - recursive TypeAliasType with Any produces spurious Unknown types
     ToolReturnContent: TypeAlias = MultiModalContent | Sequence[Any] | Mapping[str, Any] | Any
@@ -1122,7 +1151,12 @@ else:
     ToolReturnContent = TypeAliasType(
         'ToolReturnContent',
         Annotated[
-            Annotated[MultiModalContent, pydantic.Tag('multimodal')]
+            Annotated[
+                MultiModalContent,
+                pydantic.WrapValidator(_validate_multimodal_or_passthrough),
+                pydantic.WrapSerializer(_serialize_multimodal_or_passthrough),
+                pydantic.Tag('multimodal'),
+            ]
             | Annotated[Mapping[str, 'ToolReturnContent'], pydantic.Tag('mapping')]
             | Annotated[Sequence['ToolReturnContent'], pydantic.Tag('sequence')]
             | Annotated[Any, pydantic.Tag('any')],
