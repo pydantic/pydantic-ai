@@ -51,7 +51,7 @@ from .._template import TemplateStr, validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import AbstractCapability, AgentCapability, CombinedCapability, ToolSearch as ToolSearchCap
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1059,8 +1059,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 'budget) here, and `Agent(retries=...)` for tool retries.'
             )
 
-        # Resolve spec contributions (additive at run time)
-        resolved = self._resolve_spec(spec)
+        override_cap = self._override_root_capability.get()
+        base_capability = override_cap.value if override_cap is not None else self._root_capability
+
+        leaves = collect_leaves(base_capability)
+        managed_spec: AgentSpec | None = None
+
+        for capability in leaves:
+            spec_from_capability = capability.contribute_run_spec()
+            if spec_from_capability is not None:
+                managed_spec = spec_from_capability
+                break
+
+        resolved = self._resolve_spec(managed_spec or spec)
         effective_output_retries = retry_overrides.get('output')
         if resolved is not None:
             # Model: spec as fallback (run param > spec > agent)
@@ -1234,10 +1245,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # context, not perform IO or have side effects.
         state.metadata = self._get_metadata(initial_ctx, metadata)
         initial_ctx.metadata = state.metadata
-
-        # Determine root capability: override > agent default
-        override_cap = self._override_root_capability.get()
-        base_capability = override_cap.value if override_cap is not None else self._root_capability
 
         # Merge spec and run-time capabilities additively with the base capability
         extra_capabilities: list[AbstractCapability[AgentDepsT]] = []

@@ -24,6 +24,7 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.output import OutputContext
@@ -202,6 +203,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         to recursively visit all child capabilities.
         """
         visitor(self)
+
+    def contribute_run_spec(self) -> AgentSpec | None:
+        """Contribute an agent spec to the run.
+
+        Return an `AgentSpec` instance to contribute to the run.
+        """
+        return None
 
     @property
     def has_wrap_node_run(self) -> bool:
