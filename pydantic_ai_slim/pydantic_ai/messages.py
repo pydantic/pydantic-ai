@@ -2609,7 +2609,19 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'tool-search-call',
+            'capability-load-call',
+            'tool-call',
+            'builtin-tool-search-call',
+            'builtin-tool-call',
+            'builtin-tool-search-return',
+            'builtin-tool-return',
+            'thinking',
+            'compaction',
+            'file',
+        ]
         | None
     ) = None
     """The kind of the previous part, if any.
@@ -2650,7 +2662,19 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'tool-search-call',
+            'capability-load-call',
+            'tool-call',
+            'builtin-tool-search-call',
+            'builtin-tool-call',
+            'builtin-tool-search-return',
+            'builtin-tool-return',
+            'thinking',
+            'compaction',
+            'file',
+        ]
         | None
     ) = None
     """The kind of the next part, if any.
