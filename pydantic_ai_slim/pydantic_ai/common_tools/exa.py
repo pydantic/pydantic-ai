@@ -100,6 +100,12 @@ class ExaSearchTool:
     max_characters: int | None
     """Maximum characters of text content per result, or None for no limit."""
 
+    include_domains: list[str] | None = None
+    """Developer-configured domains to restrict results to, or None for no restriction."""
+
+    exclude_domains: list[str] | None = None
+    """Developer-configured domains to exclude from results, or None for no exclusion."""
+
     async def __call__(
         self,
         query: str,
@@ -126,6 +132,8 @@ class ExaSearchTool:
             num_results=self.num_results,
             type=search_type,
             contents=contents,
+            include_domains=self.include_domains,
+            exclude_domains=self.exclude_domains,
         )
 
         return [
@@ -150,6 +158,12 @@ class ExaFindSimilarTool:
     num_results: int
     """The number of results to return."""
 
+    include_domains: list[str] | None = None
+    """Developer-configured domains to restrict results to, or None for no restriction."""
+
+    exclude_domains: list[str] | None = None
+    """Developer-configured domains to exclude from results, or None for no exclusion."""
+
     async def __call__(
         self,
         url: str,
@@ -171,6 +185,8 @@ class ExaFindSimilarTool:
             num_results=self.num_results,
             exclude_source_domain=exclude_source_domain,
             contents=contents,
+            include_domains=self.include_domains,
+            exclude_domains=self.exclude_domains,
         )
 
         return [
@@ -258,6 +274,8 @@ def exa_search_tool(
     *,
     num_results: int = 5,
     max_characters: int | None = None,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> Tool[Any]: ...
 
 
@@ -267,6 +285,8 @@ def exa_search_tool(
     client: AsyncExa,
     num_results: int = 5,
     max_characters: int | None = None,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> Tool[Any]: ...
 
 
@@ -276,6 +296,8 @@ def exa_search_tool(
     client: AsyncExa | None = None,
     num_results: int = 5,
     max_characters: int | None = None,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> Tool[Any]:
     """Creates an Exa search tool.
 
@@ -288,6 +310,10 @@ def exa_search_tool(
         num_results: The number of results to return. Defaults to 5.
         max_characters: Maximum characters of text content per result. Use this to limit
             token usage. Defaults to None (no limit).
+        include_domains: Domains to restrict results to. Set by the developer rather than the
+            model, so the search query stays free of domain filters. Defaults to None (no restriction).
+        exclude_domains: Domains to exclude from results. Set by the developer rather than the
+            model. Defaults to None (no exclusion).
     """
     if client is None:
         if api_key is None:
@@ -298,6 +324,8 @@ def exa_search_tool(
             client=client,
             num_results=num_results,
             max_characters=max_characters,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
         ).__call__,
         name='exa_search',
         description='Searches Exa for the given query and returns the results with content. Exa is a neural search engine that finds high-quality, relevant results.',
@@ -309,6 +337,8 @@ def exa_find_similar_tool(
     api_key: str,
     *,
     num_results: int = 5,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> Tool[Any]: ...
 
 
@@ -317,6 +347,8 @@ def exa_find_similar_tool(
     *,
     client: AsyncExa,
     num_results: int = 5,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> Tool[Any]: ...
 
 
@@ -325,6 +357,8 @@ def exa_find_similar_tool(
     *,
     client: AsyncExa | None = None,
     num_results: int = 5,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
 ) -> Tool[Any]:
     """Creates an Exa find similar tool.
 
@@ -335,13 +369,22 @@ def exa_find_similar_tool(
         client: An existing AsyncExa client. If provided, `api_key` is ignored.
             This is useful for sharing a client across multiple tools.
         num_results: The number of similar results to return. Defaults to 5.
+        include_domains: Domains to restrict results to. Set by the developer rather than the
+            model. Defaults to None (no restriction).
+        exclude_domains: Domains to exclude from results. Set by the developer rather than the
+            model. Defaults to None (no exclusion).
     """
     if client is None:
         if api_key is None:
             raise ValueError('Either api_key or client must be provided')
         client = AsyncExa(api_key=api_key)
     return Tool[Any](
-        ExaFindSimilarTool(client=client, num_results=num_results).__call__,
+        ExaFindSimilarTool(
+            client=client,
+            num_results=num_results,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        ).__call__,
         name='exa_find_similar',
         description='Finds web pages similar to a given URL. Useful for discovering related content, competitors, or alternative sources.',
     )
@@ -435,6 +478,8 @@ class ExaToolset(FunctionToolset):
         *,
         num_results: int = 5,
         max_characters: int | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
         include_search: bool = True,
         include_find_similar: bool = True,
         include_get_contents: bool = True,
@@ -450,6 +495,10 @@ class ExaToolset(FunctionToolset):
             num_results: The number of results to return for search and find_similar. Defaults to 5.
             max_characters: Maximum characters of text content per result. Use this to limit
                 token usage. Defaults to None (no limit).
+            include_domains: Domains to restrict search/find_similar results to. Set by the developer
+                rather than the model, so the query stays free of domain filters. Defaults to None.
+            exclude_domains: Domains to exclude from search/find_similar results. Set by the developer
+                rather than the model. Defaults to None.
             include_search: Whether to include the search tool. Defaults to True.
             include_find_similar: Whether to include the find_similar tool. Defaults to True.
             include_get_contents: Whether to include the get_contents tool. Defaults to True.
@@ -460,10 +509,25 @@ class ExaToolset(FunctionToolset):
         tools: list[Tool[Any]] = []
 
         if include_search:
-            tools.append(exa_search_tool(client=client, num_results=num_results, max_characters=max_characters))
+            tools.append(
+                exa_search_tool(
+                    client=client,
+                    num_results=num_results,
+                    max_characters=max_characters,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
+                )
+            )
 
         if include_find_similar:
-            tools.append(exa_find_similar_tool(client=client, num_results=num_results))
+            tools.append(
+                exa_find_similar_tool(
+                    client=client,
+                    num_results=num_results,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
+                )
+            )
 
         if include_get_contents:
             tools.append(exa_get_contents_tool(client=client))

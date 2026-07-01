@@ -257,6 +257,29 @@ result = agent.run_sync('What are the latest developments in quantum computing?'
 print(result.output)
 ```
 
+You can also restrict or exclude domains at tool creation time via `include_domains` / `exclude_domains`.
+Because these are configured by the developer rather than the model, the search query stays free of domain
+filters (which the LLM might otherwise inject into the query text):
+
+```py {title="exa_domain_filtering.py" test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.common_tools.exa import exa_search_tool
+
+api_key = os.getenv('EXA_API_KEY')
+assert api_key is not None
+
+agent = Agent(
+    'openai:gpt-5.2',
+    tools=[exa_search_tool(api_key, num_results=5, include_domains=['arxiv.org'])],
+    system_prompt='Search the web for information using Exa.',
+)
+
+result = agent.run_sync('What are the latest developments in quantum computing?')
+print(result.output)
+```
+
 #### Using ExaToolset
 
 For better efficiency when using multiple Exa tools, use [`ExaToolset`][pydantic_ai.common_tools.exa.ExaToolset]
