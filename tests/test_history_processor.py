@@ -1915,6 +1915,46 @@ async def test_history_processor_truncation_during_resumed_tool_loop_keeps_run_m
     assert not _user_request_present(result.new_messages())
 
 
+async def test_history_processor_insert_and_replace_resumed_request_excludes_resumed_request(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """
+    A processor can both insert a message ahead of the resumed request AND rebuild the
+    resumed request itself in the same pass. The boundary is pinned by position *after*
+    processing runs (when the resumed request is the trailing message), so neither the
+    inserted message nor the rebuilt resumed request leaks into new_messages() — only the
+    model response is new. Covers the combined insert+replace case raised in review of the
+    position-based fix for https://github.com/pydantic/pydantic-ai/issues/6025.
+    """
+
+    def insert_and_replace(messages: list[ModelMessage]) -> list[ModelMessage]:
+        # Rebuild every request (changed `metadata` defeats value re-matching) and prepend a
+        # fresh request at the front, shifting the resumed request off its original position.
+        rebuilt: list[ModelMessage] = [
+            replace(message, metadata={'touched': True}) if isinstance(message, ModelRequest) else message
+            for message in messages
+        ]
+        rebuilt.insert(0, ModelRequest(parts=[SystemPromptPart(content='Injected context')]))
+        return rebuilt
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(insert_and_replace)])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Earlier question')]),
+        ModelResponse(parts=[TextPart(content='Earlier answer')]),
+        ModelRequest(parts=[UserPromptPart(content='Original prompt')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run(message_history=message_history)
+
+    assert captured_messages == result.all_messages()
+    # Both the inserted request and the rebuilt resumed request are prior context; only the
+    # model response is new, and no user request leaks in.
+    assert result.new_messages() == result.all_messages()[-1:]
+    assert not _user_request_present(result.new_messages())
+
+
 def test_takes_ctx_returns_false_for_untyped_processor():
     """takes_run_context returns False when the processor's first param has no type annotation."""
     from pydantic_ai._utils import takes_run_context
