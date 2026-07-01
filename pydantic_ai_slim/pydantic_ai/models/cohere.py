@@ -1,17 +1,18 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import EllipsisType
-from typing import Any, AsyncGenerator, Literal, cast
+from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
 
 from pydantic_ai.exceptions import ModelAPIError
 
 from .. import ModelHTTPError, usage
+from .._run_context import RunContext
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
@@ -42,7 +43,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, RunContext, StreamedResponse, check_allow_model_requests
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -493,7 +494,7 @@ class CohereStreamedResponse(StreamedResponse):
             if 'async generator is already running' not in str(e):
                 raise
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         thinking_indices: set[int] = set()
 
         async for event in self._response:
