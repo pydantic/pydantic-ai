@@ -125,7 +125,7 @@ You can customize tool task behavior using `tool_task_config` (applies to all to
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.prefect import PrefectAgent, TaskConfig
 
-agent = Agent('gpt-5.2', name='my_agent')
+agent = Agent('openai:gpt-5.2', name='my_agent')
 
 @agent.tool_plain
 def fetch_data(url: str) -> str:

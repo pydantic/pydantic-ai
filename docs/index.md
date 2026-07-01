@@ -18,7 +18,7 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 [Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
 
 2. **Model-agnostic**:
-Supports virtually every [model](models/overview.md) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Cloud, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, and SambaNova. If your favorite model or provider is not listed, you can easily implement a [custom model](models/overview.md#custom-models).
+Supports virtually every [model](models/overview.md) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Cloud, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, SambaNova, and Z.AI. If your favorite model or provider is not listed, you can easily implement a [custom model](models/overview.md#custom-models).
 
 3. **Seamless Observability**:
 Tightly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that too](logfire.md#alternative-observability-backends).
@@ -32,8 +32,8 @@ Enables you to systematically test and [evaluate](evals.md) the performance and 
 6. **Extensible by Design**:
 Build agents from composable [capabilities](capabilities.md) that bundle tools, hooks, instructions, and model settings into reusable units. Use built-in capabilities for [web search](capabilities.md#provider-adaptive-tools), [thinking](capabilities.md#thinking), and [MCP](capabilities.md#provider-adaptive-tools), pick from the [Pydantic AI Harness](harness/overview.md) capability library, build your own, or install [third-party capability packages](extensibility.md). Define agents entirely in [YAML/JSON](agent-spec.md) — no code required.
 
-7. **MCP, A2A, and UI**:
-Integrates the [Model Context Protocol](mcp/overview.md), [Agent2Agent](a2a.md), and various [UI event stream](ui/overview.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
+7. **MCP and UI**:
+Integrates the [Model Context Protocol](mcp/overview.md) and various [UI event stream](ui/overview.md) standards to give your agent access to external tools and data and build interactive applications with streaming event-based communication.
 
 8. **Human-in-the-Loop Tool Approval**:
 Easily lets you flag that certain tool calls [require approval](deferred-tools.md#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.

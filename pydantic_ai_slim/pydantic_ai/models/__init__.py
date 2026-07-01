@@ -17,20 +17,18 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
 from types import TracebackType
-from typing import Annotated, Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-import pydantic
-from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
+from typing_extensions import Self, TypeAliasType, TypedDict
 from typing_inspection.introspection import get_literal_values
 
 from .. import _deferred_capabilities, _utils
-from .._deprecated_callable import deprecated_callable_property
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from .._warnings import PydanticAIDeprecationWarning
+from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
     BaseToolCallPart,
@@ -56,10 +54,10 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..native_tools import AbstractNativeTool
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
-from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
+from ..profiles import DEFAULT_PROFILE, DEFAULT_PROMPTED_OUTPUT_TEMPLATE, ModelProfile, ModelProfileSpec, merge_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
@@ -94,7 +92,6 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'deepseek',
         'fireworks',
         'github',
-        'grok',
         'heroku',
         'litellm',
         'moonshotai',
@@ -105,6 +102,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'sambanova',
         'together',
         'vercel',
+        'zai',
     ],
 )
 OpenAIResponsesCompatibleProvider = TypeAliasType(
@@ -113,7 +111,6 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'azure',
         'deepseek',
         'fireworks',
-        'grok',
         'nebius',
         'openrouter',
         'ovhcloud',
@@ -128,12 +125,7 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
-    native_tools: Annotated[
-        list[AbstractNativeTool],
-        # Accept the pre-rename `builtin_tools` key when validating from a dict (e.g. through
-        # `pydantic.TypeAdapter`). The dump uses the new name only.
-        pydantic.Field(validation_alias=pydantic.AliasChoices('native_tools', 'builtin_tools')),
-    ] = field(default_factory=list[AbstractNativeTool])
+    native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
@@ -165,16 +157,6 @@ class ModelRequestParameters:
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
-    @property
-    def builtin_tools(self) -> list[AbstractNativeTool]:
-        """Deprecated: use [`native_tools`][pydantic_ai.models.ModelRequestParameters.native_tools] instead."""
-        warnings.warn(
-            '`ModelRequestParameters.builtin_tools` is deprecated, use `ModelRequestParameters.native_tools` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return self.native_tools
-
     @cached_property
     def prompted_output_instructions(self) -> str | None:
         if self.prompted_output_template and self.output_object:
@@ -193,12 +175,6 @@ class ModelRequestParameters:
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-# Wrap the dataclass-generated `__init__` so direct construction still accepts a
-# deprecated `builtin_tools=` kwarg. (Pydantic deserialization is handled by the
-# `validation_alias` on the `native_tools` field above.)
-_utils.install_deprecated_kwarg_alias(ModelRequestParameters, old='builtin_tools', new='native_tools')
 
 
 @dataclass(kw_only=True)
@@ -248,7 +224,7 @@ class Model(ABC, Generic[InterfaceClient]):
     @property
     def provider(self) -> Provider[InterfaceClient] | None:
         """The provider for this model, if any."""
-        return self._provider
+        return getattr(self, '_provider', None)
 
     async def __aenter__(self) -> Self:
         """Enter the model context, delegating to the provider to manage its HTTP client lifecycle."""
@@ -330,7 +306,7 @@ class Model(ABC, Generic[InterfaceClient]):
         In particular, this method can be used to make modifications to the generated tool JSON schemas if necessary
         for vendor/model-specific reasons.
         """
-        if transformer := self.profile.json_schema_transformer:
+        if transformer := self.profile.get('json_schema_transformer'):
             model_request_parameters = replace(
                 model_request_parameters,
                 function_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.function_tools],
@@ -365,8 +341,10 @@ class Model(ABC, Generic[InterfaceClient]):
         # Resolve unified thinking setting and strip from model_settings
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
-            if self.profile.supports_thinking or self.profile.thinking_always_enabled:
-                if not (thinking_value is False and self.profile.thinking_always_enabled):
+            supports_thinking = self.profile.get('supports_thinking', False)
+            thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
+            if supports_thinking or thinking_always_enabled:
+                if not (thinking_value is False and thinking_always_enabled):
                     params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
@@ -378,7 +356,7 @@ class Model(ABC, Generic[InterfaceClient]):
                 native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
-        params = params.with_default_output_mode(self.profile.default_structured_output_mode)
+        params = params.with_default_output_mode(self.profile.get('default_structured_output_mode', 'tool'))
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
@@ -391,9 +369,15 @@ class Model(ABC, Generic[InterfaceClient]):
         # Set default prompted output template
         if (
             params.output_mode == 'prompted'
-            or (params.output_mode == 'native' and self.profile.native_output_requires_schema_in_instructions)
+            or (
+                params.output_mode == 'native'
+                and self.profile.get('native_output_requires_schema_in_instructions', False)
+            )
         ) and params.prompted_output_template is None:
-            params = replace(params, prompted_output_template=self.profile.prompted_output_template)
+            params = replace(
+                params,
+                prompted_output_template=self.profile.get('prompted_output_template', DEFAULT_PROMPTED_OUTPUT_TEMPLATE),
+            )
 
         # Append prompted_output_instructions to instruction_parts so models that use structured
         # instruction parts (for per-part system messages or cache placement) also get them.
@@ -403,11 +387,11 @@ class Model(ABC, Generic[InterfaceClient]):
             params = replace(params, instruction_parts=InstructionPart.sorted(parts))
 
         # Check if output mode is supported
-        if params.output_mode == 'native' and not self.profile.supports_json_schema_output:
+        if params.output_mode == 'native' and not self.profile.get('supports_json_schema_output', False):
             raise UserError('Native structured output is not supported by this model.')
-        if params.output_mode == 'tool' and not self.profile.supports_tools:
+        if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
             raise UserError('Tool output is not supported by this model.')
-        if params.allow_image_output and not self.profile.supports_image_output:
+        if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
         # Check native tools and handle fallback swap
@@ -433,12 +417,12 @@ class Model(ABC, Generic[InterfaceClient]):
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
         sees a homogeneous shape regardless of which provider produced the prior turn.
         """
-        if ToolSearchTool not in self.profile.supported_native_tools:
+        if ToolSearchTool not in self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
             from .._tool_search import synthesize_local_tool_search_messages
 
             messages = synthesize_local_tool_search_messages(messages)
 
-        if not self.profile.supports_inline_system_prompts:
+        if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
 
         return messages
@@ -452,9 +436,13 @@ class Model(ABC, Generic[InterfaceClient]):
         2. `with_native` matches a supported native tool → keep on wire; the adapter
            applies any native-tool-specific format (e.g. Anthropic / OpenAI's wire-side
            `defer_loading` flag for `ToolSearchTool`).
-        3. `with_native` matches an *unsupported* native tool AND `defer_loading=True`
-           → drop from wire (the corpus member is currently undiscovered, so the model has
-           no way to call it on this provider).
+        3. `with_native` matches an *unsupported* native tool → the corpus member can't be
+           paired with its native tool on this provider, so its fate turns on discovery:
+           if `defer_loading=True` it's still undiscovered and is dropped from wire (the
+           model has no way to call it); otherwise it's already discovered and stays on wire
+           as a plain function tool, but sheds `with_native` — with no native tool present, an
+           adapter that derives a native flag from it (e.g. OpenAI's `defer_loading`) would
+           emit it unpaired and the provider would reject the request.
         4. Otherwise → keep.
 
         On top of the four-rule filter, two narrower drops apply, kept independent:
@@ -470,7 +458,7 @@ class Model(ABC, Generic[InterfaceClient]):
           to this drop, so making `optional` a base-class field doesn't accidentally cause
           e.g. `WebSearchTool(optional=True)` to be dropped here.
         """
-        supported_types = self.profile.supported_native_tools
+        supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
         supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
         unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
@@ -510,9 +498,17 @@ class Model(ABC, Generic[InterfaceClient]):
             if t.unless_native and t.unless_native in supported_ids:
                 if not (tool_search_kept_local and t.unless_native == ToolSearchTool.kind):
                     continue
-            # Rule 3: drop undiscovered corpus members when the native tool is unsupported.
-            if t.with_native and t.with_native not in supported_ids and t.defer_loading:
-                continue
+            # Rule 3: a corpus member whose native tool is unsupported can't be paired with that
+            # native tool on this provider; its fate turns on whether it's been discovered yet.
+            if t.with_native and t.with_native not in supported_ids:
+                # Still undiscovered → drop: the model has no way to call it on this provider.
+                if t.defer_loading:
+                    continue
+                # Already discovered → keep it callable as a plain function tool, but shed
+                # `with_native`: with no native tool on the wire, an adapter that derives a native
+                # flag from it (e.g. OpenAI's `defer_loading`) would emit it unpaired and the
+                # provider would reject the request.
+                t = replace(t, with_native=None)
             # Rules 2 + 4: keep.
             function_tools.append(t)
 
@@ -580,85 +576,46 @@ class Model(ABC, Generic[InterfaceClient]):
         """
         return frozenset()
 
-    @classmethod
-    def supported_builtin_tools(cls) -> frozenset[type[AbstractNativeTool]]:
-        """Deprecated: use [`supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] instead."""
-        warnings.warn(
-            '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return cls.supported_native_tools()
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        # If a subclass overrides only the deprecated `supported_builtin_tools` classmethod
-        # (and not the new `supported_native_tools`), wire the legacy override through so
-        # the framework still picks up the user's declared tools — with a warning.
-        own = cls.__dict__
-        if 'supported_builtin_tools' in own and 'supported_native_tools' not in own:
-            legacy: Any = own['supported_builtin_tools']
-            warnings.warn(
-                f'{cls.__name__} overrides `supported_builtin_tools()`, which is deprecated — '
-                'override `supported_native_tools()` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-
-            # Promote the legacy override to be this class's `supported_native_tools`, and
-            # replace its `supported_builtin_tools` with a stub that warns and delegates to
-            # the modern method. This way a further subclass overriding only the modern
-            # method still wins when callers reach for the legacy name (mixed-generation
-            # MRO case): `Sub.supported_builtin_tools()` → modern stub → `cls.supported_native_tools()`
-            # → modern override on `Sub`.
-            if isinstance(legacy, classmethod):
-                legacy_func: Any = legacy.__func__  # type: ignore[reportUnknownMemberType]
-            else:
-                legacy_func = legacy
-
-            def _supported_native_tools_via_legacy(
-                _cls: type[Model[Any]],
-                _legacy_func: Any = legacy_func,
-            ) -> frozenset[type[AbstractNativeTool]]:
-                return _legacy_func(_cls)
-
-            def _supported_builtin_tools_delegating(
-                _cls: type[Model[Any]],
-            ) -> frozenset[type[AbstractNativeTool]]:
-                warnings.warn(
-                    '`Model.supported_builtin_tools()` is deprecated, use `Model.supported_native_tools()` instead.',
-                    PydanticAIDeprecationWarning,
-                    stacklevel=2,
-                )
-                return _cls.supported_native_tools()
-
-            setattr(cls, 'supported_native_tools', classmethod(_supported_native_tools_via_legacy))
-            setattr(cls, 'supported_builtin_tools', classmethod(_supported_builtin_tools_delegating))
-
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile.
 
-        We use this to compute the intersection of the profile's supported_native_tools
-        and the model's implemented tools, ensuring model.profile.supported_native_tools
-        is the single source of truth for what native tools are actually usable.
+        Resolution order (later layers override earlier ones):
+          1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
+          2. The provider's `model_profile(model_name)` result — provider-specific defaults
+             for this model.
+          3. The user's `profile=` argument — partial dict merged on top, OR a callable
+             `(default) -> profile` for full control.
+
+        After resolution we compute the intersection of the profile's `supported_native_tools`
+        and the model class's implemented tools, ensuring `model.profile['supported_native_tools']`
+        is the single source of truth for what's actually usable.
         """
-        _profile = self._profile
-        if callable(_profile):
-            _profile = _profile(self.model_name)
+        # Step 1+2: provider default merged with base default
+        provider_profile: ModelProfile = {}
+        if (provider := self.provider) is not None:
+            provider_profile = provider.model_profile(self.model_name) or {}
+        resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
-        if _profile is None:
-            _profile = DEFAULT_PROFILE
+        # Step 3: user override
+        user = self._profile
+        if user is None:
+            pass
+        elif callable(user):
+            # New v2 form: (default profile) -> final profile
+            resolved = user(resolved)
+        else:
+            # Partial dict — merge on top
+            resolved = merge_profile(resolved, user)
 
-        # Compute intersection: profile's allowed tools & model's implemented tools
+        # Step 4: native tools intersection — profile's allowed tools & model's implemented tools
         model_supported = self.__class__.supported_native_tools()
-        profile_supported = _profile.supported_native_tools
+        profile_supported = resolved.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         effective_tools = profile_supported & model_supported
-
         if effective_tools != profile_supported:
-            _profile = replace(_profile, supported_native_tools=effective_tools)
+            resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
-        return _profile
+        return resolved
 
     @property
     @abstractmethod
@@ -856,6 +813,10 @@ class StreamedResponse(ABC):
         if self.cancelled:
             return
         self._cancelled = True
+        # A stream that finished naturally stays 'complete': get() checks _finished
+        # before _cancelled, and there's no live connection left to tear down.
+        if self._finished:
+            return
         await self.close_stream()
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
@@ -882,7 +843,7 @@ class StreamedResponse(ABC):
             'This model class must override `close_stream()` to support streaming cancellation.'
         )
 
-    # TODO: (v2) We should not have public private methods which need to be overwritten.
+    # TODO: We should not have public private methods which need to be overwritten.
     @abstractmethod
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
@@ -898,10 +859,10 @@ class StreamedResponse(ABC):
 
     def get(self) -> ModelResponse:
         """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
-        if self._cancelled:
-            state: ModelResponseState = 'interrupted'
-        elif self._finished:
-            state = 'complete'
+        if self._finished:
+            state: ModelResponseState = 'complete'
+        elif self._cancelled:
+            state = 'interrupted'
         else:
             state = 'incomplete'
         return ModelResponse(
@@ -917,9 +878,7 @@ class StreamedResponse(ABC):
             state=state,
         )
 
-    @deprecated_callable_property(
-        '`StreamedResponse.usage` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
@@ -1006,48 +965,21 @@ def override_allow_model_requests(allow_model_requests: bool) -> Generator[None]
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-_LEGACY_MODEL_PREFIXES: dict[str, str] = {
-    'gpt': 'openai',
-    'o1': 'openai',
-    'o3': 'openai',
-    'claude': 'anthropic',
-    'gemini': 'google',
-}
-"""Backward compat: allows prefix-only model names like `gpt-4` without `provider:`."""
-
-
 def parse_model_id(model: str) -> tuple[str | None, str]:
     """Parse a model id string into its provider and model name components.
 
-    Handles both the modern `provider:model` format and legacy model names
-    that start with known prefixes (e.g., `gpt-4`, `claude-3`).
-
-    Emits a `DeprecationWarning` when a legacy prefix-based model name is used.
-
     Args:
-        model: A model identifier string, either `provider:model_name` or a legacy
-            prefix-based name.
+        model: A model identifier string in the form `provider:model_name`.
 
     Returns:
-        A tuple of `(provider_name, model_name)`. If the provider can't be inferred,
-        returns `(None, model)` so callers can decide how to handle unknown providers.
+        A tuple of `(provider_name, model_name)`. If the model string contains no
+        `provider:` prefix, returns `(None, model)` so callers can decide how to
+        handle the unknown provider.
     """
     if ':' in model:
         provider_name, model_name = model.split(':', maxsplit=1)
         return provider_name, model_name
 
-    # Legacy model names without provider prefix
-    for prefix, provider_name in _LEGACY_MODEL_PREFIXES.items():
-        if model.startswith(prefix):
-            warnings.warn(
-                f'Specifying a model name without a provider prefix is deprecated. '
-                f"Instead of {model!r}, use '{provider_name}:{model}'.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return provider_name, model
-
-    # Unknown prefix: let callers decide how to handle this case.
     return None, model
 
 
@@ -1106,13 +1038,6 @@ def infer_model(  # noqa: C901
     if provider_name is None:
         raise UserError(f'Unknown model: {model}')
 
-    if provider_name == 'vertexai':  # pragma: no cover
-        warnings.warn(
-            "The 'vertexai' provider name is deprecated. Use 'google-cloud' instead.",
-            PydanticAIDeprecationWarning,
-        )
-        provider_name = 'google-cloud'
-
     provider = provider_factory(provider_name)
 
     model_kind = provider_name
@@ -1121,7 +1046,7 @@ def infer_model(  # noqa: C901
 
         model_kind = normalize_gateway_provider(model_kind)
 
-    # OpenRouter, Cerebras and Ollama need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1135,23 +1060,19 @@ def infer_model(  # noqa: C901
         from .ollama import OllamaModel
 
         return OllamaModel(model_name, provider=provider)
-    elif model_kind in ('openai-chat', 'openai', *get_args(OpenAIChatCompatibleProvider.__value__)):
-        from .openai import OpenAIChatModel
+    elif model_kind == 'zai':
+        from .zai import ZaiModel
 
-        if provider_name in ('openai', 'gateway/openai'):
-            warnings.warn(
-                "In v2.0, 'openai:' will resolve to the OpenAI Responses API by default. "
-                "Use 'openai-chat:' to keep current Chat Completions behavior, or "
-                "'openai-responses:' to opt in early.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind == 'openai-responses':
+        return ZaiModel(model_name, provider=provider)
+    elif model_kind in ('openai', 'openai-responses'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
+    elif model_kind in ('openai-chat', *get_args(OpenAIChatCompatibleProvider.__value__)):
+        from .openai import OpenAIChatModel
+
+        return OpenAIChatModel(model_name, provider=provider)
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleModel
 
         return GoogleModel(model_name, provider=provider)
@@ -1200,14 +1121,6 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
     )
-
-
-@deprecated('`cached_async_http_client` is deprecated, use `create_async_http_client` instead.')
-def cached_async_http_client(
-    *, provider: str | None = None, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5
-) -> httpx.AsyncClient:
-    """Use [`create_async_http_client`][pydantic_ai.models.create_async_http_client] instead."""
-    return create_async_http_client(timeout=timeout, connect=connect)
 
 
 DataT = TypeVar('DataT', str, bytes)
@@ -1312,7 +1225,7 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
-def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition):
+def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition) -> ToolDefinition:
     """Customize the tool definition using the given transformer.
 
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
@@ -1326,7 +1239,9 @@ def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: Tool
     )
 
 
-def _customize_output_object(transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition):
+def _customize_output_object(
+    transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition
+) -> OutputObjectDefinition:
     schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
     json_schema = schema_transformer.walk()
     return replace(
@@ -1399,7 +1314,7 @@ def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfil
     return schemas keep the schema as-is; other models get it injected into the tool description.
     Tools that haven't opted in have their `return_schema` cleared.
     """
-    inject = not profile.supports_tool_return_schema
+    inject = not profile.get('supports_tool_return_schema', False)
     resolved: list[ToolDefinition] = []
     changed = False
     for td in params.function_tools:

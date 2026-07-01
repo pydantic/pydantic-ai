@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import inspect
-import warnings
 from abc import abstractmethod
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any, Generic, cast
 
 from pydantic import Field
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import TypeVar
 
 from .._utils import get_event_loop
-from .._warnings import PydanticEvalsDeprecationWarning, warn_positional_dataclass_init
 from ._base import BaseEvaluator
 from .context import EvaluatorContext
 from .spec import EvaluatorSpec
@@ -52,18 +50,13 @@ EvaluatorOutput = EvaluationScalar | EvaluationReason | Mapping[str, EvaluationS
 """Type for the output of an evaluator, which can be a scalar, an EvaluationReason, or a mapping of names to either."""
 
 
-# TODO(DavidM): Add bound=EvaluationScalar to the following typevar once pydantic 2.11 is the min supported version
-EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covariant=True)
+EvaluationScalarT = TypeVar('EvaluationScalarT', bound=EvaluationScalar, default=EvaluationScalar, covariant=True)
 """Type variable for the scalar result type of an evaluation."""
 
-T = TypeVar('T')
+T = TypeVar('T', bound=EvaluationScalar)
 
 
-# TODO(v2): switch to `@dataclass(kw_only=True)`, drop the `warn_positional_dataclass_init`
-# wrapper, and consider reordering the existing fields into a more logical grouping (e.g.
-# identity → value → source metadata) while we're free to rearrange.
-@warn_positional_dataclass_init
-@dataclass
+@dataclass(kw_only=True)
 class EvaluationResult(Generic[EvaluationScalarT]):
     """The details of an individual evaluation result.
 
@@ -107,11 +100,7 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         return None
 
 
-# TODO(v2): switch to `@dataclass(kw_only=True)`, drop the `warn_positional_dataclass_init`
-# wrapper, and consider reordering the existing fields into a more logical grouping (e.g.
-# identity → error detail → source metadata) while we're free to rearrange.
-@warn_positional_dataclass_init
-@dataclass
+@dataclass(kw_only=True)
 class EvaluatorFailure:
     """Represents a failure raised during the execution of an evaluator."""
 
@@ -182,12 +171,6 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
     ```
     """
 
-    @classmethod
-    @deprecated('`name` has been renamed, use `get_serialization_name` instead.')
-    def name(cls) -> str:
-        """`name` has been renamed, use `get_serialization_name` instead."""
-        return cls.get_serialization_name()
-
     def get_default_evaluation_name(self) -> str:
         """Return the default name to use in reports for the output of this evaluator.
 
@@ -197,19 +180,6 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         Note that evaluators that return a mapping of results will always use the keys of that mapping as the names
         of the associated evaluation results.
         """
-        # Back-compat: if the subclass set an `evaluation_name` attribute (class or instance), honor it,
-        # but warn — that pattern is being replaced by overriding this method.
-        # TODO(v2): drop this fallback; subclasses must override `get_default_evaluation_name`.
-        evaluation_name = getattr(self, 'evaluation_name', None)
-        if isinstance(evaluation_name, str):
-            warnings.warn(
-                f'{type(self).__module__}.{type(self).__qualname__} relies on the `evaluation_name` attribute '
-                f'to customize the default evaluation name. This is deprecated; override `get_default_evaluation_name` '
-                f'in your evaluator class to retain this behavior in pydantic-evals v2.',
-                PydanticEvalsDeprecationWarning,
-                stacklevel=2,
-            )
-            return evaluation_name
         return self.get_serialization_name()
 
     def get_evaluator_version(self) -> str | None:
@@ -220,18 +190,6 @@ class Evaluator(BaseEvaluator, Generic[InputsT, OutputT, MetadataT]):
         whenever behavior changes in a way that invalidates prior scores. Override this method to set
         a non-`None` version.
         """
-        # Back-compat: honor an `evaluator_version` attribute (class or instance) but warn.
-        # TODO(v2): drop this fallback; subclasses must override `get_evaluator_version`.
-        evaluator_version = getattr(self, 'evaluator_version', None)
-        if isinstance(evaluator_version, str):
-            warnings.warn(
-                f'{type(self).__module__}.{type(self).__qualname__} relies on the `evaluator_version` attribute '
-                f'to set its version. This is deprecated; override `get_evaluator_version` in your evaluator class '
-                f'to retain this behavior in pydantic-evals v2.',
-                PydanticEvalsDeprecationWarning,
-                stacklevel=2,
-            )
-            return evaluator_version
         return None
 
     @abstractmethod

@@ -89,7 +89,7 @@ try:
         parse_ag_ui_version,
         thinking_encrypted_metadata,
     )
-except ImportError as e:
+except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
@@ -530,13 +530,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return builder.messages
 
     @staticmethod
-    def _dump_request_parts(
+    def _dump_request_parts(  # noqa: C901
         msg: ModelRequest,
         *,
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
     ) -> list[Message]:
-        """Convert a `ModelRequest` into AG-UI messages."""
+        """Convert a `ModelRequest` into AG-UI messages.
+
+        Uses a flush pattern to preserve part ordering: buffered user content is flushed before
+        each tool message, so a `ToolReturnPart` that precedes a `UserPromptPart` in the original
+        request keeps its position instead of being reordered after the user prompt.
+        """
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
         result: list[Message] = []
         system_content: list[str] = []
@@ -548,6 +553,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             | VideoInputContent
             | DocumentInputContent
         ] = []
+
+        def flush_user_content() -> None:
+            nonlocal user_content
+            if not user_content:
+                return
+            # Simplify to plain string if only a single text item.
+            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+                result.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
+            else:
+                result.append(UserMessage(id=_new_message_id(), content=user_content))
+            user_content = []
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
@@ -561,6 +577,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             # AG-UI has no native uploaded-file message type. We repurpose
                             # ActivityMessage with a reserved `pydantic_ai_*` activity_type
                             # for round-trip fidelity. See UploadedFileActivityContent.
+                            flush_user_content()
                             uploaded_content: dict[str, Any] = {
                                 'file_id': item.file_id,
                                 'provider_name': item.provider_name,
@@ -581,6 +598,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if converted is not None:
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
+                flush_user_content()
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
@@ -590,6 +608,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name:
+                    flush_user_content()
                     result.append(
                         ToolMessage(
                             id=_new_message_id(),
@@ -606,12 +625,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         messages: list[Message] = []
         if system_content:
             messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
-        if user_content:
-            # Simplify to plain string if only single text item
-            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-                messages.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
-            else:
-                messages.append(UserMessage(id=_new_message_id(), content=user_content))
+        flush_user_content()
         messages.extend(result)
         return messages
 

@@ -26,7 +26,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
+    from pydantic_ai.profiles.anthropic import anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
 
 pytestmark = [
@@ -278,21 +278,46 @@ def test_model_profile_supported_model():
     """Models that support structured outputs have supports_json_schema_output=True."""
     profile = anthropic_model_profile('claude-sonnet-4-5')
     assert profile is not None
-    assert profile.supports_json_schema_output is True
+    assert profile.get('supports_json_schema_output', False) is True
 
 
 def test_model_profile_unsupported_model():
     """Models that don't support structured outputs have supports_json_schema_output=False."""
     profile = anthropic_model_profile('claude-sonnet-4-0')
     assert profile is not None
-    assert profile.supports_json_schema_output is False
+    assert profile.get('supports_json_schema_output', False) is False
 
 
 def test_model_profile_opus():
     """Opus 4.1 supports structured outputs."""
     profile = anthropic_model_profile('claude-opus-4-1')
     assert profile is not None
-    assert profile.supports_json_schema_output is True
+    assert profile.get('supports_json_schema_output', False) is True
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'claude-fable-5',
+        'claude-mythos-5',
+        'claude-mythos-preview',
+        'claude-sonnet-4-6',
+        'claude-opus-4-6',
+        'claude-opus-4-7',
+        'claude-opus-4-8',
+    ],
+)
+def test_model_profile_supports_dynamic_filtering(model_name: str):
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('anthropic_supports_dynamic_filtering') is True
+
+
+@pytest.mark.parametrize('model_name', ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5'])
+def test_model_profile_does_not_support_dynamic_filtering(model_name: str):
+    profile = anthropic_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('anthropic_supports_dynamic_filtering') is False
 
 
 def test_model_profile_fable_5():
@@ -302,21 +327,22 @@ def test_model_profile_fable_5():
     budget-based thinking, accepts adaptive thinking + `xhigh` effort + task budgets + json-schema
     output, but rejects `anthropic_speed='fast'` and a forced `tool_choice` outright.
     """
-    profile = AnthropicModelProfile.from_profile(anthropic_model_profile('claude-fable-5'))
+    profile = anthropic_model_profile('claude-fable-5')
+    assert profile is not None
 
     # Shared with the Opus 4.7 / 4.8 family
-    assert profile.supports_json_schema_output is True
-    assert profile.anthropic_supports_adaptive_thinking is True
-    assert profile.anthropic_supports_effort is True
-    assert profile.anthropic_supports_xhigh_effort is True
-    assert profile.anthropic_disallows_budget_thinking is True
-    assert profile.anthropic_disallows_sampling_settings is True
-    assert profile.anthropic_supports_task_budgets is True
-    assert profile.anthropic_default_code_execution_tool_version == '20260120'
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
 
     # Fable-5-specific divergences from the Opus mirror
-    assert profile.anthropic_supports_fast_speed is False
-    assert profile.anthropic_supports_forced_tool_choice is False
+    assert profile.get('anthropic_supports_fast_speed') is False
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
 
 
 def test_model_profile_mythos_rejects_forced_tool_choice():
@@ -325,8 +351,9 @@ def test_model_profile_mythos_rejects_forced_tool_choice():
     Per the Anthropic docs, requests with `tool_choice: {'type': 'any'}` or `{'type': 'tool'}`
     return a 400 on this model, so `anthropic_supports_forced_tool_choice` must be False.
     """
-    profile = AnthropicModelProfile.from_profile(anthropic_model_profile('claude-mythos-preview'))
-    assert profile.anthropic_supports_forced_tool_choice is False
+    profile = anthropic_model_profile('claude-mythos-preview')
+    assert profile is not None
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
 
 
 def test_model_profile_mythos_5():
@@ -336,18 +363,46 @@ def test_model_profile_mythos_5():
     Every capability is documented for Mythos 5 by name except the forced-`tool_choice` rejection,
     which is inferred from it being both the successor to Mythos Preview and Fable 5's twin.
     """
-    profile = AnthropicModelProfile.from_profile(anthropic_model_profile('claude-mythos-5'))
+    profile = anthropic_model_profile('claude-mythos-5')
+    assert profile is not None
 
     # Identical to the Fable 5 / Opus 4.8 capability set
-    assert profile.supports_json_schema_output is True
-    assert profile.anthropic_supports_adaptive_thinking is True
-    assert profile.anthropic_supports_effort is True
-    assert profile.anthropic_supports_xhigh_effort is True
-    assert profile.anthropic_disallows_budget_thinking is True
-    assert profile.anthropic_disallows_sampling_settings is True
-    assert profile.anthropic_supports_task_budgets is True
-    assert profile.anthropic_default_code_execution_tool_version == '20260120'
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
 
     # Shared divergences from the Opus mirror (same as Fable 5)
-    assert profile.anthropic_supports_fast_speed is False
-    assert profile.anthropic_supports_forced_tool_choice is False
+    assert profile.get('anthropic_supports_fast_speed') is False
+    assert profile.get('anthropic_supports_forced_tool_choice') is False
+
+
+def test_model_profile_sonnet_5():
+    """Claude Sonnet 5 carries Sonnet 4.6's tool/schema/adaptive surface plus the Opus 4.7 / 4.8
+    frontier flags (xhigh effort, task budgets, no budget-based thinking, no sampling settings).
+
+    Capabilities verified live against the Anthropic API: it accepts adaptive thinking, `xhigh`
+    effort, task budgets, json-schema output, tool search, dynamic filtering, and forced
+    `tool_choice`, but rejects budget-based thinking, sampling settings, and `anthropic_speed='fast'`.
+    """
+    profile = anthropic_model_profile('claude-sonnet-5')
+    assert profile is not None
+
+    # Frontier flags shared with the Opus 4.7 / 4.8 family (new vs Sonnet 4.6)
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('anthropic_supports_adaptive_thinking') is True
+    assert profile.get('anthropic_supports_effort') is True
+    assert profile.get('anthropic_supports_xhigh_effort') is True
+    assert profile.get('anthropic_disallows_budget_thinking') is True
+    assert profile.get('anthropic_disallows_sampling_settings') is True
+    assert profile.get('anthropic_supports_task_budgets') is True
+    assert profile.get('anthropic_supports_dynamic_filtering') is True
+    assert profile.get('anthropic_default_code_execution_tool_version') == '20260120'
+
+    # Sonnet-5-specific: forcing is allowed (unlike Fable/Mythos), fast speed is not (Opus-only)
+    assert profile.get('anthropic_supports_forced_tool_choice') is True
+    assert profile.get('anthropic_supports_fast_speed') is False
