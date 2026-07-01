@@ -18,7 +18,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeVar, assert_never
 
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
@@ -1437,20 +1437,7 @@ class ToolReturnPart(BaseToolReturnPart):
         [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
         direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        narrower = _TOOL_RETURN_NARROWERS.get(kind) if kind is not None else None
-        if narrower is None:
-            return part
-        # Restructure JSON-string content for the narrower, but only when parsing changed it, so an
-        # already-typed part keeps its identity (the narrower short-circuits on it) instead of a rebuild.
-        structured = part.structured_content()
-        narrow_input = (
-            replace(part, content=structured) if structured is not None and structured is not part.content else part
-        )
-        try:
-            return narrower(narrow_input)
-        except pydantic.ValidationError:
-            return replace(part, tool_kind=None) if part.tool_kind is not None else part
+        return _narrow_return(part, _TOOL_RETURN_NARROWERS, tool_kind)
 
 
 @dataclass(repr=False)
@@ -1490,20 +1477,7 @@ class NativeToolReturnPart(BaseToolReturnPart):
         [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
         direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        narrower = _NATIVE_RETURN_NARROWERS.get(kind) if kind is not None else None
-        if narrower is None:
-            return part
-        # Restructure JSON-string content for the narrower, but only when parsing changed it, so an
-        # already-typed part keeps its identity (the narrower short-circuits on it) instead of a rebuild.
-        structured = part.structured_content()
-        narrow_input = (
-            replace(part, content=structured) if structured is not None and structured is not part.content else part
-        )
-        try:
-            return narrower(narrow_input)
-        except pydantic.ValidationError:
-            return replace(part, tool_kind=None) if part.tool_kind is not None else part
+        return _narrow_return(part, _NATIVE_RETURN_NARROWERS, tool_kind)
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -1983,14 +1957,7 @@ class ToolCallPart(BaseToolCallPart):
         [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
         direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        narrower = _TOOL_CALL_NARROWERS.get(kind) if kind is not None else None
-        if narrower is None:
-            return part
-        try:
-            return narrower(part)
-        except pydantic.ValidationError:
-            return replace(part, tool_kind=None) if part.tool_kind is not None else part
+        return _narrow_call(part, _TOOL_CALL_NARROWERS, tool_kind)
 
 
 @dataclass(repr=False)
@@ -2047,14 +2014,7 @@ class NativeToolCallPart(BaseToolCallPart):
         [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
         direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        narrower = _NATIVE_CALL_NARROWERS.get(kind) if kind is not None else None
-        if narrower is None:
-            return part
-        try:
-            return narrower(part)
-        except pydantic.ValidationError:
-            return replace(part, tool_kind=None) if part.tool_kind is not None else part
+        return _narrow_call(part, _NATIVE_CALL_NARROWERS, tool_kind)
 
 
 # Registry of typed promoters for `NativeToolCallPart` / `NativeToolReturnPart`.
@@ -2068,6 +2028,44 @@ _NATIVE_RETURN_NARROWERS: dict[str, Callable[[NativeToolReturnPart], NativeToolR
 # without native tool search.
 _TOOL_CALL_NARROWERS: dict[str, Callable[[ToolCallPart], ToolCallPart]] = {}
 _TOOL_RETURN_NARROWERS: dict[str, Callable[[ToolReturnPart], ToolReturnPart]] = {}
+
+
+_CallPartT = TypeVar('_CallPartT', bound='BaseToolCallPart')
+_ReturnPartT = TypeVar('_ReturnPartT', bound='BaseToolReturnPart')
+
+
+def _narrow_call(
+    part: _CallPartT, narrowers: dict[str, Callable[[_CallPartT], _CallPartT]], tool_kind: ToolPartKind | None
+) -> _CallPartT:
+    """Best-effort promotion shared by the call-part `narrow_type` methods. See `ToolCallPart.narrow_type`."""
+    kind = tool_kind if tool_kind is not None else part.tool_kind
+    narrower = narrowers.get(kind) if kind is not None else None
+    if narrower is None:
+        return part
+    try:
+        return narrower(part)
+    except pydantic.ValidationError:
+        return replace(part, tool_kind=None) if part.tool_kind is not None else part
+
+
+def _narrow_return(
+    part: _ReturnPartT, narrowers: dict[str, Callable[[_ReturnPartT], _ReturnPartT]], tool_kind: ToolPartKind | None
+) -> _ReturnPartT:
+    """Best-effort promotion shared by the return-part `narrow_type` methods. See `ToolReturnPart.narrow_type`."""
+    kind = tool_kind if tool_kind is not None else part.tool_kind
+    narrower = narrowers.get(kind) if kind is not None else None
+    if narrower is None:
+        return part
+    # Restructure JSON-string content for the narrower, but only when parsing changed it, so an
+    # already-typed part keeps its identity (the narrower short-circuits on it) instead of a rebuild.
+    structured = part.structured_content()
+    narrow_input = (
+        replace(part, content=structured) if structured is not None and structured is not part.content else part
+    )
+    try:
+        return narrower(narrow_input)
+    except pydantic.ValidationError:
+        return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
 
 _TYPED_PART_TAGS: dict[tuple[str, str], str] = {}
@@ -2441,10 +2439,12 @@ def narrow_message_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]
             new_response_parts = [_narrow_response_part(part) for part in message.parts]
             if any(new is not old for new, old in zip(new_response_parts, message.parts)):
                 message = replace(message, parts=new_response_parts)
-        else:
+        elif isinstance(message, ModelRequest):
             new_request_parts = [_narrow_request_part(part) for part in message.parts]
             if any(new is not old for new, old in zip(new_request_parts, message.parts)):
                 message = replace(message, parts=new_request_parts)
+        else:
+            assert_never(message)
         narrowed.append(message)
     return narrowed
 
