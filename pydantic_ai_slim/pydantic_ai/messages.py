@@ -18,7 +18,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Self, TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeVar
 
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
@@ -1264,6 +1264,22 @@ class BaseToolReturnPart:
         else:
             return {RETURN_VALUE_KEY: json_content}
 
+    def structured_content(self) -> ToolReturnContent:
+        """Return `content` with a JSON string parsed into structured data, else `content` unchanged.
+
+        A read-side companion to [`files`][pydantic_ai.messages.BaseToolReturnPart.files] and
+        [`model_response_object`][pydantic_ai.messages.BaseToolReturnPart.model_response_object]: some
+        UI wire formats (e.g. AG-UI) transmit tool results as JSON strings, so
+        [`narrow_type`][pydantic_ai.messages.ToolReturnPart.narrow_type] calls this to recover the
+        structured payload a typed return subclass expects. A non-JSON string is returned unchanged.
+        """
+        if isinstance(self.content, str):
+            try:
+                return pydantic_core.from_json(self.content)
+            except ValueError:
+                pass
+        return self.content
+
     def model_response_str_and_user_content(self) -> tuple[str, list[UserContent]]:
         """Build a text-only tool result with multimodal files extracted for a trailing user message.
 
@@ -1308,21 +1324,6 @@ class BaseToolReturnPart:
         """Return `True` if the tool return has content."""
         return self.content is not None  # pragma: no cover
 
-    def _parse_str_content(self) -> Self:
-        """Return a copy with a JSON-string `content` parsed into structured form, else `self`.
-
-        The return-side counterpart to [`ToolCallPart.args_as_dict`][pydantic_ai.messages.ToolCallPart.args_as_dict]:
-        some UI wire formats (e.g. AG-UI) transmit tool results as JSON strings, but a typed return
-        subclass carries structured content, so `narrow_type` parses before validating. A non-JSON
-        string is left unchanged for the narrower to reject.
-        """
-        if isinstance(self.content, str):
-            try:
-                return replace(self, content=pydantic_core.from_json(self.content))
-            except ValueError:
-                pass
-        return self
-
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -1350,7 +1351,7 @@ class ToolReturnPart(BaseToolReturnPart):
         if narrower is None:
             return part
         try:
-            return narrower(part._parse_str_content())
+            return narrower(replace(part, content=part.structured_content()))
         except pydantic.ValidationError:
             return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
@@ -1397,7 +1398,7 @@ class NativeToolReturnPart(BaseToolReturnPart):
         if narrower is None:
             return part
         try:
-            return narrower(part._parse_str_content())
+            return narrower(replace(part, content=part.structured_content()))
         except pydantic.ValidationError:
             return replace(part, tool_kind=None) if part.tool_kind is not None else part
 

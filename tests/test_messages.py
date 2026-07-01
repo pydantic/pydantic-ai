@@ -1704,6 +1704,14 @@ def test_narrow_type_strips_unsubstantiated_tool_kind_set_on_part():
     assert NativeToolReturnPart.narrow_type(native_return) == replace(native_return, tool_kind=None)
 
 
+def test_structured_content_parses_json_string():
+    """`structured_content` parses a JSON-string `content` into structured data, and returns
+    already-structured or non-JSON content unchanged."""
+    assert ToolReturnPart(tool_name='t', tool_call_id='c1', content='{"a": 1}').structured_content() == {'a': 1}
+    assert ToolReturnPart(tool_name='t', tool_call_id='c2', content={'a': 1}).structured_content() == {'a': 1}
+    assert ToolReturnPart(tool_name='t', tool_call_id='c3', content='not json').structured_content() == 'not json'
+
+
 def test_narrow_type_upgrades_json_string_content():
     """A typed return whose content arrives as a JSON string (as UI adapters transmit it) is parsed
     and promoted to its typed subclass with structured content, not left as a base part."""
