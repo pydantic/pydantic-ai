@@ -3718,6 +3718,33 @@ def test_agent_conversation_id_resolves_from_message_history() -> None:
     assert all(cid == first.conversation_id for cid in new_conv_ids)
 
 
+def test_clean_message_history_preserves_request_context_on_merge() -> None:
+    agent = Agent(TestModel(custom_output_text='continuation'))
+    request = ModelRequest(
+        parts=[UserPromptPart(content='hello')],
+        instructions='same',
+        run_id='run-123',
+        conversation_id='conv-123',
+        metadata={'source': 'history', 'turn': 1},
+    )
+    retry = ModelRequest(
+        parts=[RetryPromptPart(content='retry')],
+        instructions='same',
+        run_id='run-123',
+        conversation_id='conv-123',
+        metadata={'turn': 2},
+    )
+
+    result = agent.run_sync(message_history=[request, retry])
+
+    merged_request = result.all_messages()[0]
+    assert isinstance(merged_request, ModelRequest)
+    assert merged_request.parts == [*retry.parts, *request.parts]
+    assert merged_request.run_id == 'run-123'
+    assert merged_request.conversation_id == 'conv-123'
+    assert merged_request.metadata == {'source': 'history', 'turn': 2}
+
+
 def test_agent_conversation_id_explicit_override() -> None:
     agent = Agent(TestModel(custom_output_text='explicit'))
 
