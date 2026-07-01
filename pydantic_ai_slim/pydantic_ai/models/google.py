@@ -1661,7 +1661,7 @@ def _native_tool_return_part_dict(
 ) -> PartDict | None:
     if item.provider_name not in accepted_provider_names:
         return None
-    if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
+    if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict | list):
         return _attach_signature(
             {'code_execution_result': cast(CodeExecutionResultDict, item.content)},  # pyright: ignore[reportUnknownMemberType]
             signature,
