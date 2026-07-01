@@ -7,8 +7,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
-from pydantic_graph import BaseNode, End, GraphRunContext
-from pydantic_graph.graph_builder import EndMarker, ErrorMarker, GraphRun, GraphTaskRequest, JoinItem
+from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
 
 from . import (
@@ -18,7 +17,6 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
-from ._deprecated_callable import deprecated_callable_property
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._instrumentation import current_otel_traceparent
 from .output import OutputDataT
@@ -403,9 +401,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
         return await self._run_node_with_hooks(node, self._advance_graph)
 
-    @deprecated_callable_property(
-        '`AgentRun.usage` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
@@ -592,16 +588,12 @@ class AgentRunResult(Generic[OutputDataT]):
                 return message
         raise ValueError('No response found in the message history')  # pragma: no cover
 
-    @deprecated_callable_property(
-        '`AgentRunResult.usage` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
 
-    @deprecated_callable_property(
-        '`AgentRunResult.timestamp` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def timestamp(self) -> datetime:
         """Return the timestamp of last response."""
         return self.response.timestamp
