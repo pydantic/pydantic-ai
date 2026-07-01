@@ -687,6 +687,16 @@ def text_document_content(assets_path: Path) -> BinaryContent:
     return bin_content
 
 
+# Opaque 3-byte payload for roundtrip / serialization tests where the bytes are never decoded by a
+# model and assertions only check structure (e.g. `IsStr()` on base64): keeps inline-snapshot diffs
+# small and avoids CI errors that explode when failure traces include large base64 payloads. When the
+# model has to actually see the content (e.g. VCR tests against provider APIs), use the KB-scale
+# session fixtures above (`image_content`, `audio_content`, `video_content`).
+@pytest.fixture
+def tiny_audio() -> BinaryContent:
+    return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
+
+
 os.environ.pop('OPENAI_BASE_URL', None)
 os.environ.pop('ANTHROPIC_BASE_URL', None)
 
@@ -799,6 +809,11 @@ def xai_api_key() -> str:
 @pytest.fixture(scope='session')
 def tavily_api_key() -> str:
     return os.getenv('TAVILY_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def zai_api_key() -> str:
+    return os.getenv('ZAI_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
