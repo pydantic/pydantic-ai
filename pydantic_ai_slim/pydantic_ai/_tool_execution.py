@@ -106,7 +106,7 @@ async def process_tool_calls(
     final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
-    output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1),
+    output_final_result: deque[result.FinalResult[NodeRunEndT]] | None = None,
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     """Process a model response's tool calls, honoring the `end_strategy`.
 
@@ -141,6 +141,13 @@ async def process_tool_calls(
     Because async iterators can't have return values, we use `output_parts` and
     `output_final_result` as output arguments.
     """
+    if output_final_result is None:
+        # `output_final_result` is an output argument that is appended to, and at
+        # least one caller relies on this default rather than passing its own. A
+        # shared module-level `deque(maxlen=1)` would be reused across every such
+        # run, retaining the previous run's final result (a mutable-default / B006
+        # footgun). Give each call that omits the argument its own deque.
+        output_final_result = deque(maxlen=1)
     end_strategy = ctx.deps.end_strategy
     if end_strategy == 'exhaustive':
         processor_class: type[_ToolCallProcessor[DepsT, NodeRunEndT]] = _ExhaustiveProcessor
