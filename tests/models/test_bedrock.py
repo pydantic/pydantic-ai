@@ -5101,3 +5101,73 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
     ]
     assert '<system>Now be terse.</system>' in text_blocks
     assert 'You are helpful.' not in text_blocks
+
+
+async def test_bedrock_tool_result_and_attachment_alternate(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get', args={}, tool_call_id='t1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get', content='ok', tool_call_id='t1')]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'what accounts are in this?',
+                        DocumentUrl(url='s3://bucket/file.csv', media_type='text/csv'),
+                    ]
+                )
+            ]
+        ),
+    ]
+    prepared = model.prepare_messages(messages)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    # They should not be merged into a single user message.
+    # Instead, they should alternate: user (toolResult) -> assistant (dummy text) -> user (document/prompt)
+    assert bedrock_messages == [
+        {
+            'role': 'user',
+            'content': [{'text': 'show me my expenses'}],
+        },
+        {
+            'role': 'assistant',
+            'content': [{'toolUse': {'toolUseId': 't1', 'name': 'get', 'input': {}}}],
+        },
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'toolResult': {
+                        'toolUseId': 't1',
+                        'content': [{'text': 'ok'}],
+                        'status': 'success',
+                    }
+                }
+            ],
+        },
+        {
+            'role': 'assistant',
+            'content': [{'text': ' '}],
+        },
+        {
+            'role': 'user',
+            'content': [
+                {'text': 'what accounts are in this?'},
+                {
+                    'document': {
+                        'name': 'Document 1',
+                        'format': 'csv',
+                        'source': {
+                            's3Location': {
+                                'uri': 's3://bucket/file.csv',
+                            }
+                        },
+                    }
+                },
+            ],
+        },
+    ]
