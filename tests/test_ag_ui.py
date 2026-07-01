@@ -1555,6 +1555,33 @@ def test_dump_load_roundtrip_basic() -> None:
     assert reloaded == original
 
 
+def test_dump_load_roundtrip_preserves_text_content_metadata() -> None:
+    original: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Hello',
+                        TextContent(content='World', metadata={'source': 'mcp', 'part_id': 'abc123'}),
+                    ]
+                )
+            ]
+        )
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+
+    [reloaded_request] = reloaded
+    assert isinstance(reloaded_request, ModelRequest)
+    [reloaded_part] = reloaded_request.parts
+    assert isinstance(reloaded_part, UserPromptPart)
+    assert reloaded_part.content[0] == 'Hello'
+    assert isinstance(reloaded_part.content[1], TextContent)
+    assert reloaded_part.content[1].content == 'World'
+    assert reloaded_part.content[1].metadata == {'source': 'mcp', 'part_id': 'abc123'}
+
+
 def test_dump_load_roundtrip_thinking() -> None:
     """Test full round-trip for thinking parts with all metadata."""
     original: list[ModelMessage] = [

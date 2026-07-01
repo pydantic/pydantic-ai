@@ -276,7 +276,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 user_prompt_content: str | list[UserContent] = []
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
-                        user_prompt_content.append(part.text)
+                        provider_meta = load_provider_metadata(part.provider_metadata)
+                        if 'text_content_metadata' in provider_meta:
+                            user_prompt_content.append(
+                                TextContent(content=part.text, metadata=provider_meta['text_content_metadata'])
+                            )
+                        else:
+                            user_prompt_content.append(part.text)
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
@@ -916,7 +922,8 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
             elif isinstance(item, TextContent):
-                ui_parts.append(TextUIPart(text=item.content, state='done'))
+                provider_metadata = dump_provider_metadata(text_content_metadata=item.metadata)
+                ui_parts.append(TextUIPart(text=item.content, state='done', provider_metadata=provider_metadata))
             elif isinstance(item, BinaryContent):
                 ui_parts.append(
                     FileUIPart(
