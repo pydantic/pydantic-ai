@@ -5506,6 +5506,9 @@ web-fetch = [
 xai = [
     { name = "xai-sdk" },
 ]
+zai = [
+    { name = "openai" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -5532,6 +5535,7 @@ requires-dist = [
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.0.0,!=2.4.6" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.29.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.8.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=2.29.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.6.13" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
@@ -5556,7 +5560,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"

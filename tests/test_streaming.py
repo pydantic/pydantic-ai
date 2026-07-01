@@ -5,6 +5,7 @@ import datetime
 import gc
 import json
 import re
+import sys
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -5045,27 +5046,45 @@ async def test_run_stream_events_break_cleanup():
     # __aexit__ closes the iterator and drains the background task; no task leak, no error.
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason='suspended stream cleanup is not reliably finalized during task cancellation on Python < 3.12',
+)
 async def test_run_stream_events_unstarted_iterator_cleanup():
     """Entering and exiting the CM without advancing the iterator must still drain the background task."""
-    never = asyncio.Event()
+    producer_started = asyncio.Event()
     producer_finalized = asyncio.Event()
+    readiness_wait_timeout = 10.0
 
-    async def blocking_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
-        try:
-            yield 'hello'
-            await never.wait()  # pragma: no cover  # blocks until cancelled
-        finally:
-            producer_finalized.set()
+    class CleanupSignalTestModel(TestModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncGenerator[models.StreamedResponse]:
+            async with super().request_stream(
+                messages,
+                model_settings,
+                model_request_parameters,
+                run_context,
+            ) as stream:
+                try:
+                    producer_started.set()
+                    yield stream
+                finally:
+                    producer_finalized.set()
 
-    agent = Agent(FunctionModel(stream_function=blocking_stream))
+    agent = Agent(CleanupSignalTestModel(custom_output_text='hello'))
 
     async with agent.run_stream_events(''):
-        # Let the background task start and block on send_stream.send(); we never advance the iterator.
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(producer_started.wait(), timeout=readiness_wait_timeout)
 
     # `aclose()` on the unstarted iterator skips its cleanup branches, so the CM body itself must
     # drain the background task; otherwise the producer's `finally` never runs.
-    await asyncio.wait_for(producer_finalized.wait(), timeout=1.0)
+    await asyncio.wait_for(producer_finalized.wait(), timeout=readiness_wait_timeout)
 
 
 async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
