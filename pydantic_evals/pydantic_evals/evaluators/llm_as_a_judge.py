@@ -121,14 +121,14 @@ _judge_input_output_expected_agent = Agent(
         Examples:
 
         <Input>What color is the sky?</Input>
-        <ExpectedOutput>Blue</ExpectedOutput>
         <Output>Cerulean</Output>
+        <ExpectedOutput>Blue</ExpectedOutput>
         <Rubric>The output is consistent with the expected output but doesn't have to match exactly</Rubric>
         {"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}
 
         <Input>How many legs does a spider have?</Input>
-        <ExpectedOutput>8</ExpectedOutput>
         <Output>Six</Output>
+        <ExpectedOutput>8</ExpectedOutput>
         <Rubric>The output is factually consistent with the expected output</Rubric>
         {"reason": "Spiders have 8 legs", "pass": false, "score": 0.0}
         """
@@ -167,13 +167,13 @@ _judge_output_expected_agent = Agent(
 
         Examples:
 
-        <ExpectedOutput>Blue</ExpectedOutput>
         <Output>Cerulean</Output>
+        <ExpectedOutput>Blue</ExpectedOutput>
         <Rubric>The output should be a shade of the expected output color</Rubric>
         {"reason": "'Cerulean' is a shade of blue", "pass": true, "score": 1.0}
 
-        <ExpectedOutput>8</ExpectedOutput>
         <Output>Six</Output>
+        <ExpectedOutput>8</ExpectedOutput>
         <Rubric>The output should be a number written in words which matches the number written in digits in the expected output</Rubric>
         {"reason": "The output is 'Six' which is a different number than 8", "pass": false, "score": 0.0}
         """
@@ -250,21 +250,23 @@ def _build_prompt(
     inputs: Any | None = None,
     expected_output: Any | None = None,
 ) -> str | Sequence[str | UserContent]:
-    """Build a prompt that includes input, expected output, output, and rubric.
+    """Build a prompt that includes input, output, expected output, and rubric.
 
     Sections are emitted in the same order the judge agents' system-prompt few-shot
-    examples demonstrate — `Input → ExpectedOutput → Output → Rubric` — so the runtime
-    prompt matches the format the model was primed with and the rubric (the instruction)
-    comes last, after all the context it applies to.
+    examples demonstrate — `Input → Output → ExpectedOutput → Rubric`, matching the
+    `judge_input_output_expected` naming — so the runtime prompt matches the format the
+    model was primed with and the rubric (the instruction) comes last, after all the
+    context it applies to.
     """
     sections: list[str | UserContent] = []
     if inputs is not None:
         sections.extend(_make_section(inputs, 'Input'))
 
+    sections.extend(_make_section(output, 'Output'))
+
     if expected_output is not None:
         sections.extend(_make_section(expected_output, 'ExpectedOutput'))
 
-    sections.extend(_make_section(output, 'Output'))
     sections.extend(_make_section(rubric, 'Rubric'))
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections)  # type: ignore[arg-type]

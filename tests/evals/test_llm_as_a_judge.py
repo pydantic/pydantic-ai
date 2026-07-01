@@ -77,17 +77,18 @@ def test_stringify():
     [
         ({'output': 'O', 'rubric': 'R'}, ['Output', 'Rubric']),
         ({'output': 'O', 'rubric': 'R', 'inputs': 'I'}, ['Input', 'Output', 'Rubric']),
-        ({'output': 'O', 'rubric': 'R', 'expected_output': 'E'}, ['ExpectedOutput', 'Output', 'Rubric']),
+        ({'output': 'O', 'rubric': 'R', 'expected_output': 'E'}, ['Output', 'ExpectedOutput', 'Rubric']),
         (
             {'output': 'O', 'rubric': 'R', 'inputs': 'I', 'expected_output': 'E'},
-            ['Input', 'ExpectedOutput', 'Output', 'Rubric'],
+            ['Input', 'Output', 'ExpectedOutput', 'Rubric'],
         ),
     ],
 )
 def test_build_prompt_section_order_matches_few_shot_examples(kwargs: dict[str, str], expected_tags: list[str]) -> None:
     """`_build_prompt` must emit sections in the same order the judge system-prompt few-shot
-    examples demonstrate: `Input → ExpectedOutput → Output → Rubric`, with the rubric (the
-    instruction) last, after all the context it applies to. See issue #6110."""
+    examples demonstrate: `Input → Output → ExpectedOutput → Rubric` (matching the
+    `judge_input_output_expected` naming), with the rubric (the instruction) last, after all
+    the context it applies to. See issue #6110."""
     prompt = _build_prompt(**kwargs)
     assert isinstance(prompt, str)
     assert re.findall(r'<(\w+)>', prompt) == expected_tags
@@ -287,12 +288,12 @@ async def test_judge_input_output_expected_mock(mocker: MockerFixture, image_con
 <Input>
 Hello
 </Input>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>
 <Output>
 Hello world
 </Output>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Rubric>
 Output contains input
 </Rubric>\
@@ -313,12 +314,12 @@ Output contains input
                 '<Input>',
                 image_content,
                 '</Input>',
-                '<ExpectedOutput>',
-                'Hello',
-                '</ExpectedOutput>',
                 '<Output>',
                 'Hello world',
                 '</Output>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
                 '<Rubric>',
                 'Output contains input',
                 '</Rubric>',
@@ -357,12 +358,12 @@ async def test_judge_input_output_expected_with_model_settings_mock(
 <Input>
 Hello settings
 </Input>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>
 <Output>
 Hello world with settings
 </Output>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Rubric>
 Output contains input with settings
 </Rubric>\
@@ -393,12 +394,12 @@ Output contains input with settings
                 '<Input>',
                 image_content,
                 '</Input>',
-                '<ExpectedOutput>',
-                'Hello',
-                '</ExpectedOutput>',
                 '<Output>',
                 'Hello world with settings',
                 '</Output>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
                 '<Rubric>',
                 'Output contains input with settings',
                 '</Rubric>',
@@ -430,12 +431,12 @@ Output contains input with settings
 <Input>
 123
 </Input>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>
 <Output>
 Hello world with settings
 </Output>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Rubric>
 Output contains input with settings
 </Rubric>\
@@ -464,12 +465,12 @@ Output contains input with settings
 <Input>
 123
 </Input>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>
 <Output>
 Hello world with settings
 </Output>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Rubric>
 Output contains input with settings
 </Rubric>\
@@ -546,12 +547,12 @@ async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixt
     assert call_args == snapshot(
         (
             [
-                '<ExpectedOutput>',
-                'Hello',
-                '</ExpectedOutput>',
                 '<Output>',
                 image_content,
                 '</Output>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
                 '<Rubric>',
                 'Output contains input with settings',
                 '</Rubric>',
