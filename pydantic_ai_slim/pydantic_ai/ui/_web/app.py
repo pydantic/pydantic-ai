@@ -54,11 +54,11 @@ def _read_cached_file(cache_file: Path) -> bytes | None:
     An empty file is treated as a miss (a truncated/partial write left by a prior crash)
     so the caller refetches instead of serving an incomplete payload.
     """
-    if cache_file.exists():
+    try:
         content = cache_file.read_bytes()
-        if content:
-            return content
-    return None
+    except FileNotFoundError:
+        return None
+    return content or None
 
 
 def _write_cached_file(cache_file: Path, content: bytes) -> None:

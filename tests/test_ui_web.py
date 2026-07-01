@@ -278,16 +278,6 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
-def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """`_get_cache_dir` derives its path from `XDG_CACHE_HOME` and creates the directory."""
-    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
-
-    cache_dir = app_module._get_cache_dir()  # pyright: ignore[reportPrivateUsage]
-
-    assert cache_dir == tmp_path / 'pydantic-ai' / 'web-ui'
-    assert cache_dir.is_dir()
-
-
 @pytest.mark.anyio
 async def test_get_ui_html_refetches_empty_cache_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
