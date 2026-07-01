@@ -41,14 +41,14 @@ with try_import() as imports_successful:
     from cohere import (
         AssistantMessageResponse,
         AsyncClientV2,
-        ChatMessageEndEventDelta,
-        ChatResponse,
         ChatContentDeltaEventDelta,
         ChatContentDeltaEventDeltaMessage,
         ChatContentDeltaEventDeltaMessageContent,
         ChatContentStartEventDelta,
         ChatContentStartEventDeltaMessage,
         ChatContentStartEventDeltaMessageContent,
+        ChatMessageEndEventDelta,
+        ChatResponse,
         ChatToolCallDeltaEventDelta,
         ChatToolCallDeltaEventDeltaMessage,
         ChatToolCallDeltaEventDeltaMessageToolCalls,
@@ -120,7 +120,9 @@ class MockAsyncClientV2:
         return cast(AsyncClientV2, cls(completions=completions))
 
     @classmethod
-    def create_stream_mock(cls, stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]]) -> AsyncClientV2:
+    def create_stream_mock(
+        cls, stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]]
+    ) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(stream=stream))
 
     async def chat(self, *_args: Any, **kwargs: Any) -> ChatResponse:
@@ -724,9 +726,7 @@ def _text_stream_events(chunks: list[str], *, finish_reason: str = 'COMPLETE') -
         ContentStartV2ChatStreamResponse(
             index=0,
             delta=ChatContentStartEventDelta(
-                message=ChatContentStartEventDeltaMessage(
-                    content=ChatContentStartEventDeltaMessageContent(type='text')
-                )
+                message=ChatContentStartEventDeltaMessage(content=ChatContentStartEventDeltaMessageContent(type='text'))
             ),
         )
     ]
@@ -822,9 +822,7 @@ async def test_stream_tool_call(allow_model_requests: None):
             )
         ),
     ]
-    mock_client = MockAsyncClientV2.create_stream_mock(
-        [tool_call_events, _text_stream_events(['Sunny in London'])]
-    )
+    mock_client = MockAsyncClientV2.create_stream_mock([tool_call_events, _text_stream_events(['Sunny in London'])])
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
 
     agent = Agent(m, output_type=str)
@@ -884,9 +882,7 @@ async def test_stream_thinking(allow_model_requests: None):
         ContentStartV2ChatStreamResponse(
             index=1,
             delta=ChatContentStartEventDelta(
-                message=ChatContentStartEventDeltaMessage(
-                    content=ChatContentStartEventDeltaMessageContent(type='text')
-                )
+                message=ChatContentStartEventDeltaMessage(content=ChatContentStartEventDeltaMessageContent(type='text'))
             ),
         ),
         ContentDeltaV2ChatStreamResponse(
