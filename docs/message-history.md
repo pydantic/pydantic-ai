@@ -433,12 +433,14 @@ _(This example is complete, it can be run "as is")_
     [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages still contain
     the instructions used by the originating agent, but those instructions are
     not sent to the model again. The receiving agent uses its own
-    [`instructions`](agent.md#instructions).
+    `instructions`; see [Instructions](agent.md#instructions) for how this
+    differs from [system prompts](agent.md#system-prompts) when
+    `message_history` is provided.
 
-    [`system_prompt`](agent.md#system-prompts) is different: system prompt parts
-    are part of the message history. If the receiving agent has its own
-    `system_prompt` and you need to ensure it is present when reusing history,
-    see [`ReinjectSystemPrompt`](capabilities.md#reinjectsystemprompt). Use
+    `system_prompt` is different: system prompt parts are part of the message
+    history. If the receiving agent has its own `system_prompt` and you need to
+    ensure it is present when reusing history, see
+    [`ReinjectSystemPrompt`](capabilities.md#reinjectsystemprompt). Use
     `replace_existing=True` when a system prompt from another agent should not
     remain authoritative.
 
