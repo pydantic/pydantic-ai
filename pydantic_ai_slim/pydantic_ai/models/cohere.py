@@ -1,16 +1,23 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from types import EllipsisType
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
 
 from pydantic_ai.exceptions import ModelAPIError
 
 from .. import ModelHTTPError, usage
-from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
+from .._run_context import RunContext
+from .._utils import (
+    generate_tool_call_id as _generate_tool_call_id,
+    guard_tool_call_id as _guard_tool_call_id,
+    now_utc as _now_utc,
+)
 from ..messages import (
     CachePoint,
     CompactionPart,
@@ -20,6 +27,7 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
@@ -35,7 +43,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, check_allow_model_requests
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -45,15 +53,21 @@ try:
         ChatFinishReason,
         ChatMessageV2,
         Content as CohereContent,
+        ContentDeltaV2ChatStreamResponse,
+        ContentStartV2ChatStreamResponse,
+        MessageEndV2ChatStreamResponse,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentOneItem,
         TextContent as CohereTextContent,
         ThinkingAssistantMessageV2ContentOneItem,
+        ToolCallDeltaV2ChatStreamResponse,
+        ToolCallStartV2ChatStreamResponse,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
         ToolV2,
         ToolV2Function,
+        Usage as CohereUsage,
         UserChatMessageV2,
         V2ChatResponse,
     )
@@ -173,6 +187,49 @@ class CohereModel(Model[AsyncClientV2]):
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         model_response = self._process_response(response)
         return model_response
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        check_allow_model_requests()
+        model_settings, model_request_parameters = self.prepare_request(
+            model_settings,
+            model_request_parameters,
+        )
+        cohere_settings = cast(CohereModelSettings, model_settings or {})
+        tools, tool_choice = self._get_tool_choice(model_request_parameters, cohere_settings)
+        cohere_messages = self._map_messages(messages, model_request_parameters)
+        try:
+            response_iter = self.client.chat_stream(
+                model=self._model_name,
+                messages=cohere_messages,
+                tools=tools or OMIT,
+                tool_choice=tool_choice,
+                max_tokens=cohere_settings.get('max_tokens', OMIT),
+                stop_sequences=cohere_settings.get('stop_sequences', OMIT),
+                temperature=cohere_settings.get('temperature', OMIT),
+                p=cohere_settings.get('top_p', OMIT),
+                k=cohere_settings.get('top_k', OMIT),
+                seed=cohere_settings.get('seed', OMIT),
+                presence_penalty=cohere_settings.get('presence_penalty', OMIT),
+                frequency_penalty=cohere_settings.get('frequency_penalty', OMIT),
+            )
+        except ApiError as e:
+            if (status_code := e.status_code) and status_code >= 400:
+                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        yield CohereStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _provider_name=self._provider.name,
+            _provider_url=self.base_url,
+            _response=response_iter,
+        )
 
     async def _chat(
         self,
@@ -385,24 +442,131 @@ def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
     u = response.usage
     if u is None:
         return usage.RequestUsage()
-    else:
-        details: dict[str, int] = {}
-        if u.billed_units is not None:
-            if u.billed_units.input_tokens:  # pragma: no branch
-                details['input_tokens'] = int(u.billed_units.input_tokens)
-            if u.billed_units.output_tokens:
-                details['output_tokens'] = int(u.billed_units.output_tokens)
-            if u.billed_units.search_units:  # pragma: no cover
-                details['search_units'] = int(u.billed_units.search_units)
-            if u.billed_units.classifications:  # pragma: no cover
-                details['classifications'] = int(u.billed_units.classifications)
+    return _map_cohere_usage(u)
 
-        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
-        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
-        cache_read_tokens = int(u.cached_tokens) if u.cached_tokens else 0
-        return usage.RequestUsage(
-            input_tokens=request_tokens,
-            output_tokens=response_tokens,
-            cache_read_tokens=cache_read_tokens,
-            details=details,
-        )
+
+def _map_cohere_usage(u: CohereUsage) -> usage.RequestUsage:
+    details: dict[str, int] = {}
+    if u.billed_units is not None:
+        if u.billed_units.input_tokens:  # pragma: no branch
+            details['input_tokens'] = int(u.billed_units.input_tokens)
+        if u.billed_units.output_tokens:
+            details['output_tokens'] = int(u.billed_units.output_tokens)
+        if u.billed_units.search_units:  # pragma: no cover
+            details['search_units'] = int(u.billed_units.search_units)
+        if u.billed_units.classifications:  # pragma: no cover
+            details['classifications'] = int(u.billed_units.classifications)
+
+    request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
+    response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
+    cache_read_tokens = int(u.cached_tokens) if u.cached_tokens else 0
+    return usage.RequestUsage(
+        input_tokens=request_tokens,
+        output_tokens=response_tokens,
+        cache_read_tokens=cache_read_tokens,
+        details=details,
+    )
+
+
+@dataclass
+class CohereStreamedResponse(StreamedResponse):
+    """Implementation of `StreamedResponse` for Cohere models."""
+
+    model_request_parameters: ModelRequestParameters
+    _model_name: CohereModelName
+    _provider_name: str
+    _provider_url: str
+    _response: AsyncIterator[Any]
+    _timestamp: datetime = field(default_factory=_now_utc)
+
+    async def close_stream(self) -> None:
+        aclose = getattr(self._response, 'aclose', None)
+        if aclose is None:
+            return
+        try:
+            await aclose()
+        except RuntimeError as e:
+            if 'async generator is already running' not in str(e):
+                raise
+
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        thinking_indices: set[int] = set()
+
+        async for event in self._response:
+            if isinstance(event, ContentStartV2ChatStreamResponse):
+                if event.index is not None:
+                    content_type = (
+                        event.delta
+                        and event.delta.message
+                        and event.delta.message.content
+                        and event.delta.message.content.type
+                    )
+                    if content_type == 'thinking':
+                        thinking_indices.add(event.index)
+
+            elif isinstance(event, ContentDeltaV2ChatStreamResponse):
+                if event.index is not None and event.delta and event.delta.message and event.delta.message.content:
+                    mc = event.delta.message.content
+                    if event.index in thinking_indices:
+                        if thinking := mc.thinking:
+                            for ev in self._parts_manager.handle_thinking_delta(
+                                vendor_part_id=event.index,
+                                content=thinking,
+                            ):
+                                yield ev
+                    else:
+                        if text := mc.text:
+                            for ev in self._parts_manager.handle_text_delta(
+                                vendor_part_id=event.index,
+                                content=text,
+                            ):
+                                yield ev
+
+            elif isinstance(event, ToolCallStartV2ChatStreamResponse):
+                if event.index is not None and event.delta and event.delta.message and event.delta.message.tool_calls:
+                    tc = event.delta.message.tool_calls
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=event.index,
+                        tool_name=tc.function.name if tc.function else None,
+                        tool_call_id=tc.id,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
+
+            elif isinstance(event, ToolCallDeltaV2ChatStreamResponse):
+                if event.index is not None and event.delta and event.delta.message and event.delta.message.tool_calls:
+                    tc = event.delta.message.tool_calls
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=event.index,
+                        args=tc.function.arguments if tc.function else None,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
+
+            elif isinstance(event, MessageEndV2ChatStreamResponse):
+                if event.delta:
+                    if raw_finish_reason := event.delta.finish_reason:
+                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+                        self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    if event.delta.usage:
+                        self._usage += _map_cohere_usage(event.delta.usage)
+
+    @property
+    def model_name(self) -> CohereModelName:
+        """Get the model name of the response."""
+        return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
+    def provider_url(self) -> str:
+        """Get the provider URL."""
+        return self._provider_url
+
+    @property
+    def timestamp(self) -> datetime:
+        """Get the timestamp of the response."""
+        return self._timestamp
