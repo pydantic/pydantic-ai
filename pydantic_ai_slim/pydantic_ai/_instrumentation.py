@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 from urllib.parse import urlparse
 
 from opentelemetry.baggage import get_baggage
@@ -59,6 +59,17 @@ ANY_ADAPTER = TypeAdapter[Any](Any)
 # These are in the spec:
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
 TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
+
+# The spec doesn't advise boundaries for `gen_ai.client.operation.time_to_first_chunk`, but without
+# advice the OTel SDK's default histogram buckets (0, 5, 10, 25, ... seconds) collapse virtually all
+# TTFT values into the first two buckets. This is the ladder the spec advises for
+# `gen_ai.client.operation.duration`, which spans fast-provider TTFTs (~10ms) through reasoning-model
+# worst cases (~80s). Like any bucket advisory it's only advice: users can override it by configuring
+# a View for this instrument on their MeterProvider, and SDKs configured for exponential-bucket
+# histogram aggregation (e.g. logfire) ignore it entirely.
+TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
+    0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
+)  # fmt: skip
 
 
 class CostCalculationFailedWarning(Warning):
@@ -176,11 +187,21 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
     return tool_definitions
 
 
+class _FinishModelRequestSpan(Protocol):
+    """The `finish` callback yielded by `open_model_request_span`.
+
+    `time_to_first_chunk` is the streaming-only TTFT in seconds; non-streaming
+    callers omit it.
+    """
+
+    def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
+
+
 @contextmanager
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
-) -> Generator[tuple[Callable[[ModelResponse], None], ModelRequestContext]]:
+) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
     Shared between `Instrumentation.wrap_model_request` (agent flow) and
@@ -233,7 +254,7 @@ def open_model_request_span(
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
             # so observability backends that aggregate metrics from span attributes
             # don't double-count.
-            def finish(response: ModelResponse) -> None:
+            def finish(response: ModelResponse, time_to_first_chunk: float | None = None) -> None:
                 nonlocal record_metrics
 
                 annotate_tool_call_otel_metadata(response, prepared_parameters)
@@ -254,7 +275,7 @@ def open_model_request_span(
                         'gen_ai.request.model': request_model,
                         'gen_ai.response.model': response_model,
                     }
-                    settings.record_metrics(response, price_calculation, metric_attributes)
+                    settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
 
                 record_metrics = _record_metrics
 
@@ -285,6 +306,8 @@ def open_model_request_span(
                     attributes_to_set['gen_ai.response.id'] = response.provider_response_id
                 if response.finish_reason is not None:
                     attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
+                if time_to_first_chunk is not None:
+                    attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
 
