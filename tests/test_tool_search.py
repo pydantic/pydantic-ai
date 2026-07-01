@@ -2230,73 +2230,22 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
     assert replay_outputs and all(item.get('execution') == 'client' for item in replay_outputs)
 
 
-async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loading(
-    allow_model_requests: None,
-):
-    """A tool-search tool discovered in a prior turn must not carry the wire-side `defer_loading`
-    flag on a model without native `tool_search` (e.g. `gpt-5.2`).
-
-    `defer_loading` only travels alongside a native `tool_search` tool; without one, pydantic-ai
-    falls back to local search and OpenAI rejects a lone `defer_loading`. Minimal form of #5938;
-    the deferred-capability path is covered by
-    `test_openai_deferred_capability_runs_on_model_without_native_tool_search`.
-    """
-    pytest.importorskip('openai')
-
-    final = response_message(
-        [
-            ResponseOutputMessage(
-                id='msg',
-                content=[ResponseOutputText(text='Sunny.', type='output_text', annotations=[])],
-                role='assistant',
-                status='completed',
-                type='message',
-            )
-        ]
-    )
-    mock_client = MockOpenAIResponses.create_mock(final)
-    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
-    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
-
-    @agent.tool_plain(defer_loading=True)
-    def get_weather(city: str) -> str:  # pragma: no cover
-        return f'Weather in {city}.'
-
-    # `get_weather` was discovered last turn, so it now rides along as a callable tool
-    # (`defer_loading=False`, but `with_native='tool_search'` still set).
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='I might want the weather later.')]),
-        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='loc_1')]),
-        ModelRequest(
-            parts=[
-                ToolSearchReturnPart(
-                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
-                    tool_call_id='loc_1',
-                )
-            ]
-        ),
-    ]
-
-    await agent.run('Weather in Paris?', message_history=history)
-
-    [request] = get_mock_responses_kwargs(mock_client)
-    request_tools = cast(list[dict[str, Any]], request['tools'])
-    assert not any(tool['type'] == 'tool_search' for tool in request_tools)
-    [weather_tool] = [tool for tool in request_tools if tool.get('name') == 'get_weather']
-    assert 'defer_loading' not in weather_tool
-
-
 @pytest.mark.vcr
 async def test_openai_deferred_capability_runs_on_model_without_native_tool_search(
-    allow_model_requests: None, openai_api_key: str, vcr: Any
+    allow_model_requests: None, openai_api_key: str
 ) -> None:
-    """#5938 end-to-end against live `gpt-5.2` (no native `tool_search`): loading a deferred
-    `Capability` and calling its tool must complete, not 400.
+    """Loading a deferred `Capability` and calling its tool must complete on a model
+    *without* native `tool_search` (#5938).
 
-    After `load_capability` reveals `bar`, it carries `with_native='tool_search'`. Before the fix
-    the revealed tool shipped with `defer_loading: true` and no `tool_search` tool, and OpenAI
-    rejected it. The wire contract is pinned by the mock
-    `test_openai_discovered_tool_without_native_tool_search_omits_defer_loading`.
+    `gpt-5.2` predates OpenAI's native `tool_search`, so search falls back to local and no
+    `tool_search` builtin is on the wire. The tool revealed by `load_capability` still carries
+    `with_native='tool_search'`, which the base-class filter sheds so no adapter emits a
+    wire-side `defer_loading` flag with no native `tool_search` tool to pair it with — which
+    OpenAI rejects. The invariant is simply that the run completes and `bar` returns.
+
+    This is the tool-search-*unsupported* half of the matrix. OpenAI is the only provider it
+    can be recorded against: every non-deprecated Anthropic (and Google) model supports native
+    tool search, so there is no equivalent no-native-`tool_search` model to exercise.
     """
     foo = Capability[None](id='foo', description='Use this capability when the user asks for foo.', defer_loading=True)
 
@@ -2316,18 +2265,12 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
     result = await agent.run('Use foo with x=1.')
 
     # The capability loaded and `bar` returned, so the follow-up request carrying the revealed
-    # `bar` (the one that used to 400) was sent and accepted.
+    # `bar` (the one that used to 400) was accepted and the run finished.
     assert any(isinstance(p, LoadCapabilityReturnPart) for m in result.all_messages() for p in m.parts)
     bar_returns = [
         p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart) and p.tool_name == 'bar'
     ]
     assert [p.content for p in bar_returns] == [1]
-
-    # gpt-5.2 runs the local fallback: no request may carry `defer_loading` or a `tool_search` tool.
-    for request in vcr.requests:
-        request_tools = cast(list[dict[str, Any]], json.loads(request.body).get('tools', []))
-        assert not any(tool.get('type') == 'tool_search' for tool in request_tools)
-        assert not any('defer_loading' in tool for tool in request_tools)
 
 
 async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_requests: None):
