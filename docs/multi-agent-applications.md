@@ -182,6 +182,12 @@ graph TD
 
 Here agents don't need to use the same deps.
 
+!!! tip "Message history between agents"
+    To give another agent the previous conversation as context, pass
+    `message_history` to its run method. See
+    [Sharing messages between agents](message-history.md#sharing-messages-between-agents)
+    for the details on instructions, system prompts, and tool context.
+
 Here we show two agents used in succession, the first to find a flight and the second to extract the user's seat preference.
 
 ```python {title="programmatic_handoff.py"}
