@@ -90,7 +90,6 @@ making it ideal for queries that require up-to-date data.
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
-| Outlines | ❌ | Not supported |
 
 ### Usage
 
@@ -170,6 +169,24 @@ _(This example is complete, it can be run "as is")_
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
 
+!!! note "Anthropic Web Search Tool Versions"
+    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
+    the web search tool version from the model profile and Anthropic client: `web_search_20260209`
+    for models and platforms that support Anthropic's dynamic-filtering web tools, and
+    `web_search_20250305` otherwise.
+    The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
+    a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
+    On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
+    dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
+    See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
+    and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
+    for current model support and platform availability.
+
+    Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
+    Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209`.
+    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
+    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
+
 ## X Search Tool
 
 !!! tip
@@ -183,7 +200,7 @@ The [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] allows your agent to s
 from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
-agent = Agent('xai:grok-4-1-fast', capabilities=[NativeTool(XSearchTool())])
+agent = Agent('xai:grok-4.3', capabilities=[NativeTool(XSearchTool())])
 
 result = agent.run_sync('What are people saying about AI on X today?')
 print(result.output)
@@ -203,7 +220,7 @@ from pydantic_ai import Agent, XSearchTool
 from pydantic_ai.capabilities import NativeTool
 
 agent = Agent(
-    'xai:grok-4-1-fast',
+    'xai:grok-4.3',
     capabilities=[
         NativeTool(
             XSearchTool(
@@ -250,7 +267,6 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
-| Outlines | ❌ | |
 
 ### Usage
 
@@ -511,7 +527,6 @@ allowing it to pull up-to-date information from the web.
 | Mistral | ❌ | |
 | Cohere | ❌ | |
 | HuggingFace | ❌ | |
-| Outlines | ❌ | |
 
 ### Usage
 
@@ -573,6 +588,24 @@ _(This example is complete, it can be run "as is")_
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
+!!! note "Anthropic Web Fetch Tool Versions"
+    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
+    the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260209`
+    for models and platforms that support Anthropic's dynamic-filtering web tools, and
+    `web_fetch_20250910` otherwise.
+    `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
+    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
+    `AsyncAnthropicVertex`.
+    See the
+    [Anthropic web fetch docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)
+    and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
+    for current model support and platform availability.
+
+    Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
+    Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209`.
+    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
+    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## Memory Tool
 
@@ -837,7 +870,6 @@ The [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool] enables your age
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
-| Outlines | ❌ | Not supported |
 
 ### Usage
 
@@ -917,7 +949,7 @@ asyncio.run(main())
 
 #### xAI
 
-With xAI, `FileSearchTool` maps to the [collections search](https://docs.x.ai/developers/tools/collection-search) tool. Pass collection IDs as `file_store_ids`.
+With xAI, `FileSearchTool` maps to the [collections search](https://docs.x.ai/developers/tools/collections-search) tool. Pass collection IDs as `file_store_ids`.
 
 ```py {title="file_search_xai.py" test="skip"}
 import asyncio
@@ -928,7 +960,7 @@ from pydantic_ai.capabilities import NativeTool
 
 async def main():
     agent = Agent(
-        'xai:grok-4-1-fast',
+        'xai:grok-4.3',
         capabilities=[NativeTool(FileSearchTool(file_store_ids=['collection_abc123']))]
     )
 

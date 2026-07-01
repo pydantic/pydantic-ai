@@ -22,7 +22,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import PartStartEvent, RequestUsage
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.grok import GrokModelProfile, grok_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.usage import RunUsage
 
 from ..._inline_snapshot import snapshot
@@ -49,12 +49,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
 
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
@@ -67,61 +61,76 @@ XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
 
 
 @pytest.mark.parametrize(
-    'model_name,expected_thinking',
+    'model_name,expected_thinking,expected_always_enabled',
     [
-        # grok-4 reasoning models always reason but reject the reasoning_effort parameter,
-        # so pydantic-ai treats them as not supporting the unified `thinking` setting.
-        ('grok-4-fast-reasoning', False),
-        ('grok-4-1-reasoning', False),
-        ('grok-4-fast-non-reasoning', False),
-        ('grok-4-1-fast-non-reasoning', False),
-        ('grok-3-mini', True),
-        ('grok-3-mini-fast', True),
-        ('grok-3', False),
+        ('grok-4.3', True, False),
+        ('grok-4.3-latest', True, False),
+        # `grok-latest` is the floating alias for the newest Grok (currently 4.3), so it mirrors its efforts.
+        ('grok-latest', True, False),
+        ('grok-4-fast-reasoning', True, False),
+        ('grok-4-fast-non-reasoning', True, False),
+        ('grok-4-1-fast-non-reasoning', True, False),
+        # `grok-4.20`'s effort knob controls agent count, not thinking depth, so unified thinking is unsupported.
+        ('grok-4.20', False, False),
+        ('grok-4.20-multi-agent', False, False),
+        ('grok-4.20-reasoning', False, False),
+        # `grok-code-fast-1` redirects to `grok-build-0.1`, not Grok 4.3, so they get no reasoning effort.
+        ('grok-code-fast-1', False, False),
+        ('grok-build-0.1', False, False),
+        ('grok-3', True, False),
+        ('grok-3-mini', True, True),
+        ('grok-3-mini-fast', True, True),
+        ('grok-3-fast', False, False),
+        ('grok-4-1-reasoning', False, False),
     ],
     ids=[
+        'grok-4.3',
+        'grok-4.3-latest',
+        'grok-latest',
         'grok-4-fast-reasoning',
-        'grok-4-1-reasoning',
         'grok-4-fast-non-reasoning',
         'grok-4-1-fast-non-reasoning',
+        'grok-4.20',
+        'grok-4.20-multi-agent',
+        'grok-4.20-reasoning',
+        'grok-code-fast-1',
+        'grok-build-0.1',
+        'grok-3',
         'grok-3-mini',
         'grok-3-mini-fast',
-        'grok-3',
+        'grok-3-fast',
+        'grok-4-1-reasoning',
     ],
 )
-def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool) -> None:
+def test_grok_model_profile_thinking(model_name: str, expected_thinking: bool, expected_always_enabled: bool) -> None:
     profile = grok_model_profile(model_name)
     assert profile is not None
-    assert profile.supports_thinking == expected_thinking
-    # `reasoning_effort` has no `'none'` value on xAI, so any grok model that
-    # supports reasoning is necessarily always-on (thinking=False is silently
-    # dropped via the gate).
-    assert profile.thinking_always_enabled == expected_thinking
+    assert profile.get('supports_thinking', False) == expected_thinking
+    # Only models whose `reasoning_effort` set lacks `'none'` (the grok-3-mini family) are always-on;
+    # Grok 4.3 and its redirect slugs accept `'none'`, so `thinking=False` disables reasoning there.
+    assert profile.get('thinking_always_enabled', False) == expected_always_enabled
 
 
-async def test_grok_4_reasoning_model_does_not_forward_reasoning_effort(allow_model_requests: None) -> None:
-    """grok-4 reasoning models reject `reasoning_effort` with INVALID_ARGUMENT, so the profile
-    treats them as unsupported thinking targets and passing `thinking` must not forward the param
-    to the SDK. See https://docs.x.ai/docs/guides/reasoning.
-    """
+async def test_grok_4_reasoning_model_forwards_reasoning_effort(allow_model_requests: None) -> None:
+    """Retired grok-4 reasoning slugs redirect to grok-4.3 and accept `reasoning_effort`."""
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    settings: XaiModelSettings = {'thinking': True}
+    settings: XaiModelSettings = {'thinking': 'high'}
     agent = Agent(m, model_settings=settings)
 
     await agent.run('hi')
 
     kwargs = get_mock_chat_create_kwargs(mock_client)
     assert len(kwargs) == 1
-    assert 'reasoning_effort' not in kwargs[0]
+    assert kwargs[0]['reasoning_effort'] == 'high'
 
 
 async def test_xai_thinking_false_with_non_always_on_profile_is_dropped(allow_model_requests: None) -> None:
-    """Defensive guard: `_create_chat` skips emitting `reasoning_effort` when `thinking=False`
-    survives the gate (only possible under a profile with `supports_thinking=True` and
-    `thinking_always_enabled=False`). xAI's `reasoning_effort` has no `'none'` value,
-    so `XAI_EFFORT_MAP[False]` would KeyError if the guard were removed."""
+    """Defensive guard: no `reasoning_effort` is emitted when `thinking=False` survives the gate
+    (only possible under a profile with `supports_thinking=True` and `thinking_always_enabled=False`).
+    The profile here exposes no `reasoning_effort` values, so `_map_reasoning_effort` returns `None`
+    and the parameter is omitted rather than forwarded."""
     response = create_response(content='ok')
     mock_client = MockXai.create_mock([response])
     custom_profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
@@ -139,13 +148,25 @@ async def test_xai_thinking_false_with_non_always_on_profile_is_dropped(allow_mo
 def test_grok_model_profile_builtin_tools() -> None:
     grok4_profile = grok_model_profile('grok-4-fast-non-reasoning')
     assert grok4_profile is not None
-    assert isinstance(grok4_profile, GrokModelProfile)
-    assert grok4_profile.grok_supports_builtin_tools is True
+    assert isinstance(grok4_profile, dict)
+    assert grok4_profile.get('grok_supports_builtin_tools', False) is True
 
+    # `grok-3` redirects to Grok 4.3, so it's builtin-capable despite not matching the `grok-4`/`code` patterns.
     grok3_profile = grok_model_profile('grok-3')
     assert grok3_profile is not None
-    assert isinstance(grok3_profile, GrokModelProfile)
-    assert grok3_profile.grok_supports_builtin_tools is False
+    assert isinstance(grok3_profile, dict)
+    assert grok3_profile.get('grok_supports_builtin_tools', False) is True
+
+    # `grok-build-0.1` is a coding model (the `grok-code-fast-1` redirect target) and supports builtin tools.
+    grok_build_profile = grok_model_profile('grok-build-0.1')
+    assert grok_build_profile is not None
+    assert isinstance(grok_build_profile, dict)
+    assert grok_build_profile.get('grok_supports_builtin_tools', False) is True
+
+    grok3_mini_profile = grok_model_profile('grok-3-mini')
+    assert grok3_mini_profile is not None
+    assert isinstance(grok3_mini_profile, dict)
+    assert grok3_mini_profile.get('grok_supports_builtin_tools', False) is False
 
 
 # =============================================================================

@@ -12,6 +12,7 @@ from pydantic_ai.capabilities import Thinking, WebSearch
 
 agent = Agent(
     'anthropic:claude-opus-4-6',
+    name='capabilities_agent',
     capabilities=[
         Thinking(effort='high'),
         WebSearch(),
@@ -37,8 +38,8 @@ Use the unified `Thinking` capability or the `thinking` model setting.
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking
 
-agent = Agent('anthropic:claude-opus-4-6', capabilities=[Thinking(effort='high')])
-agent = Agent('anthropic:claude-opus-4-6', model_settings={'thinking': 'high'})
+capability_agent = Agent('anthropic:claude-opus-4-6', name='capability_agent', capabilities=[Thinking(effort='high')])
+settings_agent = Agent('anthropic:claude-opus-4-6', name='settings_agent', model_settings={'thinking': 'high'})
 ```
 
 Supported effort values:
@@ -56,26 +57,34 @@ Supported effort values:
 Use `Hooks` for decorator-based lifecycle interception.
 
 ```python
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import ValidatedToolArgs
 from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 
 hooks = Hooks()
 
 
 @hooks.on.before_model_request
-async def log_request(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
     print(f'Sending {len(request_context.messages)} messages')
     return request_context
 
 
 @hooks.on.before_tool_execute(tools=['send_email'])
-async def audit_tool(ctx, *, call, tool_def, args):
+async def audit_tool(
+    ctx: RunContext[None],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: ValidatedToolArgs,
+) -> ValidatedToolArgs:
     print(f'Executing {call.tool_name}')
     return args
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[hooks])
+agent = Agent('openai:gpt-5.2', name='hooks_agent', capabilities=[hooks])
 ```
 
 Important hook families:
@@ -100,3 +109,9 @@ Reach for a custom capability when:
 - the behavior should be installable or declarative
 
 Keep custom capabilities focused. If the user only needs one tool or one hook, do not introduce a capability.
+
+For every capability, consider whether `defer_loading=True` would improve the system by keeping instructions and tool schemas out of the eager context. Keep it eager only when the model benefits from that capability on most turns, when its hooks/settings must always apply, or when deferral would make capability selection unreliable.
+
+## Defer Capability Loading
+
+For capabilities on demand, load [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md). Use it when the user mentions deferred capabilities, capability progressive disclosure, `defer_loading=True` on a capability, or `load_capability`; also use it proactively when an agent design includes optional instructions, specialist workflows, long-tail tools, or context the model does not need on most turns.

@@ -2,16 +2,16 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, _utils
-from .._output import OutputObjectDefinition
 from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
@@ -52,23 +52,14 @@ from ..models import (
     download_item,
 )
 from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
-from ..profiles import ModelProfileSpec
-from ..profiles.grok import GrokModelProfile
+from ..output import OutputObjectDefinition
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
+from ..profiles.grok import GrokModelProfile, GrokReasoningEffort
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._tool_choice import resolve_tool_choice
-
-XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
-    True: 'high',
-    'minimal': 'low',
-    'low': 'low',
-    'medium': 'high',
-    'high': 'high',
-    'xhigh': 'high',
-}
-"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'."""
 
 try:
     import grpc
@@ -86,7 +77,7 @@ except ImportError as _import_error:
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except grpc.RpcError as e:
@@ -109,6 +100,40 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
 
 XaiModelName = str | ChatModel
 """Possible xAI model names."""
+
+# `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
+# `'grok'` alias (when `GrokProvider` existed) so persisted messages from before the rename still
+# route their thinking and native-tool parts back to this provider.
+_XAI_PROVIDER_NAMES = frozenset({'xai', 'grok'})
+
+
+def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) -> GrokReasoningEffort | None:
+    """Map unified thinking values to the xAI `reasoning_effort` values a model accepts."""
+    supported_efforts = profile.get('grok_reasoning_efforts', frozenset())
+    if not supported_efforts:
+        return None
+
+    if thinking is False:
+        return 'none' if 'none' in supported_efforts else None
+    if thinking is True:
+        # `True` requests reasoning at the model's default level rather than a specific effort.
+        # Models that accept `'none'` (Grok 4.3) treat `reasoning_effort` as optional and apply their
+        # own default, so we omit it. Always-on models like grok-3-mini don't expose a default-omission
+        # path, so they fall back to `'medium'` (consistent with OpenAI), normalized to the nearest
+        # supported value by the `'medium'` handling below.
+        if 'none' in supported_efforts:
+            return None
+        thinking = 'medium'
+
+    if thinking in ('minimal', 'low'):
+        return 'low'
+    elif thinking == 'medium':
+        return 'medium' if 'medium' in supported_efforts else 'high'
+    elif thinking in ('high', 'xhigh'):
+        return 'high'
+    else:
+        assert_never(thinking)
+
 
 _FINISH_REASON_MAP: dict[str, FinishReason] = {
     'stop': 'stop',
@@ -191,10 +216,23 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `collections_search_call.outputs` value of the `include` parameter in the Responses API.
     """
 
-    xai_reasoning_effort: Literal['low', 'high']
+    xai_reasoning_effort: GrokReasoningEffort
     """Reasoning effort level for Grok reasoning models.
 
     See https://docs.x.ai for details.
+    """
+
+    xai_max_turns: int
+    """Maximum number of agentic turns xAI's server-side tool loop may take.
+
+    Only affects requests that use xAI's server-side native tools (e.g. web search, code
+    execution, X search): xAI iterates up to this many turns — calling those server-side tools
+    and processing their results — before returning a final response. It has no effect on ordinary
+    client-side tools or on Pydantic AI's own agent loop; use [`UsageLimits`][pydantic_ai.usage.UsageLimits]
+    to bound those.
+
+    With parallel tool calls enabled, multiple tool calls can occur within a single turn, so
+    `xai_max_turns` does not necessarily equal the total number of tool calls made.
     """
 
 
@@ -208,12 +246,14 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'parallel_tool_calls': 'parallel_tool_calls',
     'presence_penalty': 'presence_penalty',
     'frequency_penalty': 'frequency_penalty',
+    'seed': 'seed',
     'xai_logprobs': 'logprobs',
     'xai_top_logprobs': 'top_logprobs',
     'xai_user': 'user',
     'xai_store_messages': 'store_messages',
     'xai_previous_response_id': 'previous_response_id',
     'xai_reasoning_effort': 'reasoning_effort',
+    'xai_max_turns': 'max_turns',
 }
 
 
@@ -234,7 +274,7 @@ class XaiModel(Model[AsyncClient]):
         """Initialize the xAI model.
 
         Args:
-            model_name: The name of the xAI model to use (e.g., "grok-4-1-fast-non-reasoning")
+            model_name: The name of the xAI model to use (e.g., "grok-4.3")
             provider: The provider to use for API calls. Defaults to `'xai'`.
             profile: Optional model profile specification. Defaults to a profile picked by the provider based on the model name.
             settings: Optional model settings.
@@ -245,7 +285,7 @@ class XaiModel(Model[AsyncClient]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile(model_name))
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> 'AsyncClient':
@@ -260,6 +300,10 @@ class XaiModel(Model[AsyncClient]):
     def system(self) -> str:
         """The model provider."""
         return 'xai'
+
+    @cached_property
+    def profile(self) -> GrokModelProfile:
+        return cast(GrokModelProfile, super().profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type]:
@@ -366,7 +410,7 @@ class XaiModel(Model[AsyncClient]):
                 self._append_tool_call(messages, client_side_tool_call)
             elif isinstance(item, NativeToolCallPart):
                 builtin_call = self._map_builtin_tool_call_part(item)
-                if item.provider_name == self.system and builtin_call:
+                if item.provider_name in _XAI_PROVIDER_NAMES and builtin_call:
                     self._append_tool_call(messages, builtin_call)
                     # Track specific tool calls for status updates
                     # Note: tool_call_id is always truthy here since _map_builtin_tool_call_part
@@ -375,7 +419,7 @@ class XaiModel(Model[AsyncClient]):
                         builtin_calls[item.tool_call_id] = builtin_call
             elif isinstance(item, NativeToolReturnPart):
                 if (
-                    item.provider_name == self.system
+                    item.provider_name in _XAI_PROVIDER_NAMES
                     and item.tool_call_id
                     and (details := item.provider_details) is not None
                     and details.get('status') == 'failed'
@@ -414,7 +458,7 @@ class XaiModel(Model[AsyncClient]):
         - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
         - Non-xAI (or non-native) thinking is preserved by wrapping in the model profile's thinking tags
         """
-        if item.provider_name == self.system and (item.content or item.signature):
+        if item.provider_name in _XAI_PROVIDER_NAMES and (item.content or item.signature):
             msg = assistant('')
             if item.content:
                 msg.reasoning_content = item.content
@@ -422,7 +466,7 @@ class XaiModel(Model[AsyncClient]):
                 msg.encrypted_content = item.signature
             return msg
         elif item.content:
-            start_tag, end_tag = self.profile.thinking_tags
+            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
             return assistant('\n'.join([start_tag, item.content, end_tag]))
         else:
             return None
@@ -574,11 +618,7 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported in xAI user prompts')
             elif isinstance(item, UploadedFile):
-                if item.provider_name != self.system:
-                    raise UserError(
-                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with XaiModel. '
-                        f'Expected `provider_name` to be `{self.system!r}`.'
-                    )
+                self._validate_uploaded_file_provider(item)
                 content_items.append(file(item.file_id))
             elif isinstance(item, CachePoint):
                 # xAI doesn't support prompt caching via CachePoint, so we filter it out
@@ -604,17 +644,17 @@ class XaiModel(Model[AsyncClient]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.tool_defs
 
-        profile = GrokModelProfile.from_profile(self.profile)
+        profile = self.profile
 
         tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            tool_choice = 'required' if profile.grok_supports_tool_choice_required else 'auto'
+            tool_choice = 'required' if profile.get('grok_supports_tool_choice_required', True) else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if profile.grok_supports_tool_choice_required:
+                if profile.get('grok_supports_tool_choice_required', True):
                     tool_choice = required_tool(next(iter(tool_names)))
                 else:
                     # Forcing not supported: filter so the model can only see the requested tool.
@@ -623,7 +663,7 @@ class XaiModel(Model[AsyncClient]):
                     tool_choice = 'auto'
             else:
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                if tool_choice_mode == 'required' and profile.grok_supports_tool_choice_required:
+                if tool_choice_mode == 'required' and profile.get('grok_supports_tool_choice_required', True):
                     tool_choice = 'required'
                 else:
                     tool_choice = 'auto'
@@ -670,7 +710,7 @@ class XaiModel(Model[AsyncClient]):
             tool_choice = None
 
         # Set response_format based on the output_mode
-        profile = GrokModelProfile.from_profile(self.profile)
+        profile = self.profile
         response_format: chat_pb2.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
@@ -679,18 +719,18 @@ class XaiModel(Model[AsyncClient]):
         elif (
             model_request_parameters.output_mode == 'prompted'
             and not tools_param
-            and profile.supports_json_object_output
+            and profile.get('supports_json_object_output', False)
         ):  # pragma: no branch
             response_format = _map_json_object()
 
         # Map model settings to xAI SDK parameters
         xai_settings = _map_model_settings(model_settings)
 
-        # Fall back to unified thinking when xai_reasoning_effort is not set
+        # Fall back to unified thinking when xai_reasoning_effort is not set.
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
-            thinking = model_request_parameters.thinking
-            if thinking is not False:
-                xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
+            reasoning_effort = _map_reasoning_effort(model_request_parameters.thinking, profile)
+            if reasoning_effort is not None:
+                xai_settings['reasoning_effort'] = reasoning_effort
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
@@ -747,7 +787,7 @@ class XaiModel(Model[AsyncClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         """Make a streaming request to the xAI model."""
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(

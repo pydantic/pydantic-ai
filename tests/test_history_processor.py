@@ -18,10 +18,7 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import (
-    HistoryProcessor,  # pyright: ignore[reportDeprecated]
-    ProcessHistory,
-)
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
@@ -961,7 +958,7 @@ async def test_new_messages_index_during_iter_with_pruning():
     agent = Agent(model=FunctionModel(model_function, model_name='test'), capabilities=[ProcessHistory(keep_last_2)])
 
     @agent.tool
-    async def my_tool(ctx: RunContext[None]) -> str:
+    async def my_tool(ctx: RunContext) -> str:
         return 'tool executed'
 
     with capture_run_messages() as captured_messages:
@@ -1034,7 +1031,7 @@ async def test_new_messages_index_during_iter_with_pruning_and_history():
     agent = Agent(model=FunctionModel(model_function, model_name='test'), capabilities=[ProcessHistory(keep_last_2)])
 
     @agent.tool
-    async def my_tool(ctx: RunContext[None]) -> str:
+    async def my_tool(ctx: RunContext) -> str:
         return 'tool executed'
 
     history = [
@@ -1435,7 +1432,7 @@ async def test_resuming_without_prompt_with_tool_calls_excludes_resumed_request(
     agent = Agent(model=FunctionModel(model_function, model_name='test'))
 
     @agent.tool
-    async def my_tool(_ctx: RunContext[None]) -> str:
+    async def my_tool(_ctx: RunContext) -> str:
         return 'tool executed'
 
     with capture_run_messages() as captured_messages:
@@ -1761,25 +1758,3 @@ def test_takes_ctx_returns_false_for_untyped_processor():
 
     # When first param has no type annotation, takes_run_context returns False
     assert takes_run_context(untyped_processor) is False  # pyright: ignore[reportUnknownArgumentType]
-
-
-async def test_history_processor_deprecated_alias(function_model: FunctionModel, received_messages: list[ModelMessage]):
-    def drop_first(messages: list[ModelMessage]) -> list[ModelMessage]:
-        return messages[1:]
-
-    with pytest.warns(DeprecationWarning, match='`HistoryProcessor` is deprecated'):
-        capability = HistoryProcessor(drop_first)  # pyright: ignore[reportDeprecated]
-
-    assert isinstance(capability, ProcessHistory)
-
-    agent = Agent(function_model, capabilities=[capability])
-    message_history = [
-        ModelRequest(parts=[UserPromptPart(content='First')]),
-        ModelResponse(parts=[TextPart(content='Answer')]),
-    ]
-    await agent.run('Second', message_history=message_history)
-
-    # First message dropped by the processor before the provider sees it.
-    assert [part for msg in received_messages for part in msg.parts if isinstance(part, UserPromptPart)] == snapshot(
-        [UserPromptPart(content='Second', timestamp=IsDatetime())]
-    )

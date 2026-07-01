@@ -287,6 +287,12 @@ async def main():
 asyncio.run(main())
 ```
 
+!!! note "Referencing uploaded images"
+    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] can only reference uploaded *documents* by `file_id`. Referencing an uploaded image (an `image/*` media type) raises a [`UserError`][pydantic_ai.exceptions.UserError], because the Chat Completions API doesn't accept a `file_id` for image parts. Use [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent] for images, or use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], which does support uploaded images.
+
+    With `OpenAIResponsesModel`, control the image [detail level](https://platform.openai.com/docs/guides/images-vision) by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the `UploadedFile`; it defaults to `'auto'`.
+    With `OpenAIChatModel`, `GroqModel`, `MistralModel`, and `XaiModel`, control the image detail level by passing `vendor_metadata={'detail': 'high'}` (or `'low'`) to the [`ImageUrl`][pydantic_ai.messages.ImageUrl] or [`BinaryContent`][pydantic_ai.messages.BinaryContent]; it defaults to `'auto'`.
+
 ### Google
 
 Follow the [Google Files API docs](https://ai.google.dev/gemini-api/docs/files) to upload files. You can access the underlying Google GenAI client via `provider.client`.
@@ -373,7 +379,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     provider = XaiProvider()
-    model = XaiModel('grok-4-fast', provider=provider)
+    model = XaiModel('grok-4.3', provider=provider)
 
     # Upload a file using the provider's client (xAI client)
     with open('document.pdf', 'rb') as f:

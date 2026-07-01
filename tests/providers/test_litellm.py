@@ -7,7 +7,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
 
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.litellm import LiteLLMProvider
 
 pytestmark = [
@@ -38,15 +38,7 @@ def test_init_with_openai_client():
 def test_model_profile_returns_openai_compatible_profile(mocker: MockerFixture):
     provider = LiteLLMProvider(api_key='test-key')
 
-    # Create a proper mock profile object that can be updated
-    from dataclasses import dataclass
-
-    @dataclass
-    class MockProfile:
-        max_tokens: int = 4096
-        supports_streaming: bool = True
-
-    mock_profile = MockProfile()
+    mock_profile: dict[str, object] = {'supports_tools': True}
     mock_openai_profile = mocker.patch('pydantic_ai.providers.litellm.openai_model_profile', return_value=mock_profile)
 
     profile = provider.model_profile('gpt-3.5-turbo')
@@ -55,37 +47,29 @@ def test_model_profile_returns_openai_compatible_profile(mocker: MockerFixture):
     mock_openai_profile.assert_called_once_with('gpt-3.5-turbo')
 
     # Verify the returned profile is an OpenAIModelProfile with OpenAIJsonSchemaTransformer
-    assert isinstance(profile, OpenAIModelProfile)
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert isinstance(profile, dict)
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
 def test_model_profile_with_different_models(mocker: MockerFixture):
     provider = LiteLLMProvider(api_key='test-key')
 
-    # Create mocks for all profile functions
-    from dataclasses import dataclass
-
-    @dataclass
-    class MockProfile:
-        max_tokens: int = 4096
-        supports_streaming: bool = True
+    mock_profile: dict[str, object] = {'supports_tools': True}
 
     # Mock all profile functions
     mock_profiles = {
-        'openai': mocker.patch('pydantic_ai.providers.litellm.openai_model_profile', return_value=MockProfile()),
-        'anthropic': mocker.patch('pydantic_ai.providers.litellm.anthropic_model_profile', return_value=MockProfile()),
-        'google': mocker.patch('pydantic_ai.providers.litellm.google_model_profile', return_value=MockProfile()),
-        'meta': mocker.patch('pydantic_ai.providers.litellm.meta_model_profile', return_value=MockProfile()),
-        'mistral': mocker.patch('pydantic_ai.providers.litellm.mistral_model_profile', return_value=MockProfile()),
-        'cohere': mocker.patch('pydantic_ai.providers.litellm.cohere_model_profile', return_value=MockProfile()),
-        'amazon': mocker.patch('pydantic_ai.providers.litellm.amazon_model_profile', return_value=MockProfile()),
-        'deepseek': mocker.patch('pydantic_ai.providers.litellm.deepseek_model_profile', return_value=MockProfile()),
-        'groq': mocker.patch('pydantic_ai.providers.litellm.groq_model_profile', return_value=MockProfile()),
-        'grok': mocker.patch('pydantic_ai.providers.litellm.grok_model_profile', return_value=MockProfile()),
-        'moonshotai': mocker.patch(
-            'pydantic_ai.providers.litellm.moonshotai_model_profile', return_value=MockProfile()
-        ),
-        'qwen': mocker.patch('pydantic_ai.providers.litellm.qwen_model_profile', return_value=MockProfile()),
+        'openai': mocker.patch('pydantic_ai.providers.litellm.openai_model_profile', return_value=mock_profile),
+        'anthropic': mocker.patch('pydantic_ai.providers.litellm.anthropic_model_profile', return_value=mock_profile),
+        'google': mocker.patch('pydantic_ai.providers.litellm.google_model_profile', return_value=mock_profile),
+        'meta': mocker.patch('pydantic_ai.providers.litellm.meta_model_profile', return_value=mock_profile),
+        'mistral': mocker.patch('pydantic_ai.providers.litellm.mistral_model_profile', return_value=mock_profile),
+        'cohere': mocker.patch('pydantic_ai.providers.litellm.cohere_model_profile', return_value=mock_profile),
+        'amazon': mocker.patch('pydantic_ai.providers.litellm.amazon_model_profile', return_value=mock_profile),
+        'deepseek': mocker.patch('pydantic_ai.providers.litellm.deepseek_model_profile', return_value=mock_profile),
+        'groq': mocker.patch('pydantic_ai.providers.litellm.groq_model_profile', return_value=mock_profile),
+        'grok': mocker.patch('pydantic_ai.providers.litellm.grok_model_profile', return_value=mock_profile),
+        'moonshotai': mocker.patch('pydantic_ai.providers.litellm.moonshotai_model_profile', return_value=mock_profile),
+        'qwen': mocker.patch('pydantic_ai.providers.litellm.qwen_model_profile', return_value=mock_profile),
     }
 
     # Test models without provider prefix (should use openai profile)
@@ -93,8 +77,8 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
 
     for model in models_without_prefix:
         profile = provider.model_profile(model)
-        assert isinstance(profile, OpenAIModelProfile)
-        assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+        assert isinstance(profile, dict)
+        assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Verify openai_model_profile was called for each model without prefix
     assert mock_profiles['openai'].call_count == len(models_without_prefix)
@@ -124,8 +108,8 @@ def test_model_profile_with_different_models(mocker: MockerFixture):
 
     for model_name, expected_profile, expected_suffix in test_cases:
         profile = provider.model_profile(model_name)
-        assert isinstance(profile, OpenAIModelProfile)
-        assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+        assert isinstance(profile, dict)
+        assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
         # Verify the correct profile function was called with the correct suffix
         mock_profiles[expected_profile].assert_called_with(expected_suffix)
         mock_profiles[expected_profile].reset_mock()

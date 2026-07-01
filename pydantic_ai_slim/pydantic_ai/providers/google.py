@@ -1,23 +1,20 @@
 from __future__ import annotations as _annotations
 
 import os
-import warnings
 from abc import ABC, abstractmethod
 from typing import Literal, overload
 
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
 try:
-    from google.auth.credentials import Credentials
     from google.genai.client import Client
-    from google.genai.types import HttpOptions
+    from google.genai.types import HttpOptions, HttpRetryOptions
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
@@ -55,6 +52,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
         *,
         http_client: httpx.AsyncClient | None,
         base_url: str | None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> HttpOptions:
         """Build `HttpOptions` and record ownership of the httpx client if we created it.
 
@@ -75,6 +73,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
             headers={'User-Agent': get_user_agent()},
             httpx_async_client=http_client,
             timeout=timeout_ms,
+            retry_options=retry_options,
         )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
@@ -88,100 +87,45 @@ class GoogleProvider(BaseGoogleProvider):
 
     @property
     def name(self) -> str:
+        # Must not change: persisted in ModelMessage.provider_name and checked during history replay.
         return 'google'
-
-    @overload
-    def __init__(
-        self, *, api_key: str, http_client: httpx.AsyncClient | None = None, base_url: str | None = None
-    ) -> None: ...
 
     @overload
     def __init__(
         self,
         *,
-        credentials: Credentials | None = None,
-        project: str | None = None,
-        location: GoogleCloudLocation | Literal['global'] | str | None = None,
+        api_key: str,
         http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None: ...
 
     @overload
     def __init__(self, *, client: Client) -> None: ...
 
-    @overload
-    def __init__(
-        self,
-        *,
-        vertexai: bool = False,
-        api_key: str | None = None,
-        http_client: httpx.AsyncClient | None = None,
-        base_url: str | None = None,
-    ) -> None: ...
-
     def __init__(
         self,
         *,
         api_key: str | None = None,
-        credentials: Credentials | None = None,
-        project: str | None = None,
-        location: GoogleCloudLocation | Literal['global'] | str | None = None,
-        vertexai: bool | None = None,
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None:
         """Create a new Google provider for the Gemini API.
 
         Args:
             api_key: The [API key](https://ai.google.dev/gemini-api/docs/api-key) to
                 use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
-            credentials: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
-            project: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
-            location: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
-            vertexai: Deprecated. Use [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] instead.
             client: A pre-initialized client to use.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Gemini API.
+            retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
+                See `google.genai.types.HttpRetryOptions` for available fields.
         """
         if client is not None:
             self._client = client
             return
-
-        vertex_ai_args_used = bool(location or project or credentials)
-        if vertexai is True or vertex_ai_args_used:
-            # Cloud-args usage on `GoogleProvider` is deprecated in 1.x; forward to `GoogleCloudProvider`
-            # so the Cloud-specific construction logic stays in one place.
-            warnings.warn(
-                '`GoogleProvider(...)` with Google Cloud (formerly known as Vertex AI) arguments '
-                '(`vertexai=True`, `location=`, `project=`, or `credentials=`) is deprecated and will '
-                'be removed in v2.0. Use `GoogleCloudProvider(...)` instead, which only accepts the '
-                'Google Cloud arguments.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            from .google_cloud import GoogleCloudProvider
-
-            delegate = GoogleCloudProvider(
-                api_key=api_key,
-                credentials=credentials,
-                project=project,
-                location=location,
-                http_client=http_client,
-                base_url=base_url,
-            )
-            self._client = delegate._client
-            self._own_http_client = delegate._own_http_client
-            self._http_client_factory = delegate._http_client_factory
-            return
-
-        if vertexai is False:
-            warnings.warn(
-                '`GoogleProvider(vertexai=False, ...)` is redundant and will be removed in v2.0; '
-                "drop the explicit `vertexai=False` (it's the default).",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
 
         # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
         api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
@@ -190,7 +134,7 @@ class GoogleProvider(BaseGoogleProvider):
                 'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                 ' to use the Gemini API.'
             )
-        http_options = self._build_http_options(http_client=http_client, base_url=base_url)
+        http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
         self._client = Client(vertexai=False, api_key=api_key, http_options=http_options)
 
 
@@ -228,6 +172,3 @@ GoogleCloudLocation = Literal[
 """Regions available for Google Cloud.
 More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
 """
-
-VertexAILocation = GoogleCloudLocation
-"""Deprecated alias for `GoogleCloudLocation`."""
