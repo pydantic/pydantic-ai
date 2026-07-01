@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -253,24 +254,7 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     test_content = b'<html>Test UI</html>'
-
-    class MockResponse:
-        content = test_content
-
-        def raise_for_status(self) -> None:
-            pass
-
-    class MockAsyncClient:
-        async def __aenter__(self) -> MockAsyncClient:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get(self, url: str) -> MockResponse:
-            return MockResponse()
-
-    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    _stub_cdn_fetch(monkeypatch, test_content)
 
     result = await _get_ui_html()
 
@@ -325,7 +309,7 @@ def test_write_cached_file_removes_temp_file_on_replace_error(monkeypatch: pytes
     cache_file.write_bytes(b'old content')
     temp_paths: list[Path] = []
 
-    def fail_replace(src: Any, dst: Any) -> None:
+    def fail_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
         temp_paths.append(Path(src))
         assert Path(dst) == cache_file
         assert Path(src).exists()
@@ -359,7 +343,7 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
     real_replace = app_module.os.replace
     replaced_targets: list[Path] = []
 
-    def instrumented_replace(src: Any, dst: Any) -> None:
+    def instrumented_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
         assert Path(src).read_bytes() == full_content
         assert not cache_file.exists()
         replaced_targets.append(Path(dst))
@@ -600,34 +584,14 @@ async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, t
     monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
 
     test_content = b'<html>Cached Custom UI</html>'
-    fetch_count = 0
-
-    class MockResponse:
-        content = test_content
-
-        def raise_for_status(self) -> None:
-            pass
-
-    class MockAsyncClient:
-        async def __aenter__(self) -> MockAsyncClient:
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
-
-        async def get(self, url: str) -> MockResponse:
-            nonlocal fetch_count
-            fetch_count += 1
-            return MockResponse()
-
-    monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
+    fetch_count = _stub_cdn_fetch(monkeypatch, test_content)
 
     custom_url = 'https://my-internal-cdn.example.com/ui/cached.html'
 
     # First call should fetch from URL
     result1 = await _get_ui_html(html_source=custom_url)
     assert result1 == test_content
-    assert fetch_count == 1
+    assert fetch_count[0] == 1
 
     # Verify cache file was created
     url_hash = hashlib.sha256(custom_url.encode()).hexdigest()[:16]
@@ -638,7 +602,7 @@ async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, t
     # Second call should use cache, not fetch again
     result2 = await _get_ui_html(html_source=custom_url)
     assert result2 == test_content
-    assert fetch_count == 1  # Still 1, not 2
+    assert fetch_count[0] == 1  # Still 1, not 2
 
 
 def test_agent_to_web_with_html_source():
