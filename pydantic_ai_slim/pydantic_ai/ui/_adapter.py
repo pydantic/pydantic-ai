@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserContent,
     UserPromptPart,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -127,12 +128,49 @@ class StateDeps(Generic[StateT]):
     state: StateT
 
 
+_FILE_DROPPED = object()
+"""Sentinel marking a file leaf removed by `strip_tool_return_files` so callers can drop it."""
+
+
+def strip_tool_return_files(content: ToolReturnContent, *, keep_top_level_files: bool) -> ToolReturnContent:
+    """Remove multimodal files that `BaseToolReturnPart.files`/`model_response_str()` can't reach.
+
+    Those helpers only see *top-level* files (the content itself, or direct elements of a top-level
+    list), so with `preserve_file_data=False` a file nested inside a mapping or a deeper list is
+    serialized to the client on dump. This strips exactly those nested files — mirroring the recursion
+    in `UIAdapter._sanitize_tool_return_content` on the inbound path — while
+    `keep_top_level_files` leaves top-level files in place for the existing text-collapse / sidecar handling.
+    """
+    if is_multi_modal_content(content):
+        return content if keep_top_level_files else _FILE_DROPPED
+    if isinstance(content, Mapping):
+        mapping: Mapping[str, ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+        stripped_mapping: dict[str, ToolReturnContent] = {}
+        for key, value in mapping.items():
+            stripped_value = strip_tool_return_files(value, keep_top_level_files=False)
+            if stripped_value is not _FILE_DROPPED:
+                stripped_mapping[key] = stripped_value
+        return stripped_mapping
+    if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
+        sequence: Sequence[ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
+        stripped_sequence: list[ToolReturnContent] = []
+        for item in sequence:
+            if keep_top_level_files and is_multi_modal_content(item):
+                stripped_sequence.append(item)
+                continue
+            stripped_item = strip_tool_return_files(item, keep_top_level_files=False)
+            if stripped_item is not _FILE_DROPPED:
+                stripped_sequence.append(stripped_item)
+        return stripped_sequence
+    return content
+
+
 def narrow_binary_images(value: ToolReturnContent) -> ToolReturnContent:
     """Walk a validated `ToolReturnContent` and narrow image `BinaryContent` to `BinaryImage`.
 
-    After `tool_return_content_ta` rehydrates multimodal items from a wire payload they come back as
-    plain `BinaryContent`, so this restores the `BinaryImage` subclass for image media types (matching
-    `BinaryContent.from_data_uri`).
+    The inbound counterpart to `strip_tool_return_files`: after `tool_return_content_ta` rehydrates
+    multimodal items from a wire payload they come back as plain `BinaryContent`, so this restores the
+    `BinaryImage` subclass for image media types (matching `BinaryContent.from_data_uri`).
     """
     if isinstance(value, BinaryContent):
         return BinaryContent.narrow_type(value)
