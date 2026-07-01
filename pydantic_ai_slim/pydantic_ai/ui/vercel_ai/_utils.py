@@ -43,6 +43,15 @@ __all__ = []
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
 
+COMPACTION_DATA_TYPE = 'data-pydantic-ai-compaction'
+"""Reserved Vercel AI `DataUIPart` type for round-tripping `CompactionPart`s.
+
+Vercel AI has no native compaction message type, but compaction data must be
+round-tripped back to the same provider in subsequent requests (e.g. OpenAI's
+`encrypted_content` chain token), so it is preserved as a reserved `data-*` part
+rather than dropped. Such `data-*` parts are not sent to the model.
+"""
+
 
 class _PydanticAIMessageMetadata(BaseModel):
     """Schema for the `pydantic_ai` key in `UIMessage.metadata`.

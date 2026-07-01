@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -3808,6 +3809,11 @@ async def test_adapter_load_messages_with_data_ui_part_in_user_message():
                         text='Hello',
                         state='streaming',
                     ),
+                    DataUIPart(
+                        id='custom-assistant-data',
+                        type='data-custom',
+                        data={'key': 'value'},
+                    ),
                 ],
             ),
         ],
@@ -3883,6 +3889,67 @@ async def test_adapter_dump_messages():
             },
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'original',
+    [
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Hello')]),
+                ModelResponse(
+                    parts=[
+                        CompactionPart(
+                            content=None,
+                            id='cmp-1',
+                            provider_name='openai',
+                            provider_details={'encrypted_content': 'opaque-chain-token'},
+                        )
+                    ]
+                ),
+            ],
+            id='openai-encrypted',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Hello')]),
+                ModelResponse(
+                    parts=[
+                        CompactionPart(content='Readable summary of prior messages.', provider_name='anthropic'),
+                        TextPart(content='Continuing the conversation.'),
+                    ]
+                ),
+            ],
+            id='anthropic-text-plus-following-part',
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Hello')]),
+                ModelResponse(parts=[CompactionPart(content='Summary only, no provider metadata.')]),
+            ],
+            id='content-only-no-provider-metadata',
+        ),
+    ],
+)
+async def test_adapter_round_trips_compaction_part(original: list[ModelMessage]) -> None:
+    """`CompactionPart` survives dump_messages -> load_messages intact.
+
+    Regression test for the UI-adapter layer silently dropping `CompactionPart`
+    (and with it OpenAI's `provider_details['encrypted_content']` chain token).
+    """
+    ui_messages = VercelAIAdapter.dump_messages(original)
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+
+    # Normalise timestamps, which are regenerated on reload.
+    for original_msg, reloaded_msg in zip(original, reloaded):
+        if isinstance(original_msg, ModelResponse) and isinstance(reloaded_msg, ModelResponse):
+            reloaded_msg.timestamp = original_msg.timestamp
+        for original_part, reloaded_part in zip(original_msg.parts, reloaded_msg.parts):
+            original_ts = getattr(original_part, 'timestamp', None)
+            if original_ts is not None and hasattr(reloaded_part, 'timestamp'):
+                setattr(reloaded_part, 'timestamp', original_ts)
+
+    assert reloaded == original
 
 
 async def test_adapter_dump_messages_with_tools():

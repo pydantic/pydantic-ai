@@ -47,6 +47,7 @@ from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
 from ._event_stream import VercelAIEventStream
 from ._utils import (
+    COMPACTION_DATA_TYPE,
     apply_message_metadata,
     dump_message_metadata,
     dump_provider_metadata,
@@ -502,9 +503,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         outcome='denied',
                                     )
                                 )
-                    elif isinstance(part, DataUIPart):  # pragma: no cover
-                        # Contains custom data that shouldn't be sent to the model
-                        pass
+                    elif isinstance(part, DataUIPart):
+                        if part.type == COMPACTION_DATA_TYPE:
+                            builder.add(cls._load_compaction_data_part(part))
+                        # else: contains custom data that shouldn't be sent to the model
                     elif isinstance(part, SourceUrlUIPart):  # pragma: no cover
                         # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
                         pass
@@ -712,12 +714,41 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
             elif isinstance(part, ToolCallPart):
                 ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
-            elif isinstance(part, CompactionPart):  # pragma: no cover
-                pass  # Compaction parts are not rendered in the UI
+            elif isinstance(part, CompactionPart):
+                ui_parts.append(cls._dump_compaction_part(part))
             else:
                 assert_never(part)
 
         return ui_parts
+
+    @staticmethod
+    def _load_compaction_data_part(part: DataUIPart) -> CompactionPart:
+        """Reconstruct a `CompactionPart` from a reserved `data-*` `DataUIPart`."""
+        data: dict[str, Any] = part.data if _is_str_dict(part.data) else {}
+        return CompactionPart(
+            content=data.get('content'),
+            id=part.id,
+            provider_name=data.get('provider_name'),
+            provider_details=data.get('provider_details'),
+        )
+
+    @staticmethod
+    def _dump_compaction_part(part: CompactionPart) -> DataUIPart:
+        """Convert a `CompactionPart` into a reserved `data-*` `DataUIPart`.
+
+        Vercel AI has no native compaction message type, but compaction data must be
+        round-tripped back to the same provider (e.g. OpenAI's `encrypted_content` chain
+        token), so we preserve it as a reserved `data-*` part rather than drop it. `data-*`
+        parts are not sent to the model. See COMPACTION_DATA_TYPE.
+        """
+        compaction_data: dict[str, Any] = {}
+        if part.content is not None:
+            compaction_data['content'] = part.content
+        if part.provider_name is not None:
+            compaction_data['provider_name'] = part.provider_name
+        if part.provider_details is not None:
+            compaction_data['provider_details'] = part.provider_details
+        return DataUIPart(type=COMPACTION_DATA_TYPE, id=part.id, data=compaction_data)
 
     @staticmethod
     def _dump_tool_call_part(
