@@ -4184,7 +4184,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                         UserPromptPart(
                             content=[
                                 'Process these files and call the tool',
-                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryImage(data=b'\x89PNG', media_type='image/png', identifier='4effda'),
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
@@ -4219,7 +4219,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                             tool_name='get_multimodal_content',
                             content=[
                                 'test',
-                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryImage(data=b'\x89PNG', media_type='image/png', identifier='4effda'),
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
@@ -4266,11 +4266,13 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     for content in part.content_items():
                         if isinstance(content, (BinaryContent, DocumentUrl)):
                             media_types.append((type(content).__name__, content.media_type))
-        # Should have 4 items: 2 from user input, 2 from tool return
+        # Should have 4 items: 2 from user input, 2 from tool return.
+        # The image `BinaryContent` round-trips as `BinaryImage`: narrowing is applied during
+        # `MultiModalContent` validation, so it now survives the Temporal serialization boundary too.
         assert media_types == [
-            ('BinaryContent', 'image/png'),
+            ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
-            ('BinaryContent', 'image/png'),
+            ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
 
