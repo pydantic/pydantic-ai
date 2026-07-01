@@ -13,11 +13,8 @@ from pydantic_ai.settings import ModelSettings
 
 __all__ = (
     'GEvalOutput',
-    'GembaScoreOutput',
     'GradingOutput',
     'judge_g_eval',
-    'judge_gemba_da',
-    'judge_gemba_sqm',
     'judge_input_output',
     'judge_input_output_expected',
     'judge_output',
@@ -329,6 +326,9 @@ async def judge_g_eval(
     Returns:
         A [`GEvalOutput`][pydantic_evals.evaluators.llm_as_a_judge.GEvalOutput] containing
         the judge's reasoning and integer score.
+
+    Raises:
+        ValueError: If `score_range` is invalid, or if the judge returns a score outside it.
     """
     if score_range[0] >= score_range[1]:
         raise ValueError(f'`score_range` must satisfy min < max, got {score_range!r}')
@@ -346,129 +346,9 @@ async def judge_g_eval(
         ]
     )
     user_prompt = _build_prompt(output=output, rubric=rubric, inputs=inputs)
-    return (
+    result = (
         await _judge_g_eval_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
     ).output
-
-
-class GembaScoreOutput(BaseModel):
-    """The output of a GEMBA grading operation.
-
-    `score` is an integer within the range required by the selected GEMBA variant (0-100 for DA,
-    0-6 for SQM). See [`judge_gemba_da`][pydantic_evals.evaluators.llm_as_a_judge.judge_gemba_da]
-    and [`judge_gemba_sqm`][pydantic_evals.evaluators.llm_as_a_judge.judge_gemba_sqm].
-    """
-
-    reason: str
-    score: int
-
-
-_judge_gemba_agent = Agent(
-    name='judge_gemba',
-    system_prompt=dedent(
-        """
-        You are a professional translator scoring machine translation quality using the GEMBA
-        (GPT Estimation Metric Based Assessment) protocol.
-
-        Follow the scoring rubric in the user prompt exactly. Respond with a JSON object of the form:
-        {"reason": string, "score": integer}
-
-        - `reason`: a one-sentence justification for the score.
-        - `score`: an integer within the range described in the prompt.
-        """
-    ),
-    output_type=GembaScoreOutput,
-)
-
-
-def _gemba_da_prompt(
-    source_text: str,
-    target_text: str,
-    source_lang: str,
-    target_lang: str,
-    reference: str | None,
-) -> str:
-    lines = [
-        f'Score the following translation from {source_lang} to {target_lang} on a continuous scale',
-        'from 0 to 100, where a score of zero means "no meaning preserved" and a score of one hundred',
-        'means "perfect meaning and grammar".',
-        '',
-        f'{source_lang} source: "{source_text}"',
-    ]
-    if reference is not None:
-        lines.append(f'{target_lang} human reference: "{reference}"')
-    lines.append(f'{target_lang} translation: "{target_text}"')
-    lines += ['', 'Return an integer score between 0 and 100 inclusive.']
-    return '\n'.join(lines)
-
-
-def _gemba_sqm_prompt(
-    source_text: str,
-    target_text: str,
-    source_lang: str,
-    target_lang: str,
-    reference: str | None,
-) -> str:
-    lines = [
-        f'Score the following translation from {source_lang} to {target_lang} using the Scalar Quality Metrics (SQM) rubric on an integer scale from 0 to 6:',
-        '',
-        '0 = Nonsense/No meaning preserved',
-        '2 = Some meaning preserved',
-        '4 = Most meaning preserved with few grammar mistakes',
-        '6 = Perfect meaning and grammar',
-        '',
-        f'{source_lang} source: "{source_text}"',
-    ]
-    if reference is not None:
-        lines.append(f'{target_lang} human reference: "{reference}"')
-    lines.append(f'{target_lang} translation: "{target_text}"')
-    lines += ['', 'Return an integer score between 0 and 6 inclusive.']
-    return '\n'.join(lines)
-
-
-async def judge_gemba_da(
-    source_text: str,
-    target_text: str,
-    source_lang: str,
-    target_lang: str,
-    reference: str | None = None,
-    model: models.Model | models.KnownModelName | str | None = None,
-    model_settings: ModelSettings | None = None,
-) -> GembaScoreOutput:
-    """Judge translation quality using the GEMBA Direct Assessment (0-100) prompt.
-
-    Implements the zero-shot GEMBA-DA prompt from Kocmi & Federmann, 2023 ("Large Language Models
-    Are State-of-the-Art Evaluators of Translation Quality"). When `reference` is provided, the
-    human reference is included alongside the candidate translation.
-
-    Returns:
-        A [`GembaScoreOutput`][pydantic_evals.evaluators.llm_as_a_judge.GembaScoreOutput] with a
-        0-100 integer score.
-    """
-    user_prompt = _gemba_da_prompt(source_text, target_text, source_lang, target_lang, reference)
-    return (
-        await _judge_gemba_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
-    ).output
-
-
-async def judge_gemba_sqm(
-    source_text: str,
-    target_text: str,
-    source_lang: str,
-    target_lang: str,
-    reference: str | None = None,
-    model: models.Model | models.KnownModelName | str | None = None,
-    model_settings: ModelSettings | None = None,
-) -> GembaScoreOutput:
-    """Judge translation quality using the GEMBA Scalar Quality Metrics (0-6) prompt.
-
-    Implements the zero-shot GEMBA-SQM prompt from Kocmi & Federmann, 2023.
-
-    Returns:
-        A [`GembaScoreOutput`][pydantic_evals.evaluators.llm_as_a_judge.GembaScoreOutput] with a
-        0-6 integer score.
-    """
-    user_prompt = _gemba_sqm_prompt(source_text, target_text, source_lang, target_lang, reference)
-    return (
-        await _judge_gemba_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
-    ).output
+    if not score_range[0] <= result.score <= score_range[1]:
+        raise ValueError(f'Judge returned score {result.score}, outside the requested `score_range` {score_range!r}')
+    return result

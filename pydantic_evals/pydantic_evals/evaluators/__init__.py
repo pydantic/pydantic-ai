@@ -1,8 +1,8 @@
-from . import ragas
 from .common import (
     Contains,
     Equals,
     EqualsExpected,
+    GEval,
     HasMatchingSpan,
     IsInstance,
     LLMJudge,
@@ -11,10 +11,6 @@ from .common import (
 )
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput, EvaluatorSpec
-from .quality import (
-    GembaScore,
-    GEval,
-)
 from .report_common import (
     ConfusionMatrixEvaluator,
     KolmogorovSmirnovEvaluator,
@@ -31,6 +27,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'GEval',
     'HasMatchingSpan',
     'OutputConfig',
     # context
@@ -42,11 +39,6 @@ __all__ = (
     'EvaluatorOutput',
     'EvaluatorSpec',
     'EvaluationResult',
-    # quality (LLM-backed metrics named after their methods)
-    'GEval',
-    'GembaScore',
-    # ragas (rubric presets modeled on Ragas RAG metrics; see the `ragas` submodule)
-    'ragas',
     # report evaluators
     'ReportEvaluator',
     'ReportEvaluatorContext',

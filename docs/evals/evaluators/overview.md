@@ -51,10 +51,12 @@ dataset = Dataset(
 )
 ```
 
-For recognisable names and sensible defaults aligned with common evaluation frameworks (Ragas,
-G-Eval, GEMBA), see the [Standard Quality Metrics](standard-quality-metrics.md) pack — each
-metric there is a thin wrapper over [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] with a curated rubric. To plug in the *exact*
-upstream implementations of external frameworks, see [Third-Party Integrations](framework-integrations.md).
+For metrics aligned with widely-used evaluation methods (G-Eval, the Ragas RAG metrics, GEMBA),
+see [Standard Quality Metrics](standard-quality-metrics.md): the
+[`GEval`][pydantic_evals.evaluators.GEval] evaluator plus ready-made
+[`LLMJudge`][pydantic_evals.evaluators.LLMJudge] rubrics you can copy and adapt. To plug in the
+*exact* upstream implementations of external frameworks, see
+[Third-Party Integrations](framework-integrations.md).
 
 **Advantages:**
 
@@ -476,7 +478,7 @@ dataset = Dataset(
 
 - **[Native Evaluators](built-in.md)** - Complete reference of all provided evaluators
 - **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
-- **[Standard Quality Metrics](standard-quality-metrics.md)** - Curated LLM-backed metrics (Faithfulness, G-Eval, GEMBA, etc.)
+- **[Standard Quality Metrics](standard-quality-metrics.md)** - G-Eval, plus LLM judge rubrics for common RAG and translation metrics
 - **[Third-Party Integrations](framework-integrations.md)** - Wrap Ragas, DeepEval, and other metrics libraries
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
 - **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses

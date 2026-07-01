@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
@@ -15,11 +15,6 @@ from ..otel.span_tree import SpanQuery
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
 
-if TYPE_CHECKING:
-    # DEFAULT_EVALUATORS is assembled lazily via __getattr__ to avoid a circular import
-    # between `common` and `quality`; expose it here for type checkers.
-    DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...]
-
 __all__ = (
     'Equals',
     'EqualsExpected',
@@ -27,6 +22,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'GEval',
     'HasMatchingSpan',
     'OutputConfig',
 )
@@ -198,7 +194,7 @@ class OutputConfig(TypedDict, total=False):
     include_reason: bool
 
 
-def update_combined_output(
+def _update_combined_output(
     combined_output: dict[str, EvaluationScalar | EvaluationReason],
     value: EvaluationScalar,
     reason: str | None,
@@ -212,19 +208,15 @@ def update_combined_output(
         combined_output[name] = value
 
 
-def serialize_model_as_string(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Replace a `model` argument's [`Model`][pydantic_ai.models.Model] instance with its `model_id` string.
-
-    Shared by [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] and the quality-pack evaluators, which all
-    accept `model: Model | KnownModelName | str | None` but should serialize the model as a plain string so
-    the spec round-trips cleanly.
-
-    Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model. I expect
-    that is rare enough to be worth not solving yet, but common enough that we probably will want to solve it
-    eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
-    """
+def _serialize_model_as_string(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Replace a `model` argument's `Model` instance with its `model_id` string, so specs round-trip cleanly."""
+    # always serialize the model as a string when present; use its name if it's a KnownModelName
     if (model := arguments.get('model')) and isinstance(model, models.Model):
         arguments['model'] = model.model_id
+
+    # Note: this may lead to confusion if you try to serialize-then-deserialize with a custom model.
+    # I expect that is rare enough to be worth not solving yet, but common enough that we probably will want to
+    # solve it eventually. I'm imagining some kind of model registry, but don't want to work out the details yet.
     return arguments
 
 
@@ -279,16 +271,68 @@ class LLMJudge(Evaluator[object, object, object]):
 
         if self.score is not False:
             default_name = f'{evaluation_name}_score' if include_both else evaluation_name
-            update_combined_output(output, grading_output.score, grading_output.reason, self.score, default_name)
+            _update_combined_output(output, grading_output.score, grading_output.reason, self.score, default_name)
 
         if self.assertion is not False:
             default_name = f'{evaluation_name}_pass' if include_both else evaluation_name
-            update_combined_output(output, grading_output.pass_, grading_output.reason, self.assertion, default_name)
+            _update_combined_output(output, grading_output.pass_, grading_output.reason, self.assertion, default_name)
 
         return output
 
     def build_serialization_arguments(self):
-        return serialize_model_as_string(super().build_serialization_arguments())
+        return _serialize_model_as_string(super().build_serialization_arguments())
+
+
+@dataclass(repr=False)
+class GEval(Evaluator[object, object, object]):
+    """G-Eval-style chain-of-thought evaluator (Liu et al., 2023).
+
+    The judge is shown the evaluation `criteria` and a list of explicit `evaluation_steps`,
+    produces a short reasoning trace, and emits an integer score within `score_range` (inclusive),
+    returned as an [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason]. Because the
+    criteria and steps are user-supplied, `GEval` puts no structural requirements on `ctx.inputs`
+    or `ctx.output`.
+
+    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
+    overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    !!! note "Simplified G-Eval"
+        The paper computes a probability-weighted expectation over score tokens using log-probs.
+        We ask the model for a direct integer score instead, trading some correlation with human
+        judgment for provider-agnostic simplicity.
+    """
+
+    criteria: str
+    evaluation_steps: list[str]
+    score_range: tuple[int, int] = (1, 5)
+    include_input: bool = False
+    model: models.Model | models.KnownModelName | str | None = None
+    model_settings: ModelSettings | None = None
+    evaluation_name: str | None = field(default=None)
+
+    def __post_init__(self):
+        if self.score_range[0] >= self.score_range[1]:
+            raise ValueError(f'`score_range` must satisfy min < max, got {self.score_range!r}')
+
+    async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+        from .llm_as_a_judge import judge_g_eval
+
+        g_eval_output = await judge_g_eval(
+            ctx.output,
+            self.criteria,
+            self.evaluation_steps,
+            self.score_range,
+            inputs=ctx.inputs if self.include_input else None,
+            model=self.model,
+            model_settings=self.model_settings,
+        )
+        return EvaluationReason(value=g_eval_output.score, reason=g_eval_output.reason)
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
+    def build_serialization_arguments(self):
+        return _serialize_model_as_string(super().build_serialization_arguments())
 
 
 @dataclass(repr=False)
@@ -308,7 +352,7 @@ class HasMatchingSpan(Evaluator[object, object, object]):
         return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
 
 
-_COMMON_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
+DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     Equals,
     EqualsExpected,
     Contains,
@@ -316,22 +360,11 @@ _COMMON_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     MaxDuration,
     LLMJudge,
     HasMatchingSpan,
+    GEval,
 )
 
 
 def __getattr__(name: str):
-    if name == 'DEFAULT_EVALUATORS':
-        # Import lazily to avoid a circular import (these modules import helpers from this one).
-        from . import quality, ragas
-
-        return _COMMON_EVALUATORS + (
-            ragas.Faithfulness,
-            ragas.AnswerRelevance,
-            ragas.ContextPrecision,
-            ragas.ContextRecall,
-            quality.GEval,
-            quality.GembaScore,
-        )
     if name == 'Python':
         raise ImportError(
             'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
