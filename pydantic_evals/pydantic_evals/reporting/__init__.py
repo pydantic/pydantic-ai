@@ -499,7 +499,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             for failure in self.report_evaluator_failures:
                 msg = f'  {failure.name}: {failure.error_message}'
                 console.print(Text(msg, style='red'))
-        if include_errors and self.failures:  # pragma: no cover
+        if include_errors and self.failures:
             failures_table = self.failures_table(
                 include_input=include_input,
                 include_metadata=include_metadata,
