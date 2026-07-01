@@ -298,6 +298,18 @@ if __name__ == '__main__':
     mcp.run()
 ```
 
+## Tool errors
+
+When an MCP server reports a tool error, [`MCPToolset`][pydantic_ai.mcp.MCPToolset] lets you choose whether that error should ask the model to retry, appear as a failed tool result, or escape as an exception:
+
+| `tool_error_behavior` | Behavior |
+| --- | --- |
+| `'retry'` | Default. Raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], sending the server error back to the model as a retry prompt. Use this when the model may be able to correct the call. |
+| `'failed'` | Raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], which is recorded as a tool result with `outcome='failed'`. Use this when the tool call is complete but failed, and the model should decide what to do next. |
+| `'error'` | Propagates the underlying MCP tool exception and fails the agent run. Use this for errors you want application code to handle outside the model loop. |
+
+This is the MCP equivalent of the [tool retry](../tools-advanced.md#tool-retries) vs [failed tool result](../tools-advanced.md#tool-failed) distinction in local tool code.
+
 ## Tool prefixes to avoid naming conflicts
 
 When connecting to multiple MCP servers that might provide tools with the same name, wrap each `MCPToolset` with [`.prefixed(...)`][pydantic_ai.toolsets.AbstractToolset.prefixed] to prepend a prefix to its tool names:

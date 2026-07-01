@@ -1099,9 +1099,16 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.append(file_part)
 
-        response = part.model_response_object()
-        if fallback_refs:
-            response = {'output': [response, *fallback_refs]}
+        if part.outcome == 'failed':
+            # Gemini reads the `error` value as the failure message verbatim, so it must stay a
+            # plain string — folding file-reference strings in (as the success branch does under
+            # `output`) pollutes the message. A hand-constructed failed return with files still
+            # sends the file parts below; we just don't anchor them inside the error payload.
+            response = {'error': part.model_response_str()}
+        else:
+            response = part.model_response_object()
+            if fallback_refs:
+                response = {'output': [response, *fallback_refs]}
 
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,

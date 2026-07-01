@@ -1317,6 +1317,8 @@ To skip validation and provide pre-validated args, raise [`SkipToolValidation(ar
 
 To skip execution and provide a replacement result, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `wrap_tool_execute`.
 
+Tool validation and execution hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to request a retry, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a failed tool result without retrying. See [triggering retries and tool failures](hooks.md#triggering-retries-with-modelretry) for the full pattern.
+
 #### Output hooks
 
 Like tool processing, [output](output.md) processing has two phases: **validation** (parsing the model's raw output against the output schema) and **processing** (extracting the value and calling any [output function](output.md#output-functions)). Each phase has its own hooks.

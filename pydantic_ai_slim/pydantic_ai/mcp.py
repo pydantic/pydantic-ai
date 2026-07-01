@@ -716,11 +716,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """The underlying FastMCP `Client`. Always normalized to a `fastmcp.Client` regardless of how
     the toolset was constructed."""
 
-    tool_error_behavior: Literal['retry', 'error']
+    tool_error_behavior: Literal['retry', 'error', 'failed']
     """How to handle tool errors raised by the server.
 
     `'retry'` (default) raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] so the model can
     self-correct; `'error'` propagates the underlying `fastmcp.exceptions.ToolError` to the caller.
+    `'failed'` raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
     """
 
     max_retries: int | None
@@ -815,7 +816,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Pydantic AI-layer config
         id: str | None = None,
         max_retries: int | None = None,
-        tool_error_behavior: Literal['retry', 'error'] = 'retry',
+        tool_error_behavior: Literal['retry', 'error', 'failed'] = 'retry',
         process_tool_call: ProcessToolCallback | None = None,
         cache_tools: bool = True,
         cache_resources: bool = True,
@@ -852,7 +853,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 `None` inherits the agent's retry count at runtime.
             tool_error_behavior: `'retry'` (default) raises
                 [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] on tool errors so the model can
-                self-correct; `'error'` propagates the underlying exception.
+                self-correct; `'error'` propagates the underlying exception; `'failed'` raises
+                [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
             process_tool_call: Hook to wrap tool calls. See
                 [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
             cache_tools: Whether to cache the list of tools. See
@@ -1188,6 +1190,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             ModelRetry: If the tool errors and `tool_error_behavior='retry'` (the default).
             fastmcp.exceptions.ToolError: If the tool errors and `tool_error_behavior='error'`.
+            ToolFailed: If the tool errors and `tool_error_behavior='failed'`.
         """
         async with self:
             try:
@@ -1201,7 +1204,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             except ToolError as e:
                 if self.tool_error_behavior == 'retry':
                     raise exceptions.ModelRetry(message=str(e)) from e
-                raise
+                elif self.tool_error_behavior == 'failed':
+                    raise exceptions.ToolFailed(message=str(e)) from e
+                elif self.tool_error_behavior == 'error':
+                    raise
+                else:
+                    assert_never(self.tool_error_behavior)
             except _utils.BaseExceptionGroup as eg:
                 # The FastMCP client runs the MCP session in an anyio task group, so a tool/protocol
                 # error can surface wrapped in an `ExceptionGroup` rather than as a bare
@@ -1210,7 +1218,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # unwinds from is not pinned down — so this is a best-effort guard: when the group
                 # contains only tool/protocol errors, treat it like the bare case above; otherwise
                 # re-raise unchanged so a concurrent cancellation grouped alongside is never swallowed.
-                if self.tool_error_behavior != 'retry':
+                if self.tool_error_behavior == 'error':
                     raise
                 matched, rest = eg.split((ToolError, mcp_exceptions.McpError))
                 if matched is None or rest is not None:
@@ -1219,7 +1227,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 error: BaseException = matched
                 while isinstance(error, _utils.BaseExceptionGroup):
                     error = error.exceptions[0]
-                raise exceptions.ModelRetry(message=str(error)) from eg
+                if self.tool_error_behavior == 'retry':
+                    raise exceptions.ModelRetry(message=str(error)) from eg
+                elif self.tool_error_behavior == 'failed':
+                    raise exceptions.ToolFailed(message=str(error)) from eg
+                else:
+                    assert_never(self.tool_error_behavior)
 
         # Prefer structured content if all parts are text (per the docs they contain the JSON-encoded
         # structured content for backward compatibility).

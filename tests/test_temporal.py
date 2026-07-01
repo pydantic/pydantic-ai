@@ -53,7 +53,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
     Model,
@@ -2596,6 +2596,47 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                 ),
             ]
         )
+
+
+tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
+
+
+@tool_failed_agent.tool_plain
+def failing_tool() -> str:
+    raise ToolFailed('Disk full')
+
+
+tool_failed_temporal_agent = TemporalAgent(tool_failed_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class ToolFailedWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[tuple[str, Any, str]]:
+        result = await tool_failed_temporal_agent.run(prompt)
+        return [
+            (part.tool_name, part.content, part.outcome)
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+
+async def test_temporal_agent_with_tool_failed(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ToolFailedWorkflow],
+        plugins=[AgentPlugin(tool_failed_temporal_agent)],
+    ):
+        tool_returns = await client.execute_workflow(
+            ToolFailedWorkflow.run,
+            args=['Call the failing tool'],
+            id=ToolFailedWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
 
 
 class CustomModelSettings(ModelSettings, total=False):
