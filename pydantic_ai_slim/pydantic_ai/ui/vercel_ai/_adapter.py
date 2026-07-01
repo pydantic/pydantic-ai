@@ -414,7 +414,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         part_id = provider_meta.get('id')
                         provider_name = provider_meta.get('provider_name')
                         provider_details = provider_meta.get('provider_details')
-                        tool_kind = parse_tool_kind(provider_meta.get('tool_kind'))
+                        raw_tool_kind = provider_meta.get('tool_kind')
+                        tool_kind = parse_tool_kind(raw_tool_kind) if isinstance(raw_tool_kind, str) else None
 
                         if builtin_tool:
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
@@ -436,10 +437,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             if has_tool_output:
                                 call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
 
-                            # `tool_kind` comes from client-supplied metadata, so it's coerced to a
-                            # known `ToolPartKind` here and set on the base part; the final
-                            # `narrow_message_parts` pass promotes it best-effort and strips any claim
-                            # whose data doesn't validate against the typed subclass.
+                            # `tool_kind` comes from client-supplied metadata, so each claim is validated
+                            # to a known `ToolPartKind` (else dropped) before being set on the base part;
+                            # the final `narrow_message_parts` pass then promotes it best-effort and
+                            # strips any claim whose data doesn't validate against the typed subclass.
+                            raw_call_tool_kind = call_meta.get('tool_kind')
+                            call_tool_kind = (
+                                parse_tool_kind(raw_call_tool_kind) if isinstance(raw_call_tool_kind, str) else None
+                            )
+                            raw_return_tool_kind = return_meta.get('tool_kind')
+                            return_tool_kind = (
+                                parse_tool_kind(raw_return_tool_kind) if isinstance(raw_return_tool_kind, str) else None
+                            )
                             builder.add(
                                 NativeToolCallPart(
                                     tool_name=tool_name,
@@ -448,7 +457,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     id=call_meta.get('id') or part_id,
                                     provider_name=call_meta.get('provider_name') or provider_name,
                                     provider_details=call_meta.get('provider_details') or provider_details,
-                                    tool_kind=parse_tool_kind(call_meta.get('tool_kind')) or tool_kind,
+                                    tool_kind=call_tool_kind or tool_kind,
                                 )
                             )
 
@@ -477,9 +486,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         # As in the non-builtin branch below, error/denied returns carry
                                         # no `tool_kind`: a typed return subclass signals shape-valid
                                         # success to readers like `parse_discovered_tools`.
-                                        tool_kind=(parse_tool_kind(return_meta.get('tool_kind')) or tool_kind)
-                                        if outcome == 'success'
-                                        else None,
+                                        tool_kind=(return_tool_kind or tool_kind) if outcome == 'success' else None,
                                     )
                                 )
                         else:

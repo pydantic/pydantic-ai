@@ -133,20 +133,11 @@ def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
     AG-UI has no generic per-tool metadata field, so we carry the `tool_kind` discriminator in
-    `encrypted_value` — the protocol's opaque, client-echoed state-continuity slot (for Zero Data
-    Retention), exposed on `ToolCall`/`ToolMessage` and streamed via
-    `ReasoningEncryptedValueEvent(subtype='tool-call')`. Our payload is nested under a `pydantic_ai`
-    key so a genuine provider blob landing in this slot (e.g. Google's encrypted thinking on a tool
-    call) is never read as our data: `parse_encrypted_tool_kind` only returns a claim when that key
-    is present. The nested dict also leaves room to carry more metadata later. The claim is untrusted
-    coming back in and degrades to a plain part if it doesn't validate.
-
-    The field-based paths (`dump_messages`/`load_messages`) gate on `ENCRYPTED_VALUE_VERSION`
-    (0.1.11), where the `encrypted_value` field itself landed. The streaming path carries the same
-    payload in a `ReasoningEncryptedValueEvent` — a `REASONING_*` event the codebase only emits from
-    `REASONING_VERSION` (0.1.13) — so a 0.1.11/0.1.12 client sees `tool_kind` survive a
-    `dump_messages` round-trip but not a purely streaming one; either way the claim is best-effort and
-    a dropped one just re-narrows server-side on the next run.
+    `encrypted_value` — the protocol's opaque, client-echoed state-continuity slot. Our payload is
+    nested under a `pydantic_ai` key so a genuine provider blob in the same slot (e.g. Google's
+    encrypted thinking on a tool call) is never read as our data. The claim is untrusted coming back
+    in: `parse_encrypted_tool_kind` returns it only when the key is present, and it degrades to a
+    plain part if it doesn't validate.
     """
     if tool_kind is None:
         return None
@@ -154,12 +145,11 @@ def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
 
 
 def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
-    """Warn that a typed part's `tool_kind` can't be persisted below `ENCRYPTED_VALUE_VERSION`.
+    """Warn that typed tool parts' `tool_kind` will be lost when dumping below `ENCRYPTED_VALUE_VERSION`.
 
-    Emitted from `dump_messages` when a history carries typed tool parts but the target AG-UI version
-    predates the `encrypted_value` carrier (0.1.11). Without it, features like lazy capabilities and
-    tool search silently forget their state across a round-trip; the warning surfaces the cause and
-    points at the fix (upgrade the client) instead of degrading quietly.
+    The `encrypted_value` carrier only exists from 0.1.11, so on older versions features like lazy
+    capabilities and tool search silently forget their state across a round-trip; upgrading the client
+    fixes it.
     """
     warnings.warn(
         f'ag-ui-protocol {ag_ui_version} predates the `encrypted_value` field (added in 0.1.11), so '
@@ -189,7 +179,8 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
     namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
     if not is_str_dict(namespaced):
         return None
-    return parse_tool_kind(namespaced.get('tool_kind'))
+    tool_kind = namespaced.get('tool_kind')
+    return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
 
 
 def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:

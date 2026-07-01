@@ -18,7 +18,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import Self, TypeAliasType, TypeVar
 
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
@@ -1096,33 +1096,14 @@ Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
 _TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
 
 
-def parse_tool_kind(value: object) -> ToolPartKind | None:
+def parse_tool_kind(value: str) -> ToolPartKind | None:
     """Return `value` if it's a known [`ToolPartKind`][pydantic_ai.messages.ToolPartKind], else `None`.
 
-    UI adapters use this to sanitize an untrusted client-supplied `tool_kind` claim before setting it
-    on a part: a non-hashable or unknown value degrades to `None` rather than crashing the narrower's
-    registry lookup or asserting a bogus discriminator.
+    UI adapters call this at the wire boundary to validate an untrusted client-supplied `tool_kind`
+    string before setting it on a part, so an unknown value degrades to `None` rather than asserting a
+    bogus discriminator.
     """
     return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
-
-
-_ReturnPartT = TypeVar('_ReturnPartT', bound='BaseToolReturnPart')
-
-
-def _structure_return_content(part: _ReturnPartT) -> _ReturnPartT:
-    """Parse a return part's JSON-string `content` into structured form ahead of narrowing.
-
-    Some UI wire formats (e.g. AG-UI) transmit tool results as JSON strings, but a typed return
-    subclass carries structured content. Parsing here — driven by `narrow_type` before it hands the
-    part to a registered narrower — lets each narrower validate structured content uniformly. A
-    non-JSON string is returned unchanged for the narrower to reject via its normal validation.
-    """
-    if isinstance(part.content, str):
-        try:
-            return replace(part, content=pydantic_core.from_json(part.content))
-        except ValueError:
-            pass
-    return part
 
 
 @dataclass(repr=False)
@@ -1327,6 +1308,21 @@ class BaseToolReturnPart:
         """Return `True` if the tool return has content."""
         return self.content is not None  # pragma: no cover
 
+    def _parse_str_content(self) -> Self:
+        """Return a copy with a JSON-string `content` parsed into structured form, else `self`.
+
+        The return-side counterpart to [`ToolCallPart.args_as_dict`][pydantic_ai.messages.ToolCallPart.args_as_dict]:
+        some UI wire formats (e.g. AG-UI) transmit tool results as JSON strings, but a typed return
+        subclass carries structured content, so `narrow_type` parses before validating. A non-JSON
+        string is left unchanged for the narrower to reject.
+        """
+        if isinstance(self.content, str):
+            try:
+                return replace(self, content=pydantic_core.from_json(self.content))
+            except ValueError:
+                pass
+        return self
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -1343,24 +1339,18 @@ class ToolReturnPart(BaseToolReturnPart):
     def narrow_type(part: ToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> ToolReturnPart:
         """Promote a base `ToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Promotion is best-effort: the input is returned unchanged when neither the `tool_kind` kwarg
-        nor `part.tool_kind` resolves to a registered subclass. When a registered subclass exists but
-        the part's data doesn't validate against its shape (e.g. forged client metadata, or a model
-        that emitted schema-violating args), the unsubstantiated `tool_kind` is stripped and the plain
-        part returned — strict validation belongs to the point of use, like the tool's args validator
-        at execution time, and a base part left carrying a `tool_kind` it can't be narrowed to would
-        not survive a [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]
-        round-trip (the discriminator routes it back to the typed subclass and fails the same way).
-        Pass `tool_kind` to inject the discriminator inline, or set it on `part` directly. Use this on
-        direct construction; Pydantic deserialization promotes automatically via the
-        discriminated-union dispatch on [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
         kind = tool_kind if tool_kind is not None else part.tool_kind
         narrower = _TOOL_RETURN_NARROWERS.get(kind) if kind is not None else None
         if narrower is None:
             return part
         try:
-            return narrower(_structure_return_content(part))
+            return narrower(part._parse_str_content())
         except pydantic.ValidationError:
             return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
@@ -1396,24 +1386,18 @@ class NativeToolReturnPart(BaseToolReturnPart):
     def narrow_type(part: NativeToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolReturnPart:
         """Promote a base `NativeToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Promotion is best-effort: the input is returned unchanged when neither the `tool_kind` kwarg
-        nor `part.tool_kind` resolves to a registered subclass. When a registered subclass exists but
-        the part's data doesn't validate against its shape (e.g. forged client metadata, or a model
-        that emitted schema-violating args), the unsubstantiated `tool_kind` is stripped and the plain
-        part returned — strict validation belongs to the point of use, like the tool's args validator
-        at execution time, and a base part left carrying a `tool_kind` it can't be narrowed to would
-        not survive a [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]
-        round-trip (the discriminator routes it back to the typed subclass and fails the same way).
-        Pass `tool_kind` to inject the discriminator inline, or set it on `part` directly. Use this on
-        direct construction; Pydantic deserialization promotes automatically via the
-        discriminated-union dispatch on [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
         kind = tool_kind if tool_kind is not None else part.tool_kind
         narrower = _NATIVE_RETURN_NARROWERS.get(kind) if kind is not None else None
         if narrower is None:
             return part
         try:
-            return narrower(_structure_return_content(part))
+            return narrower(part._parse_str_content())
         except pydantic.ValidationError:
             return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
@@ -1889,17 +1873,11 @@ class ToolCallPart(BaseToolCallPart):
     def narrow_type(part: ToolCallPart, *, tool_kind: ToolPartKind | None = None) -> ToolCallPart:
         """Promote a base `ToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Promotion is best-effort: the input is returned unchanged when neither the `tool_kind` kwarg
-        nor `part.tool_kind` resolves to a registered subclass. When a registered subclass exists but
-        the part's data doesn't validate against its shape (e.g. forged client metadata, or a model
-        that emitted schema-violating args), the unsubstantiated `tool_kind` is stripped and the plain
-        part returned — strict validation belongs to the point of use, like the tool's args validator
-        at execution time, and a base part left carrying a `tool_kind` it can't be narrowed to would
-        not survive a [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]
-        round-trip (the discriminator routes it back to the typed subclass and fails the same way).
-        Pass `tool_kind` to inject the discriminator inline, or set it on `part` directly. Use this on
-        direct construction; Pydantic deserialization promotes automatically via the
-        discriminated-union dispatch on [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
         kind = tool_kind if tool_kind is not None else part.tool_kind
         narrower = _TOOL_CALL_NARROWERS.get(kind) if kind is not None else None
@@ -1959,17 +1937,11 @@ class NativeToolCallPart(BaseToolCallPart):
     def narrow_type(part: NativeToolCallPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolCallPart:
         """Promote a base `NativeToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Promotion is best-effort: the input is returned unchanged when neither the `tool_kind` kwarg
-        nor `part.tool_kind` resolves to a registered subclass. When a registered subclass exists but
-        the part's data doesn't validate against its shape (e.g. forged client metadata, or a model
-        that emitted schema-violating args), the unsubstantiated `tool_kind` is stripped and the plain
-        part returned — strict validation belongs to the point of use, like the tool's args validator
-        at execution time, and a base part left carrying a `tool_kind` it can't be narrowed to would
-        not survive a [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter]
-        round-trip (the discriminator routes it back to the typed subclass and fails the same way).
-        Pass `tool_kind` to inject the discriminator inline, or set it on `part` directly. Use this on
-        direct construction; Pydantic deserialization promotes automatically via the
-        discriminated-union dispatch on [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
         kind = tool_kind if tool_kind is not None else part.tool_kind
         narrower = _NATIVE_CALL_NARROWERS.get(kind) if kind is not None else None
