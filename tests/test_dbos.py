@@ -950,6 +950,41 @@ async def test_dbos_agent_run_in_workflow_with_toolsets(allow_model_requests: No
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
 
 
+async def test_dbos_agent_run_in_workflow_with_runtime_external_toolset(dbos: DBOS):
+    def request_external_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(request_external_tool),
+        name='runtime_external_toolset_agent',
+        output_type=[str, DeferredToolRequests],
+    )
+    dbos_agent = DBOSAgent(agent)
+
+    result = await dbos_agent.run(
+        'Call the runtime external tool.',
+        toolsets=[
+            ExternalToolset(
+                tool_defs=[
+                    ToolDefinition(
+                        name='external',
+                        parameters_json_schema={
+                            'type': 'object',
+                            'properties': {'query': {'type': 'string'}},
+                            'required': ['query'],
+                        },
+                    )
+                ],
+                id='external',
+            )
+        ],
+    )
+
+    assert result.output == DeferredToolRequests(
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+    )
+
+
 async def test_dbos_agent_override_model_in_workflow(allow_model_requests: None, dbos: DBOS):
     # We cannot override the model to a non-DBOS one in a DBOS workflow.
     with workflow_raises(
