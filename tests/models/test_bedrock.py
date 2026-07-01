@@ -2648,6 +2648,46 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     )
 
 
+async def test_bedrock_empty_list_tool_result_uses_non_empty_content_block(bedrock_provider: BedrockProvider):
+    now = datetime.now()
+    req = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='lookup', content=[], tool_call_id='id1', timestamp=now),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'text': '[]'}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+    model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': []}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+
 async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     my_tool = ToolDefinition(
         name='my_tool',
