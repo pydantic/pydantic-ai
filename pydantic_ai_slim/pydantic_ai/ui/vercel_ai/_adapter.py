@@ -349,7 +349,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             ) from e
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         vendor_metadata = provider_meta.get('vendor_metadata')
-                        if vendor_metadata is not None:
+                        # `vendor_metadata` is client-supplied and unconstrained; assignment on the
+                        # (non-`validate_assignment`) `BinaryContent` dataclass bypasses validation,
+                        # so ignore anything that isn't a dict rather than let it reach the provider.
+                        if _is_str_dict(vendor_metadata):
                             file.vendor_metadata = vendor_metadata
                         builder.add(
                             FilePart(

@@ -6526,6 +6526,38 @@ async def test_adapter_dump_filepart_carries_vendor_metadata_in_provider_metadat
     assert provider_meta.get('vendor_metadata') == {'detail': 'high'}
 
 
+async def test_adapter_load_filepart_ignores_non_dict_vendor_metadata():
+    """A malformed (non-dict) client-supplied vendor_metadata is ignored on load, not forwarded.
+
+    Assignment onto the non-`validate_assignment` `BinaryContent` bypasses validation, so the load
+    path guards with `is_str_dict`; this pins that guard.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                FilePart(
+                    content=BinaryContent(
+                        data=b'fake video bytes',
+                        media_type='video/mp4',
+                        vendor_metadata={'detail': 'high'},
+                    ),
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    file_ui_part = ui_messages[0].parts[0]
+    assert isinstance(file_ui_part, FileUIPart)
+    assert file_ui_part.provider_metadata is not None
+    file_ui_part.provider_metadata['pydantic_ai']['vendor_metadata'] = 'not-a-dict'
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    reloaded_part = reloaded[0].parts[0]
+    assert isinstance(reloaded_part, FilePart)
+    assert reloaded_part.content.vendor_metadata is None
+
+
 async def test_adapter_builtin_tool_part_with_provider_metadata():
     """Test NativeToolCallPart with id, provider_name, provider_details and roundtrips."""
     # Use JSON string for content since that's what load_messages produces
