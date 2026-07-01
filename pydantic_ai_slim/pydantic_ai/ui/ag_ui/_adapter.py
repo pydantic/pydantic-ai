@@ -530,29 +530,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return builder.messages
 
     @staticmethod
-    def _flush_user_content(
-        result: list[Message],
-        user_content: list[
-            TextInputContent
-            | BinaryInputContent
-            | ImageInputContent
-            | AudioInputContent
-            | VideoInputContent
-            | DocumentInputContent
-        ],
-    ) -> None:
-        """Flush pending user content to result."""
-        if not user_content:
-            return
-        # Simplify to plain string if only single text item
-        if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-            result.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
-        else:
-            result.append(UserMessage(id=_new_message_id(), content=user_content))
-        user_content.clear()
-
-    @staticmethod
-    def _dump_request_parts(
+    def _dump_request_parts(  # noqa: C901
         msg: ModelRequest,
         *,
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
@@ -560,9 +538,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ) -> list[Message]:
         """Convert a `ModelRequest` into AG-UI messages.
 
-        Uses a flush pattern to preserve part ordering: pending user content is flushed
-        to result when tool-related parts are encountered, ensuring the original part
-        order is maintained.
+        Uses a flush pattern to preserve part ordering: buffered user content is flushed to
+        an AssistantMessage-adjacent position before each tool message, so a `ToolReturnPart`
+        that follows a `UserPromptPart` in the original request keeps its place instead of
+        being reordered after the user prompt.
         """
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
         result: list[Message] = []
@@ -576,6 +555,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             | DocumentInputContent
         ] = []
 
+        def flush_user_content() -> None:
+            nonlocal user_content
+            if not user_content:
+                return
+            # Simplify to plain string if only a single text item.
+            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+                result.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
+            else:
+                result.append(UserMessage(id=_new_message_id(), content=user_content))
+            user_content = []
+
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
                 system_content.append(part.content)
@@ -588,7 +578,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             # AG-UI has no native uploaded-file message type. We repurpose
                             # ActivityMessage with a reserved `pydantic_ai_*` activity_type
                             # for round-trip fidelity. See UploadedFileActivityContent.
-                            AGUIAdapter._flush_user_content(result, user_content)
+                            flush_user_content()
                             uploaded_content: dict[str, Any] = {
                                 'file_id': item.file_id,
                                 'provider_name': item.provider_name,
@@ -609,7 +599,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if converted is not None:
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
-                AGUIAdapter._flush_user_content(result, user_content)
+                flush_user_content()
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
@@ -619,7 +609,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name:
-                    AGUIAdapter._flush_user_content(result, user_content)
+                    flush_user_content()
                     result.append(
                         ToolMessage(
                             id=_new_message_id(),
@@ -636,7 +626,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         messages: list[Message] = []
         if system_content:
             messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
-        AGUIAdapter._flush_user_content(result, user_content)
+        flush_user_content()
         messages.extend(result)
         return messages
 

@@ -1853,27 +1853,40 @@ def test_dump_load_roundtrip_retry_prompt_without_tool() -> None:
 
 
 def test_dump_messages_preserves_part_order() -> None:
-    """Test that dump_messages preserves ModelRequest part ordering (regression for #5964).
+    """Dumping a `ModelRequest` keeps `ToolReturnPart`s interleaved with user prompts (regression for #5964).
 
-    When a ModelRequest has ToolReturnPart before UserPromptPart, dump_messages should emit
-    ToolMessage before UserMessage, not reorder them.
+    User content was previously buffered and emitted as a single `UserMessage` at the end, so a
+    `ToolReturnPart` following a `UserPromptPart` would be reordered after it. That produces a
+    `tool_use` block without an immediately-following `tool_result`, which providers like Anthropic
+    reject on the next request. The buffer must be flushed before each tool message so the original
+    part order survives, including user prompts on both sides of a tool return.
     """
     original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='suggest', args={'suggestions': ['Yes', 'No']}, tool_call_id='call_1'),
+            ]
+        ),
         ModelRequest(
             parts=[
-                ToolReturnPart(tool_name='search', tool_call_id='call_1', content='search result'),
-                UserPromptPart(content='Based on the result, do something'),
+                UserPromptPart(content='Before the tool return.'),
+                ToolReturnPart(tool_name='suggest', tool_call_id='call_1', content='suggested'),
+                UserPromptPart(content='After the tool return.'),
             ]
         ),
     ]
 
     ag_ui_msgs = AGUIAdapter.dump_messages(original)
 
-    # Should emit ToolMessage before UserMessage, preserving original order
-    assert len(ag_ui_msgs) == 2
-    assert isinstance(ag_ui_msgs[0], ToolMessage)
-    assert ag_ui_msgs[0].tool_call_id == 'call_1'
-    assert isinstance(ag_ui_msgs[1], UserMessage)
+    assert [type(msg).__name__ for msg in ag_ui_msgs] == snapshot(
+        ['AssistantMessage', 'UserMessage', 'ToolMessage', 'UserMessage']
+    )
+    tool_msg = ag_ui_msgs[2]
+    assert isinstance(tool_msg, ToolMessage)
+    assert tool_msg.tool_call_id == 'call_1'
+    assert [getattr(msg, 'content', None) for msg in ag_ui_msgs[1:]] == snapshot(
+        ['Before the tool return.', 'suggested', 'After the tool return.']
+    )
 
 
 def test_file_part_dropped_by_default() -> None:
