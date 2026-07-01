@@ -110,6 +110,9 @@ class WrapperModel(Model):
     ) -> ModelResponse:
         return await self.wrapped.compact_messages(request_context, instructions=instructions)  # pragma: no cover
 
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        return await self.wrapped.cancel_suspended_response(response)
+
     @asynccontextmanager
     async def request_stream(
         self,

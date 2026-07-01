@@ -1821,6 +1821,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The model provider."""
         return self._provider.name
 
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        """Cancel a suspended background response by cancelling its server-side job.
+
+        `responses.cancel` only applies to background responses; calling it on an ordinary
+        (foreground) response returns a 400. `suspended_retry_delay` is set exactly when a
+        response was suspended in background mode, so it distinguishes a cancellable background
+        job from a normal streamed response that happens to be interrupted by `cancel()`.
+        """
+        if (
+            response.suspended_retry_delay is not None
+            and response.provider_response_id
+            and response.provider_name == self.system
+        ):
+            with _map_api_errors(self.model_name):
+                await self.client.responses.cancel(response.provider_response_id)
+
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""

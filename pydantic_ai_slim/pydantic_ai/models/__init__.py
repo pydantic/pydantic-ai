@@ -806,6 +806,14 @@ class Model(ABC, Generic[InterfaceClient]):
         # noinspection PyUnreachableCode
         yield  # pragma: no cover
 
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        """Cancel a server-side suspended/background response (e.g. an OpenAI background job).
+
+        Called when a continuation is abandoned via cancellation or error. No-op by default;
+        model classes with cancellable server-side jobs override this.
+        """
+        return None
+
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         """Customize the request parameters for the model.
 

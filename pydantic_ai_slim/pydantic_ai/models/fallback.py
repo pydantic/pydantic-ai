@@ -336,6 +336,15 @@ class FallbackModel(Model):
 
         _raise_fallback_exception_group(exceptions, [])
 
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        """Cancel a suspended continuation on the pinned underlying model.
+
+        Only the pinned model holds the server-side job, so resolve it from the response's
+        continuation pin and delegate. If no pin resolves, there is nothing to cancel.
+        """
+        if pinned := self._get_continuation_model([response]):
+            await pinned.cancel_suspended_response(response)
+
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
