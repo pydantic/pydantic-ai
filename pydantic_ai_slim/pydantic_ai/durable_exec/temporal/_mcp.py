@@ -148,12 +148,12 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_tools(ctx)
 
-        # The cache lives on the run (`ctx.tool_defs_cache`), recreated per run and reconstructed
+        # The cache lives on the run (`ctx._mcp_tool_defs_cache`), recreated per run and reconstructed
         # identically on replay, so the choice to schedule the activity depends only on the workflow's
         # own history. Caching on the process-shared instance instead would make that choice depend on
         # what earlier runs warmed in the worker, breaking replay determinism (TMPRL1100).
         cache_key = self.id or ''
-        if self._cache_tools and (cached := ctx.tool_defs_cache.get(cache_key)) is not None:
+        if self._cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
             return {name: self.tool_for_tool_def(tool_def) for name, tool_def in cached.items()}
 
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
@@ -167,7 +167,7 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
             **activity_config,
         )
         if self._cache_tools:
-            ctx.tool_defs_cache[cache_key] = tool_defs
+            ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
     async def call_tool(

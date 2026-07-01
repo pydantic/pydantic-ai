@@ -1664,7 +1664,7 @@ async def test_dbos_mcptoolset_returns_cached_tool_defs(dbos: DBOS):
     inner = MCPToolset('https://example.com/mcp', id='cache_return_test')
     wrapper = DBOSMCPToolset(inner, step_name_prefix='cache_return_test', step_config={})
     run_context = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    run_context.tool_defs_cache['cache_return_test'] = {
+    run_context._mcp_tool_defs_cache['cache_return_test'] = {  # pyright: ignore[reportPrivateUsage]
         'foo': ToolDefinition(name='foo', parameters_json_schema={'type': 'object'}),
     }
 

@@ -3072,7 +3072,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'instrumentation_version',  # tracing config, not run state
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
-        'tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
+        '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
