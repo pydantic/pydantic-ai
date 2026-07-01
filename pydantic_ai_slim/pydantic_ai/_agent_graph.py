@@ -944,25 +944,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 
         if self.is_resuming_without_prompt:
-            # In a resume-without-prompt run there is no separate user-prompt request:
-            # the request being sent *is* the trailing request that arrived via
-            # `message_history`, so it is prior context rather than a new message. It is
-            # the last message at this point (the model output is appended afterwards), so
-            # pin its position now. Tracking the boundary by position keeps it correct even
-            # when a capability (e.g. system-prompt reinjection) or history processor
-            # rebuilds the request in place — a rewrite that changes its identity, `parts`,
-            # `timestamp`, `instructions`, or `metadata` and so defeats re-matching it.
+            # No separate user-prompt request this run: the trailing request that arrived via
+            # `message_history` *is* the request being sent, so it's prior context, not new. Pin its
+            # position (it's the last message here, before the model output is appended) so the
+            # boundary survives a capability or processor rebuilding it in place — a change to its
+            # identity, `parts`, `timestamp`, `instructions`, or `metadata` would defeat re-matching.
             ctx.deps.resumed_request_index = len(messages) - 1
         elif ctx.deps.resumed_request_index is not None:
-            # Later steps of a resumed run (e.g. a tool-call loop): history processing this
-            # step may have prepended, truncated, or rebuilt messages ahead of the resumed
-            # request, shifting its position. Translate the pinned index by the net change so
-            # it still points at the resumed request, and drop it (fall back to run_id
-            # detection) if processing removed the resumed request itself — otherwise the
-            # stale index could exclude messages produced in this run. The pinned index is
-            # always less than `messages_before_processing` (new messages are appended after
-            # it), so the shifted index stays within bounds; only a negative result, meaning
-            # the resumed request was dropped, needs handling.
+            # Later steps (e.g. a tool-call loop) may prepend/truncate/rebuild messages ahead of the
+            # resumed request, shifting it. Translate the pinned index by the net count change; drop
+            # it (falling back to run_id detection) if processing removed the resumed request itself.
             shifted = ctx.deps.resumed_request_index - (messages_before_processing - len(messages))
             ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
