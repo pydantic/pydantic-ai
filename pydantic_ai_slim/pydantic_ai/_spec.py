@@ -6,10 +6,13 @@ and registry/loading utilities that can be reused by both the evaluator system a
 
 from __future__ import annotations
 
+import importlib.util
 import inspect
+import sys
 import types
 import typing
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from pydantic import (
@@ -30,6 +33,8 @@ from pydantic_ai._utils import get_function_type_hints
 
 if TYPE_CHECKING:
     from pydantic import ModelWrapValidatorHandler
+
+    from pydantic_ai.capabilities.abstract import AbstractCapability
 
 T = TypeVar('T')
 
@@ -335,3 +340,57 @@ def build_schema_types(
             schema_types.append(_make_typed_dict('spec', {name: params_td}))
 
     return schema_types
+
+
+def resolve_capability_path(path: str) -> type[AbstractCapability[Any]]:
+    """Resolve a `source:ClassName` spec string to a capability class.
+
+    Supports two forms for `source`:
+    - dotted module path, e.g. `pkg.mod:MyCapability`
+    - `.py` file path, e.g. `./caps.py:MyCapability`
+
+    The resolved class must be a concrete subclass of
+    [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
+
+    Args:
+        path: A spec string in the format `source:ClassName`.
+
+    Returns:
+        The resolved capability class.
+
+    Raises:
+        ValueError: If the path format is invalid, the module cannot be loaded,
+            or the resolved target isn't an `AbstractCapability` subclass.
+    """
+    # Local import avoids circular import (capabilities.__init__ imports from _spec)
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+
+    # Split into source and class name, validate format
+    source, _, name = path.rpartition(':')
+    if not source or not name:
+        raise ValueError(f"capability path must be 'source:ClassName', got {path!r}")
+
+    # Import the module — file paths use importlib, dotted paths use import_module
+    if source.endswith('.py'):
+        # Load from a file path using importlib
+        p = Path(source)
+        spec = importlib.util.spec_from_file_location(f'__pydantic_ai_capability_{p.stem}', str(p.resolve()))
+        if spec is None or spec.loader is None:
+            raise ValueError(f'Could not load module from {source!r}')  # pragma: no cover
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+    else:
+        # Load from a dotted module path using standard import
+        mod = importlib.import_module(source)
+
+    # Look up the class in the module and validate it
+    cls = getattr(mod, name, None)
+    if cls is None:
+        raise ValueError(f'{source}:{name} does not exist in module')
+    if not isinstance(cls, type):
+        raise ValueError(f'{source}:{name} is not a class, got {type(cls).__name__}')
+    if not issubclass(cls, AbstractCapability):
+        raise ValueError(f'{source}:{name} is not an AbstractCapability subclass')
+
+    return cast(type[AbstractCapability[Any]], cls)

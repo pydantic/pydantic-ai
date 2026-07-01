@@ -1,11 +1,13 @@
 """Tests for the shared _spec.py module."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, load_from_registry
+from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, load_from_registry, resolve_capability_path
+from pydantic_ai.capabilities.abstract import AbstractCapability
 
 
 class TestNamedSpec:
@@ -254,3 +256,55 @@ class TestBuildSchemaTypes:
             get_schema_target=lambda c: my_factory,
         )
         assert len(types) >= 1
+
+
+CAPABILITY_SOURCE_CODE = """\
+from __future__ import annotations
+from dataclasses import dataclass
+from pydantic_ai.capabilities.abstract import AbstractCapability
+
+@dataclass
+class MyCap(AbstractCapability[None]):
+    pass
+"""
+
+
+class TestResolveCapabilityPath:
+    """Test resolution of source:ClassName spec strings to capability classes."""
+
+    def test_resolve_file_path(self, create_module: Callable[[str], Any]):
+        mod = create_module(CAPABILITY_SOURCE_CODE)
+        cls = resolve_capability_path(f'{mod.__file__}:MyCap')
+        assert issubclass(cls, AbstractCapability)
+        assert cls.__name__ == 'MyCap'
+
+    def test_resolve_dotted_module(self, create_module: Callable[[str], Any]):
+        mod = create_module(CAPABILITY_SOURCE_CODE)
+        cls = resolve_capability_path(f'{mod.__name__}:MyCap')
+        assert cls is mod.MyCap
+
+    def test_resolve_invalid_format(self):
+        for path in ['NoColon', ':EmptySource', 'source:']:
+            with pytest.raises(ValueError, match="must be 'source:ClassName'"):
+                resolve_capability_path(path)
+
+    def test_resolve_module_not_found(self):
+        with pytest.raises((FileNotFoundError, ModuleNotFoundError)):
+            resolve_capability_path('/nonexistent/path.py:MyCap')
+        with pytest.raises(ModuleNotFoundError):
+            resolve_capability_path('nonexistent_module:MyCap')
+
+    def test_resolve_class_not_found(self, create_module: Callable[[str], Any]):
+        mod = create_module(CAPABILITY_SOURCE_CODE)
+        with pytest.raises(ValueError, match='does not exist in module'):
+            resolve_capability_path(f'{mod.__name__}:NonExistent')
+
+    def test_resolve_not_a_class(self, create_module: Callable[[str], Any]):
+        mod = create_module('x = 42')
+        with pytest.raises(ValueError, match='is not a class'):
+            resolve_capability_path(f'{mod.__name__}:x')
+
+    def test_resolve_not_capability(self, create_module: Callable[[str], Any]):
+        mod = create_module('class Plain: pass')
+        with pytest.raises(ValueError, match='is not an AbstractCapability subclass'):
+            resolve_capability_path(f'{mod.__name__}:Plain')
