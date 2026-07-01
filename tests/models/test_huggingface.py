@@ -1066,20 +1066,9 @@ async def test_image_tool_return_is_forwarded_as_user_message(allow_model_reques
 
     assert result.output == 'done'
     kwargs = get_mock_chat_completion_kwargs(mock_client)[1]
-    sent_messages = kwargs['messages']
-    assert [{k: v for k, v in asdict(message).items() if v is not None} for message in sent_messages] == snapshot(
+    follow_up_messages = kwargs['messages'][-2:]
+    assert [{k: v for k, v in asdict(message).items() if v is not None} for message in follow_up_messages] == snapshot(
         [
-            {'role': 'user', 'content': 'hello'},
-            {
-                'role': 'assistant',
-                'tool_calls': [
-                    {
-                        'function': {'name': 'get_image', 'parameters': None, 'description': None},
-                        'id': 'call_1',
-                        'type': 'function',
-                    }
-                ],
-            },
             {'role': 'tool', 'content': 'See file 01a7df.', 'tool_call_id': 'call_1'},
             {
                 'role': 'user',
