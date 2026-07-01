@@ -1191,12 +1191,16 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # Ensure that any user message containing a document block also has a text block.
         # This satisfies Bedrock's API constraint: "If you include a ContentBlock with a document field, you must also include a ContentBlock with a text field."
-        for msg in processed_messages:
+        for i, msg in enumerate(processed_messages):
             if msg['role'] == 'user':
                 has_document = any('document' in block for block in msg['content'])
                 has_text = any('text' in block for block in msg['content'])
                 if has_document and not has_text:
-                    msg['content'].insert(0, {'text': 'See attached document(s).'})
+                    new_content: list[ContentBlockUnionTypeDef] = [
+                        {'text': 'See attached document(s).'},
+                        *msg['content'],
+                    ]
+                    processed_messages[i] = {**msg, 'content': new_content}
 
         return system_prompt, processed_messages
 
