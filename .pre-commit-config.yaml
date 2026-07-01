@@ -95,3 +95,10 @@ repos:
         language: system
         files: ^tests/
         pass_filenames: false
+      - id: check-uv-lock-exclusions
+        name: Check uv.lock package exclusions
+        entry: python3
+        args: [scripts/check_uv_lock_exclusions.py]
+        language: system
+        files: ^uv\.lock$
+        pass_filenames: false
