@@ -2,7 +2,7 @@ import sys
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast, get_args
+from typing import Annotated, Any, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
@@ -1285,7 +1285,11 @@ def test_tool_return_content_nested_multimodal():
 def test_multi_modal_content_types_matches_union():
     """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members,
     and that is_multi_modal_content correctly narrows types."""
-    union_members = set(get_args(get_args(MultiModalContent)[0]))
+    # Unwrap any `Annotated` wrappers (e.g. `BinaryContent` carries an `AfterValidator` that narrows
+    # image content to `BinaryImage`) so the comparison is against the underlying content types.
+    union_members = {
+        get_args(m)[0] if get_origin(m) is Annotated else m for m in get_args(get_args(MultiModalContent)[0])
+    }
     assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
 
     # Positive cases: each multimodal type is recognized
@@ -1299,6 +1303,30 @@ def test_multi_modal_content_types_matches_union():
     assert not is_multi_modal_content('a string')
     assert not is_multi_modal_content({'key': 'value'})
     assert not is_multi_modal_content(42)
+
+
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_binary_image_narrowed_wherever_multimodal_content_is_validated(mode: str):
+    """An image `BinaryContent` narrows to `BinaryImage` on validation of any `MultiModalContent`
+    (here via `UserPromptPart`), not just `FilePart.content`; non-image `BinaryContent` is left as-is.
+    """
+    image = BinaryContent(data=b'\x89PNG', media_type='image/png')
+    audio = BinaryContent(data=b'\x00\x01', media_type='audio/mpeg')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[image, audio])])]
+
+    if mode == 'json':
+        loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    else:
+        loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+
+    part = loaded[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert isinstance(part.content, list)
+    reloaded_image, reloaded_audio = part.content
+    assert type(reloaded_image) is BinaryImage
+    assert reloaded_image.data == image.data and reloaded_image.media_type == image.media_type
+    # Non-image content is not narrowed.
+    assert type(reloaded_audio) is BinaryContent
 
 
 def test_every_multimodal_type_rehydrates_as_tool_return_content():
