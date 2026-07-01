@@ -404,6 +404,32 @@ class Instrumentation(AbstractCapability[Any]):
             handle_tool_control_flow=True,
         )
 
+    async def on_tool_execute_skipped(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        error: ToolRetryError,
+    ) -> None:
+        """Emit an `execute_tool` span for a call skipped because its arguments failed validation.
+
+        The call never runs (so there's nothing to wrap in `wrap_tool_execute`), but we still want it
+        to show up in traces. Mirrors the `ToolRetryError` branch of `_run_tool_span`: record the retry
+        prompt the model will see as the tool result, then mark the span `ERROR`.
+        """
+        settings = self.settings
+        names = self._instrumentation_names
+        with settings.tracer.start_as_current_span(
+            names.get_tool_span_name(call.tool_name),
+            attributes=self._tool_span_attributes(call),
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            if settings.include_content and span.is_recording():
+                span.set_attribute(names.tool_result_attr, error.tool_retry.model_response())
+            span.record_exception(error, escaped=True)
+            span.set_status(StatusCode.ERROR)
+
     # ------------------------------------------------------------------
     # wrap_output_process — output tool execution span (tool-mode only)
     # ------------------------------------------------------------------

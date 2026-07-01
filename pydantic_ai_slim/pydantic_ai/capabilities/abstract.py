@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, ToolRetryError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -713,6 +713,28 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         to intercept retries.
         """
         raise error
+
+    async def on_tool_execute_skipped(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        error: ToolRetryError,
+    ) -> None:
+        """Observe a tool call that failed argument validation and is therefore not executed.
+
+        Unlike [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error]
+        (which fires *during* validation and may recover by returning valid args), this fires later —
+        when a call whose arguments already failed validation reaches the execute stage and its
+        [`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError] is about to be surfaced to the model.
+        It also covers hallucinated tool names (an unknown tool never reaches `wrap_tool_validate`).
+
+        Observe-only: the `error` is raised regardless of what this hook does. The
+        [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability uses it to emit an
+        `execute_tool` span for the failed call, so validation failures appear in traces alongside
+        the spans that successful and execution-failed calls produce. Default: do nothing.
+        """
+        return None
 
     # --- Output validate lifecycle hooks ---
 

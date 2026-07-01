@@ -714,6 +714,13 @@ class ToolManager(Generic[AgentDepsT]):
         # Asserts narrow types for pyright; invariants guaranteed by ValidatedToolCall construction
         if not validated.args_valid:
             assert validated.validation_error is not None
+            # The call failed validation and won't execute, so no `wrap_tool_execute` span is opened.
+            # Give capabilities (e.g. Instrumentation) a chance to record the failure — this is what
+            # makes a validation-failed call still surface an `execute_tool` span — before raising.
+            if self.root_capability is not None:
+                await self.root_capability.on_tool_execute_skipped(
+                    validated.ctx, call=validated.call, error=validated.validation_error
+                )
             raise validated.validation_error
 
         assert validated.tool is not None

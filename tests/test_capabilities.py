@@ -58,6 +58,7 @@ from pydantic_ai.exceptions import (
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolRetryError,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
     UserError,
@@ -4109,6 +4110,7 @@ _DEFERRED_HOOK_NAMES = {
     'on_model_request_error',
     'on_tool_validate_error',
     'on_tool_execute_error',
+    'on_tool_execute_skipped',
     'before_output_validate',
     'after_output_validate',
     'wrap_output_validate',
@@ -4162,6 +4164,9 @@ async def test_combined_capability_skips_unloaded_deferred_forward_hooks() -> No
         )
         is None
     )
+    skip_call = ToolCallPart('tool', {}, tool_call_id='skip-call')
+    skip_error = ToolRetryError(RetryPromptPart(tool_name='tool', content='bad', tool_call_id='skip-call'))
+    assert await combined.on_tool_execute_skipped(ctx, call=skip_call, error=skip_error) is None
 
 
 async def test_combined_capability_skips_unloaded_deferred_reverse_hooks() -> None:
@@ -11363,6 +11368,38 @@ async def test_wrapper_capability_delegates_on_tool_execute_error():
 
     result = await agent.run('call tool')
     assert result.output == 'final response'
+
+
+async def test_wrapper_capability_delegates_on_tool_execute_skipped():
+    """WrapperCapability delegates on_tool_execute_skipped to the wrapped capability."""
+
+    @dataclass
+    class SkipObserverCap(AbstractCapability[Any]):
+        log: list[str] = field(default_factory=list[str])
+
+        async def on_tool_execute_skipped(
+            self, ctx: RunContext[Any], *, call: ToolCallPart, error: ToolRetryError
+        ) -> None:
+            self.log.append(f'on_tool_execute_skipped:{call.tool_name}')
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            for part in msg.parts:
+                if isinstance(part, RetryPromptPart):
+                    return ModelResponse(parts=[TextPart(content='done')])
+        # Call the tool with args that fail schema validation, so it's skipped before execution.
+        return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args={'x': 'not-an-int'})])
+
+    observer = SkipObserverCap()
+    agent = Agent(FunctionModel(model_fn), capabilities=[WrapperCapability(wrapped=observer)])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:  # pragma: no cover — never executes, args fail validation
+        return f'result: {x}'
+
+    result = await agent.run('call tool')
+    assert result.output == 'done'
+    assert observer.log == ['on_tool_execute_skipped:my_tool']
 
 
 # --- Tests for double-execution bug fix (streaming + before_node_run replacement) ---

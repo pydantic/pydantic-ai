@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
 from pydantic_ai._utils import gather
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, ToolRetryError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -534,6 +534,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             except Exception as new_error:
                 error = new_error
         raise error
+
+    async def on_tool_execute_skipped(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        error: ToolRetryError,
+    ) -> None:
+        for capability in self.capabilities:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
+                await capability.on_tool_execute_skipped(cap_ctx, call=call, error=error)
 
     # --- Output validate lifecycle hooks ---
 
