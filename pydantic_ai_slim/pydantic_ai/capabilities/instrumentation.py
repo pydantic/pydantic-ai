@@ -411,7 +411,11 @@ class Instrumentation(AbstractCapability[Any]):
         call: ToolCallPart,
         error: ToolRetryError,
     ) -> None:
-        """Emit an `execute_tool` span for a call skipped because its arguments failed validation.
+        """Emit an `execute_tool` span for a call skipped before execution.
+
+        Fires when a tool call can't run and its `ToolRetryError` is about to be surfaced to the
+        model — either its arguments failed validation, or it named an unknown/hallucinated tool
+        (rejected during validation and wrapped as a `ToolRetryError`).
 
         The call never runs (so there's nothing to wrap in `wrap_tool_execute`), but we still want it
         to show up in traces. Mirrors the `ToolRetryError` branch of `_run_tool_span`: record the retry
