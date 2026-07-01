@@ -2230,6 +2230,68 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
     assert replay_outputs and all(item.get('execution') == 'client' for item in replay_outputs)
 
 
+async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loading(
+    allow_model_requests: None,
+):
+    """A tool-search corpus member discovered in a prior turn must not carry the wire-side
+    `defer_loading` flag on a model without native `tool_search` (e.g. `gpt-5.2`).
+
+    OpenAI's `defer_loading` only travels alongside a native `tool_search` tool; without one the
+    provider rejects a lone `defer_loading` (#5938). Once discovered, the corpus member stays
+    callable as a plain function tool but must shed its `with_native='tool_search'` marker, so the
+    adapter (which derives `defer_loading` purely from `with_native`) stops stamping it.
+
+    This is a unit test, not VCR: the cassette matcher keys only on method and path, so a request
+    that regained a stale `defer_loading` (or an over-eager native-tool swap) would still match the
+    existing recording and pass green. Only a direct assertion on the emitted payload pins the wire
+    invariant the fix is responsible for. The end-to-end deferred-capability flow is covered by
+    `test_openai_deferred_capability_runs_on_model_without_native_tool_search`.
+    """
+    pytest.importorskip('openai')
+
+    final = response_message(
+        [
+            ResponseOutputMessage(
+                id='msg',
+                content=[ResponseOutputText(text='Sunny.', type='output_text', annotations=[])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(final)
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        return f'Weather in {city}.'
+
+    # `get_weather` was discovered last turn, so it now rides along as a callable tool
+    # (`defer_loading=False`, but `with_native='tool_search'` still set).
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='I might want the weather later.')]),
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='loc_1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
+                    tool_call_id='loc_1',
+                )
+            ]
+        ),
+    ]
+
+    await agent.run('Weather in Paris?', message_history=history)
+
+    [request] = get_mock_responses_kwargs(mock_client)
+    request_tools = cast(list[dict[str, Any]], request['tools'])
+    assert not any(tool['type'] == 'tool_search' for tool in request_tools)
+    [weather_tool] = [tool for tool in request_tools if tool.get('name') == 'get_weather']
+    assert 'defer_loading' not in weather_tool
+
+
 @pytest.mark.vcr
 async def test_openai_deferred_capability_runs_on_model_without_native_tool_search(
     allow_model_requests: None, openai_api_key: str
@@ -2242,6 +2304,10 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
     `with_native='tool_search'`, which the base-class filter sheds so no adapter emits a
     wire-side `defer_loading` flag with no native `tool_search` tool to pair it with — which
     OpenAI rejects. The invariant is simply that the run completes and `bar` returns.
+
+    The wire-payload shape (no `defer_loading`, no `tool_search` on the wire) is pinned directly by
+    `test_openai_discovered_tool_without_native_tool_search_omits_defer_loading`, since the cassette
+    matcher isn't body-sensitive and wouldn't catch a regression here on its own.
 
     This is the tool-search-*unsupported* half of the matrix. OpenAI is the only provider it
     can be recorded against: every non-deprecated Anthropic (and Google) model supports native
