@@ -1704,12 +1704,16 @@ def test_narrow_type_strips_unsubstantiated_tool_kind_set_on_part():
     assert NativeToolReturnPart.narrow_type(native_return) == replace(native_return, tool_kind=None)
 
 
-def test_structured_content_parses_json_string():
-    """`structured_content` parses a JSON-string `content` into structured data, and returns
-    already-structured or non-JSON content unchanged."""
+def test_structured_content_returns_structured_json_or_none():
+    """`structured_content` parses a JSON-string `content` into structured data (dict/list), returns
+    already-structured content as-is, and yields `None` for anything that isn't structured JSON."""
     assert ToolReturnPart(tool_name='t', tool_call_id='c1', content='{"a": 1}').structured_content() == {'a': 1}
     assert ToolReturnPart(tool_name='t', tool_call_id='c2', content={'a': 1}).structured_content() == {'a': 1}
-    assert ToolReturnPart(tool_name='t', tool_call_id='c3', content='not json').structured_content() == 'not json'
+    assert ToolReturnPart(tool_name='t', tool_call_id='c3', content='[1, 2]').structured_content() == [1, 2]
+    # A non-JSON string, a JSON scalar, and a bare scalar all lack structured JSON data.
+    assert ToolReturnPart(tool_name='t', tool_call_id='c4', content='not json').structured_content() is None
+    assert ToolReturnPart(tool_name='t', tool_call_id='c5', content='"just a string"').structured_content() is None
+    assert ToolReturnPart(tool_name='t', tool_call_id='c6', content=42).structured_content() is None
 
 
 def test_narrow_type_upgrades_json_string_content():

@@ -1264,21 +1264,28 @@ class BaseToolReturnPart:
         else:
             return {RETURN_VALUE_KEY: json_content}
 
-    def structured_content(self) -> ToolReturnContent:
-        """Return `content` with a JSON string parsed into structured data, else `content` unchanged.
+    def structured_content(self) -> dict[str, Any] | list[Any] | None:
+        """Return `content` as structured JSON data (a `dict` or `list`), or `None` if it has none.
 
-        A read-side companion to [`files`][pydantic_ai.messages.BaseToolReturnPart.files] and
-        [`model_response_object`][pydantic_ai.messages.BaseToolReturnPart.model_response_object]: some
+        A JSON string is parsed; already-structured content is returned as-is; a plain/non-JSON
+        string, scalar, or multimodal content yields `None` (there is no structured payload). A
+        read-side companion to [`files`][pydantic_ai.messages.BaseToolReturnPart.files] and
+        [`model_response_object`][pydantic_ai.messages.BaseToolReturnPart.model_response_object]; some
         UI wire formats (e.g. AG-UI) transmit tool results as JSON strings, so
-        [`narrow_type`][pydantic_ai.messages.ToolReturnPart.narrow_type] calls this to recover the
-        structured payload a typed return subclass expects. A non-JSON string is returned unchanged.
+        [`narrow_type`][pydantic_ai.messages.ToolReturnPart.narrow_type] uses it to recover the
+        structured payload a typed return subclass expects.
         """
-        if isinstance(self.content, str):
+        content = self.content
+        if isinstance(content, str):
             try:
-                return pydantic_core.from_json(self.content)
+                content = pydantic_core.from_json(content)
             except ValueError:
-                pass
-        return self.content
+                return None
+        if isinstance(content, dict):
+            return cast('dict[str, Any]', content)
+        if isinstance(content, list):
+            return cast('list[Any]', content)
+        return None
 
     def model_response_str_and_user_content(self) -> tuple[str, list[UserContent]]:
         """Build a text-only tool result with multimodal files extracted for a trailing user message.
@@ -1350,8 +1357,14 @@ class ToolReturnPart(BaseToolReturnPart):
         narrower = _TOOL_RETURN_NARROWERS.get(kind) if kind is not None else None
         if narrower is None:
             return part
+        # Restructure JSON-string content for the narrower, but only when parsing changed it, so an
+        # already-typed part keeps its identity (the narrower short-circuits on it) instead of a rebuild.
+        structured = part.structured_content()
+        narrow_input = (
+            replace(part, content=structured) if structured is not None and structured is not part.content else part
+        )
         try:
-            return narrower(replace(part, content=part.structured_content()))
+            return narrower(narrow_input)
         except pydantic.ValidationError:
             return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
@@ -1397,8 +1410,14 @@ class NativeToolReturnPart(BaseToolReturnPart):
         narrower = _NATIVE_RETURN_NARROWERS.get(kind) if kind is not None else None
         if narrower is None:
             return part
+        # Restructure JSON-string content for the narrower, but only when parsing changed it, so an
+        # already-typed part keeps its identity (the narrower short-circuits on it) instead of a rebuild.
+        structured = part.structured_content()
+        narrow_input = (
+            replace(part, content=structured) if structured is not None and structured is not part.content else part
+        )
         try:
-            return narrower(replace(part, content=part.structured_content()))
+            return narrower(narrow_input)
         except pydantic.ValidationError:
             return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
