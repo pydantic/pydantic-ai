@@ -97,13 +97,13 @@ async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str, v
 
 
 async def test_zai_clear_thinking_without_thinking(allow_model_requests: None, zai_api_key: str, vcr: Cassette):
-    """`zai_clear_thinking` set on its own (no unified `thinking`) reaches the wire as a bare
-    `extra_body.thinking.clear_thinking`, with no `type`.
+    """A bare `extra_body.thinking.clear_thinking` (no `type`) reaches the wire and the Z.AI API accepts it.
 
-    `clear_thinking` tunes cross-turn thinking preservation independently of whether the current turn
-    enables thinking, so it is emitted even when `thinking` is left to the model's default. This records
-    a real request to confirm the Z.AI API accepts that standalone shape; the transformation itself is
-    unit-tested in `test_zai_settings_transformation` (VCR matchers aren't sensitive to the request body).
+    On a thinking-capable model this no-`type` shape is now what every plain request sends, since
+    preservation (`clear_thinking=False`) is the default — so the explicit `zai_clear_thinking=False` here
+    coincides with it. The point of the recording is to confirm the real API accepts that standalone shape.
+    Explicit-override behavior (e.g. `zai_clear_thinking=True`) and the default gating are unit-tested in
+    `test_zai_settings_transformation` (VCR matchers aren't sensitive to the request body).
     """
     provider = ZaiProvider(api_key=zai_api_key)
     model = ZaiModel('glm-4.7', provider=provider)
@@ -184,9 +184,10 @@ async def test_zai_vision_thinking(
         ]
     )
 
-    # Assert the wire body so a regression to `supports_thinking=False` on the vision profile is caught:
-    # VCR matchers aren't body-sensitive, so the recorded thinking response would otherwise replay green
-    # even if `thinking` stopped reaching the request.
+    # Pin the recorded request body: VCR matchers aren't body-sensitive, so asserting the wire shape here
+    # (verified at record time) is what confirms `thinking` reaches the request for this vision model. The
+    # live transform — including the vision profile's `supports_thinking` gating — is unit-tested in
+    # `test_zai_settings_transformation` and `test_zai_provider_model_profile`.
     assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
     assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
