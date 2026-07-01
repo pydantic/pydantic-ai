@@ -16,6 +16,7 @@ from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
 from pydantic_ai._template import TemplateStr
 from pydantic_ai._utils import get_function_type_hints
 from pydantic_ai.agent.abstract import AgentRetries
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.settings import ModelSettings
 
 if TYPE_CHECKING:
@@ -92,6 +93,9 @@ class AgentSpec(BaseModel):
                     'PyYAML is required to load YAML agent specs. Install it with: pip install "pydantic-ai-slim[spec]"'
                 ) from None
             data = yaml.safe_load(text)
+        if not isinstance(data, dict):
+            raise UserError(f'Agent spec must parse to an object, got {type(data).__name__}')
+        data = cast(dict[str, Any], data)
         return cls.from_dict(data)
 
     @classmethod
