@@ -8,10 +8,10 @@ Start the Dakera server:
 
     docker run -d \\
         --name dakera \\
-        -p 3000:3000 \\
+        -p 3300:3300 \\
         -e DAKERA_API_KEY=demo \\
         -v dakera_data:/data \\
-        dakera/dakera:latest
+        ghcr.io/dakera-ai/dakera:latest
 
 Store a fact:
 
@@ -41,7 +41,7 @@ import httpx
 
 from pydantic_ai import Agent, RunContext
 
-DAKERA_URL = os.getenv("DAKERA_BASE_URL", "http://localhost:3000")
+DAKERA_URL = os.getenv("DAKERA_BASE_URL", "http://localhost:3300")
 DAKERA_KEY = os.getenv("DAKERA_API_KEY", "demo")
 DAKERA_NS = os.getenv("DAKERA_NAMESPACE", "pydantic-ai-agent")
 

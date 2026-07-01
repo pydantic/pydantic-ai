@@ -30,16 +30,16 @@ Start the Dakera server with Docker:
 ```bash
 docker run -d \
   --name dakera \
-  -p 3000:3000 \
+  -p 3300:3300 \
   -e DAKERA_API_KEY=demo \
   -v dakera_data:/data \
-  dakera/dakera:latest
+  ghcr.io/dakera-ai/dakera:latest
 ```
 
 Verify it's running:
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:3300/health
 ```
 
 ## Running the Example
@@ -75,7 +75,7 @@ OPENAI_API_KEY=your-key DAKERA_API_KEY=demo \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DAKERA_BASE_URL` | `http://localhost:3000` | Dakera server URL |
+| `DAKERA_BASE_URL` | `http://localhost:3300` | Dakera server URL |
 | `DAKERA_API_KEY` | `demo` | Dakera API key |
 | `DAKERA_NAMESPACE` | `pydantic-ai-agent` | Namespace to isolate memories |
 | `PYDANTIC_AI_MODEL` | `openai:gpt-4o` | Model to use for the agent |
