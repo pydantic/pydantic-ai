@@ -1677,11 +1677,11 @@ async def test_history_processor_replace_resumed_request_excludes_resumed_reques
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """
-    When a history processor replaces the resumed request with completely
-    different content, new_messages() still excludes it: the boundary is
-    tracked by the resumed request's position, not by re-matching the object,
-    so a full rewrite (changed identity and parts) cannot leak the resumed
-    request into new_messages().
+    When a history processor replaces the resumed request with completely different content,
+    new_messages() still excludes it. The full rewrite defeats both the object identity and value
+    matches, so the pinned-position fallback is what keeps it excluded. This is consistent with the
+    other (non-resumed) request the same processor replaces, which is likewise prior context: a
+    processor's transient reshaping of prior context is not a new message to persist.
     """
 
     def replace_all_requests(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -1747,8 +1747,8 @@ async def test_history_processor_replace_resumed_request_excludes_resumed_reques
         ]
     )
 
-    # The resumed request is excluded by position even though the processor
-    # rebuilt it with the current run_id; only the model response is new.
+    # The resumed request is excluded via the position fallback even though the processor rebuilt
+    # it with the current run_id and different content; only the model response is new.
     assert result.new_messages() == result.all_messages()[-1:]
 
 
