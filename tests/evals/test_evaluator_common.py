@@ -18,6 +18,7 @@ with try_import() as imports_successful:
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
         Contains,
+        ContainsExpected,
         Equals,
         EqualsExpected,
         HasMatchingSpan,
@@ -215,6 +216,55 @@ async def test_contains_invalid_type():
     result = evaluator.evaluate(MockContext(output=Unhashable()))
     assert result.value is False
     assert result.reason and result.reason.startswith("Containment check failed: argument of type 'Unhashable'")
+
+
+async def test_contains_expected():
+    """Test ContainsExpected evaluator."""
+    evaluator = ContainsExpected()
+
+    # Test string containment against expected output
+    assert evaluator.evaluate(MockContext(output='this is a test', expected_output='test')) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test string non-containment against expected output
+    assert evaluator.evaluate(MockContext(output='no match', expected_output='test output')) == snapshot(
+        EvaluationReason(value=False, reason="Output string 'no match' does not contain expected string 'test output'")
+    )
+
+    # Test with no expected output
+    assert evaluator.evaluate(MockContext(output='this is a test', expected_output=None)) == {}
+
+    # Test dictionary containment
+    assert evaluator.evaluate(
+        MockContext(output={'key': 'value', 'extra': 'data'}, expected_output={'key': 'value'})
+    ) == snapshot(EvaluationReason(value=True))
+
+    # Test list containment
+    assert evaluator.evaluate(MockContext(output=[1, 42, 3], expected_output=42)) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test BaseModel containment
+    class MockModel(BaseModel):
+        key: str
+        extra: str | None = None
+
+    assert evaluator.evaluate(
+        MockContext(output=MockModel(key='value', extra='data'), expected_output={'key': 'value'})
+    ) == snapshot(EvaluationReason(value=True))
+
+    # Test case insensitivity
+    evaluator_case_insensitive = ContainsExpected(case_sensitive=False)
+    assert evaluator_case_insensitive.evaluate(
+        MockContext(output='this is a test', expected_output='TEST')
+    ) == snapshot(EvaluationReason(value=True))
+
+    # Test as_strings conversion
+    evaluator_as_strings = ContainsExpected(as_strings=True)
+    assert evaluator_as_strings.evaluate(MockContext(output='The answer is 42', expected_output=42)) == snapshot(
+        EvaluationReason(value=True)
+    )
 
 
 async def test_is_instance():
