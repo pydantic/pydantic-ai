@@ -496,6 +496,22 @@ KnownModelName = TypeAliasType(
         'xai:grok-4.3',
         'xai:grok-4.3-latest',
         'xai:grok-code-fast-1',
+        # Snowflake Cortex Inference
+        'snowflake-cortex:claude-haiku-4-5',
+        'snowflake-cortex:claude-opus-4',
+        'snowflake-cortex:claude-sonnet-4-5',
+        'snowflake-cortex:claude-sonnet-4-6',
+        'snowflake-cortex:deepseek-r1',
+        'snowflake-cortex:llama3.1-405b',
+        'snowflake-cortex:llama3.1-70b',
+        'snowflake-cortex:llama3.1-8b',
+        'snowflake-cortex:llama3.3-70b',
+        'snowflake-cortex:llama4-maverick',
+        'snowflake-cortex:mistral-7b',
+        'snowflake-cortex:mistral-large2',
+        'snowflake-cortex:openai-gpt-4.1',
+        'snowflake-cortex:openai-gpt-5',
+        'snowflake-cortex:snowflake-llama-3.3-70b',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
