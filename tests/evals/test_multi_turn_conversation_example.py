@@ -15,28 +15,36 @@ from pydantic_ai.models.test import TestModel
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
+MULTI_TURN_EXAMPLE_DIR = Path(__file__).parents[2] / 'examples' / 'pydantic_ai_examples' / 'evals' / 'multi_turn'
 
-def _load_multi_turn_example() -> ModuleType:
-    path = Path(__file__).parents[2] / 'examples' / 'pydantic_ai_examples' / 'evals' / 'multi_turn_conversation.py'
-    spec = importlib.util.spec_from_file_location('multi_turn_conversation_example', path)
+
+def _load_eval_example_module(module_name: str, filename: str) -> ModuleType:
+    path = MULTI_TURN_EXAMPLE_DIR / filename
+    spec = importlib.util.spec_from_file_location(module_name, path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
+    sys.modules[module_name] = module
+    sys.path.insert(0, str(MULTI_TURN_EXAMPLE_DIR))
     spec.loader.exec_module(module)
     return module
 
 
-multi_turn_example = _load_multi_turn_example()
+core = _load_eval_example_module('core', 'core.py')
+evaluators = _load_eval_example_module('evaluators', 'evaluators.py')
+examples = _load_eval_example_module('multi_turn_examples', 'examples.py')
 
-ConversationMessage = multi_turn_example.ConversationMessage
-ConversationRun = multi_turn_example.ConversationRun
-ConversationScenario = multi_turn_example.ConversationScenario
-SimulatedConversationTask = multi_turn_example.SimulatedConversationTask
-SimulatorOutput = multi_turn_example.SimulatorOutput
-_build_simulator_turn_prompt = multi_turn_example._build_simulator_turn_prompt
-_seed_simulator_message_history = multi_turn_example._seed_simulator_message_history
-run_conversation = multi_turn_example.run_conversation
+ConversationCompleted = evaluators.ConversationCompleted
+ConversationMessage = core.ConversationMessage
+ConversationRun = core.ConversationRun
+ConversationScenario = core.ConversationScenario
+SimulatedConversationTask = core.SimulatedConversationTask
+SimulatorOutput = core.SimulatorOutput
+build_dataset = examples.build_dataset
+build_simulator_agent_factory = core.build_simulator_agent_factory
+build_simulator_turn_prompt = core.build_simulator_turn_prompt
+run_conversation = core.run_conversation
+seed_simulator_message_history = core.seed_simulator_message_history
 
 pytestmark = pytest.mark.anyio
 
@@ -189,7 +197,14 @@ async def test_dataset_evaluates_simulated_conversation_task_run_method() -> Non
             )
         ],
     )
-    task = TestConversationTask(target_agent=Agent(model=TestModel()))
+
+    def unused_simulator_factory(scenario: ConversationScenario) -> Agent[None, SimulatorOutput]:
+        return Agent(model=TestModel(), output_type=SimulatorOutput)
+
+    task = TestConversationTask(
+        target_agent=Agent(model=TestModel()),
+        simulator_agent_factory=unused_simulator_factory,
+    )
 
     report = await dataset.evaluate(task.run, progress=False)
 
@@ -198,7 +213,7 @@ async def test_dataset_evaluates_simulated_conversation_task_run_method() -> Non
 
 
 def test_simulator_history_is_seeded_with_the_first_user_message() -> None:
-    history = _seed_simulator_message_history('Cancel my account.')
+    history = seed_simulator_message_history('Cancel my account.')
 
     assert len(history) == 2
     assert isinstance(history[0], ModelRequest)
@@ -210,10 +225,34 @@ def test_simulator_history_is_seeded_with_the_first_user_message() -> None:
 
 
 def test_simulator_turn_prompt_does_not_embed_the_transcript() -> None:
-    prompt = _build_simulator_turn_prompt('Can you confirm your email?')
+    prompt = build_simulator_turn_prompt('Can you confirm your email?')
 
     assert 'Can you confirm your email?' in prompt
     assert 'done=true' in prompt
     assert 'done=false' in prompt
     assert 'Cancel my account.' not in prompt
     assert 'Full conversation so far:' not in prompt
+
+
+def test_core_builds_scenario_specific_simulator_agents() -> None:
+    factory = build_simulator_agent_factory(
+        model='test',
+        instructions='You are simulating animal sound questions.',
+    )
+    simulator_agent = factory(
+        ConversationScenario(
+            simulator_goal='Ask for the dog sound.',
+            first_message='What sound does a dog make?',
+            simulator_persona='Brief and direct.',
+        )
+    )
+
+    assert isinstance(simulator_agent, Agent)
+
+
+def test_client_dataset_uses_reusable_multi_turn_evaluators() -> None:
+    dataset = build_dataset(include_llm_judge=False)
+
+    assert dataset.name == 'multi_turn_animal_sounds'
+    assert len(dataset.cases) == 3
+    assert isinstance(dataset.evaluators[0], ConversationCompleted)
