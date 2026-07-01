@@ -1037,9 +1037,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_details = provider_details or {}
             provider_details['container_id'] = response.container.id
 
+        response_usage, _ = _map_usage(response, self._provider.name, self._provider.base_url, self._model_name)
         return ModelResponse(
             parts=items,
-            usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
+            usage=response_usage,
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
@@ -2197,6 +2198,15 @@ class AnthropicCompaction(AbstractCapability[AgentDepsT]):
 
 
 _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')
+# Raw Anthropic token fields that a consumer normalizes onto a first-class `RequestUsage` metric (input,
+# output, cache read/write). Excluded from the exposed `RequestUsage.details` so consumers don't add them
+# on top of the canonical `gen_ai.usage.*` totals and double-count (see `_map_usage` and #6131). Kept as
+# its own literal rather than `frozenset(_COMPACTION_TOKEN_KEYS)`: the two sets answer independent questions
+# ("which keys need compaction summing" vs "which keys duplicate a first-class metric") and must be free to
+# diverge if Anthropic's usage schema grows.
+_FIRST_CLASS_TOKEN_KEYS = frozenset(
+    {'input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'}
+)
 
 
 def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
@@ -2235,8 +2245,17 @@ def _map_usage(
     provider: str,
     provider_url: str,
     model: str,
-    existing_usage: usage.RequestUsage | None = None,
-) -> usage.RequestUsage:
+    existing_details: dict[str, int] | None = None,
+) -> tuple[usage.RequestUsage, dict[str, int]]:
+    """Map an Anthropic usage payload to a `RequestUsage`, alongside the raw token counts to carry forward.
+
+    The returned `dict` retains the raw Anthropic token counts (`input_tokens`, `output_tokens`,
+    `cache_*`) keyed by their API names so that streaming delta events — which may omit input/cache
+    tokens — can inherit them from the `message_start` event by passing it back as `existing_details`.
+    Those raw keys are excluded from the returned `RequestUsage.details`, since they duplicate the
+    first-class `RequestUsage` fields and OTel consumers would otherwise double-count them against the
+    `gen_ai.usage.*` attributes (see <https://github.com/pydantic/pydantic-ai/issues/6131>).
+    """
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
@@ -2246,7 +2265,7 @@ def _map_usage(
             # into `BetaRawMessageStartEvent(message=None)`, violating the type annotation.
             # The metrics chunk's token counts duplicate the canonical `message_start` /
             # `message_delta` usage, so dropping them here avoids double-counting.
-            return existing_usage or usage.RequestUsage()
+            return usage.RequestUsage(), existing_details or {}
         response_usage = message.message.usage
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
@@ -2255,24 +2274,32 @@ def _map_usage(
 
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
-    details = (existing_usage.details if existing_usage else {}) | _extract_usage_details(response_usage)
+    raw_details = (existing_details or {}) | _extract_usage_details(response_usage)
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
-    usage_for_extraction = dict(details)
+    usage_for_extraction = dict(raw_details)
     for key in _COMPACTION_TOKEN_KEYS:
-        if compaction_value := details.get(f'compaction_{key}'):
+        if compaction_value := raw_details.get(f'compaction_{key}'):
             usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
-    # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
-    return usage.RequestUsage.extract(
+    # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens.
+    # The raw token counts are summed into the first-class `RequestUsage` fields above and excluded from
+    # `details`: consumers (e.g. Langfuse) map a detail key like `output_tokens`, or the well-known Anthropic
+    # cache field names, back onto the canonical usage metric and add them on top of `gen_ai.usage.*`,
+    # double-counting (#6131). The `compaction_*` sub-totals are also folded into the first-class totals but
+    # kept, because their key names have no canonical metric to collide with — a consumer records them as
+    # their own breakdown rather than re-adding them. `compaction_iterations`/`message_iterations` stay too,
+    # as genuinely supplementary counts.
+    request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_for_extraction),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='anthropic',
-        details=details,
+        details={key: value for key, value in raw_details.items() if key not in _FIRST_CLASS_TOKEN_KEYS},
     )
+    return request_usage, raw_details
 
 
 @dataclass
@@ -2284,6 +2311,10 @@ class AnthropicStreamedResponse(StreamedResponse):
     _provider_name: str
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    # Raw Anthropic token counts carried across `message_start`/`message_delta` events so deltas that
+    # omit input/cache tokens inherit them. Kept separate from `self._usage`, whose `details` excludes
+    # these raw keys to avoid OTel double-counting (see `_map_usage`).
+    _raw_usage_details: dict[str, int] = field(default_factory=dict[str, int], init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
@@ -2297,7 +2328,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                         # as `BetaRawMessageStartEvent(message=None)`. Skip them entirely so we
                         # don't dereference `event.message.id` / `.container` below.
                         continue
-                    self._usage = _map_usage(event, self._provider_name, self._provider_url, self._model_name)
+                    self._usage, self._raw_usage_details = _map_usage(
+                        event, self._provider_name, self._provider_url, self._model_name
+                    )
                     self.provider_response_id = event.message.id
                     if event.message.container:
                         self.provider_details = self.provider_details or {}
@@ -2450,8 +2483,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                         pass
 
                 elif isinstance(event, BetaRawMessageDeltaEvent):
-                    self._usage = _map_usage(
-                        event, self._provider_name, self._provider_url, self._model_name, self._usage
+                    self._usage, self._raw_usage_details = _map_usage(
+                        event, self._provider_name, self._provider_url, self._model_name, self._raw_usage_details
                     )
                     if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                         self.provider_details = self.provider_details or {}

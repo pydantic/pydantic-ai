@@ -3388,16 +3388,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(
-                    input_tokens=42,
-                    output_tokens=291,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 42,
-                        'output_tokens': 291,
-                    },
-                ),
+                usage=RequestUsage(input_tokens=42, output_tokens=291),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
