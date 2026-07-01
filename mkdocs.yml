@@ -185,6 +185,7 @@ nav:
           - api/result.md
           - api/retries.md
           - api/run.md
+          - api/sanitization.md
           - api/settings.md
           - api/tools.md
           - api/toolsets.md
