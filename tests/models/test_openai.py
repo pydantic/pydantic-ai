@@ -4207,15 +4207,23 @@ async def test_thinking_only_response_skipped_in_history(
     )
     agent = Agent(m)
 
-    await agent.run('hello')
+    result = await agent.run('hello')
+    assert result.output == 'hello back'
 
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
-    invalid_assistant_messages = [
-        message
-        for message in second_call_messages
-        if message.get('role') == 'assistant' and message.get('content') is None and not message.get('tool_calls')
+    assert second_call_messages == [
+        {'content': 'hello', 'role': 'user'},
+        {
+            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
+            'role': 'user',
+        },
     ]
-    assert invalid_assistant_messages == []
+
+    first_response = result.all_messages()[1]
+    assert isinstance(first_response, ModelResponse)
+    assert first_response.parts == [
+        ThinkingPart(content='Let me think about this...', id='reasoning_content', provider_name='openai')
+    ]
 
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
