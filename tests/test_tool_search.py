@@ -4680,6 +4680,24 @@ def test_typed_call_part_typed_args_returns_none_for_unparsed_args() -> None:
         assert complete_part.queries == ['x']
 
 
+def test_tool_search_narrow_type_leaves_malformed_args_untyped() -> None:
+    """Malformed `search_tools` args should stay on the base part for retry handling."""
+
+    local_part = ToolCallPart(tool_name='search_tools', args={'query': 'find a tool'}, tool_call_id='c1')
+    narrowed_local = ToolCallPart.narrow_type(local_part, tool_kind='tool-search')
+    assert narrowed_local is local_part
+
+    native_part = NativeToolCallPart(
+        tool_name='tool_search',
+        tool_kind=None,
+        args={'queries': 'oops'},
+        tool_call_id='c2',
+        provider_name='openai',
+    )
+    narrowed_native = NativeToolCallPart.narrow_type(native_part, tool_kind='tool-search')
+    assert narrowed_native is native_part
+
+
 def test_builtin_tool_search_return_part_message_accessor() -> None:
     """`message` on `NativeToolSearchReturnPart` reads `content.get('message')`.
 
