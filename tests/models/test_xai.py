@@ -110,6 +110,8 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.xai import XaiProvider
 
+    from .xai_proto_cassettes import get_recorded_request_messages
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
@@ -375,6 +377,252 @@ async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_reques
                         'function': {'name': 'tool_b', 'arguments': '{}'},
                     },
                 ],
+            }
+        ]
+    )
+
+
+async def test_xai_thinking_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
+    """A reasoning `ThinkingPart` followed by `ToolCallPart`s maps to one assistant message.
+
+    The encrypted reasoning trace must stay attached to the tool calls it produced — matching
+    `xai_sdk`'s `Chat.append` — rather than splitting into a reasoning message and a separate
+    tool-call message.
+    """
+    response1 = create_response(
+        reasoning_content='Let me call the tools',
+        encrypted_content='encrypted_signature_123',
+        tool_calls=[
+            create_tool_call('call_a', 'tool_a', {}),
+            create_tool_call('call_b', 'tool_b', {}),
+        ],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        return 'b'
+
+    result = await agent.run('Run tools')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+    assistant_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call_a',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_a', 'arguments': '{}'},
+                    },
+                    {
+                        'id': 'call_b',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_b', 'arguments': '{}'},
+                    },
+                ],
+                'reasoning_content': 'Let me call the tools',
+                'encrypted_content': 'encrypted_signature_123',
+            }
+        ]
+    )
+
+
+async def test_xai_text_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
+    """A `TextPart` followed by `ToolCallPart`s maps to one assistant message carrying both.
+
+    The relaxed grouping also packs text with the tool calls it precedes — matching `xai_sdk`'s
+    `Chat.append`, which puts `content` and `tool_calls` on a single assistant message — rather
+    than splitting them into a text message and a separate tool-call message.
+    """
+    response1 = create_response(
+        content='Calling the tools',
+        tool_calls=[
+            create_tool_call('call_a', 'tool_a', {}),
+            create_tool_call('call_b', 'tool_b', {}),
+        ],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        return 'b'
+
+    result = await agent.run('Run tools')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+    assistant_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': 'Calling the tools'}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call_a',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_a', 'arguments': '{}'},
+                    },
+                    {
+                        'id': 'call_b',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_b', 'arguments': '{}'},
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: None, xai_provider: XaiProvider):
+    """End-to-end proof for #5329: the real xAI API accepts grouped reasoning + tool-call history.
+
+    Turn 1 on a reasoning model (with `xai_include_encrypted_content=True`) returns a `ThinkingPart`
+    carrying an encrypted signature AND a `ToolCallPart` in the same response. After the tool runs,
+    turn 2 sends that history back: `_append_tool_call` packs the encrypted reasoning and the tool
+    call onto ONE assistant message, and xAI accepts it and continues the run. The mock grouping
+    tests pin the exact mapped request shape; this proves the grouped shape round-trips against the
+    live API — the orphaned-reasoning split #5329 reports would make turn 2 fail.
+    """
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_encrypted_content=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return 'It is sunny and 25°C.'
+
+    result = await agent.run('What is the weather in London? Use the get_weather tool, then answer.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in London? Use the get_weather tool, then answer.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"London"}',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=221, cache_read_tokens=128, output_tokens=11, details={'reasoning_tokens': 111}
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='It is sunny and 25°C.',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The tool returned: "It is sunny and 25°C."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='It is sunny and 25°C in London.'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=358, cache_read_tokens=192, output_tokens=10, details={'reasoning_tokens': 47}
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # The grouped single assistant message that xAI accepted on the second request.
+    requests = get_recorded_request_messages(xai_provider.client)
+    assert len(requests) == 2
+    assistant_msgs = [msg for msg in requests[1] if msg.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'get_weather', 'arguments': '{"city":"London"}'},
+                    }
+                ],
+                'reasoning_content': 'The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                'encrypted_content': IsStr(),
             }
         ]
     )
