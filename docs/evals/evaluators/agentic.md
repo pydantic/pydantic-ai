@@ -22,14 +22,16 @@ Deterministic, span-based evaluators that grade an agent's *trajectory* — the 
     against the provider's own spans, or the model's output, to assess those.
 
 !!! note "What counts as a tool call"
-    Every execution *attempt* produces a span, so:
+    Every execution *attempt* produces a span, discriminated as follows:
 
-    - A call the model retried (e.g. the tool raised `ModelRetry`) is counted
-      once per attempt, and each attempt's arguments are recorded separately.
-    - A call whose tool body raised an exception is still counted — its
-      arguments were recorded before the failure.
-    - A deferred call (`ApprovalRequired` / `CallDeferred`) is **not**
-      counted: it never actually executed in this run.
+    - An attempt that ended in an error — the tool body raised an exception,
+      or requested a retry via `ModelRetry` — is **not** counted by default;
+      pass `include_failed=True` to count every attempt. The exception:
+      [`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls] counts failed
+      attempts by default (they still consume budget); pass
+      `include_failed=False` there to count only successful calls.
+    - A deferred call (`ApprovalRequired` / `CallDeferred`) is **never**
+      counted: it did not execute in this run.
     - All matching spans in the captured trace are counted, including tool
       calls made by nested sub-agents (agent-as-tool delegation). If you
       delegate to sub-agents that call their own tools, account for those
@@ -69,6 +71,7 @@ dataset = Dataset(
 
 - `expected_tools` (`list[str]`): Tool names the agent is expected to call. Order doesn't matter; duplicates are significant — `['search', 'search']` requires two `search` calls.
 - `allow_extra` (`bool`, default `False`): By default, any tool call not listed in `expected_tools` fails the check. Set to `True` to only require that the expected tools were called, permitting extras.
+- `include_failed` (`bool`, default `False`): Whether to count tool-call attempts that ended in an error.
 - `evaluation_name` (`str | None`): Custom name in reports.
 
 **Returns:** [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason] with a `bool` value. The `reason` names missing and unexpected tools.
@@ -100,6 +103,7 @@ dataset = Dataset(
     - `'exact'` — `1.0` iff the sequences are equal, else `0.0`.
     - `'in_order'` — F1 computed from the longest common subsequence (LCS). Precision = `LCS / len(actual)`, recall = `LCS / len(expected)`. Allows extra calls interleaved with the expected order, but they reduce precision.
     - `'any_order'` — F1 computed from the multiset intersection. Precision = `overlap / len(actual)`, recall = `overlap / len(expected)`. Order is ignored, but extra and missing calls both reduce the score.
+- `include_failed` (`bool`, default `False`): Whether the trajectory includes tool-call attempts that ended in an error.
 - `evaluation_name` (`str | None`): Custom name in reports.
 
 **Returns:** [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason] with a `float` value in `[0.0, 1.0]`. For the F1-based modes, the reason text spells out the overlap, precision, recall, and F1 so the score is reproducible from the mismatch.
@@ -137,7 +141,8 @@ dataset = Dataset(
 - `match_mode` (`Literal['exact', 'subset']`, default `'subset'`):
     - `'subset'` — every expected key/value is present in the actual arguments. Note that this applies only to top-level keys: an expected *value* (including a nested dict) must compare equal to the actual value in full.
     - `'exact'` — deep equality; unexpected keys also fail.
-- `occurrence` (`Literal['first', 'last'] | int`, default `'first'`): Which invocation to inspect if the tool is called multiple times. Integer indexes are 0-based. Retried invocations count as separate occurrences.
+- `occurrence` (`Literal['first', 'last'] | int`, default `'first'`): Which invocation to inspect if the tool is called multiple times. Integer indexes are 0-based.
+- `include_failed` (`bool`, default `False`): Whether tool-call attempts that ended in an error are considered. When `True`, each attempt counts as a separate occurrence.
 - `evaluation_name` (`str | None`): Custom name in reports.
 
 **Returns:** [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason] with a `bool` value.
@@ -164,7 +169,7 @@ dataset = Dataset(
 
 **Parameters:**
 
-- `MaxToolCalls`: `max_calls` (`int`) — maximum allowed locally-executed tool calls.
+- `MaxToolCalls`: `max_calls` (`int`) — maximum allowed locally-executed tool calls. `include_failed` (`bool`, default `True`) controls whether attempts that ended in an error count against the budget (by default they do — they still consumed time and tokens).
 - `MaxModelRequests`: `max_requests` (`int`) — maximum allowed model (chat) requests. Prefers the `requests` value from `ctx.metrics` when available, otherwise counts LLM request spans directly (both use the same criteria).
 - Both accept `evaluation_name` (`str | None`) to customize the name in reports — useful when the same budget check appears at both the dataset and case level.
 

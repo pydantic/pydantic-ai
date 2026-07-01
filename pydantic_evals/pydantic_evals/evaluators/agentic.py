@@ -20,14 +20,16 @@ not captured (e.g. Logfire isn't configured).
     do not create local spans and will not be counted.
 
 !!! note "What counts as a tool call"
-    Every execution *attempt* produces a span, so:
+    Every execution *attempt* produces a span, discriminated as follows:
 
-    - A call the model retried (e.g. the tool raised `ModelRetry`) is counted
-      once per attempt, and each attempt's arguments are recorded separately.
-    - A call whose tool body raised an exception is still counted — its
-      arguments were recorded before the failure.
-    - A deferred call (`ApprovalRequired` / `CallDeferred`) is **not** counted:
-      it never actually executed in this run.
+    - An attempt that ended in an error — the tool body raised an exception,
+      or requested a retry via `ModelRetry` — is **not** counted by default;
+      pass `include_failed=True` to count every attempt. The exception:
+      [`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls] counts failed
+      attempts by default (they still consume budget); pass
+      `include_failed=False` there to count only successful calls.
+    - A deferred call (`ApprovalRequired` / `CallDeferred`) is **never**
+      counted: it did not execute in this run.
     - All matching spans in the captured tree are counted, including tool
       calls made by nested sub-agents (agent-as-tool delegation).
 """
@@ -156,16 +158,20 @@ def _extract_tool_call_info(node: SpanNode) -> _ToolCallInfo:
     )
 
 
-def _extract_tool_calls(span_tree: SpanTree) -> list[_ToolCallInfo]:
+def _matches_tool_call(node: SpanNode, *, include_failed: bool) -> bool:
+    return _is_tool_call_span(node) and (include_failed or node.status != 'error')
+
+
+def _extract_tool_calls(span_tree: SpanTree, *, include_failed: bool) -> list[_ToolCallInfo]:
     """Return all locally-executed tool calls in the tree, ordered by start time."""
-    tool_spans = [node for node in span_tree if _is_tool_call_span(node)]
+    tool_spans = [node for node in span_tree if _matches_tool_call(node, include_failed=include_failed)]
     tool_spans.sort(key=lambda n: n.start_timestamp)
     return [_extract_tool_call_info(node) for node in tool_spans]
 
 
-def _count_tool_calls(span_tree: SpanTree) -> int:
+def _count_tool_calls(span_tree: SpanTree, *, include_failed: bool) -> int:
     """Count locally-executed tool-call spans in the tree."""
-    return sum(1 for node in span_tree if _is_tool_call_span(node))
+    return sum(1 for node in span_tree if _matches_tool_call(node, include_failed=include_failed))
 
 
 def _count_model_requests(span_tree: SpanTree) -> int:
@@ -196,6 +202,10 @@ class ToolCorrectness(Evaluator[object, object, object]):
         allow_extra: If `False` (the default), any tool call not listed in
             `expected_tools` fails the check. Set to `True` to only require
             that the expected tools were called, permitting extras.
+        include_failed: If `False` (the default), tool-call attempts that
+            ended in an error (a raised exception, or a retry requested via
+            `ModelRetry`) are not counted. Set to `True` to count every
+            attempt.
         evaluation_name: Optional override for the reported evaluation name.
 
     Returns `EvaluationReason` with a `bool` value.
@@ -203,6 +213,7 @@ class ToolCorrectness(Evaluator[object, object, object]):
 
     expected_tools: list[str]
     allow_extra: bool = False
+    include_failed: bool = False
     evaluation_name: str | None = field(default=None)
 
     def get_default_evaluation_name(self) -> str:
@@ -214,7 +225,7 @@ class ToolCorrectness(Evaluator[object, object, object]):
         except SpanTreeRecordingError:
             return EvaluationReason(value=False, reason=_NO_SPAN_TREE_REASON)
 
-        actual = Counter(call.name for call in _extract_tool_calls(span_tree))
+        actual = Counter(call.name for call in _extract_tool_calls(span_tree, include_failed=self.include_failed))
         expected = Counter(self.expected_tools)
 
         missing = expected - actual
@@ -287,6 +298,10 @@ class TrajectoryMatch(Evaluator[object, object, object]):
             - `'any_order'`: F1 computed from the multiset intersection of the
               two trajectories. Order is ignored, but extra and missing calls
               still reduce the score.
+        include_failed: If `False` (the default), tool-call attempts that
+            ended in an error (a raised exception, or a retry requested via
+            `ModelRetry`) are not part of the trajectory. Set to `True` to
+            include every attempt.
         evaluation_name: Optional override for the reported evaluation name.
 
     Returns `EvaluationReason` with a `float` value in `[0.0, 1.0]` (including
@@ -300,6 +315,7 @@ class TrajectoryMatch(Evaluator[object, object, object]):
 
     expected_trajectory: list[str]
     order: TrajectoryOrder = 'in_order'
+    include_failed: bool = False
     evaluation_name: str | None = field(default=None)
 
     def get_default_evaluation_name(self) -> str:
@@ -311,7 +327,7 @@ class TrajectoryMatch(Evaluator[object, object, object]):
         except SpanTreeRecordingError:
             return EvaluationReason(value=0.0, reason=_NO_SPAN_TREE_REASON)
 
-        actual = [call.name for call in _extract_tool_calls(span_tree)]
+        actual = [call.name for call in _extract_tool_calls(span_tree, include_failed=self.include_failed)]
         expected = list(self.expected_trajectory)
 
         if self.order == 'exact':
@@ -383,8 +399,11 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
             compare equal to the actual value in full.
         occurrence: Which invocation of the tool to inspect when the tool is
             called multiple times: `'first'`, `'last'`, or a 0-based integer
-            index. A negative int is not supported. Note that retried
-            invocations count as separate occurrences, so with retries
+            index. A negative int is not supported.
+        include_failed: If `False` (the default), tool-call attempts that
+            ended in an error (a raised exception, or a retry requested via
+            `ModelRetry`) are not considered. Set to `True` to consider every
+            attempt; each attempt then counts as a separate occurrence, so
             `'first'` may select an attempt that was subsequently retried.
         evaluation_name: Optional override for the reported evaluation name.
 
@@ -397,6 +416,7 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
     expected_arguments: dict[str, Any]
     match_mode: ArgumentMatchMode = 'subset'
     occurrence: ArgumentOccurrence | int = 'first'
+    include_failed: bool = False
     evaluation_name: str | None = field(default=None)
 
     def get_default_evaluation_name(self) -> str:
@@ -408,7 +428,8 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
         except SpanTreeRecordingError:
             return EvaluationReason(value=False, reason=_NO_SPAN_TREE_REASON)
 
-        matches = [call for call in _extract_tool_calls(span_tree) if call.name == self.tool_name]
+        tool_calls = _extract_tool_calls(span_tree, include_failed=self.include_failed)
+        matches = [call for call in tool_calls if call.name == self.tool_name]
         if not matches:
             return EvaluationReason(value=False, reason=f'No calls to tool {self.tool_name!r} were recorded.')
 
@@ -489,12 +510,17 @@ class MaxToolCalls(Evaluator[object, object, object]):
 
     Args:
         max_calls: Maximum allowed locally-executed tool calls.
+        include_failed: If `True` (the default), tool-call attempts that ended
+            in an error (a raised exception, or a retry requested via
+            `ModelRetry`) count against the budget — they still consumed time
+            and tokens. Set to `False` to count only successful calls.
         evaluation_name: Optional override for the reported evaluation name.
 
     Returns `EvaluationReason` with a `bool` value.
     """
 
     max_calls: int
+    include_failed: bool = True
     evaluation_name: str | None = field(default=None)
 
     def get_default_evaluation_name(self) -> str:
@@ -506,7 +532,7 @@ class MaxToolCalls(Evaluator[object, object, object]):
         except SpanTreeRecordingError:
             return EvaluationReason(value=False, reason=_NO_SPAN_TREE_REASON)
 
-        tool_count = _count_tool_calls(span_tree)
+        tool_count = _count_tool_calls(span_tree, include_failed=self.include_failed)
         return EvaluationReason(
             value=tool_count <= self.max_calls,
             reason=f'{tool_count} tool call(s), budget={self.max_calls}',

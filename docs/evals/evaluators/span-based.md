@@ -410,6 +410,7 @@ def example_properties(node: SpanNode) -> None:
     _ = node.attributes  # dict[str, AttributeValue]
     _ = node.start_timestamp  # datetime
     _ = node.end_timestamp  # datetime
+    _ = node.status  # 'unset' | 'ok' | 'error'
     _ = node.children  # list[SpanNode]
     _ = node.descendants  # list[SpanNode] (recursive)
     _ = node.ancestors  # list[SpanNode]

@@ -904,3 +904,23 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'refer to the documentation at '
         'https://ai.pydantic.dev/evals/#opentelemetry-integration.'
     )
+
+
+async def test_span_node_status_captured():
+    """`SpanNode.status` reflects the OTel span status (unset / ok / error)."""
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.trace import StatusCode
+
+    tracer = otel_trace.get_tracer(__name__)
+    with context_subtree() as tree:
+        with logfire.span('unset_span'):
+            pass
+        with tracer.start_as_current_span('ok_span') as ok_span:
+            ok_span.set_status(StatusCode.OK)
+        with pytest.raises(ValueError):
+            with logfire.span('error_span'):
+                raise ValueError('boom')
+
+    assert isinstance(tree, SpanTree)
+    statuses = {node.name: node.status for node in tree}
+    assert statuses == {'unset_span': 'unset', 'ok_span': 'ok', 'error_span': 'error'}

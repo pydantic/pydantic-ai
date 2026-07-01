@@ -28,7 +28,7 @@ with try_import() as imports_successful:
         TrajectoryMatch,
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
-    from pydantic_evals.otel.span_tree import SpanNode, SpanTree
+    from pydantic_evals.otel.span_tree import SpanNode, SpanStatus, SpanTree
 
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
@@ -46,6 +46,7 @@ def _make_span(
     start_offset: float = 0.0,
     duration: float = 0.01,
     trace_id: int = 1,
+    status: SpanStatus = 'unset',
 ) -> SpanNode:
     """Build a `SpanNode` directly for test fixtures.
 
@@ -60,6 +61,7 @@ def _make_span(
         start_timestamp=_EPOCH + timedelta(seconds=start_offset),
         end_timestamp=_EPOCH + timedelta(seconds=start_offset + duration),
         attributes=dict(attributes or {}),
+        status=status,
     )
 
 
@@ -116,6 +118,23 @@ def _v3_output_function_span(*, name: str, span_id: int, start_offset: float) ->
             'logfire.msg': f'running output function: {name}',
         },
         start_offset=start_offset,
+    )
+
+
+def _failed_tool_span(*, name: str, span_id: int, args: str | None, start_offset: float) -> SpanNode:
+    """A tool span whose attempt ended in an error (raised exception or `ModelRetry`)."""
+    attrs: dict[str, Any] = {
+        'gen_ai.tool.name': name,
+        'logfire.msg': f'running tool: {name}',
+    }
+    if args is not None:
+        attrs['gen_ai.tool.call.arguments'] = args
+    return _make_span(
+        name=f'execute_tool {name}',
+        span_id=span_id,
+        attributes=attrs,
+        start_offset=start_offset,
+        status='error',
     )
 
 
@@ -218,6 +237,62 @@ def test_tool_spans_ignore_deferred_tool_calls():
     assert result.value is False
     assert result.reason is not None
     assert "missing tools: 'delete_account' (x1)" in result.reason
+
+
+def test_failed_attempts_excluded_by_default():
+    # A tool raised ModelRetry with bad args, then the model retried
+    # successfully: one errored span and one successful span. By default only
+    # the successful call counts, so the trajectory is the logical one.
+    tree = _build_tree(
+        [
+            _failed_tool_span(name='search', span_id=1, args='{"q": "bad"}', start_offset=0.0),
+            _v3_tool_span(name='search', span_id=2, args='{"q": "good"}', start_offset=0.1),
+        ]
+    )
+    assert ToolCorrectness(expected_tools=['search']).evaluate(_ctx(tree=tree)) == EvaluationReason(value=True)
+    result = TrajectoryMatch(expected_trajectory=['search'], order='exact').evaluate(_ctx(tree=tree))
+    assert result.value == 1.0
+    # ArgumentCorrectness picks the successful attempt's arguments.
+    args_result = ArgumentCorrectness(tool_name='search', expected_arguments={'q': 'good'}).evaluate(_ctx(tree=tree))
+    assert args_result.value is True
+
+
+def test_failed_attempts_included_when_requested():
+    tree = _build_tree(
+        [
+            _failed_tool_span(name='search', span_id=1, args='{"q": "bad"}', start_offset=0.0),
+            _v3_tool_span(name='search', span_id=2, args='{"q": "good"}', start_offset=0.1),
+        ]
+    )
+    # Both attempts count: expected multiset of one 'search' now has an extra.
+    result = ToolCorrectness(expected_tools=['search'], include_failed=True).evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason is not None
+    assert "unexpected tools: 'search' (x1)" in result.reason
+    # The first occurrence is now the failed attempt.
+    args_result = ArgumentCorrectness(
+        tool_name='search',
+        expected_arguments={'q': 'bad'},
+        include_failed=True,
+    ).evaluate(_ctx(tree=tree))
+    assert args_result.value is True
+
+
+def test_max_tool_calls_counts_failed_attempts_by_default():
+    tree = _build_tree(
+        [
+            _failed_tool_span(name='search', span_id=1, args=None, start_offset=0.0),
+            _v3_tool_span(name='search', span_id=2, args='{}', start_offset=0.1),
+        ]
+    )
+    # Both attempts consume budget by default...
+    result = MaxToolCalls(max_calls=1).evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason is not None
+    assert '2 tool call(s)' in result.reason
+    # ...but only successful calls count when include_failed=False.
+    result = MaxToolCalls(max_calls=1, include_failed=False).evaluate(_ctx(tree=tree))
+    assert result.value is True
 
 
 def test_tool_spans_ignore_unrelated_spans():
