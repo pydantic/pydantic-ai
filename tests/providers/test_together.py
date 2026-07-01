@@ -98,3 +98,9 @@ def test_together_provider_model_profile(mocker: MockerFixture):
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    # A model name without a `/` must not crash (regression for the unguarded `split('/', 1)`
+    # unpack); it falls back to the OpenAI-compatible default like the other providers.
+    no_slash_profile = provider.model_profile('gpt-4o-mini')
+    assert no_slash_profile is not None
+    assert no_slash_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
