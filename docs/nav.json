@@ -348,7 +348,8 @@
         "label": "Conversational Agents",
         "items": [
           "examples/chat-app",
-          "examples/bank-support"
+          "examples/bank-support",
+          "examples/dakera-memory-agent"
         ]
       },
       {
