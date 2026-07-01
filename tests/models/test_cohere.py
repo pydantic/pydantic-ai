@@ -29,6 +29,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -71,7 +72,7 @@ with try_import() as imports_successful:
     )
     from cohere.core.api_error import ApiError
 
-    from pydantic_ai.models.cohere import CohereModel
+    from pydantic_ai.models.cohere import CohereModel, CohereStreamedResponse
     from pydantic_ai.providers.cohere import CohereProvider
 
     MockChatResponse = ChatResponse | Exception
@@ -108,7 +109,7 @@ class MockClientWrapper:
 @dataclass
 class MockAsyncClientV2:
     completions: MockChatResponse | Sequence[MockChatResponse] | None = None
-    stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]] | None = None
+    stream: Exception | Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]] | None = None
     index: int = 0
     chat_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     _client_wrapper: MockClientWrapper = None  # type: ignore
@@ -122,7 +123,7 @@ class MockAsyncClientV2:
 
     @classmethod
     def create_stream_mock(
-        cls, stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]]
+        cls, stream: Exception | Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]]
     ) -> AsyncClientV2:
         return cast(AsyncClientV2, cls(stream=stream))
 
@@ -141,6 +142,8 @@ class MockAsyncClientV2:
     def chat_stream(self, *_args: Any, **kwargs: Any) -> MockAsyncStream[MockStreamEvent]:
         self.chat_kwargs.append(kwargs)
         assert self.stream is not None
+        raise_if_exception(self.stream)
+        assert not isinstance(self.stream, Exception)
         if isinstance(self.stream[0], Sequence):
             response = MockAsyncStream(iter(cast(list[MockStreamEvent], self.stream[self.index])))
         else:
@@ -959,3 +962,160 @@ async def test_stream_thinking(allow_model_requests: None):
     assert len(text_parts) == 1
     assert text_parts[0].content == snapshot('The answer is 42.')
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=5, output_tokens=4))
+
+
+async def test_stream_request_status_error(allow_model_requests: None) -> None:
+    mock_client = MockAsyncClientV2.create_stream_mock(
+        ApiError(status_code=500, body={'error': 'test error'}),
+    )
+    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass  # pragma: no cover
+    assert str(exc_info.value) == snapshot("status_code: 500, model_name: command-r, body: {'error': 'test error'}")
+
+
+async def test_stream_request_non_http_error(allow_model_requests: None) -> None:
+    mock_client = MockAsyncClientV2.create_stream_mock(
+        ApiError(status_code=None, body={'error': 'connection error'}),
+    )
+    m = CohereModel('command-r', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(m)
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass  # pragma: no cover
+    assert exc_info.value.model_name == 'command-r'
+
+
+async def test_stream_event_edge_cases():
+    """Regression: boundary conditions in `_get_event_iterator` that must yield no part event."""
+    events: list[Any] = [
+        # A real Cohere stream begins with a message-start event, which this model doesn't yet
+        # handle: it must fall through the isinstance chain without raising or yielding.
+        cohere.MessageStartV2ChatStreamResponse(type='message-start'),
+        # ContentStart with no index: guard clause skips content-type tracking.
+        ContentStartV2ChatStreamResponse(
+            index=None,
+            delta=ChatContentStartEventDelta(
+                message=ChatContentStartEventDeltaMessage(
+                    content=ChatContentStartEventDeltaMessageContent(type='thinking')
+                )
+            ),
+        ),
+        # ContentDelta with no index: guard clause skips entirely.
+        ContentDeltaV2ChatStreamResponse(
+            index=None,
+            delta=ChatContentDeltaEventDelta(
+                message=ChatContentDeltaEventDeltaMessage(
+                    content=ChatContentDeltaEventDeltaMessageContent(text='ignored')
+                )
+            ),
+        ),
+        # A real thinking index registered, then a delta with empty thinking content (falsy).
+        ContentStartV2ChatStreamResponse(
+            index=0,
+            delta=ChatContentStartEventDelta(
+                message=ChatContentStartEventDeltaMessage(
+                    content=ChatContentStartEventDeltaMessageContent(type='thinking')
+                )
+            ),
+        ),
+        ContentDeltaV2ChatStreamResponse(
+            index=0,
+            delta=ChatContentDeltaEventDelta(
+                message=ChatContentDeltaEventDeltaMessage(content=ChatContentDeltaEventDeltaMessageContent(thinking=''))
+            ),
+        ),
+        # A real (non-thinking) index, then a delta with empty text content (falsy).
+        ContentDeltaV2ChatStreamResponse(
+            index=1,
+            delta=ChatContentDeltaEventDelta(
+                message=ChatContentDeltaEventDeltaMessage(content=ChatContentDeltaEventDeltaMessageContent(text=''))
+            ),
+        ),
+        # ToolCallStart with no tool_calls on the message: guard clause skips.
+        ToolCallStartV2ChatStreamResponse(
+            index=2,
+            delta=ChatToolCallStartEventDelta(message=ChatToolCallStartEventDeltaMessage(tool_calls=None)),
+        ),
+        # ToolCallStart that produces no part-start event (no name yet).
+        ToolCallStartV2ChatStreamResponse(
+            index=3,
+            delta=ChatToolCallStartEventDelta(
+                message=ChatToolCallStartEventDeltaMessage(
+                    tool_calls=ToolCallV2(id='tc-noname', type='function', function=None)
+                )
+            ),
+        ),
+        # ToolCallDelta with no tool_calls on the message: guard clause skips.
+        ToolCallDeltaV2ChatStreamResponse(
+            index=3,
+            delta=ChatToolCallDeltaEventDelta(message=ChatToolCallDeltaEventDeltaMessage(tool_calls=None)),
+        ),
+        # ToolCallDelta that passes the guard but carries no new args: still incomplete, no event.
+        ToolCallDeltaV2ChatStreamResponse(
+            index=3,
+            delta=ChatToolCallDeltaEventDelta(
+                message=ChatToolCallDeltaEventDeltaMessage(
+                    tool_calls=ChatToolCallDeltaEventDeltaMessageToolCalls(function=None)
+                )
+            ),
+        ),
+        # MessageEnd with no delta: guard clause skips entirely.
+        MessageEndV2ChatStreamResponse(delta=None),
+        # MessageEnd with a delta but no finish_reason and no usage.
+        MessageEndV2ChatStreamResponse(delta=ChatMessageEndEventDelta(finish_reason=None, usage=None)),
+    ]
+    response = CohereStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='command-r7b-12-2024',
+        _provider_name='cohere',
+        _provider_url='https://api.cohere.com',
+        _response=cast(Any, MockAsyncStream(iter(events))),
+    )
+
+    part_events = [e async for e in response._get_event_iterator()]  # pyright: ignore[reportPrivateUsage]
+
+    assert part_events == []
+    assert response.finish_reason is None
+    assert response.provider_details is None
+
+
+@pytest.mark.parametrize(
+    ('error_message', 'raises'),
+    [
+        ('async generator is already running', False),
+        ('boom', True),
+    ],
+)
+async def test_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
+    class FailingStream:
+        async def aclose(self) -> None:
+            raise RuntimeError(error_message)
+
+    response = CohereStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='command-r7b-12-2024',
+        _provider_name='cohere',
+        _provider_url='https://api.cohere.com',
+        _response=cast(Any, FailingStream()),
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match='boom'):
+            await response.close_stream()
+    else:
+        await response.close_stream()
+
+
+async def test_close_stream_no_aclose():
+    """`close_stream` is a no-op when the underlying response has no `aclose` method."""
+    response = CohereStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='command-r7b-12-2024',
+        _provider_name='cohere',
+        _provider_url='https://api.cohere.com',
+        _response=cast(Any, iter([])),
+    )
+    await response.close_stream()
