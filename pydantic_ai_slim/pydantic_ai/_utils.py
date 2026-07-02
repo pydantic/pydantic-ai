@@ -268,7 +268,14 @@ class Unset:
     pass
 
 
-UNSET = Unset()
+# Preserve the singleton's identity across `importlib.reload(pydantic_ai._utils)`.
+# `is_set()` below compares by identity (`is not UNSET`), and many callers capture
+# `UNSET` as a default argument value at import time (e.g. `Agent.override(retries=UNSET)`).
+# A reload re-executes this module into its existing namespace without clearing it, so
+# reusing the current instance keeps those captured defaults matching `UNSET`; otherwise a
+# reload would rebind `UNSET` to a fresh object and `is_set()` would wrongly report every
+# previously-captured default as *set*.
+UNSET: Unset = globals().get('UNSET') or Unset()
 
 
 def is_set(t_or_unset: T | Unset) -> TypeGuard[T]:

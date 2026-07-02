@@ -307,6 +307,32 @@ async def test_run_in_executor_runs_inline_by_default_on_emscripten(monkeypatch:
         importlib.reload(utils_module)
 
 
+def test_unset_singleton_survives_reload():
+    """`UNSET` must keep its identity across `importlib.reload(_utils)`.
+
+    `is_set()` compares by identity, and callers across the codebase capture `UNSET`
+    as a default argument value at import time (e.g. `Agent.override(retries=UNSET)`).
+    Other tests in this module reload `_utils` to re-evaluate a platform-derived default;
+    if that reload rebound `UNSET` to a fresh object, every already-captured default would
+    start reading as *set*, so e.g. `agent.override(deps=...)` would treat its unset
+    `retries` sentinel as a real value and raise `AttributeError: 'Unset' object has no
+    attribute 'copy'`. Regression guard for that cross-test leak.
+    """
+    original_unset = utils_module.UNSET
+    original_unset_type = utils_module.Unset
+
+    importlib.reload(utils_module)
+    try:
+        assert utils_module.UNSET is original_unset
+        # A value captured against the pre-reload sentinel must still read as unset.
+        assert not utils_module.is_set(original_unset)
+        assert utils_module.is_set('something')
+    finally:
+        # Restore the type identity so later reloads/tests see a consistent module.
+        utils_module.Unset = original_unset_type
+        importlib.reload(utils_module)
+
+
 def test_is_async_callable():
     def sync_func(): ...  # pragma: no branch
 
