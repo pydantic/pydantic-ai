@@ -74,6 +74,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from pydantic_ai import ExternalToolset, FunctionToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 
 from ._inline_snapshot import snapshot
@@ -983,6 +984,63 @@ async def test_dbos_agent_run_in_workflow_with_runtime_external_toolset(dbos: DB
     assert result.output == DeferredToolRequests(
         calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
     )
+
+
+def runtime_tool() -> str:
+    return 'tool-result'
+
+
+async def test_dbos_agent_run_in_workflow_with_runtime_function_toolset(dbos: DBOS):
+    # Unlike Temporal and Prefect, DBOS runs function tools inline rather than wrapping them, so a
+    # `FunctionToolset` added per-run is allowed and executes like a constructor-time one. (The toolset,
+    # like all DBOS workflow arguments, must be serializable, so the tool is a module-level function.)
+    def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('runtime_tool', {}, tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(call_then_answer), name='runtime_function_toolset_agent')
+    dbos_agent = DBOSAgent(agent)
+
+    result = await dbos_agent.run('Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')])
+    assert result.output == 'done'
+    assert any(
+        isinstance(part, ToolReturnPart) and part.content == 'tool-result'
+        for message in result.all_messages()
+        for part in message.parts
+    )
+
+
+async def test_dbos_agent_run_in_workflow_rejects_runtime_mcp_toolset(dbos: DBOS):
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'MCPToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            'execute their own tools or resolve dynamically must be registered for durable execution when the '
+            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
+            '`ExternalToolset` can be passed at runtime.'
+        ),
+    ):
+        await simple_dbos_agent.run(
+            'Hello',
+            toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp')],
+        )
+
+
+async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: DBOS):
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'DynamicToolset cannot be passed to `run(toolsets=...)` at runtime with DBOS, because toolsets that '
+            'execute their own tools or resolve dynamically must be registered for durable execution when the '
+            'agent is constructed. Pass them to the agent constructor instead. Non-executing toolsets like '
+            '`ExternalToolset` can be passed at runtime.'
+        ),
+    ):
+        await simple_dbos_agent.run(
+            'Hello',
+            toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')],
+        )
 
 
 async def test_dbos_agent_override_model_in_workflow(allow_model_requests: None, dbos: DBOS):

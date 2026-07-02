@@ -35,6 +35,7 @@ from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -867,6 +868,22 @@ async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
     assert result.output == DeferredToolRequests(
         calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
     )
+
+
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
+async def test_prefect_agent_run_rejects_executing_runtime_toolsets(kind: str) -> None:
+    # Prefect wraps both function tools and MCP servers in tasks registered up front, and dynamic toolsets
+    # can't be introspected ahead of time, so none of them can be added per-run.
+    toolset_factories = {
+        'function': lambda: FunctionToolset(),
+        'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp'),
+        'dynamic': lambda: DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic'),
+    }
+    labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
+
+    prefect_agent = PrefectAgent(Agent(TestModel(), name=f'reject_{kind}_prefect_agent'))
+    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+        await prefect_agent.run('Hello', toolsets=[toolset_factories[kind]()])
 
 
 async def test_prefect_agent_override_tools(allow_model_requests: None) -> None:

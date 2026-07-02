@@ -34,6 +34,7 @@ from pydantic_ai.tools import (
     ToolFuncEither,
 )
 
+from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._model import PrefectModel
 from ._toolset import prefectify_toolset
 
@@ -174,6 +175,12 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self, additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
     ) -> Generator[None]:
         # Override with PrefectModel and PrefectMCPToolset in the toolsets.
+        # Per-run toolsets are merged with the constructor-time durable toolsets, but only non-executing
+        # ones are supported: Prefect wraps both function tools and MCP servers in tasks registered up
+        # front, and dynamic toolsets can't be introspected ahead of time.
+        reject_unsupported_runtime_toolsets(
+            additional_toolsets, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Prefect'
+        )
         merged_toolsets = [*self._toolsets, *(additional_toolsets or ())]
         with super().override(model=self._model, toolsets=merged_toolsets, tools=[]):
             yield
