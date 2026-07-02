@@ -142,11 +142,6 @@ async def process_tool_calls(
     `output_final_result` as output arguments.
     """
     if output_final_result is None:
-        # `output_final_result` is an output argument that is appended to, and at
-        # least one caller relies on this default rather than passing its own. A
-        # shared module-level `deque(maxlen=1)` would be reused across every such
-        # run, retaining the previous run's final result (a mutable-default / B006
-        # footgun). Give each call that omits the argument its own deque.
         output_final_result = deque(maxlen=1)
     end_strategy = ctx.deps.end_strategy
     if end_strategy == 'exhaustive':
