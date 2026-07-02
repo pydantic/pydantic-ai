@@ -1,5 +1,6 @@
 import asyncio
 import re
+import threading
 from contextlib import contextmanager
 from datetime import timezone
 from unittest.mock import AsyncMock, patch
@@ -180,17 +181,30 @@ def test_model_request_stream_sync_timeout():
     """Test timeout when stream fails to initialize."""
     async_stream_mock = AsyncMock()
 
-    async def slow_init():
-        await asyncio.sleep(0.1)
+    # Gate initialization on an event rather than a fixed sleep: a sleep can finish before the main
+    # thread's (much shorter) readiness wait under heavy CI load, initializing the stream and raising
+    # a different error than the timeout this test is about. The gate is only released after the
+    # timeout has been observed, so initialization can never win the race — and `__exit__` (which
+    # joins the producer thread) still returns promptly.
+    release_init = threading.Event()
 
-    async_stream_mock.__aenter__ = AsyncMock(side_effect=slow_init)
+    async def blocked_init():
+        while not release_init.is_set():
+            await asyncio.sleep(0.01)
+
+    async_stream_mock.__aenter__ = AsyncMock(side_effect=blocked_init)
 
     stream_sync = StreamedResponseSync(_async_stream_cm=async_stream_mock)
 
     with patch('pydantic_ai.direct.STREAM_INITIALIZATION_TIMEOUT', 0.01):
         with stream_sync:
-            with pytest.raises(RuntimeError, match='Stream failed to initialize within timeout'):
-                _ = stream_sync.response
+            try:
+                with pytest.raises(RuntimeError, match='Stream failed to initialize within timeout'):
+                    _ = stream_sync.response
+            finally:
+                # Always release the gate: `__exit__` joins the producer thread, so leaving it closed
+                # on an assertion failure would hang the test instead of failing fast.
+                release_init.set()
 
 
 def test_model_request_stream_sync_intermediate_get():

@@ -69,6 +69,11 @@ from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
+# Wall-clock guard for the readiness `Event.wait()`s in the timing-sensitive tests below. The events are
+# set near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout
+# is configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
+READINESS_WAIT_TIMEOUT = 10
+
 
 class Foo(BaseModel):
     a: int
@@ -2896,8 +2901,8 @@ class TestMultipleToolCalls:
                 await result.get_output()  # pragma: no cover
 
         task = asyncio.create_task(run())
-        await asyncio.wait_for(first_done.wait(), timeout=1)
-        await asyncio.wait_for(pending_started.wait(), timeout=1)
+        await asyncio.wait_for(first_done.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        await asyncio.wait_for(pending_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -5054,7 +5059,6 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     """Entering and exiting the CM without advancing the iterator must still drain the background task."""
     producer_started = asyncio.Event()
     producer_finalized = asyncio.Event()
-    readiness_wait_timeout = 10.0
 
     class CleanupSignalTestModel(TestModel):
         @asynccontextmanager
@@ -5080,11 +5084,11 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     agent = Agent(CleanupSignalTestModel(custom_output_text='hello'))
 
     async with agent.run_stream_events(''):
-        await asyncio.wait_for(producer_started.wait(), timeout=readiness_wait_timeout)
+        await asyncio.wait_for(producer_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
     # `aclose()` on the unstarted iterator skips its cleanup branches, so the CM body itself must
     # drain the background task; otherwise the producer's `finally` never runs.
-    await asyncio.wait_for(producer_finalized.wait(), timeout=readiness_wait_timeout)
+    await asyncio.wait_for(producer_finalized.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
 
 async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
@@ -5113,7 +5117,7 @@ async def test_run_stream_events_break_on_final_result_retrieves_late_producer_e
                 if isinstance(event, FinalResultEvent):
                     # This mirrors the documented "stop once final result is known" pattern.
                     # The producer task can still finish with an exception before the CM exits.
-                    await asyncio.wait_for(producer_finished.wait(), timeout=1.0)
+                    await asyncio.wait_for(producer_finished.wait(), timeout=READINESS_WAIT_TIMEOUT)
                     await asyncio.sleep(0)
                     break
 
@@ -5228,7 +5232,7 @@ async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_
                 pass
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

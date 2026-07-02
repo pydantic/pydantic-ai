@@ -148,6 +148,17 @@ jobs:
           restore-keys: |
             hf-${{ runner.os }}-
 
+      # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
+      # tests/test_temporal.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
+      - name: cache Temporal dev-server binary
+        if: matrix.install.name == 'all-extras'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/temporal-dev-server
+          key: temporal-cli-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            temporal-cli-${{ runner.os }}-
+
       # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
       # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
       # instead of 4). `logical` uses all vCPUs; ~39% faster on premium-4, no-op
@@ -205,6 +216,19 @@ jobs:
           key: hf-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
           restore-keys: |
             hf-${{ runner.os }}-
+
+      # See the matching step in the `test` job. Separate `lowest-` key: this job may resolve a
+      # different temporalio version than the frozen lockfile, wanting a different binary. A stale or
+      # cross-restored dir is safe either way — the SDK names the binary by its own version and
+      # re-downloads on a filename miss.
+      - name: cache Temporal dev-server binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/temporal-dev-server
+          key: temporal-cli-${{ runner.os }}-lowest-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            temporal-cli-${{ runner.os }}-lowest-
+            temporal-cli-${{ runner.os }}-
 
       - run: uv sync --all-extras --resolution lowest-direct
         env:
