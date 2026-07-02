@@ -256,7 +256,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             tool_name=part.tool_name,
             provider_executed=provider_executed,
             provider_metadata=dump_provider_metadata(
-                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                id=part.id,
+                tool_kind=part.tool_kind,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
             ),
         )
         if part.args:
@@ -316,7 +319,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             tool_name=part.tool_name,
             input=part.args_as_dict(),
             provider_metadata=dump_provider_metadata(
-                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                id=part.id,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
+                tool_kind=part.tool_kind,
             ),
         )
 
@@ -327,7 +333,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             input=part.args_as_dict(),
             provider_executed=True,
             provider_metadata=dump_provider_metadata(
-                id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                id=part.id,
+                provider_name=part.provider_name,
+                provider_details=part.provider_details,
+                tool_kind=part.tool_kind,
             ),
         )
 
@@ -378,6 +387,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                     id=streamed_part.id,
                     provider_name=streamed_part.provider_name,
                     provider_details=streamed_part.provider_details,
+                    tool_kind=streamed_part.tool_kind,
                 ),
             )
 
@@ -398,6 +408,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                     id=invalidated_part.id,
                     provider_name=invalidated_part.provider_name,
                     provider_details=invalidated_part.provider_details,
+                    tool_kind=invalidated_part.tool_kind,
                 ),
                 error_text=part.model_response() if isinstance(part, RetryPromptPart) else part.model_response_str(),
             )

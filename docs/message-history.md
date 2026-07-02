@@ -411,6 +411,65 @@ print(result2.all_messages())
 """
 ```
 
+_(This example is complete, it can be run "as is")_
+
+## Sharing messages between agents
+
+The same `message_history` parameter also works when the next run uses a
+different [`Agent`][pydantic_ai.Agent]. This is useful for
+[programmatic agent hand-off](multi-agent-applications.md#programmatic-agent-hand-off),
+where your application runs one agent, then gives another agent the conversation
+so far as context.
+
+```python {title="sharing_messages_between_agents.py" hl_lines="19"}
+from pydantic_ai import Agent
+
+biography_agent = Agent(
+    'openai:gpt-5.2',
+    instructions='Answer biographical questions concisely.',
+)
+
+science_agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='Answer science questions for a general audience.',
+)
+
+biography_result = biography_agent.run_sync('Who was Albert Einstein?')
+print(biography_result.output)
+#> Albert Einstein was a German-born theoretical physicist.
+
+science_result = science_agent.run_sync(
+    'What was his most famous equation?',
+    message_history=biography_result.new_messages(),
+)
+print(science_result.output)
+#> Albert Einstein's most famous equation is (E = mc^2).
+```
+
+_(This example is complete, it can be run "as is")_
+
+!!! note "Instructions, system prompts, and tools"
+    When you pass `message_history` to another agent, previous
+    [`ModelRequest`][pydantic_ai.messages.ModelRequest] messages still contain
+    the instructions used by the originating agent, but those instructions are
+    not sent to the model again. The receiving agent uses its own
+    `instructions`; see [Instructions](agent.md#instructions) for how this
+    differs from [system prompts](agent.md#system-prompts) when
+    `message_history` is provided.
+
+    `system_prompt` is different: system prompt parts are part of the message
+    history. If the receiving agent has its own `system_prompt` and you need to
+    ensure it is present when reusing history, see
+    [`ReinjectSystemPrompt`](capabilities.md#reinjectsystemprompt). Use
+    `replace_existing=True` when a system prompt from another agent should not
+    remain authoritative.
+
+    Tool call and tool return parts also remain in the history. Prefer sharing
+    history between agents that can understand the same tool context, or pass
+    only the messages that make sense for the receiving agent.
+
+For more complex multi-agent patterns, see the [multi-agent applications](multi-agent-applications.md) documentation.
+
 ## Injecting messages mid-run
 
 Tools, capability hooks, and external code driving an agent run can inject extra content
