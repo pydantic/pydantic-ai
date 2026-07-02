@@ -940,7 +940,7 @@ async def test_xai_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_stream_text_finish_reason(allow_model_requests: None):
@@ -1012,7 +1012,9 @@ async def test_xai_stream_structured(allow_model_requests: None):
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot({'first': 'One', 'second': 'Two'})
-    assert agent_run.usage == snapshot(RunUsage(input_tokens=20, output_tokens=1, requests=1))
+    assert agent_run.usage == snapshot(
+        RunUsage(input_tokens=20, output_tokens=1, requests=1, cost=Decimal('0.0000045'))
+    )
 
     # Verify event types: one PartStartEvent, then PartDeltaEvents for args
     # (UI adapters like Vercel AI and AG-UI expect deltas, not repeated starts)
@@ -1120,7 +1122,7 @@ async def test_xai_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_none_delta(allow_model_requests: None):
@@ -1137,7 +1139,7 @@ async def test_xai_none_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])

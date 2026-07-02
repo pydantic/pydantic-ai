@@ -293,7 +293,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        ignore_warning_cost: bool = False,
     ) -> None: ...
 
     @overload
@@ -318,7 +317,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        ignore_warning_cost: bool = False,
     ) -> None: ...
 
     def __init__(
@@ -342,7 +340,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
-        ignore_warning_cost: bool = True,
     ) -> None:
         """Create an agent.
 
@@ -410,7 +407,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] for more information.
                 Custom capabilities can be created by subclassing
                 [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
-            ignore_warning_cost: If `True`, the agent will ignore warnings about token cost.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -492,8 +488,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._event_stream_handler = None
 
         self._concurrency_limiter = _concurrency.normalize_to_limiter(max_concurrency)
-
-        self._ignore_warning_cost = ignore_warning_cost
 
         self._override_name: ContextVar[_utils.Option[str]] = ContextVar('_override_name', default=None)
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
@@ -1159,7 +1153,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             output_retries_used=0,
             run_step=0,
-            ignore_warning_cost=self._ignore_warning_cost,
             conversation_id=_agent_graph.resolve_conversation_id(conversation_id, message_history),
         )
 

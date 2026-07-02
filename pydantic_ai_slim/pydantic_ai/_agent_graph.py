@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
-import warnings
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
@@ -11,14 +10,13 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import field, replace
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, best_effort_cost
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
@@ -144,7 +142,6 @@ class GraphAgentState:
     usage: _usage.RunUsage = dataclasses.field(default_factory=_usage.RunUsage)
     output_retries_used: int = 0
     run_step: int = 0
-    ignore_warning_cost: bool = False
     run_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     conversation_id: str = dataclasses.field(default_factory=lambda: str(uuid7()))
     """The unique identifier of the conversation this run belongs to.
@@ -685,7 +682,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 ) as sr:
                     self._did_stream = True
                     ctx.state.usage.requests += 1
-                    ctx.state.usage.cost += cost(sr, ctx.state.ignore_warning_cost)
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
@@ -781,6 +777,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         conversation_id=ctx.state.conversation_id,
                     )
                     ctx.state.usage.incr(partial_response.usage)
+                    ctx.state.usage.cost += best_effort_cost(partial_response)
                     ctx.state.message_history.append(partial_response)
             else:
                 try:
@@ -886,7 +883,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._build_retry_node(ctx, e)
         self.last_request_context = request_context
         ctx.state.usage.requests += 1
-        ctx.state.usage.cost += cost(model_response, ctx.state.ignore_warning_cost)
 
         return await self._finish_handling(ctx, model_response)
 
@@ -1091,6 +1087,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """Append a model response to history, updating usage tracking."""
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.usage.incr(response.usage)
+        ctx.state.usage.cost += best_effort_cost(response)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)
         ctx.state.message_history.append(response)
@@ -1479,27 +1476,6 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> End[result.FinalResult[NodeRunEndT]]:
         return End(self.final_result)
-
-
-def cost(response: _messages.ModelResponse | models.StreamedResponse, ignore_warning_cost: bool) -> Decimal:
-    # If we can't calculate the price, we don't want to fail the run.
-    if not response.model_name:
-        # Without a model name (e.g. a synthetic response from a capability) there's nothing to price.
-        return Decimal(0)
-    try:
-        cost = response.cost().total_price
-    except (LookupError, ValueError):
-        # NOTE(Marcelo): We can allow some kind of hook on the provider level, which we could retrieve via
-        # `ctx.deps.model.provider.calculate_cost`, but I'm not sure how would the API look like. Maybe a new parameter
-        # on the `Provider` classes, that parameter would be a callable that receives the same parameters as `genai_prices`.
-        if response.model_name not in ('test', 'function') and not ignore_warning_cost:
-            warnings.warn(
-                f'The costs with provider "{response.provider_name}" and model "{response.model_name}" '
-                "couldn't be calculated. Please report this on GitHub https://github.com/pydantic/genai-prices. "
-                'If you want to ignore this warning, please pass the `ignore_warning_cost=True` parameter to the `Agent`.'
-            )
-        return Decimal(0)
-    return cost
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

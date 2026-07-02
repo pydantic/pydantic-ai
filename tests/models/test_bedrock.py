@@ -611,7 +611,9 @@ async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider
     assert data == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
-    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
+    assert result.usage == snapshot(
+        RunUsage(requests=1, input_tokens=13, output_tokens=82, cost=Decimal('0.000011935'))
+    )
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from typing_extensions import TypeVar
 
 from . import _utils, exceptions, messages as _messages, models
+from ._instrumentation import best_effort_cost
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -198,7 +199,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        return self._initial_run_ctx_usage + self._raw_stream_response.usage
+        # `_raw_stream_response.usage` is a `RequestUsage` and carries no cost, so add this request's
+        # best-effort cost (computed from the usage consumed so far) on top of the earlier requests' cost.
+        usage = self._initial_run_ctx_usage + self._raw_stream_response.usage
+        usage.cost += best_effort_cost(self._raw_stream_response.get())
+        return usage
 
     @property
     def timestamp(self) -> datetime:
@@ -362,8 +367,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         if self._agent_stream_iterator is None:
+            # Token-limit checks run after every event and only look at token counts, so skip the per-event
+            # cost calculation that the `usage` property does and pass the cheaper token-only usage.
             self._agent_stream_iterator = _get_usage_checking_stream_response(
-                self._raw_stream_response, self._usage_limits, lambda: self.usage
+                self._raw_stream_response,
+                self._usage_limits,
+                lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
             )
 
         base_iter = self._agent_stream_iterator

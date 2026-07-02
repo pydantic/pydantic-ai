@@ -26,7 +26,6 @@ class UsageBase:
 
     cache_write_tokens: int = 0
     """Number of tokens written to the cache."""
-
     cache_read_tokens: int = 0
     """Number of tokens read from the cache."""
 
@@ -39,10 +38,8 @@ class UsageBase:
 
     input_audio_tokens: int = 0
     """Number of audio input tokens."""
-
     cache_audio_read_tokens: int = 0
     """Number of audio tokens read from the cache."""
-
     output_audio_tokens: int = 0
     """Number of audio output tokens."""
 
@@ -202,8 +199,12 @@ class RunUsage(UsageBase):
     output_tokens: int = 0
     """Total number of output/completion tokens."""
 
-    cost: Decimal = Decimal('0.0')
-    """Total cost of the run."""
+    cost: Decimal = Decimal(0)
+    """Total cost of the run in USD, calculated with [genai-prices](https://github.com/pydantic/genai-prices).
+
+    This is a best-effort estimate: requests to models or providers that genai-prices doesn't have pricing data for
+    don't contribute to the total.
+    """
 
     details: dict[str, int] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""

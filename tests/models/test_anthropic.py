@@ -2431,6 +2431,7 @@ async def test_stream_structured(allow_model_requests: None):
                 output_tokens=5,
                 tool_calls=1,
                 details={'input_tokens': 20, 'output_tokens': 5},
+                cost=Decimal('0.000036'),
             )
         )
         assert tool_called
@@ -11503,6 +11504,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(allow_model_reque
                 'compaction_cache_creation_input_tokens': 55096,
             },
             requests=1,
+            cost=Decimal('0.208566'),
         )
     )
 

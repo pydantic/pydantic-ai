@@ -19,7 +19,6 @@ from types import TracebackType
 from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from genai_prices import calc_price, types as genai_types
 from typing_extensions import Self, TypeAliasType, TypedDict
 from typing_inspection.introspection import get_literal_values
 
@@ -868,19 +867,6 @@ class StreamedResponse(ABC):
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
-
-    def cost(self) -> genai_types.PriceCalculation:
-        """Calculate the cost of the usage.
-
-        Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
-        """
-        assert self.model_name, 'Model name is required to calculate price'
-        return calc_price(
-            self._usage,
-            self.model_name,
-            provider_id=self.provider_name,
-            genai_request_timestamp=self.timestamp,
-        )
 
     @property
     @abstractmethod
