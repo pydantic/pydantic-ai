@@ -78,9 +78,7 @@ def tool_return_output(part: BaseToolReturnPart, *, preserve_file_data: bool = F
     placeholders, because event-stream formats can't carry multimodal tool output (#3826). That
     dump-vs-stream difference is intentional, not a gap to fix.
     """
-    if preserve_file_data:
-        return tool_return_ta.dump_python(part.content, mode='json')
-    if part.files:
+    if not preserve_file_data and part.files:
         return part.model_response_str()
     return tool_return_ta.dump_python(part.content, mode='json')
 
