@@ -730,7 +730,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     ```python
     from pydantic_ai import Agent
 
-    agent = Agent('openai:gpt-5')
+    agent = Agent('openai:gpt-5.2')
 
     def main():
         with agent.run_stream_sync('What is the capital of the UK?') as response:
@@ -745,6 +745,14 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     _streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]
 
     def __init__(self, run_stream_cm: AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]) -> None:
+        if isinstance(run_stream_cm, StreamedRunResult):
+            # This wrapper used to take an already-entered `StreamedRunResult`, but it now needs the
+            # `run_stream()` context manager so it can enter it on the portal thread. Construct it via
+            # `agent.run_stream_sync(...)` instead. TODO (v3): remove this check.
+            raise TypeError(
+                '`StreamedRunResultSync` now takes the `run_stream()` context manager rather than an '
+                'already-entered `StreamedRunResult`; use `agent.run_stream_sync(...)` to construct it.'
+            )
         self._bridge = SyncStreamBridge(run_stream_cm, async_alternative='`run_stream`')
         self._streamed_run_result = self._bridge.stream
 

@@ -82,7 +82,7 @@ class SyncStreamBridge(Generic[StreamT]):
 
         Args:
             cm: The async streaming context manager to run on the portal thread.
-            async_alternative: How to refer to the async counterpart in error messages, e.g. `` '`run_stream`' ``.
+            async_alternative: How to name the async counterpart in error messages (e.g. `run_stream`).
         """
         try:
             asyncio.get_running_loop()

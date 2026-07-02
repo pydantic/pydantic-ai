@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -343,12 +343,20 @@ def test_run_stream_sync_tears_down_on_keyboard_interrupt(monkeypatch: pytest.Mo
 
 
 def test_run_stream_sync_early_break_tears_down_pump():
-    """Breaking out of a sync stream early unblocks and closes the pump without surfacing an error."""
+    """Abandoning a sync stream early unblocks and closes the pump without surfacing an error."""
     agent = Agent(TestModel(custom_output_text='The cat sat on the mat.'))
     with agent.run_stream_sync('Hello') as result:
-        for chunk in result.stream_text(delta=True, debounce_by=None):
-            assert chunk
-            break  # stop while the pump still has items to send
+        stream = result.stream_text(delta=True, debounce_by=None)
+        assert next(stream)  # pull one chunk while the pump still has more to send
+        # `stream_text` is typed `Iterator` but is a generator at runtime; closing it abandons the stream,
+        # closing the receive end the pump is sending into.
+        cast(Any, stream).close()
+
+
+def test_run_stream_sync_rejects_already_entered_result():
+    """Passing an already-entered `StreamedRunResult` (the old constructor arg) raises a clear error."""
+    with pytest.raises(TypeError, match='now takes the `run_stream\\(\\)` context manager'):
+        StreamedRunResultSync(cast(Any, object.__new__(StreamedRunResult)))
 
 
 async def test_streamed_structured_response():
@@ -3356,7 +3364,7 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
     )
 
     @asynccontextmanager
-    async def run_stream_cm() -> AsyncIterator[StreamedRunResult[None, str]]:
+    async def run_stream_cm() -> AsyncGenerator[StreamedRunResult[None, str]]:
         yield streamed
 
     with StreamedRunResultSync(run_stream_cm()) as sync_result:
