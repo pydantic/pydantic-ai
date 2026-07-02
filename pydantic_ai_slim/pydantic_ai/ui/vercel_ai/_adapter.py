@@ -104,6 +104,8 @@ if TYPE_CHECKING:
 __all__ = ['VercelAIAdapter']
 
 request_data_ta: TypeAdapter[RequestData] = TypeAdapter(RequestData)
+_TOOL_RETURN_METADATA_KIND = 'tool_return_metadata_kind'
+_FILE_CHUNK_METADATA_KIND = 'file_chunk'
 
 
 def _generate_message_id(
@@ -373,7 +375,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     elif isinstance(part, FileUIPart):
-                        if active_tool_return is not None:
+                        provider_meta = load_provider_metadata(part.provider_metadata)
+                        if (
+                            active_tool_return is not None
+                            and provider_meta.get(_TOOL_RETURN_METADATA_KIND) == _FILE_CHUNK_METADATA_KIND
+                        ):
                             _append_metadata_chunk(
                                 active_tool_return, FileChunk(url=part.url, media_type=part.media_type)
                             )
@@ -387,7 +393,6 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             raise ValueError(
                                 'Vercel AI integration can currently only handle assistant file parts with data URIs.'
                             ) from e
-                        provider_meta = load_provider_metadata(part.provider_metadata)
                         vendor_metadata = provider_meta.get('vendor_metadata')
                         # `vendor_metadata` is client-supplied and unconstrained; assignment on the
                         # (non-`validate_assignment`) `BinaryContent` dataclass bypasses validation,
@@ -1103,7 +1108,13 @@ def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePar
                 )
             )
         elif isinstance(chunk, FileChunk):
-            parts.append(FileUIPart(url=chunk.url, media_type=chunk.media_type))
+            parts.append(
+                FileUIPart(
+                    url=chunk.url,
+                    media_type=chunk.media_type,
+                    provider_metadata=dump_provider_metadata(**{_TOOL_RETURN_METADATA_KIND: _FILE_CHUNK_METADATA_KIND}),
+                )
+            )
         else:
             assert_never(chunk)
     return parts

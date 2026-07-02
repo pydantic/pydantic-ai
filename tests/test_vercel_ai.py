@@ -4361,7 +4361,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         'media_type': 'image/png',
                         'filename': None,
                         'url': 'https://example.com/file.png',
-                        'provider_metadata': None,
+                        'provider_metadata': {'pydantic_ai': {'tool_return_metadata_kind': 'file_chunk'}},
                     },
                     {
                         'type': 'data-valid',
@@ -4430,6 +4430,40 @@ async def test_adapter_dump_load_round_trips_tool_return_metadata_chunks(
     assert len(tool_returns) == 1
     assert tool_returns[0].metadata == chunks
     assert len(reloaded) == len(messages)
+
+
+async def test_adapter_load_messages_preserves_standalone_file_after_tool_output():
+    """Test untagged file parts after tool outputs stay standalone assistant files."""
+    file_content = BinaryContent(data=b'file_data', media_type='image/png')
+    ui_messages = [
+        UIMessage(
+            id='message-1',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-send_data',
+                    tool_call_id='call_1',
+                    input={},
+                    output='Data sent',
+                ),
+                FileUIPart(media_type=file_content.media_type, url=file_content.data_uri),
+            ],
+        )
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+
+    assert len(reloaded) == 3
+    assert isinstance(reloaded[1], ModelRequest)
+    tool_return = reloaded[1].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.metadata is None
+
+    assert isinstance(reloaded[2], ModelResponse)
+    file_part = reloaded[2].parts[0]
+    assert isinstance(file_part, FilePart)
+    assert file_part.content.data == file_content.data
+    assert file_part.content.media_type == file_content.media_type
 
 
 async def test_stream_and_dump_messages_metadata_consistency():
