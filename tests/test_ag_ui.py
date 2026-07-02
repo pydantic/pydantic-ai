@@ -4268,6 +4268,35 @@ def test_tool_return_file_sidecar_after_tool_message_raises(tiny_image: BinaryIm
         AGUIAdapter.load_messages(reordered, preserve_file_data=True)
 
 
+async def test_event_stream_tool_return_nested_multimodal_stripped(tiny_image: BinaryImage) -> None:
+    """The streaming path strips nested files too, so no file bytes reach the client in `TOOL_CALL_RESULT`.
+
+    Regression for the nested-file leak in the sibling streaming path: `_tool_return_content` calls
+    `model_response_str()`, which only excludes top-level files, so a nested `BinaryContent` was
+    serialized inline into the emitted event content.
+    """
+
+    async def event_generator() -> AsyncIterator[Any]:
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(
+                tool_name='get_file',
+                tool_call_id='tool_call_1',
+                content={'caption': 'see image', 'attachment': tiny_image},
+            )
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Call tool'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    tool_results = [e for e in events if e['type'] == 'TOOL_CALL_RESULT']
+    assert [e['content'] for e in tool_results] == snapshot(['{"caption":"see image"}'])
+    assert base64.b64encode(tiny_image.data).decode() not in str(events)
+
+
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
     """Test multimodal `NativeToolReturnPart.content` round-trips via the sidecar `ActivityMessage`."""
     original: list[ModelMessage] = [

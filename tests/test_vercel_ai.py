@@ -2326,6 +2326,46 @@ async def test_run_stream_tool_return_with_files():
     )
 
 
+async def test_run_stream_tool_return_nested_multimodal_stripped():
+    """The streaming path strips files nested below the top level, so no file bytes reach the client.
+
+    Regression for the nested-file leak in the sibling streaming path: `_tool_return_with_files` used
+    `model_response_object()`, which only excludes top-level files, so a nested `BinaryContent` was
+    serialized inline into the `tool-output-available` output.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='get_image', json_args='{}', tool_call_id='img_1')}
+        else:
+            yield 'I see an image'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def get_image() -> list[Any]:
+        img = BinaryImage(data=b'fake_png', media_type='image/png')
+        return ['Image description', img, {'thumbnail': img}]
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Get an image')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    tool_outputs: list[Any] = [
+        e['output'] for e in events if not isinstance(e, str) and e.get('type') == 'tool-output-available'
+    ]
+    assert tool_outputs == snapshot([[{'return_value': ['Image description', {}]}, '[File: image/png]']])
+    assert base64.b64encode(b'fake_png').decode() not in str(events)
+
+
 async def test_run_stream_tool_return_files_only():
     """Test that tool returns with only files return file descriptions."""
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
 from ..._utils import now_utc
@@ -29,6 +29,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
+from .._adapter import strip_tool_return_files
 from .._event_stream import describe_file
 from ._interrupt import (
     HAS_INTERRUPTS,
@@ -333,7 +334,13 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
 
 def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:
-    """Return tool output string with file descriptions if present."""
+    """Return tool output string with file descriptions if present.
+
+    Nested files are stripped first: `model_response_str()` only drops top-level files (surfaced as
+    descriptions below) and would otherwise serialize files nested in a mapping or deeper list inline.
+    Event-stream formats can't carry multimodal tool output (#3826), so no file data reaches the client.
+    """
+    part = replace(part, content=strip_tool_return_files(part.content, keep_top_level_files=True))
     output = part.model_response_str()
     if file_descriptions := [describe_file(f) for f in part.files]:
         if output:

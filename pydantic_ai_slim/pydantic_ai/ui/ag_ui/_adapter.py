@@ -424,7 +424,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     @classmethod
     def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:  # noqa: C901
-        """Transform AG-UI messages into Pydantic AI messages."""
+        """Transform AG-UI messages into Pydantic AI messages.
+
+        Raises:
+            ValueError: If a tool-return file sidecar activity has no matching tool message; each
+                sidecar must precede the tool message it belongs to.
+        """
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
         # Files from `pydantic_ai_tool_return_file` activity messages, keyed by tool_call_id and

@@ -76,9 +76,9 @@ def tool_return_output(part: BaseToolReturnPart, *, preserve_file_data: bool = F
       data stays on the server — the trust-model default from #3971 — and this matches the AG-UI dump path.
     - `True`: dump the files inline; they're rehydrated on load via `ToolReturnContent`'s discriminator.
 
-    The streaming path (`_tool_return_with_files`) ignores this flag and always replaces files with text
-    placeholders, because event-stream formats can't carry multimodal tool output (#3826). That
-    dump-vs-stream difference is intentional, not a gap to fix.
+    The streaming path (`_tool_return_with_files`) ignores this flag: it never sends file data. Top-level
+    files become text placeholders and nested files are stripped, because event-stream formats can't carry
+    multimodal tool output (#3826). That dump-vs-stream difference is intentional, not a gap to fix.
     """
     if preserve_file_data:
         return tool_return_ta.dump_python(part.content, mode='json')

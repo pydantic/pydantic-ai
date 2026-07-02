@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Any, Literal
 
 from pydantic_core import to_json
@@ -32,6 +32,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
+from .._adapter import strip_tool_return_files
 from .._event_stream import describe_file
 from ._utils import dump_message_metadata, dump_provider_metadata, iter_metadata_chunks, tool_return_output
 from .request_types import RequestData
@@ -85,6 +86,10 @@ def _json_dumps(obj: Any) -> str:
 def _tool_return_with_files(part: BaseToolReturnPart) -> Any:
     """Wrap tool_return_output with file descriptions for multimodal tool returns."""
     if file_descriptions := [describe_file(f) for f in part.files]:
+        # `model_response_object()` drops only top-level files (surfaced as descriptions here); strip
+        # nested ones too so no file data reaches the client. `tool_return_output` already does this on
+        # the no-top-level-files branch below.
+        part = replace(part, content=strip_tool_return_files(part.content, keep_top_level_files=True))
         return [part.model_response_object(), *file_descriptions]
     return tool_return_output(part)
 

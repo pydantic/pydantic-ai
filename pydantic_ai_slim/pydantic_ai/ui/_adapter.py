@@ -139,6 +139,11 @@ def strip_tool_return_files(content: ToolReturnContent, *, keep_top_level_files:
     serialized to the client on dump. This strips exactly those nested files — mirroring the recursion
     in `UIAdapter._sanitize_tool_return_content` on the inbound path — while
     `keep_top_level_files` leaves top-level files in place for the existing text-collapse / sidecar handling.
+
+    Unlike that inbound sanitizer, this runs on *every* tool return regardless of `tool_kind`: the
+    inbound path skips typed subclasses so their `TypedDict` `content` stays schema-valid for
+    re-validation, but here the stripped content is only serialized to a wire string, so there's no
+    schema to keep valid — and skipping typed parts would instead leak a file-bearing typed field.
     """
     if is_multi_modal_content(content):
         return content if keep_top_level_files else _FILE_DROPPED
