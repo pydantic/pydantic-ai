@@ -35,6 +35,9 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._agent_graph import (
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
 from pydantic_ai.models.test import TestModel
 
@@ -1649,3 +1652,128 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     response = part.model_response()
     assert '"input": 42' in response
     assert '"name"' in response
+
+
+# The `_clean_message_history` tests below are unit tests rather than VCR tests because they pin
+# internal merge/skip semantics across field combinations that can't be distinguished on the wire:
+# `run_id`, `conversation_id`, and `metadata` are never sent to the model, so a cassette would
+# match whether or not they survive the merge.
+
+
+def test_clean_message_history_merge_preserves_fields():
+    """Merging consecutive requests preserves `run_id`, `conversation_id`, `metadata`, and `timestamp`,
+    whether they're set on the earlier or the later request.
+
+    `run_id` intentionally doesn't block the merge: requests from different runs legitimately
+    merge (e.g. deferred tool results joining the prior run's trailing tool returns), and the
+    earlier request's `run_id` survives.
+    """
+    t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    bare = ModelRequest(parts=[UserPromptPart('a')])
+    full = ModelRequest(
+        parts=[UserPromptPart('b')], run_id='r1', conversation_id='c1', metadata={'k': 'v'}, timestamp=t1
+    )
+    equal_fields = ModelRequest(parts=[UserPromptPart('c')], run_id='r2', conversation_id='c1', metadata={'k': 'v'})
+
+    assert _clean_message_history([bare, full, equal_fields]) == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='a', timestamp=IsDatetime()),
+                    UserPromptPart(content='b', timestamp=IsDatetime()),
+                    UserPromptPart(content='c', timestamp=IsDatetime()),
+                ],
+                timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                run_id='r1',
+                conversation_id='c1',
+                metadata={'k': 'v'},
+            )
+        ]
+    )
+
+    # An explicitly-set empty metadata dict survives instead of collapsing to `None`
+    assert _clean_message_history([ModelRequest(parts=[UserPromptPart('a')], metadata={}), bare]) == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='a', timestamp=IsDatetime()),
+                    UserPromptPart(content='a', timestamp=IsDatetime()),
+                ],
+                metadata={},
+            )
+        ]
+    )
+
+
+def test_clean_message_history_skips_merge_on_conflicts():
+    """Requests with conflicting `conversation_id` or `metadata` are kept separate rather than
+    silently dropping one side's value: the merged message could only carry one."""
+    conversation_conflict: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('a')], conversation_id='c1'),
+        ModelRequest(parts=[UserPromptPart('b')], conversation_id='c2'),
+    ]
+    assert _clean_message_history(conversation_conflict) == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='a', timestamp=IsDatetime())], conversation_id='c1'),
+            ModelRequest(parts=[UserPromptPart(content='b', timestamp=IsDatetime())], conversation_id='c2'),
+        ]
+    )
+
+    metadata_conflict: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('a')], conversation_id='c1', metadata={'k': 'v1'}),
+        ModelRequest(parts=[UserPromptPart('b')], conversation_id='c1', metadata={'k': 'v2'}),
+    ]
+    assert _clean_message_history(metadata_conflict) == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='a', timestamp=IsDatetime())],
+                conversation_id='c1',
+                metadata={'k': 'v1'},
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='b', timestamp=IsDatetime())],
+                conversation_id='c1',
+                metadata={'k': 'v2'},
+            ),
+        ]
+    )
+
+
+def test_message_history_merge_preserves_fields_through_agent_run():
+    """The history cleanup at the start of a run preserves fields on merged requests in persisted history."""
+    agent = Agent(TestModel())
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('context')], run_id='r1', conversation_id='c1', metadata={'k': 'v'}),
+        ModelRequest(parts=[UserPromptPart('more context')]),
+    ]
+
+    result = agent.run_sync('hi', message_history=history)
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='context', timestamp=IsDatetime()),
+                    UserPromptPart(content='more context', timestamp=IsDatetime()),
+                ],
+                run_id='r1',
+                conversation_id='c1',
+                metadata={'k': 'v'},
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id='c1',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='test',
+                provider_name='test',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id='c1',
+            ),
+        ]
+    )

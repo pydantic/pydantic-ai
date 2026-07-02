@@ -1721,16 +1721,30 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
+                and (
+                    last_message.conversation_id is None
+                    or message.conversation_id is None
+                    or last_message.conversation_id == message.conversation_id
+                )
+                and (
+                    last_message.metadata is None
+                    or message.metadata is None
+                    or last_message.metadata == message.metadata
+                )
             ):
                 parts = [*last_message.parts, *message.parts]
                 parts.sort(
                     # Tool return parts always need to be at the start
                     key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
                 )
-                merged_message = _messages.ModelRequest(
+                merged_message = replace(
+                    last_message,
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
                     timestamp=message.timestamp or last_message.timestamp,
+                    run_id=last_message.run_id or message.run_id,
+                    conversation_id=last_message.conversation_id or message.conversation_id,
+                    metadata=last_message.metadata if last_message.metadata is not None else message.metadata,
                 )
                 clean_messages[-1] = merged_message
             else:
