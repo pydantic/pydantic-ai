@@ -5171,3 +5171,43 @@ async def test_bedrock_tool_result_and_attachment_alternate(bedrock_provider: Be
             ],
         },
     ]
+
+
+async def test_bedrock_user_message_document_no_text(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        DocumentUrl(url='s3://bucket/file.csv', media_type='text/csv'),
+                    ]
+                )
+            ]
+        ),
+    ]
+    prepared = model.prepare_messages(messages)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert bedrock_messages == [
+        {
+            'role': 'user',
+            'content': [
+                {'text': 'See attached document(s).'},
+                {
+                    'document': {
+                        'name': 'Document 1',
+                        'format': 'csv',
+                        'source': {
+                            's3Location': {
+                                'uri': 's3://bucket/file.csv',
+                            }
+                        },
+                    }
+                },
+            ],
+        },
+    ]
