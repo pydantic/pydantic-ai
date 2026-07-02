@@ -30,6 +30,8 @@ def test_tool_call_helpers_can_scan_agent_run_history() -> None:
 
     assert result.response.tool_calls == []
     with pytest.raises(AssertionError, match='No tool calls found'):
+        assert_tool_call(result, 'lookup')
+    with pytest.raises(AssertionError, match='No tool calls found'):
         assert_tool_call_sequence(result, ['lookup'])
     assert [call.tool_name for call in tool_calls(result, across_history=True)] == ['lookup']
     assert_tool_call(result, 'lookup', args={'key': 'weather'}, across_history=True)
@@ -47,3 +49,10 @@ def test_assert_tool_call_checks_args() -> None:
 
     with pytest.raises(AssertionError, match='with args'):
         assert_tool_call(response, 'search', args={'q': 'tools'})
+
+
+def test_assert_tool_call_sequence_reports_mismatch() -> None:
+    response = ModelResponse(parts=[ToolCallPart('search', {'q': 'agents'}, tool_call_id='call-1')])
+
+    with pytest.raises(AssertionError, match='Expected tool call sequence'):
+        assert_tool_call_sequence(response, ['lookup'])
