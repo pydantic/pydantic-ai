@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from functools import cached_property
 from typing import Any, cast
 
@@ -471,7 +472,9 @@ async def test_stream_usage_with_cached_tokens(allow_model_requests: None):
             pass
 
     # `prompt_tokens_details.cached_tokens` is surfaced as first-class `cache_read_tokens`.
-    assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
+    assert result.usage == snapshot(
+        RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1, cost=Decimal('0.002206'))
+    )
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
