@@ -141,10 +141,10 @@ async def test_evaluator_sync():
     """Test synchronous evaluator execution."""
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('did not record spans'),
         attributes={},
@@ -175,10 +175,10 @@ async def test_evaluator_async():
     """Test asynchronous evaluator execution."""
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('did not record spans'),
         attributes={},
@@ -309,10 +309,10 @@ async def test_run_evaluator():
     """Test run_evaluator function."""
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=SpanTreeRecordingError('did not record spans'),
         attributes={},
