@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -28,11 +28,14 @@ class PrefectModel(WrapperModel):
         model: Any,
         *,
         task_config: TaskConfig,
-        event_stream_handler: EventStreamHandler[Any] | None = None,
+        get_event_stream_handler: Callable[[], EventStreamHandler[Any] | None] | None = None,
     ):
         super().__init__(model)
         self.task_config = default_task_config | (task_config or {})
-        self.event_stream_handler = event_stream_handler
+        # Resolve the effective event stream handler lazily inside the task so that a per-run
+        # handler (set on a `ContextVar` by `PrefectAgent`) is picked up without rebuilding the model
+        # and re-registering its Prefect tasks.
+        self._get_event_stream_handler = get_event_stream_handler
 
         @task
         async def wrapped_request(
@@ -52,15 +55,18 @@ class PrefectModel(WrapperModel):
             model_request_parameters: ModelRequestParameters,
             ctx: RunContext[Any] | None,
         ) -> ModelResponse:
+            event_stream_handler = (
+                self._get_event_stream_handler() if self._get_event_stream_handler is not None else None
+            )
             async with super(PrefectModel, self).request_stream(
                 messages, model_settings, model_request_parameters, ctx
             ) as streamed_response:
-                if self.event_stream_handler is not None:
+                if event_stream_handler is not None:
                     assert ctx is not None, (
                         'A Prefect model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. '
                         'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                     )
-                    await self.event_stream_handler(ctx, streamed_response)
+                    await event_stream_handler(ctx, streamed_response)
 
                 # Consume the entire stream
                 async for _ in streamed_response:

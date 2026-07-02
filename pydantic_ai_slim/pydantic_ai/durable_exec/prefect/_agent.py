@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, cast, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from prefect import flow, task
 from prefect.context import FlowRunContext
@@ -104,7 +104,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         prefect_model = PrefectModel(
             wrapped.model,
             task_config=self._model_task_config,
-            event_stream_handler=self.event_stream_handler,
+            get_event_stream_handler=self._effective_event_stream_handler,
         )
         self._model = prefect_model
 
@@ -188,19 +188,12 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> Generator[None]:
         # Override with PrefectModel and PrefectMCPToolset in the toolsets.
-        runtime_handler_override = event_stream_handler is not None or self._run_event_stream_handler.get() is not None
-        model = self._model
-        handler = self._effective_event_stream_handler(event_stream_handler) if runtime_handler_override else None
-        if runtime_handler_override:
-            model = PrefectModel(
-                cast(Model, self.wrapped.model),
-                task_config=self._model_task_config,
-                event_stream_handler=handler,
-            )
-
-        token = self._run_event_stream_handler.set(handler if runtime_handler_override else None)
+        # A per-run `event_stream_handler` is stashed on a `ContextVar` that `PrefectModel` reads inside its
+        # task (via `_effective_event_stream_handler`), so the runtime handler is honored without rebuilding
+        # the model and re-registering its Prefect tasks.
+        token = self._run_event_stream_handler.set(event_stream_handler or self._run_event_stream_handler.get())
         try:
-            with super().override(model=model, toolsets=self._toolsets, tools=[]):
+            with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
                 yield
         finally:
             self._run_event_stream_handler.reset(token)

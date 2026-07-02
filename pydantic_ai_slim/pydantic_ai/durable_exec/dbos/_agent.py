@@ -104,7 +104,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             wrapped.model,
             step_name_prefix=self._name,
             step_config=self._model_step_config,
-            event_stream_handler=self.event_stream_handler,
+            get_event_stream_handler=self._effective_event_stream_handler,
         )
         self._model = dbos_model
 
@@ -284,26 +284,18 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     ) -> Generator[None]:
         # Override with DBOSModel and DBOSMCPToolset in the toolsets.
         # Use the configured parallel execution mode for deterministic event ordering during DBOS replay.
-        assert self._name is not None
-        runtime_handler_override = event_stream_handler is not None or self._run_event_stream_handler.get() is not None
-        handler = self._effective_event_stream_handler(event_stream_handler) if runtime_handler_override else None
-        model = self._model
-        if runtime_handler_override:
-            model = DBOSModel(
-                cast(Model, self.wrapped.model),
-                step_name_prefix=self._name,
-                step_config=self._model_step_config,
-                event_stream_handler=handler,
-            )
-        token = self._run_event_stream_handler.set(handler if runtime_handler_override else None)
-        with (
-            super().override(model=model, toolsets=self._toolsets, tools=[]),
-            self.parallel_tool_call_execution_mode(self._parallel_execution_mode),
-        ):
-            try:
+        # A per-run `event_stream_handler` is stashed on a `ContextVar` that `DBOSModel` reads inside its
+        # step (via `_effective_event_stream_handler`), so the runtime handler is honored without rebuilding
+        # the model and re-registering its DBOS steps.
+        token = self._run_event_stream_handler.set(event_stream_handler or self._run_event_stream_handler.get())
+        try:
+            with (
+                super().override(model=self._model, toolsets=self._toolsets, tools=[]),
+                self.parallel_tool_call_execution_mode(self._parallel_execution_mode),
+            ):
                 yield
-            finally:
-                self._run_event_stream_handler.reset(token)
+        finally:
+            self._run_event_stream_handler.reset(token)
 
     @overload
     async def run(
