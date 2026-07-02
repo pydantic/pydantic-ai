@@ -1863,7 +1863,7 @@ def test_output_type_text_output_function_with_retry():
     [[str, str], [str, TextOutput(upcase)], [TextOutput(upcase), TextOutput(upcase)]],
 )
 def test_output_type_multiple_text_output(output_type: OutputSpec[str]):
-    with pytest.raises(UserError, match='Only one `str` or `TextOutput` is allowed.'):
+    with pytest.raises(UserError, match=re.escape('Only one `str` or `TextOutput` is allowed.')):
         Agent('test', output_type=output_type)
 
 
@@ -1878,7 +1878,7 @@ def test_output_type_text_output_invalid():
 
 def test_output_type_native_output_must_be_only():
     """Test that NativeOutput must be the only output type."""
-    with pytest.raises(UserError, match='`NativeOutput` must be the only output type.'):
+    with pytest.raises(UserError, match=re.escape('`NativeOutput` must be the only output type.')):
         Agent('test', output_type=[NativeOutput(str), str])
 
 
@@ -1896,7 +1896,7 @@ def test_output_type_native_output_with_binary_image():
 
 def test_output_type_prompted_output_must_be_only():
     """Test that PromptedOutput must be the only output type."""
-    with pytest.raises(UserError, match='`PromptedOutput` must be the only output type.'):
+    with pytest.raises(UserError, match=re.escape('`PromptedOutput` must be the only output type.')):
         Agent('test', output_type=[PromptedOutput(str), str])
 
 
@@ -3535,7 +3535,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
 
     with pytest.raises(
         UserError,
-        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.',
+        match=re.escape('Cannot provide a new user prompt when the message history contains unprocessed tool calls.'),
     ):
         agent.run_sync(user_prompt='New question', message_history=message_history)
 
@@ -8291,17 +8291,17 @@ def test_unsupported_output_mode():
 
     agent = Agent(model, output_type=NativeOutput(Foo))
 
-    with pytest.raises(UserError, match='Native structured output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=ToolOutput(Foo))
 
-    with pytest.raises(UserError, match='Tool output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Tool output is not supported by this model.')):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=BinaryImage)
 
-    with pytest.raises(UserError, match='Image output is not supported by this model.'):
+    with pytest.raises(UserError, match=re.escape('Image output is not supported by this model.')):
         agent.run_sync('Hello')
 
 
@@ -8508,7 +8508,9 @@ def test_many_multimodal_tool_response():
 
     with pytest.raises(
         UserError,
-        match="The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly.",
+        match=re.escape(
+            "The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly."
+        ),
     ):
         agent.run_sync('Please analyze the data')
 
@@ -8937,7 +8939,7 @@ def test_set_mcp_sampling_model():
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent(None, toolsets=[toolset])
 
-    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
+    with pytest.raises(UserError, match=re.escape('No sampling model provided and no model set on the agent.')):
         agent.set_mcp_sampling_model()
     assert server1.sampling_model is None
     assert server2.sampling_model is test_model
@@ -9873,7 +9875,7 @@ async def test_run_with_deferred_tool_results_errors():
 
     with pytest.raises(
         UserError,
-        match='Tool call results were provided, but the message history does not contain a `ModelResponse`.',
+        match=re.escape('Tool call results were provided, but the message history does not contain a `ModelResponse`.'),
     ):
         await agent.run(
             'Hello again',
@@ -9888,7 +9890,9 @@ async def test_run_with_deferred_tool_results_errors():
 
     with pytest.raises(
         UserError,
-        match='Tool call results were provided, but the message history does not contain any unprocessed tool calls.',
+        match=re.escape(
+            'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
+        ),
     ):
         await agent.run(
             'Hello again',
@@ -9902,17 +9906,22 @@ async def test_run_with_deferred_tool_results_errors():
     ]
 
     with pytest.raises(
-        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+        UserError,
+        match=re.escape('Cannot provide a new user prompt when the message history contains unprocessed tool calls.'),
     ):
         await agent.run('Hello', message_history=message_history)
 
-    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
+    with pytest.raises(
+        UserError, match=re.escape('Tool call results need to be provided for all deferred tool calls.')
+    ):
         await agent.run(
             message_history=message_history,
             deferred_tool_results=DeferredToolResults(),
         )
 
-    with pytest.raises(UserError, match='Tool call results were provided, but the message history is empty.'):
+    with pytest.raises(
+        UserError, match=re.escape('Tool call results were provided, but the message history is empty.')
+    ):
         await agent.run(
             'Hello again',
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
@@ -9935,7 +9944,9 @@ async def test_run_with_deferred_tool_results_errors():
         ),
     ]
 
-    with pytest.raises(UserError, match="Tool call 'run_me' was already executed and its result cannot be overridden."):
+    with pytest.raises(
+        UserError, match=re.escape("Tool call 'run_me' was already executed and its result cannot be overridden.")
+    ):
         await agent.run(
             message_history=message_history,
             deferred_tool_results=DeferredToolResults(
@@ -9944,7 +9955,7 @@ async def test_run_with_deferred_tool_results_errors():
         )
 
     with pytest.raises(
-        UserError, match="Tool call 'run_me_too' was already executed and its result cannot be overridden."
+        UserError, match=re.escape("Tool call 'run_me_too' was already executed and its result cannot be overridden.")
     ):
         await agent.run(
             message_history=message_history,
@@ -10889,7 +10900,9 @@ async def test_central_content_filter_handling():
     model = FunctionModel(function=filtered_response, model_name='test-model')
     agent = Agent(model)
 
-    with pytest.raises(ContentFilterError, match="Content filter triggered. Finish reason: 'content_filter'"):
+    with pytest.raises(
+        ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
+    ):
         await agent.run('Trigger filter')
 
 

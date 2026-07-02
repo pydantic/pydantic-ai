@@ -168,7 +168,7 @@ async def test_azure_document_input_not_supported(allow_model_requests: None):
 
     with pytest.raises(
         UserError,
-        match="Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
+        match=r"Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
     ):
         await agent.run(
             [
@@ -189,7 +189,7 @@ async def test_azure_document_url_input_not_supported(allow_model_requests: None
 
     with pytest.raises(
         UserError,
-        match="Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
+        match=r"Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
     ):
         await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
 

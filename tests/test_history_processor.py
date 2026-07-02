@@ -1,3 +1,4 @@
+import re
 import uuid
 from collections.abc import AsyncIterator
 from copy import deepcopy
@@ -813,7 +814,7 @@ async def test_history_processor_empty_history(function_model: FunctionModel, re
 
     agent = Agent(function_model, capabilities=[ProcessHistory(return_new_history)])
 
-    with pytest.raises(UserError, match='Processed history cannot be empty.'):
+    with pytest.raises(UserError, match=re.escape('Processed history cannot be empty.')):
         await agent.run('foobar')
 
 
@@ -825,7 +826,7 @@ async def test_history_processor_history_ending_in_response(
 
     agent = Agent(function_model, capabilities=[ProcessHistory(return_new_history)])
 
-    with pytest.raises(UserError, match='Processed history must end with a `ModelRequest`.'):
+    with pytest.raises(UserError, match=re.escape('Processed history must end with a `ModelRequest`.')):
         await agent.run('foobar')
 
 

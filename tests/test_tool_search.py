@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -766,7 +767,7 @@ async def test_tool_search_toolset_search_empty_query():
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    with pytest.raises(ModelRetry, match='Please provide at least one non-empty search query.'):
+    with pytest.raises(ModelRetry, match=re.escape('Please provide at least one non-empty search query.')):
         await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['']}, ctx, search_tool)
 
 
@@ -780,7 +781,7 @@ async def test_tool_search_toolset_search_non_tokenizable_query(query: str):
     tools = await searchable.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
-    with pytest.raises(ModelRetry, match='Please provide at least one non-empty search query.'):
+    with pytest.raises(ModelRetry, match=re.escape('Please provide at least one non-empty search query.')):
         await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': [query]}, ctx, search_tool)
 
 
@@ -3562,7 +3563,7 @@ async def test_tool_search_named_strategy_agent_run_raises_on_unsupported_model(
     def get_weather(city: str) -> str:  # pragma: no cover
         return f'Weather in {city}'
 
-    with pytest.raises(UserError, match='ToolSearchTool.*not supported by this model'):
+    with pytest.raises(UserError, match=r'ToolSearchTool.*not supported by this model'):
         await agent.run('what should I wear?')
 
 
