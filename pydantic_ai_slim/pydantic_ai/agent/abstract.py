@@ -126,13 +126,13 @@ class _RunStreamEventsIterator(AsyncIterator[_messages.AgentStreamEvent | AgentR
 
     Lazily starts a background `run()` task on the first `__anext__()` and forwards its events over a memory
     object stream, ending with a single trailing `AgentRunResultEvent` that carries the run's result. Entering
-    the context manager without iterating therefore never starts a run (the fix for #6162).
+    the context manager without iterating therefore never starts a run (#6162).
 
     This is a hand-written iterator class rather than an `async def` generator on purpose: generator cleanup
     runs by throwing `GeneratorExit` into the suspended frame during finalization, which on Python 3.10/3.11
     can resume the frame under a different `Context` and raise the `pydantic_ai.current_run_context` token
-    error from the #5132 family. Driving cleanup explicitly through `aclose()` keeps teardown in the caller's
-    task and context.
+    error (#5132). Driving cleanup explicitly through `aclose()` keeps teardown in the caller's task and
+    context.
     """
 
     def __init__(self, run_agent: _RunStreamEventsRunner) -> None:
@@ -217,9 +217,9 @@ class _RunStreamEventsContext(
         self._iterator: _RunStreamEventsIterator | None = None
 
     async def __aenter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]:
-        # Single-entry, matching the old `@asynccontextmanager` this replaced: re-entering would
-        # orphan a first iterator that had already started (and leak its background task), so fail
-        # loudly instead of silently, and `__aexit__` still cleans up the one live iterator.
+        # Single-entry: re-entering would orphan a first iterator that had already started (and leak its
+        # background task), so fail loudly instead of silently. `__aexit__` still cleans up the one live
+        # iterator.
         if self._iterator is not None:
             raise RuntimeError('`run_stream_events()` context manager cannot be entered more than once')
         self._iterator = _RunStreamEventsIterator(self._run_agent)
@@ -1215,6 +1215,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
         uses the `event_stream_handler` kwarg to get a stream of events from the run.
+
+        The background run starts on the first iteration of the event stream, not on entering the
+        context manager, so entering and exiting without iterating never calls the model.
 
         Must be used as an async context manager so the background run task is deterministically
         cleaned up when the consumer stops iterating early.
