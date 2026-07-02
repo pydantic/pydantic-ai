@@ -56,6 +56,7 @@ from ._utils import (
     iter_metadata_chunks,
     iter_tool_approval_responses,
     load_provider_metadata,
+    tool_return_error_text,
     tool_return_output,
 )
 from .request_types import (
@@ -707,7 +708,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 approval=ToolApprovalResponded(
                                     id=str(uuid.uuid4()),
                                     approved=False,
-                                    reason=builtin_return.model_response_str(),
+                                    reason=tool_return_error_text(builtin_return),
                                 ),
                             )
                         )
@@ -716,7 +717,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         or builtin_return.model_response_object().get('is_error') is True
                     ):
                         response_obj = builtin_return.model_response_object()
-                        error_text = response_obj.get('error_text', builtin_return.model_response_str())
+                        error_text = response_obj.get('error_text', tool_return_error_text(builtin_return))
                         ui_parts.append(
                             ToolOutputErrorPart(
                                 type=tool_name,
@@ -813,7 +814,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         approval=ToolApprovalResponded(
                             id=str(uuid.uuid4()),
                             approved=False,
-                            reason=tool_result.model_response_str(),
+                            reason=tool_return_error_text(tool_result),
                         ),
                     )
                 )
@@ -823,7 +824,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        error_text=tool_result.model_response_str(),
+                        error_text=tool_return_error_text(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )

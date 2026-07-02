@@ -90,6 +90,18 @@ def tool_return_output(part: BaseToolReturnPart, *, preserve_file_data: bool = F
     return tool_return_ta.dump_python(part.content, mode='json')
 
 
+def tool_return_error_text(part: BaseToolReturnPart) -> str:
+    """Serialize a `failed`/`denied` tool return to its error/denial text, stripping nested files.
+
+    Error and denial outcomes always emit the lossy text form — they never send file data to the
+    client — but `model_response_str()` only drops *top-level* files, so a file nested inside a
+    mapping or deeper list would still be serialized inline. Strip those first, mirroring the
+    `strip_tool_return_files` call the success paths use.
+    """
+    part = replace(part, content=strip_tool_return_files(part.content, keep_top_level_files=True))
+    return part.model_response_str()
+
+
 def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:
     """Load the Pydantic AI metadata from the provider metadata."""
     return provider_metadata.get(PROVIDER_METADATA_KEY, {}) if provider_metadata else {}

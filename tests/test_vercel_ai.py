@@ -4599,6 +4599,45 @@ async def test_adapter_tool_return_nested_multimodal_dropped_by_default(
     assert base64.b64encode(tiny_image.data).decode() not in json.dumps(outputs)
 
 
+@pytest.mark.parametrize('outcome', ['failed', 'denied'])
+async def test_adapter_tool_return_error_nested_multimodal_dropped_by_default(
+    outcome: Literal['failed', 'denied'], tiny_image: BinaryImage
+):
+    """A `failed`/`denied` tool return also strips nested files on dump, like the success path.
+
+    Regression for the nested-file leak's parallel `failed`/`denied` sinks: those serialize via
+    `model_response_str()` (into `error_text`/`approval.reason`), which only excludes top-level
+    files, so a nested `BinaryContent` was serialized inline. See `tool_return_error_text`.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='get_file', tool_call_id='tc-1', args={})]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    tool_call_id='tc-1',
+                    content={'caption': 'see image', 'attachment': tiny_image},
+                    outcome=outcome,
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    if outcome == 'failed':
+        error_texts = [p.error_text for m in ui_messages for p in m.parts if isinstance(p, ToolOutputErrorPart)]
+        assert error_texts == snapshot(['{"caption":"see image"}'])
+    else:
+        reasons = [
+            p.approval.reason
+            for m in ui_messages
+            for p in m.parts
+            if isinstance(p, ToolOutputDeniedPart) and isinstance(p.approval, ToolApprovalResponded)
+        ]
+        assert reasons == snapshot(['{"caption":"see image"}'])
+    assert base64.b64encode(tiny_image.data).decode() not in json.dumps([m.model_dump() for m in ui_messages])
+
+
 async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
     """Test dumping messages where ToolReturnPart.metadata contains a single DataChunk."""
     messages = [
