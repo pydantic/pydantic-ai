@@ -74,8 +74,6 @@ pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 if TYPE_CHECKING:
-    from typing import TypeVar
-
     from pluggy import Result
     from vcr.cassette import Cassette
 
@@ -685,6 +683,16 @@ def text_document_content(assets_path: Path) -> BinaryContent:
     content = assets_path.joinpath('dummy.txt').read_text(encoding='utf-8')
     bin_content = BinaryContent(data=content.encode(), media_type='text/plain')
     return bin_content
+
+
+# Opaque 3-byte payload for roundtrip / serialization tests where the bytes are never decoded by a
+# model and assertions only check structure (e.g. `IsStr()` on base64): keeps inline-snapshot diffs
+# small and avoids CI errors that explode when failure traces include large base64 payloads. When the
+# model has to actually see the content (e.g. VCR tests against provider APIs), use the KB-scale
+# session fixtures above (`image_content`, `audio_content`, `video_content`).
+@pytest.fixture
+def tiny_audio() -> BinaryContent:
+    return BinaryContent(data=b'\x10\x11\x12', media_type='audio/mpeg')
 
 
 os.environ.pop('OPENAI_BASE_URL', None)

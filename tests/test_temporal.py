@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import (
+    AbstractToolset,
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -79,14 +80,14 @@ try:
     import temporalio.api.common.v1
     from temporalio import workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
-    from temporalio.worker import Worker
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import (
@@ -228,14 +229,6 @@ async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
         f'localhost:{TEMPORAL_PORT}',
         plugins=[PydanticAIPlugin(), LogfirePlugin()],
     )
-
-
-@pytest.fixture(autouse=True)
-def _clear_mcp_tool_cache() -> None:
-    """Clear cached tool defs on module-level TemporalMCPToolset instances between tests."""
-    for toolset in complex_temporal_agent.toolsets:
-        if isinstance(toolset, TemporalMCPToolset):
-            toolset._cached_tool_defs = None  # pyright: ignore[reportPrivateUsage]
 
 
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
@@ -826,9 +819,9 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     """Verify that MCP tool caching reduces server round-trips across activities.
 
     The complex agent makes 3 model requests, each preceded by a get_tools activity.
-    With caching at the TemporalMCPToolset wrapper level, only the first get_tools activity
-    actually runs (opening an MCP connection and calling `tools/list`). Subsequent get_tools
-    calls return the wrapper's cached tool definitions without scheduling an activity at all.
+    With the run-scoped tool-defs cache, only the first get_tools activity actually runs
+    (opening an MCP connection and calling `tools/list`). Subsequent get_tools calls return
+    the run-cached tool definitions without scheduling an activity at all.
     """
 
     original_send_request = ClientSession.send_request
@@ -863,29 +856,135 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     assert methods_called.count('tools/call') == 1
 
 
-async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None):
-    """Verify that wrapper-level caching is skipped when cache_tools=False.
+def _call_mcp_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Two model steps: call an MCP tool on the first request, return text on the second.
 
-    Runs outside the Temporal workflow (via .override()) so coverage can track
-    the TemporalMCPToolset.get_tools() code path directly.
+    Two model requests means `get_tools` is invoked twice on the MCP toolset within one run,
+    so the run-scoped cache (and the activity it does or doesn't schedule each step) is exercised.
     """
-    mcp_toolset = next(ts for ts in complex_temporal_agent.toolsets if isinstance(ts, TemporalMCPToolset))
-    wrapped = cast(MCPToolset[Any], mcp_toolset.wrapped)
+    tool_returned = any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+    if tool_returned:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('get_weather_forecast', {'location': 'Mexico City'})])
 
-    original_cache_tools = wrapped.cache_tools
-    wrapped.cache_tools = False
+
+# A holder lets the replay step swap in a freshly-constructed (cold-process) instance,
+# reproducing the worker-restart scenario from #5875.
+mcp_replay_holder: dict[str, TemporalAgent[None, str]] = {}
+
+
+def _make_mcp_replay_agent(cache_tools: bool = True) -> TemporalAgent[None, str]:
+    agent = Agent(
+        FunctionModel(_call_mcp_then_finish),
+        name='mcp_replay_agent',
+        toolsets=[
+            MCPToolset(
+                StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+                id='mcp',
+                init_timeout=20,
+                cache_tools=cache_tools,
+            )
+        ],
+    )
+    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+mcp_replay_holder['agent'] = _make_mcp_replay_agent()
+
+
+@workflow.defn
+class MCPReplayWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await mcp_replay_holder['agent'].run(prompt)
+        return result.output
+
+
+def _scheduled_get_tools_count(history: WorkflowHistory) -> int:
+    return sum(
+        1
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+        and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__get_tools')
+    )
+
+
+async def test_temporal_mcp_get_tools_replay_deterministic(allow_model_requests: None, client: Client):
+    """#5875 regression: `get_tools` activity scheduling must be replay-deterministic.
+
+    The tool-defs cache must not let shared-process cache warmth decide whether a workflow
+    emits a `get_tools` activity command — otherwise a history recorded on a warm worker fails
+    replay on a cold one (and vice versa) with `TMPRL1100`. Each run must independently record
+    exactly one `get_tools` activity: the #4331 within-run win (N calls collapse to one activity)
+    without leaking cache state across the replay boundary.
+    """
+    warm = _make_mcp_replay_agent()
+    mcp_replay_holder['agent'] = warm
+
+    histories: list[WorkflowHistory] = []
+    # Unsandboxed so the module-level instance (and its cache) is shared across both runs,
+    # exactly as a long-running worker process shares it in production — the condition under
+    # which #5875 records a warm run with no `get_tools` event.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MCPReplayWorkflow],
+        activities=warm.temporal_activities,
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        for i in range(2):
+            wf_id = f'{MCPReplayWorkflow.__name__}_{i}'
+            await client.execute_workflow(MCPReplayWorkflow.run, args=['hello'], id=wf_id, task_queue=TASK_QUEUE)
+            histories.append(await client.get_workflow_handle(wf_id).fetch_history())
+    h1, h2 = histories
+
+    # Within a run, the run-scoped cache collapses the per-step `get_tools` calls to one activity...
+    assert _scheduled_get_tools_count(h1) == 1
+    # ...and each run records it independently — run 2 does not inherit run 1's warm process cache.
+    assert _scheduled_get_tools_count(h2) == 1
+
+    def replayer() -> Replayer:
+        return Replayer(
+            workflows=[MCPReplayWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            data_converter=pydantic_data_converter,
+        )
 
     try:
-        with complex_temporal_agent.override(deps=Deps(country='Mexico')):
-            result = await complex_temporal_agent.run(
-                'Tell me: the capital of the country; the weather there; the product name',
-                deps=Deps(country='The Netherlands'),
-            )
-        assert result.output is not None
-        # Wrapper-level cache should NOT be populated when cache_tools=False
-        assert mcp_toolset._cached_tool_defs is None  # pyright: ignore[reportPrivateUsage]
+        # Direction 1: cold-recorded history (run 1) replayed after the process cache warmed
+        # (the same-process sticky-cache-eviction trigger). Holder still points at the warm instance.
+        await replayer().replay_workflow(h1)
+
+        # Direction 2: warm-recorded history (run 2) replayed on a freshly-constructed cold instance
+        # (the worker-restart trigger).
+        mcp_replay_holder['agent'] = _make_mcp_replay_agent()
+        await replayer().replay_workflow(h2)
     finally:
-        wrapped.cache_tools = original_cache_tools
+        mcp_replay_holder['agent'] = warm
+
+
+async def test_temporal_mcp_get_tools_not_cached_when_disabled(allow_model_requests: None, client: Client):
+    """With `cache_tools=False`, `get_tools` is scheduled for every model request (no run cache).
+
+    The complementary case to the run-scoped cache: each of the two model requests records its own
+    `get_tools` activity, so disabling the cache stays replay-deterministic by always scheduling.
+    """
+    agent = _make_mcp_replay_agent(cache_tools=False)
+    mcp_replay_holder['agent'] = agent
+    try:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[MCPReplayWorkflow],
+            activities=agent.temporal_activities,
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            wf_id = f'{MCPReplayWorkflow.__name__}_no_cache'
+            await client.execute_workflow(MCPReplayWorkflow.run, args=['hello'], id=wf_id, task_queue=TASK_QUEUE)
+            history = await client.get_workflow_handle(wf_id).fetch_history()
+        assert _scheduled_get_tools_count(history) == 2
+    finally:
+        mcp_replay_holder['agent'] = _make_mcp_replay_agent()
 
 
 async def test_complex_agent_run(allow_model_requests: None):
@@ -1350,6 +1449,225 @@ async def test_dynamic_toolset_outside_workflow():
         'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
     )
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- DynamicToolset.get_instructions test (issue #5282) ---
+# A dynamic toolset whose resolved toolset implements `get_instructions()` must contribute those
+# instructions under `TemporalAgent`, resolved inside an activity like `get_tools`.
+
+
+def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
+
+
+dynamic_instructions_agent = Agent(FunctionModel(_echo_instructions), name='dynamic_instructions_agent')
+
+
+@dynamic_instructions_agent.toolset(id='dynamic_instruction_toolset', per_run_step=False)
+def dynamic_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+    # A toolset that only contributes instructions, no tools.
+    return FunctionToolset(instructions='SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET', id='instruction-only-toolset')
+
+
+dynamic_instructions_temporal_agent = TemporalAgent(
+    dynamic_instructions_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class DynamicInstructionsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await dynamic_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_in_workflow(allow_model_requests: None, client: Client):
+    """A dynamic toolset's `get_instructions()` reaches the model under `TemporalAgent` (issue #5282).
+
+    The model echoes the request's instructions back as its output, so the sentinel in the output
+    proves the resolved dynamic toolset's instructions were collected via the new activity.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicInstructionsAgentWorkflow],
+        plugins=[AgentPlugin(dynamic_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicInstructionsAgentWorkflow.run,
+            args=['hello'],
+            id='test_dynamic_toolset_instructions_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET')
+
+
+def test_dynamic_toolset_temporal_activities():
+    """`TemporalDynamicToolset` collects instructions inside `get_tools`, so it has no separate `get_instructions` activity."""
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in dynamic_instructions_temporal_agent.temporal_activities
+    }
+    prefix = 'agent__dynamic_instructions_agent__dynamic_toolset__dynamic_instruction_toolset'
+    assert {f'{prefix}__get_tools', f'{prefix}__call_tool'} <= activity_names
+    assert f'{prefix}__get_instructions' not in activity_names
+
+
+# --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
+# The per-run instructions cache is written by `get_tools` and read by `get_instructions` each
+# step; this guards against it serving a stale step-1 value on a later step.
+
+
+def _echo_instructions_after_tool_call(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # First request: call a tool to force a second model-request step.
+    # Second request (carrying the tool return): echo the instructions, which by then must
+    # reflect the current step — proving the cache is repopulated by `get_tools` each step.
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    if any(isinstance(part, ToolReturnPart) for part in request.parts):
+        return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
+    return ModelResponse(parts=[ToolCallPart('noop', {})])
+
+
+multi_step_instructions_agent = Agent(
+    FunctionModel(_echo_instructions_after_tool_call), name='multi_step_instructions_agent'
+)
+
+
+@multi_step_instructions_agent.toolset(id='multi_step_instruction_toolset')
+def multi_step_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+    # Instructions encode the run step, so a stale step-1 cached value read at step 2 would
+    # surface as the wrong sentinel in the model output.
+    toolset = FunctionToolset[object](
+        instructions=f'INSTRUCTIONS_FOR_STEP_{ctx.run_step}', id='step-instruction-toolset'
+    )
+
+    @toolset.tool_plain
+    def noop() -> str:
+        return 'noop'
+
+    return toolset
+
+
+multi_step_instructions_temporal_agent = TemporalAgent(
+    multi_step_instructions_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MultiStepInstructionsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await multi_step_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
+    allow_model_requests: None, client: Client
+):
+    """A dynamic toolset's instructions are refreshed each run step under `TemporalAgent` (issue #5282).
+
+    The toolset encodes the run step in its instructions; the model calls a tool on the first request to
+    force a second step, then echoes the instructions on the second request. The output being the step-2
+    sentinel (not the step-1 one) proves `get_tools` repopulates the per-run instructions cache each step
+    rather than serving a stale step-1 value.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiStepInstructionsAgentWorkflow],
+        plugins=[AgentPlugin(multi_step_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiStepInstructionsAgentWorkflow.run,
+            args=['hello'],
+            id='test_dynamic_toolset_instructions_refresh_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('INSTRUCTIONS_FOR_STEP_2')
+
+
+# --- DynamicToolset instructions replay determinism (issue #5282) ---
+# The per-run instructions cache lives on a `for_run` copy of the wrapper rather than on the
+# process-shared, module-level instance. A history recorded on one worker must replay on a
+# freshly-constructed (cold) one, proving the `for_run` override reconstructs identically and
+# introduces no `TMPRL1100` nondeterminism.
+
+# A holder lets the replay step swap in a freshly-constructed (cold-process) instance.
+dynamic_instructions_replay_holder: dict[str, TemporalAgent[object, str]] = {}
+
+
+def _make_dynamic_instructions_replay_agent() -> TemporalAgent[object, str]:
+    agent = Agent(FunctionModel(_echo_instructions_after_tool_call), name='dynamic_instructions_replay_agent')
+
+    @agent.toolset(id='replay_instruction_toolset')
+    def _replay_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+        toolset = FunctionToolset[object](
+            instructions=f'INSTRUCTIONS_FOR_STEP_{ctx.run_step}', id='step-instruction-toolset'
+        )
+
+        @toolset.tool_plain
+        def noop() -> str:
+            return 'noop'
+
+        return toolset
+
+    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+dynamic_instructions_replay_holder['agent'] = _make_dynamic_instructions_replay_agent()
+
+
+@workflow.defn
+class DynamicInstructionsReplayWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await dynamic_instructions_replay_holder['agent'].run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_requests: None, client: Client):
+    """The per-run `for_run` instructions cache must be replay-deterministic (issue #5282).
+
+    Instructions resolved by `get_tools` are held on a per-run `for_run` copy of the wrapper, not
+    on the module-level instance. This records a two-step workflow (instructions differ per step)
+    and replays its history on a freshly-constructed cold instance — the worker-restart scenario —
+    asserting no nondeterminism, so the `for_run` copy is reconstructed identically on replay.
+    """
+    warm = _make_dynamic_instructions_replay_agent()
+    dynamic_instructions_replay_holder['agent'] = warm
+
+    # Unsandboxed so the module-level instance is shared across the run exactly as a long-running
+    # worker process shares it in production.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicInstructionsReplayWorkflow],
+        activities=warm.temporal_activities,
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        wf_id = DynamicInstructionsReplayWorkflow.__name__
+        output = await client.execute_workflow(
+            DynamicInstructionsReplayWorkflow.run, args=['hello'], id=wf_id, task_queue=TASK_QUEUE
+        )
+        assert output == snapshot('INSTRUCTIONS_FOR_STEP_2')
+        history = await client.get_workflow_handle(wf_id).fetch_history()
+
+    # Warm-recorded history replayed on a freshly-constructed cold instance (worker-restart trigger).
+    dynamic_instructions_replay_holder['agent'] = _make_dynamic_instructions_replay_agent()
+    try:
+        await Replayer(
+            workflows=[DynamicInstructionsReplayWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            data_converter=pydantic_data_converter,
+        ).replay_workflow(history)
+    finally:
+        dynamic_instructions_replay_holder['agent'] = warm
 
 
 # --- MCP-based DynamicToolset test ---
@@ -2974,6 +3292,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'instrumentation_version',  # tracing config, not run state
         'conversation_id',  # not currently exposed inside activities
         'model_settings',  # not currently exposed inside activities
+        '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -4184,7 +4503,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                         UserPromptPart(
                             content=[
                                 'Process these files and call the tool',
-                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryImage(data=b'\x89PNG', media_type='image/png', identifier='4effda'),
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
@@ -4219,7 +4538,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                             tool_name='get_multimodal_content',
                             content=[
                                 'test',
-                                BinaryContent(data=b'\x89PNG', media_type='image/png', _identifier='4effda'),
+                                BinaryImage(data=b'\x89PNG', media_type='image/png', identifier='4effda'),
                                 DocumentUrl(
                                     url='https://example.com/doc/12345',
                                     _media_type='application/pdf',
@@ -4266,11 +4585,13 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     for content in part.content_items():
                         if isinstance(content, (BinaryContent, DocumentUrl)):
                             media_types.append((type(content).__name__, content.media_type))
-        # Should have 4 items: 2 from user input, 2 from tool return
+        # Should have 4 items: 2 from user input, 2 from tool return.
+        # The image `BinaryContent` round-trips as `BinaryImage`: narrowing is applied during
+        # `MultiModalContent` validation, so it now survives the Temporal serialization boundary too.
         assert media_types == [
-            ('BinaryContent', 'image/png'),
+            ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
-            ('BinaryContent', 'image/png'),
+            ('BinaryImage', 'image/png'),
             ('DocumentUrl', 'application/pdf'),
         ]
 
