@@ -11,7 +11,6 @@ from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from prefect.context import FlowRunContext
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -40,6 +39,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 try:
     from prefect import flow, task
+    from prefect.context import FlowRunContext
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
