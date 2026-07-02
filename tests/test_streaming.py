@@ -46,10 +46,10 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    _utils,
     capture_run_messages,
     models,
 )
-from pydantic_ai import _utils
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai.agent import AgentRun
@@ -295,7 +295,7 @@ def test_streamed_text_sync_response():
 async def test_run_stream_sync_rejects_running_event_loop():
     """`run_stream_sync` drives its own event loop, so it must refuse to run inside an existing one."""
     agent = Agent(TestModel())
-    with pytest.raises(RuntimeError, match='Cannot use `run_stream_sync` from within an async context'):
+    with pytest.raises(RuntimeError, match=r'from within an async context or a running event loop; use `run_stream`'):
         agent.run_stream_sync('Hello')
 
 
@@ -303,7 +303,7 @@ def test_run_stream_sync_rejects_disabled_threads():
     """When threads are disabled (e.g. emscripten or Temporal), the dedicated-thread portal can't be used."""
     agent = Agent(TestModel())
     with _utils.disable_threads():
-        with pytest.raises(RuntimeError, match='runs the stream on a dedicated event-loop thread'):
+        with pytest.raises(RuntimeError, match=r'runs on a dedicated event-loop thread.*use `run_stream`'):
             agent.run_stream_sync('Hello')
 
 
@@ -311,11 +311,12 @@ def test_run_stream_sync_tears_down_on_keyboard_interrupt(monkeypatch: pytest.Mo
     """A Ctrl-C while blocked on the portal cancels the run instead of leaking tasks/sockets (#5975)."""
     agent = Agent(TestModel())
     result = agent.run_stream_sync('Hello')
-    assert result._finalizer.alive  # pyright: ignore[reportPrivateUsage]
+    bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+    assert bridge._finalizer.alive  # pyright: ignore[reportPrivateUsage]
 
     # Simulate the interrupt landing in the calling thread while it's blocked on the portal: the first
     # `portal.call` (the `get_output` below) raises, later ones (the teardown) behave normally.
-    portal = result._portal  # pyright: ignore[reportPrivateUsage]
+    portal = bridge._portal  # pyright: ignore[reportPrivateUsage]
     original_call = portal.call
     calls = 0
 
@@ -328,14 +329,26 @@ def test_run_stream_sync_tears_down_on_keyboard_interrupt(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(portal, 'call', interrupt_first_call)
 
+    # Enter the `with` block too, so its `__exit__` also calls `shutdown()` — the interrupt teardown
+    # already ran it once, so this exercises the idempotent (already-disarmed) shutdown path.
     with pytest.raises(KeyboardInterrupt):
-        result.get_output()
+        with result:
+            result.get_output()
 
     # The run was torn down as part of handling the interrupt: the finalizer is disarmed and the portal
     # thread is stopped, so no pending tasks or sockets are left running until GC.
-    assert not result._finalizer.alive  # pyright: ignore[reportPrivateUsage]
+    assert not bridge._finalizer.alive  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(RuntimeError):  # the portal has stopped, so it rejects further calls
         original_call(asyncio.sleep, 0)
+
+
+def test_run_stream_sync_early_break_tears_down_pump():
+    """Breaking out of a sync stream early unblocks and closes the pump without surfacing an error."""
+    agent = Agent(TestModel(custom_output_text='The cat sat on the mat.'))
+    with agent.run_stream_sync('Hello') as result:
+        for chunk in result.stream_text(delta=True, debounce_by=None):
+            assert chunk
+            break  # stop while the pump still has items to send
 
 
 async def test_streamed_structured_response():
