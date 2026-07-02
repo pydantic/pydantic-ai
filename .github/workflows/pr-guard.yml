@@ -140,10 +140,6 @@ jobs:
             fi
           }
 
-          # Fetch all open PRs once upfront (the list endpoint includes body and labels).
-          # Done outside the loop to avoid repeated paginated calls when multiple issues are referenced.
-          ALL_OPEN_PRS=$(gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate) || ALL_OPEN_PRS="[]"
-
           FOUND_OPEN_ISSUE="false"
           FOUND_CLOSED_ISSUE="false"
           for ISSUE_NUM in $ISSUE_NUMBERS; do
@@ -175,12 +171,37 @@ jobs:
             ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.user.login')
 
             # Check for duplicate/blocking PRs first — this must run regardless of assignment outcome.
-            # Look for any other open PR (excluding this one) that references this issue.
+            # As with the current PR's linked issues, ask GitHub which open PRs
+            # would close this issue instead of regex-matching PR bodies, so all
+            # closing syntaxes (and manually linked PRs) are recognized. Bot
+            # logins get their "[bot]" suffix restored to match the REST-style
+            # logins used elsewhere (PYDANTY_LOGIN, ISSUE_AUTHOR).
             echo "Checking for existing PRs targeting issue #${ISSUE_NUM}..."
 
             BLOCKING_PRS=""
             FOUND_STALE_PR="false"
-            MATCHING_PRS=$(echo "$ALL_OPEN_PRS" | jq -c "[.[] | select(.number != ${PR_NUMBER} and (.body // \"\" | test(\"(?i)\\\\b(close[sd]?|fix(es|ed)?|resolve[sd]?)\\\\s+#${ISSUE_NUM}(\\\\s|$|[^0-9])\")))] | .[]")
+            MATCHING_PRS=$(gh api graphql \
+              -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$ISSUE_NUM" \
+              -f query='
+                query($owner: String!, $name: String!, $number: Int!) {
+                  repository(owner: $owner, name: $name) {
+                    issue(number: $number) {
+                      closedByPullRequestsReferences(first: 100) {
+                        nodes {
+                          number
+                          state
+                          createdAt
+                          repository { nameWithOwner }
+                          author { __typename login }
+                          labels(first: 100) { nodes { name } }
+                        }
+                      }
+                    }
+                  }
+                }' \
+              --jq ".data.repository.issue.closedByPullRequestsReferences.nodes[]
+                | select(.state == \"OPEN\" and .repository.nameWithOwner == \"${REPO}\" and .number != ${PR_NUMBER})
+                | {number, created_at: .createdAt, user: {login: (if .author.__typename == \"Bot\" then .author.login + \"[bot]\" else .author.login end)}, labels: [.labels.nodes[]]}")
 
             while IFS= read -r PR_JSON; do
               [ -z "$PR_JSON" ] && continue
