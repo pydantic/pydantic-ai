@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import inspect
-import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
@@ -17,9 +14,13 @@ from pydantic_ai.tools import RunContext, Tool
 
 XSearchFallbackModelFunc = Callable[
     [RunContext[Any]],
-    Awaitable[Model] | Model,
+    Awaitable[Model | KnownModelName | str] | Model | KnownModelName | str,
 ]
-"""Callable that resolves a fallback model dynamically per-run."""
+"""Callable that resolves a fallback model dynamically per-run.
+
+May return a `Model` instance or a model name string (e.g. `'xai:grok-4-1-fast-non-reasoning'`);
+strings are resolved to a model at call time.
+"""
 
 XSearchFallbackModel = Model | KnownModelName | str | XSearchFallbackModelFunc | None
 """Type for the fallback model: a model, model name, factory callable, or None."""
@@ -76,51 +77,22 @@ class XSearchSubagentTool:
             raise ModelRetry(str(e)) from e
         return result.output
 
-    def __getattr__(self, name: str) -> Any:
-        # Deprecated alias for read access to the renamed `builtin_tool` field.
-        if name == 'builtin_tool':
-            warnings.warn(
-                '`XSearchSubagentTool.builtin_tool` is deprecated, use `.native_tool` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            return self.native_tool
-        raise AttributeError(name)
-
-
-install_deprecated_kwarg_alias(XSearchSubagentTool, old='builtin_tool', new='native_tool')
-
 
 def x_search_tool(
     model: Model | KnownModelName | str | XSearchFallbackModelFunc,
-    native_tool: XSearchTool | None = None,
+    native_tool: XSearchTool,
     *,
     instructions: str = 'Search X/Twitter based on the user query. Return a comprehensive summary of the results.',
-    **_deprecated_kwargs: Any,
 ) -> Tool[Any]:
     """Creates an X search tool backed by a subagent.
 
     Args:
         model: The model to use for X search. Must be an xAI model that natively
-            supports the `XSearchTool` native tool, e.g. `'xai:grok-4-1-fast-non-reasoning'`.
+            supports the `XSearchTool` native tool, e.g. `'xai:grok-4.3'`.
             Can also be a callable taking `RunContext` that returns such a model.
         native_tool: The X search tool configuration to pass to the subagent.
         instructions: Instructions for the subagent that performs the X search.
     """
-    if 'builtin_tool' in _deprecated_kwargs:
-        warnings.warn(
-            '`x_search_tool(builtin_tool=...)` is deprecated, use `native_tool=` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        legacy_native_tool = _deprecated_kwargs.pop('builtin_tool')
-        if native_tool is None:
-            native_tool = legacy_native_tool
-    if _deprecated_kwargs:
-        unknown = ', '.join(f'`{k}`' for k in _deprecated_kwargs)
-        raise TypeError(f'x_search_tool() got unexpected keyword arguments: {unknown}')
-    if native_tool is None:
-        raise TypeError("x_search_tool() missing required argument: 'native_tool'")
     return Tool[Any](
         XSearchSubagentTool(model=model, native_tool=native_tool, instructions=instructions).__call__,
         name='x_search',

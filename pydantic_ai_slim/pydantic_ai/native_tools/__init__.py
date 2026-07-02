@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
-from typing_extensions import TypedDict, deprecated
+from typing_extensions import TypedDict
 
 __all__ = (
     'AbstractNativeTool',
@@ -17,7 +17,6 @@ __all__ = (
     'XSearchTool',
     'CodeExecutionTool',
     'WebFetchTool',
-    'UrlContextTool',
     'ImageGenerationModelName',
     'ImageGenerationTool',
     'ImageAspectRatio',
@@ -25,7 +24,6 @@ __all__ = (
     'MCPServerTool',
     'FileSearchTool',
     'NATIVE_TOOL_TYPES',
-    'DEPRECATED_NATIVE_TOOLS',
     'SUPPORTED_NATIVE_TOOLS',
     'NATIVE_TOOLS_REQUIRING_CONFIG',
 )
@@ -212,7 +210,7 @@ class XSearchTool(AbstractNativeTool):
     """
 
     allowed_x_handles: list[str] | None = None
-    """If provided, only posts from these X handles will be included (max 10).
+    """If provided, only posts from these X handles will be included (max 20).
 
     Supported by:
 
@@ -220,7 +218,7 @@ class XSearchTool(AbstractNativeTool):
     """
 
     excluded_x_handles: list[str] | None = None
-    """If provided, posts from these X handles will be excluded (max 10).
+    """If provided, posts from these X handles will be excluded (max 20).
 
     Supported by:
 
@@ -285,10 +283,10 @@ class XSearchTool(AbstractNativeTool):
     def __post_init__(self) -> None:
         if self.allowed_x_handles is not None and self.excluded_x_handles is not None:
             raise ValueError('Cannot specify both allowed_x_handles and excluded_x_handles')
-        if self.allowed_x_handles and len(self.allowed_x_handles) > 10:
-            raise ValueError('allowed_x_handles cannot contain more than 10 handles')
-        if self.excluded_x_handles and len(self.excluded_x_handles) > 10:
-            raise ValueError('excluded_x_handles cannot contain more than 10 handles')
+        if self.allowed_x_handles and len(self.allowed_x_handles) > 20:
+            raise ValueError('allowed_x_handles cannot contain more than 20 handles')
+        if self.excluded_x_handles and len(self.excluded_x_handles) > 20:
+            raise ValueError('excluded_x_handles cannot contain more than 20 handles')
 
 
 @dataclass(kw_only=True)
@@ -366,19 +364,6 @@ class WebFetchTool(AbstractNativeTool):
 
     kind: str = 'web_fetch'
     """The kind of tool."""
-
-
-@deprecated('Use `WebFetchTool` instead.')
-@dataclass(kw_only=True)
-class UrlContextTool(WebFetchTool):
-    """Deprecated alias for WebFetchTool. Use WebFetchTool instead.
-
-    Overrides kind to 'url_context' so old serialized payloads with {"kind": "url_context", ...}
-    can be deserialized to UrlContextTool for backward compatibility.
-    """
-
-    kind: str = 'url_context'
-    """The kind of tool (deprecated value for backward compatibility)."""
 
 
 @dataclass(kw_only=True)
@@ -620,11 +605,8 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractNativeTool) -> str:
         return tool_data.kind
 
 
-DEPRECATED_NATIVE_TOOLS: frozenset[type[AbstractNativeTool]] = frozenset({UrlContextTool})  # pyright: ignore[reportDeprecated]
-"""Set of deprecated native tool IDs that should not be offered in new UIs."""
-
-SUPPORTED_NATIVE_TOOLS = frozenset(cls for cls in NATIVE_TOOL_TYPES.values() if cls not in DEPRECATED_NATIVE_TOOLS)
-"""Get the set of all native tool types (excluding deprecated tools)."""
+SUPPORTED_NATIVE_TOOLS = frozenset(NATIVE_TOOL_TYPES.values())
+"""Set of all native tool types."""
 
 NATIVE_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractNativeTool]] = frozenset(
     {FileSearchTool, MCPServerTool, MemoryTool, _tool_search.ToolSearchTool}

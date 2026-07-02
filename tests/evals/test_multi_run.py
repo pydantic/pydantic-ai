@@ -269,7 +269,7 @@ def test_averages_with_multi_run():
     averages = report.averages()
     assert averages is not None
     # Two-level: mean(mean(0.2, 0.4), mean(0.9)) = mean(0.3, 0.9) = 0.6
-    assert averages.scores['score'] == pytest.approx(0.6)  # pyright: ignore[reportUnknownMemberType]
+    assert averages.scores['score'] == pytest.approx(0.6)
 
 
 def test_average_from_aggregates_computation():

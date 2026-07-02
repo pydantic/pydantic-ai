@@ -470,10 +470,10 @@ async def test_span_query_evaluator(capfire: CaptureLogfire):
 
     ctx = EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=dict[str, Any](),
         metadata=None,
         expected_output=None,
-        output={},
+        output=dict[str, Any](),
         duration=0.0,
         _span_tree=tree,
         attributes={},

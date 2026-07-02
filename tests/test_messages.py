@@ -1,12 +1,16 @@
+import re
 import sys
+import warnings
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast, get_args
+from typing import Annotated, Any, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -34,7 +38,16 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.messages import INVALID_JSON_KEY, MULTI_MODAL_CONTENT_TYPES, is_multi_modal_content
+from pydantic_ai.messages import (
+    INVALID_JSON_KEY,
+    MULTI_MODAL_CONTENT_TYPES,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    ToolReturnContent,
+    is_multi_modal_content,
+    narrow_message_parts,
+)
+from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
@@ -205,7 +218,7 @@ def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
 
 
 def test_audio_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from audio URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from audio URL: foobar.potato')):
         AudioUrl('foobar.potato').media_type
 
 
@@ -225,10 +238,10 @@ def test_image_url_formats(image_url: ImageUrl, media_type: str, format: str):
 
 
 def test_image_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from image URL: foobar.potato')):
         ImageUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from image URL: foobar.potato')):
         ImageUrl('foobar.potato').format
 
 
@@ -266,7 +279,7 @@ def test_document_url_formats(document_url: DocumentUrl, media_type: str, format
 
 
 def test_document_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from document URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from document URL: foobar.potato')):
         DocumentUrl('foobar.potato').media_type
 
     with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
@@ -341,6 +354,17 @@ def test_binary_content_base64():
     assert bc.data_uri == 'data:image/png;base64,SGVsbG8sIHdvcmxkIQ=='
 
 
+def test_from_data_uri_base64():
+    bc = BinaryContent.from_data_uri('data:image/png;base64,SGVsbG8sIHdvcmxkIQ==')
+    assert bc.data == b'Hello, world!'
+    assert bc.media_type == 'image/png'
+
+
+def test_from_data_uri_non_base64():
+    with pytest.raises(ValueError, match='must be base64-encoded'):
+        BinaryContent.from_data_uri('data:text/plain,Hello%20World')
+
+
 @pytest.mark.xdist_group(name='url_formats')
 @pytest.mark.parametrize(
     'video_url,media_type,format',
@@ -361,7 +385,7 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 
 
 def test_video_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from video URL: foobar.potato')):
         VideoUrl('foobar.potato').media_type
 
 
@@ -507,6 +531,43 @@ def test_pre_usage_refactor_messages_deserializable():
             ),
         ]
     )
+
+
+@pytest.mark.anyio
+async def test_legacy_vendor_message_history_replays_through_agent():
+    """1.x message history serialized with `vendor_details` / `vendor_id` keys still routes through `agent.run(message_history=...)`.
+
+    Backstop for the V2-RULES rule 4 (cross-history-replay): the deprecated `vendor_*` read properties
+    are gone in v2, but the validation aliases on `provider_details` / `provider_response_id` stay so
+    stored histories load.
+    """
+    legacy_history: list[dict[str, Any]] = [
+        {
+            'parts': [{'content': 'Hi', 'part_kind': 'user-prompt'}],
+            'kind': 'request',
+        },
+        {
+            'parts': [{'content': 'Hello!', 'part_kind': 'text'}],
+            'kind': 'response',
+            'model_name': 'gpt-5',
+            'provider_name': 'openai',
+            'vendor_details': {'finish_reason': 'stop'},
+            'vendor_id': 'chatcmpl-legacy',
+        },
+    ]
+    message_history = ModelMessagesTypeAdapter.validate_python(legacy_history)
+    response = next(m for m in message_history if isinstance(m, ModelResponse))
+    assert response.provider_details == {'finish_reason': 'stop'}
+    assert response.provider_response_id == 'chatcmpl-legacy'
+
+    agent = Agent(TestModel())
+    result = await agent.run('And now?', message_history=message_history)
+
+    replayed_response = next(
+        m for m in result.all_messages() if isinstance(m, ModelResponse) and m.model_name == 'gpt-5'
+    )
+    assert replayed_response.provider_details == {'finish_reason': 'stop'}
+    assert replayed_response.provider_response_id == 'chatcmpl-legacy'
 
 
 def test_file_part_has_content():
@@ -1229,7 +1290,11 @@ def test_tool_return_content_nested_multimodal():
 def test_multi_modal_content_types_matches_union():
     """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members,
     and that is_multi_modal_content correctly narrows types."""
-    union_members = set(get_args(get_args(MultiModalContent)[0]))
+    # Unwrap any `Annotated` wrappers (e.g. `BinaryContent` carries an `AfterValidator` that narrows
+    # image content to `BinaryImage`) so the comparison is against the underlying content types.
+    union_members = {
+        get_args(m)[0] if get_origin(m) is Annotated else m for m in get_args(get_args(MultiModalContent)[0])
+    }
     assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
 
     # Positive cases: each multimodal type is recognized
@@ -1245,11 +1310,198 @@ def test_multi_modal_content_types_matches_union():
     assert not is_multi_modal_content(42)
 
 
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_binary_image_narrowed_wherever_multimodal_content_is_validated(mode: str):
+    """An image `BinaryContent` narrows to `BinaryImage` on validation of any `MultiModalContent`
+    (here via `UserPromptPart`), not just `FilePart.content`; non-image `BinaryContent` is left as-is.
+    """
+    image = BinaryContent(data=b'\x89PNG', media_type='image/png')
+    audio = BinaryContent(data=b'\x00\x01', media_type='audio/mpeg')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[image, audio])])]
+
+    if mode == 'json':
+        loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    else:
+        loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+
+    part = loaded[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert isinstance(part.content, list)
+    reloaded_image, reloaded_audio = part.content
+    assert type(reloaded_image) is BinaryImage
+    assert reloaded_image.data == image.data and reloaded_image.media_type == image.media_type
+    # Non-image content is not narrowed.
+    assert type(reloaded_audio) is BinaryContent
+
+
+def test_every_multimodal_type_rehydrates_as_tool_return_content():
+    """Every `MultiModalContent` type, dumped as scalar `ToolReturnPart.content`, must rehydrate to
+    its own subclass through `ModelMessagesTypeAdapter` — not collapse to a plain dict.
+
+    Guards the `ToolReturnContent` discriminator's type-specific-field gate (`_MULTIMODAL_FIELDS`):
+    if a future `MultiModalContent` type serialized without a `url`/`media_type`/`file_id` key, the
+    gate would route its dumped dict to the `mapping` branch and silently stop rehydrating it. The
+    factory must cover exactly `MULTI_MODAL_CONTENT_TYPES`, so a new type forces a deliberate update.
+    `BinaryContent` uses a non-image media type so it isn't narrowed to `BinaryImage`.
+    """
+    samples: dict[type, MultiModalContent] = {
+        ImageUrl: ImageUrl(url='https://example.com/a.png'),
+        AudioUrl: AudioUrl(url='https://example.com/a.mp3'),
+        VideoUrl: VideoUrl(url='https://example.com/a.mp4'),
+        DocumentUrl: DocumentUrl(url='https://example.com/a.pdf'),
+        BinaryContent: BinaryContent(data=b'x', media_type='application/pdf'),
+        UploadedFile: UploadedFile(file_id='f1', provider_name='openai', media_type='image/png'),
+    }
+    assert set(samples) == set(MULTI_MODAL_CONTENT_TYPES)
+
+    for cls, instance in samples.items():
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[ToolReturnPart(tool_name='t', content=instance, tool_call_id='c')])
+        ]
+        reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+        part = reloaded[0].parts[0]
+        assert isinstance(part, ToolReturnPart)
+        assert type(part.content) is cls, (
+            f'{cls.__name__} did not rehydrate through the discriminator gate '
+            f'(got {type(part.content).__name__}) — a `_MULTIMODAL_FIELDS` mismatch would cause this'
+        )
+
+
 def test_tool_return_part_binary_content_serialization():
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
     binary_content = BinaryContent(png_data, media_type='image/png')
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
     assert tool_return.model_response_object() == snapshot({})
+
+
+@pytest.mark.parametrize('case_id', ['scalar', 'list-with-binary', 'dict-with-nested-binary'])
+def test_tool_return_part_binary_content_round_trip(case_id: str, tiny_audio: BinaryContent):
+    """`ToolReturnPart.content` containing `BinaryContent` (scalar, in a list, or in a dict)
+    must round-trip via `ModelMessagesTypeAdapter` in both `validate_json` (the wire path)
+    and `validate_python` (the replay path used by UI adapters that already parsed JSON).
+
+    Without the explicit `Discriminator` on `ToolReturnContent`, smart-union resolution picks
+    `Mapping`/`Sequence`/`Any` over the discriminated `MultiModalContent` branch in
+    `validate_python`, leaving binary leaves as plain dicts.
+
+    Uses `tiny_audio` (non-image `BinaryContent`) to focus on rehydration, not the
+    `BinaryImage` narrowing applied by UI adapters.
+    """
+    contents: dict[str, ToolReturnContent] = {
+        'scalar': tiny_audio,
+        'list-with-binary': ['hello', tiny_audio],
+        'dict-with-nested-binary': {'caption': 'see audio', 'attachment': tiny_audio},
+    }
+    content = contents[case_id]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    json_loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    json_part = json_loaded[0].parts[0]
+    assert isinstance(json_part, ToolReturnPart)
+    assert json_part.content == content
+
+    python_loaded = ModelMessagesTypeAdapter.validate_python(
+        ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    )
+    python_part = python_loaded[0].parts[0]
+    assert isinstance(python_part, ToolReturnPart)
+    assert python_part.content == content
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param({'kind': 'binary', 'label': 'foo'}, id='kind-binary-no-media-type'),
+        pytest.param({'kind': 'image-url', 'note': 'not a real url part'}, id='kind-url-no-media-type'),
+    ],
+)
+def test_tool_return_dict_reusing_kind_without_type_field_stays_mapping(content: dict[str, str]):
+    """A user dict that reuses one of our `kind` values but lacks a type-specific field
+    (`media_type`/`file_id`) is left as a plain mapping rather than forced through
+    `MultiModalContent` validation (which would raise a hard `ValidationError`).
+
+    The discriminator is wired into core `ToolReturnContent`, so this guards every
+    `ModelMessagesTypeAdapter` round trip, not just the UI adapters.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+    part = loaded[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.content == content
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        # Reserved `kind` + a type-specific field, but not a valid instance of that type:
+        pytest.param({'kind': 'binary', 'media_type': 'text/plain', 'text': 'hello'}, id='binary-without-data'),
+        pytest.param(
+            {'kind': 'uploaded-file', 'file_id': 'abc', 'status': 'ready'}, id='uploaded-file-without-provider'
+        ),
+        pytest.param({'kind': 'image-url', 'media_type': 'image/png', 'note': 'x'}, id='image-url-without-url'),
+    ],
+)
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_tool_return_dict_reusing_kind_with_type_field_stays_mapping(content: dict[str, str], mode: str):
+    """A user dict that reuses a `kind` value AND carries a type field (`media_type`/`url`/`file_id`)
+    but isn't a valid instance of that type must stay a plain mapping, not raise.
+
+    The discriminator gates such a dict into the `multimodal` branch on the `kind`+field heuristic;
+    `_validate_multimodal_or_passthrough` falls back to the raw dict when `MultiModalContent` validation
+    fails, and `_serialize_multimodal_or_passthrough` dumps it without a spurious serializer warning —
+    together matching the pre-discriminator behavior where these fell through to the `Any` arm.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')  # a `PydanticSerializationUnexpectedValue` warning would fail here
+        if mode == 'json':
+            loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+        else:
+            loaded = ModelMessagesTypeAdapter.validate_python(
+                ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+            )
+
+    part = loaded[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.content == content
+
+
+@pytest.mark.parametrize(
+    'kind',
+    [
+        pytest.param([1, 2], id='kind-list'),
+        pytest.param({'x': 'y'}, id='kind-dict'),
+        pytest.param(bytearray(b'binary'), id='kind-bytearray'),
+    ],
+)
+@pytest.mark.parametrize('nested', [False, True], ids=['top-level', 'nested-in-sequence'])
+def test_tool_return_dict_unhashable_kind_stays_mapping(kind: object, nested: bool):
+    """A client dict whose `kind` is unhashable must not crash the discriminator with a `TypeError`.
+
+    The discriminator's `kind in _MULTIMODAL_KINDS` membership test raises `TypeError` on an unhashable
+    `kind` (`list`/`dict`/`bytearray`); the `isinstance(kind, str)` guard routes it to the `mapping`
+    branch instead, where it round-trips as a plain mapping — the same graceful handling of malformed
+    client input as the `_js_binary_to_bytes` hardening.
+    """
+    inner: dict[str, Any] = {'kind': kind, 'media_type': 'image/png', 'data': 'YWJj'}
+    content: Any = [inner] if nested else inner
+    dumped = {
+        'parts': [{'tool_name': 't', 'content': content, 'tool_call_id': 'c', 'part_kind': 'tool-return'}],
+        'kind': 'request',
+    }
+
+    loaded = ModelMessagesTypeAdapter.validate_python([dumped])
+    part = loaded[0].parts[0]
+    assert isinstance(part, ToolReturnPart)
+    assert part.content == content
 
 
 def test_tool_return_part_list_structure_preserved():
@@ -1599,3 +1851,114 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     response = part.model_response()
     assert '"input": 42' in response
     assert '"name"' in response
+
+
+def test_narrow_type_leaves_claim_free_part_unchanged_on_invalid_data():
+    """Best-effort: a kwarg `tool_kind` claim whose data doesn't validate against the typed
+    subclass leaves the (claim-free) part untouched instead of raising.
+
+    Not reachable as a unit through one public flow: each part class's lenient branch sits
+    behind a different producer (dict-args providers for calls, UI adapters for returns),
+    so the four classes are pinned directly here.
+    """
+    call = ToolCallPart(tool_name='load_capability', args={'name': 'oops'})
+    assert ToolCallPart.narrow_type(call, tool_kind='capability-load') is call
+
+    tool_return = ToolReturnPart(tool_name='load_capability', tool_call_id='c1', content='error text')
+    assert ToolReturnPart.narrow_type(tool_return, tool_kind='capability-load') is tool_return
+
+    native_call = NativeToolCallPart(tool_name='tool_search', args={'bad': 1})
+    assert NativeToolCallPart.narrow_type(native_call, tool_kind='tool-search') is native_call
+
+    native_return = NativeToolReturnPart(tool_name='tool_search', tool_call_id='c2', content='oops')
+    assert NativeToolReturnPart.narrow_type(native_return, tool_kind='tool-search') is native_return
+
+
+def test_narrow_type_strips_unsubstantiated_tool_kind_set_on_part():
+    """A `tool_kind` set directly on a part whose data doesn't validate against the typed subclass
+    is stripped (rather than left on a base part), across all four part classes.
+
+    Counterpart to the kwarg case above: there the claim is never on the part, here it is, so the
+    narrower must actively clear it.
+    """
+    call = ToolCallPart(tool_name='load_capability', args={'name': 'oops'}, tool_kind='capability-load')
+    assert ToolCallPart.narrow_type(call) == replace(call, tool_kind=None)
+
+    tool_return = ToolReturnPart(
+        tool_name='load_capability', tool_call_id='c1', content='not-a-dict', tool_kind='capability-load'
+    )
+    assert ToolReturnPart.narrow_type(tool_return) == replace(tool_return, tool_kind=None)
+
+    native_call = NativeToolCallPart(tool_name='tool_search', args={'bad': 1}, tool_kind='tool-search')
+    assert NativeToolCallPart.narrow_type(native_call) == replace(native_call, tool_kind=None)
+
+    native_return = NativeToolReturnPart(
+        tool_name='tool_search', tool_call_id='c2', content='oops', tool_kind='tool-search'
+    )
+    assert NativeToolReturnPart.narrow_type(native_return) == replace(native_return, tool_kind=None)
+
+
+def test_structured_content_returns_structured_json_or_none():
+    """`structured_content` parses a JSON-string `content` into structured data (dict/list), returns
+    already-structured content as-is, and yields `None` for anything that isn't structured JSON."""
+    assert ToolReturnPart(tool_name='t', tool_call_id='c1', content='{"a": 1}').structured_content() == {'a': 1}
+    assert ToolReturnPart(tool_name='t', tool_call_id='c2', content={'a': 1}).structured_content() == {'a': 1}
+    assert ToolReturnPart(tool_name='t', tool_call_id='c3', content='[1, 2]').structured_content() == [1, 2]
+    # A non-JSON string, a JSON scalar, and a bare scalar all lack structured JSON data.
+    assert ToolReturnPart(tool_name='t', tool_call_id='c4', content='not json').structured_content() is None
+    assert ToolReturnPart(tool_name='t', tool_call_id='c5', content='"just a string"').structured_content() is None
+    assert ToolReturnPart(tool_name='t', tool_call_id='c6', content=42).structured_content() is None
+
+
+def test_narrow_type_upgrades_json_string_content():
+    """A typed return whose content arrives as a JSON string (as UI adapters transmit it) is parsed
+    and promoted to its typed subclass with structured content, not left as a base part."""
+    tool_return = ToolReturnPart(
+        tool_name='load_capability',
+        tool_call_id='c1',
+        content='{"instructions": "hi"}',
+        tool_kind='capability-load',
+    )
+    narrowed = ToolReturnPart.narrow_type(tool_return)
+    assert type(narrowed) is LoadCapabilityReturnPart
+    assert narrowed.content == {'instructions': 'hi'}
+
+
+def test_stripped_tool_kind_part_survives_roundtrip():
+    """A base part that kept an unvalidatable `tool_kind` would be routed back to the typed subclass
+    by the discriminator and fail validation on reload; stripping it preserves the round-trip."""
+    invalid = ToolReturnPart(
+        tool_name='load_capability', tool_call_id='c1', content='not-a-dict', tool_kind='capability-load'
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolReturnPart.narrow_type(invalid)])]
+    reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
+    assert type(reloaded[0].parts[0]) is ToolReturnPart
+
+
+def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
+    """`narrow_message_parts` promotes shape-valid claims to their typed subclass and leaves parts
+    without a `tool_kind` untouched (same object), so callers can hand it a whole history."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='load_capability', tool_call_id='c1', args={'id': 'foo'}, tool_kind='capability-load'
+                ),
+                TextPart(content='hello'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='load_capability',
+                    tool_call_id='c1',
+                    content={'instructions': 'hi'},
+                    tool_kind='capability-load',
+                )
+            ]
+        ),
+    ]
+    narrowed = narrow_message_parts(messages)
+    assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
+    assert narrowed[0].parts[1] is messages[0].parts[1]
+    assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
