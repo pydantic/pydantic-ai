@@ -1,5 +1,6 @@
 from .common import (
     Contains,
+    ContainsExpected,
     Equals,
     EqualsExpected,
     HasMatchingSpan,
@@ -23,6 +24,7 @@ __all__ = (
     'Equals',
     'EqualsExpected',
     'Contains',
+    'ContainsExpected',
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
