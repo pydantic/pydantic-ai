@@ -32,7 +32,7 @@ from rich.progress import Progress
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
-from pydantic_evals._utils import get_event_loop
+from pydantic_evals._utils import run_until_complete
 
 from . import _task_run
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
@@ -455,7 +455,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A report containing the results of the evaluation.
         """
-        return get_event_loop().run_until_complete(
+        return run_until_complete(
             self.evaluate(
                 task,
                 name=name,

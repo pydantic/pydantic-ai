@@ -45,7 +45,10 @@ from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from pydantic_graph._utils import AbstractSpan
+from pydantic_graph._utils import (
+    AbstractSpan,
+    run_until_complete as run_until_complete,  # re-exported for the sync wrappers
+)
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
@@ -397,12 +400,21 @@ def sync_anext(iterator: Iterator[T]) -> T:
 
 
 def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
-    loop = get_event_loop()
-    while True:
-        try:
-            yield loop.run_until_complete(anext(async_iter))
-        except StopAsyncIteration:
-            break
+    try:
+        while True:
+            try:
+                yield run_until_complete(anext(async_iter))
+            except StopAsyncIteration:
+                break
+    finally:
+        # Close the underlying async iterator so its `async with`/`finally` blocks (which close
+        # model streams and HTTP connections) run even when the consumer breaks out early or is
+        # interrupted (Ctrl-C closing this generator with `GeneratorExit`), not just when the
+        # stream is exhausted.
+        aclose: Callable[[], Awaitable[None]] | None = getattr(async_iter, 'aclose', None)
+        if aclose is not None:  # pragma: no branch
+            with suppress(BaseException):
+                run_until_complete(aclose())
 
 
 def now_utc() -> datetime:
