@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import httpx
 import pytest
@@ -2879,38 +2879,47 @@ async def test_stream_cancel(allow_model_requests: None):
 #####################
 
 
-async def test_reasoning_effort_with_unified_thinking(allow_model_requests: None) -> None:
-    """Unified thinking='high' should pass reasoning_effort='high' to the Mistral API."""
-    from pydantic_ai.models.mistral import MistralModelSettings
-
+@pytest.mark.parametrize(
+    'thinking,expected',
+    [
+        pytest.param(True, 'high', id='true'),
+        pytest.param(False, 'none', id='false'),
+        pytest.param('minimal', 'none', id='minimal'),
+        pytest.param('low', 'high', id='low'),
+        pytest.param('medium', 'high', id='medium'),
+        pytest.param('high', 'high', id='high'),
+        pytest.param('xhigh', 'high', id='xhigh'),
+    ],
+)
+async def test_reasoning_effort_with_unified_thinking(allow_model_requests: None, thinking: Any, expected: str) -> None:
+    """Unified `thinking` values map to Mistral's `reasoning_effort` ('high' for any active thinking, 'none' to disable)."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
-    result = await agent.run('hello', model_settings=MistralModelSettings(thinking='high'))
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
     assert result.output == 'thought deeply'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'high'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected
 
 
-async def test_reasoning_effort_with_provider_setting(allow_model_requests: None) -> None:
-    """mistral_reasoning_effort='none' should pass reasoning_effort='none'."""
-    from pydantic_ai.models.mistral import MistralModelSettings
-
+@pytest.mark.parametrize('effort', ['none', 'high'])
+async def test_reasoning_effort_with_provider_setting(
+    allow_model_requests: None, effort: Literal['none', 'high']
+) -> None:
+    """`mistral_reasoning_effort` is forwarded verbatim as `reasoning_effort`."""
     c = completion_message(MistralAssistantMessage(content='quick answer', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
-    result = await agent.run('hello', model_settings=MistralModelSettings(mistral_reasoning_effort='none'))
+    result = await agent.run('hello', model_settings=MistralModelSettings(mistral_reasoning_effort=effort))
     assert result.output == 'quick answer'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'none'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == effort
 
 
 async def test_reasoning_effort_provider_setting_overrides_unified(allow_model_requests: None) -> None:
-    """mistral_reasoning_effort takes precedence over unified thinking."""
-    from pydantic_ai.models.mistral import MistralModelSettings
-
+    """`mistral_reasoning_effort` takes precedence over unified `thinking`."""
     c = completion_message(MistralAssistantMessage(content='answer', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
@@ -2937,8 +2946,6 @@ async def test_reasoning_effort_not_sent_without_config(allow_model_requests: No
 
 async def test_reasoning_effort_stream_with_unified_thinking(allow_model_requests: None) -> None:
     """Unified thinking='high' should pass reasoning_effort='high' in streaming mode."""
-    from pydantic_ai.models.mistral import MistralModelSettings
-
     stream = [text_chunk('hello '), text_chunk('world', finish_reason='stop')]
     mock_client = MockMistralAI(stream=stream)
     m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))

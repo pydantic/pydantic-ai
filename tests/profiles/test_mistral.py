@@ -34,8 +34,8 @@ class TestAdjustableReasoningModels:
     def test_adjustable_reasoning_models(self, model_name: str):
         profile = mistral_model_profile(model_name)
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is False
+        assert profile.get('supports_thinking') is True
+        assert profile.get('thinking_always_enabled') is False
 
 
 class TestAlwaysThinkingModels:
@@ -52,8 +52,8 @@ class TestAlwaysThinkingModels:
     def test_magistral_models(self, model_name: str):
         profile = mistral_model_profile(model_name)
         assert profile is not None
-        assert profile.supports_thinking is True
-        assert profile.thinking_always_enabled is True
+        assert profile.get('supports_thinking') is True
+        assert profile.get('thinking_always_enabled') is True
 
 
 class TestNonThinkingModels:
