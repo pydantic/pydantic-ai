@@ -242,9 +242,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
                 ModelRequest(
                     parts=[
                         ToolSearchReturnPart(
-                            content={
-                                'discovered_tools': [{'name': td.name} for td in newly_loaded]
-                            },
+                            content={'discovered_tools': [{'name': td.name} for td in newly_loaded]},
                             tool_call_id=call_id,
                         ),
                     ]
