@@ -11,7 +11,7 @@ import pytest
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebFetch
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import ToolCallPart, ToolReturn
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioDelta,
@@ -601,8 +601,7 @@ async def test_agent_realtime_session_runs_args_validator() -> None:
     agent: Agent[None, str] = Agent()
 
     def guard(ctx: RunContext[Any], city: str) -> None:
-        if city == 'forbidden':
-            raise ModelRetry('not allowed')
+        raise ModelRetry('not allowed')
 
     @agent.tool_plain(args_validator=guard)
     def weather(city: str) -> str:  # pragma: no cover — never reached; the validator rejects first
@@ -617,6 +616,47 @@ async def test_agent_realtime_session_runs_args_validator() -> None:
 
     completed = [e for e in events if isinstance(e, ToolCallCompleted)]
     assert 'not allowed' in completed[0].result
+
+
+async def test_agent_realtime_session_tool_return_is_unwrapped() -> None:
+    # A tool returning a `ToolReturn` sends its `return_value` back to the model.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def info() -> ToolReturn:
+        return ToolReturn(return_value='the-value', content=['extra context'])
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='info', args='{}'), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model) as session:
+        events = [e async for e in session]
+
+    completed = [e for e in events if isinstance(e, ToolCallCompleted)]
+    assert completed[0].result == 'the-value'
+
+
+async def test_agent_realtime_session_denied_tool_returns_denial_message() -> None:
+    # A capability that denies an approval-required call surfaces the denial message to the model.
+    from pydantic_ai.capabilities import HandleDeferredToolCalls
+    from pydantic_ai.exceptions import ApprovalRequired
+    from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def danger() -> str:
+        raise ApprovalRequired()
+
+    def deny(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: False for call in requests.approvals})
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='danger', args='{}'), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model, capabilities=[HandleDeferredToolCalls(handler=deny)]) as session:
+        events = [e async for e in session]
+
+    completed = [e for e in events if isinstance(e, ToolCallCompleted)]
+    assert 'denied' in completed[0].result.lower()
 
 
 async def test_agent_realtime_session_resolves_per_run_toolsets() -> None:

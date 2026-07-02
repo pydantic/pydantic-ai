@@ -5,8 +5,8 @@ import os
 import re
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -40,6 +40,7 @@ from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime import RealtimeConnection, RealtimeModel, RealtimeSession
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage
 
@@ -893,6 +894,32 @@ async def test_dbos_agent_realtime_session_in_workflow():
         with pytest.raises(UserError, match='cannot be used inside a DBOS workflow'):
             async with simple_dbos_agent.realtime_session(model=cast('Any', object())):
                 pass  # pragma: no cover
+
+
+class _FakeRealtimeConnection(RealtimeConnection):
+    async def send(self, content: Any) -> None: ...  # pragma: no cover
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        return
+        yield  # pragma: no cover
+
+
+class _FakeRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @asynccontextmanager
+    async def connect(
+        self, *, instructions: str, tools: Any = None, native_tools: Any = None, model_settings: Any = None
+    ) -> AsyncGenerator[_FakeRealtimeConnection]:
+        yield _FakeRealtimeConnection()
+
+
+async def test_dbos_agent_realtime_session_outside_workflow():
+    # Outside a workflow, the session is delegated to the wrapped agent.
+    async with simple_dbos_agent.realtime_session(model=_FakeRealtimeModel()) as session:
+        assert isinstance(session, RealtimeSession)
 
 
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):

@@ -419,6 +419,26 @@ async def test_connect_handshake_times_out(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.anyio
+async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
+    # If the very first connection fails to open, there is nothing to close on teardown.
+    class _FailingConnect:
+        def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+            return self
+
+        async def __aenter__(self) -> Any:
+            raise ConnectionError('refused')
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover — never entered
+            return False
+
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _FailingConnect())
+    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    with pytest.raises(ConnectionError, match='refused'):
+        async with model.connect(instructions='x'):
+            pass  # pragma: no cover
+
+
+@pytest.mark.anyio
 async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.MonkeyPatch) -> None:
     audio = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
     ws = FakeWebSocket([_created(), _updated(), b'\x00binary', audio])
