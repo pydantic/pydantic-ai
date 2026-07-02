@@ -33,7 +33,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.usage import RequestUsage
 
-from ...conftest import try_import
+from ...conftest import IsDatetime, try_import
 
 with try_import() as imports_successful:
     from google.genai.types import GenerateContentResponse, GroundingMetadata, Part, ToolType
@@ -207,10 +207,10 @@ def test_content_model_response_pre_gemini_3_preserves_code_execution(supports_t
 # `tool_response` parts, but leaves the `tool_response` content empty and delivers the retrieved contexts
 # (including each document's `custom_metadata`, e.g. a `source_url`) in `grounding_metadata` instead. These
 # tests pin that the empty `NativeToolReturnPart` is filled from the grounding metadata. They are unit tests
-# rather than VCR because recording needs a live Gemini 3 File Search store (unavailable in CI), and asserting
-# the internal cross-chunk assembly directly pins behavior a body-insensitive cassette matcher could let
-# drift. The streaming tests place the grounding on a later chunk than the empty `tool_response`, reproducing
-# the confirmed wire order the fix depends on.
+# rather than VCR because the cassette matcher is body-insensitive (a changed internal payload could still
+# replay green), and the cross-chunk assembly is asserted at the event level, which a VCR test can't reach.
+# The streaming tests place the grounding on a later chunk than the empty `tool_response`, reproducing the
+# confirmed wire order the fix depends on.
 
 _FILE_SEARCH_GROUNDING_METADATA: dict[str, Any] = {
     'grounding_chunks': [
@@ -224,15 +224,6 @@ _FILE_SEARCH_GROUNDING_METADATA: dict[str, Any] = {
         }
     ]
 }
-
-_EXPECTED_FILE_SEARCH_CONTENT = [
-    {
-        'text': 'Paris is the capital of France.',
-        'title': 'paris.txt',
-        'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
-        'file_search_store': 'fileSearchStores/test-store',
-    }
-]
 
 
 def test_file_search_grounding_fills_empty_tool_response():
@@ -251,19 +242,31 @@ def test_file_search_grounding_fills_empty_tool_response():
         provider_response_id='response-id',
     )
 
-    file_search_call, file_search_return, text = response.parts
-    assert file_search_call == NativeToolCallPart(
-        tool_name='file_search',
-        args={},
-        tool_call_id='file_search_call',
-        provider_name='google-gla',
+    assert response.parts == snapshot(
+        [
+            NativeToolCallPart(
+                tool_name='file_search',
+                args={},
+                tool_call_id='file_search_call',
+                provider_name='google-gla',
+            ),
+            NativeToolReturnPart(
+                tool_name='file_search',
+                content=[
+                    {
+                        'text': 'Paris is the capital of France.',
+                        'title': 'paris.txt',
+                        'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
+                        'file_search_store': 'fileSearchStores/test-store',
+                    }
+                ],
+                tool_call_id='file_search_call',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            ),
+            TextPart(content='Paris is the capital of France.'),
+        ]
     )
-    assert isinstance(file_search_return, NativeToolReturnPart)
-    assert file_search_return.tool_name == 'file_search'
-    assert file_search_return.tool_call_id == 'file_search_call'
-    assert file_search_return.provider_name == 'google-gla'
-    assert file_search_return.content == _EXPECTED_FILE_SEARCH_CONTENT
-    assert text == TextPart(content='Paris is the capital of France.')
 
 
 def test_file_search_populated_tool_response_not_overwritten():
@@ -336,25 +339,88 @@ async def test_file_search_grounding_fills_empty_tool_response_streaming():
         ]
     )
 
-    # The empty `tool_response` is filled in place, not duplicated by a second grounding-derived part.
-    file_search_returns = [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
-    assert len(file_search_returns) == 1
-    assert file_search_returns[0].tool_call_id == 'file_search_call'
-    assert file_search_returns[0].content == _EXPECTED_FILE_SEARCH_CONTENT
-    # Order matches the non-streaming path: the call and its (filled) return precede the grounded text.
-    assert [type(part) for part in parts] == [NativeToolCallPart, NativeToolReturnPart, TextPart]
-    assert isinstance(parts[2], TextPart) and parts[2].content == 'Paris is the capital of France.'
+    # The empty `tool_response` is filled in place, not duplicated by a second grounding-derived part, and
+    # the part order matches the non-streaming path: the call and its (filled) return precede the grounded text.
+    assert parts == snapshot(
+        [
+            NativeToolCallPart(
+                tool_name='file_search',
+                args={},
+                tool_call_id='file_search_call',
+                provider_name='google-gla',
+            ),
+            NativeToolReturnPart(
+                tool_name='file_search',
+                content=[
+                    {
+                        'text': 'Paris is the capital of France.',
+                        'title': 'paris.txt',
+                        'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
+                        'file_search_store': 'fileSearchStores/test-store',
+                    }
+                ],
+                tool_call_id='file_search_call',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+            ),
+            TextPart(content='Paris is the capital of France.'),
+        ]
+    )
 
     # Exactly one `PartStartEvent` for the file_search return: the empty placeholder's event is deferred until
     # it is filled, so streaming consumers see a single populated result rather than an empty one then a duplicate.
     starts = _file_search_return_start_parts(events)
     assert len(starts) == 1
-    assert starts[0].content == _EXPECTED_FILE_SEARCH_CONTENT
+    assert starts[0].content is not None
+
+
+@pytest.mark.anyio
+async def test_file_search_multiple_calls_all_filled_streaming():
+    """Every reserved file_search return is filled from the aggregate grounding, matching the non-streaming path."""
+    events, parts = await _drive_stream(
+        [
+            _stream_chunk([{'tool_call': {'id': 'call_1', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
+            _stream_chunk([{'tool_response': {'id': 'call_1', 'tool_type': 'FILE_SEARCH'}}]),
+            _stream_chunk([{'tool_call': {'id': 'call_2', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
+            _stream_chunk([{'tool_response': {'id': 'call_2', 'tool_type': 'FILE_SEARCH'}}]),
+            _stream_chunk([{'text': 'Paris.'}], grounding=_FILE_SEARCH_GROUNDING_METADATA),
+        ]
+    )
+
+    returns = [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
+    assert [(r.tool_call_id, r.content) for r in returns] == snapshot(
+        [
+            (
+                'call_1',
+                [
+                    {
+                        'text': 'Paris is the capital of France.',
+                        'title': 'paris.txt',
+                        'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
+                        'file_search_store': 'fileSearchStores/test-store',
+                    }
+                ],
+            ),
+            (
+                'call_2',
+                [
+                    {
+                        'text': 'Paris is the capital of France.',
+                        'title': 'paris.txt',
+                        'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
+                        'file_search_store': 'fileSearchStores/test-store',
+                    }
+                ],
+            ),
+        ]
+    )
+    assert len(_file_search_return_start_parts(events)) == 2
 
 
 @pytest.mark.anyio
 async def test_file_search_grounding_absent_leaves_empty_content_streaming():
-    """If grounding never arrives, the reserved file_search return keeps its empty content and emits no event."""
+    """If grounding never arrives, the reserved return keeps its empty content and its deferred event is
+    flushed at the end of the stream, so event consumers still see every part present in the final response."""
     events, parts = await _drive_stream(
         [
             _stream_chunk([{'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
@@ -366,5 +432,8 @@ async def test_file_search_grounding_absent_leaves_empty_content_streaming():
     file_search_returns = [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
     assert len(file_search_returns) == 1
     assert file_search_returns[0].content is None
-    # The deferred `PartStartEvent` is never emitted because the part is never filled.
-    assert _file_search_return_start_parts(events) == []
+    # The deferred `PartStartEvent` is flushed at the end of the stream, empty, exactly once.
+    starts = _file_search_return_start_parts(events)
+    assert len(starts) == 1
+    assert starts[0].content is None
+    assert isinstance(events[-1], PartStartEvent) and events[-1].part is starts[0]

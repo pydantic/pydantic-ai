@@ -1241,13 +1241,12 @@ class GeminiStreamedResponse(StreamedResponse):
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
-    # On Gemini 3+ the API returns an explicit but empty file_search `tool_response` several chunks before the
-    # `grounding_metadata` carrying its retrieved contexts. This holds that part so its content can be filled
-    # once the grounding arrives (see `_get_event_iterator`). Its `PartStartEvent` is deferred until the fill,
-    # and it's keyed in the parts manager by its `tool_call_id` so that emit overwrites the reserved slot
-    # instead of appending a duplicate. Only one call per response is tracked: candidate-level
-    # `grounding_metadata` is aggregate and can't be attributed to individual calls anyway.
-    _pending_file_search_return: NativeToolReturnPart | None = field(default=None, init=False)
+    # Empty file_search returns whose contexts are still to arrive in `grounding_metadata` (see
+    # `_fill_empty_file_search_return_content`). Each is reserved in the parts manager keyed by its
+    # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
+    _pending_file_search_returns: list[NativeToolReturnPart] = field(
+        default_factory=list[NativeToolReturnPart], init=False
+    )
 
     async def close_stream(self) -> None:
         try:
@@ -1425,11 +1424,10 @@ class GeminiStreamedResponse(StreamedResponse):
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
                         tool_response_part.provider_details = provider_details
                         if tool_response_part.tool_name == FileSearchTool.kind and tool_response_part.content is None:
-                            # The retrieved contexts arrive in `grounding_metadata` on a later chunk. Reserve
-                            # this part's slot now (keyed by `tool_call_id`) but defer its `PartStartEvent`
-                            # until it's filled below, so consumers see a single populated file_search result
-                            # rather than an empty one followed by a filled duplicate.
-                            self._pending_file_search_return = tool_response_part
+                            # Reserve the part's slot but defer its `PartStartEvent` until it's filled below,
+                            # so consumers see a single populated file_search result rather than an empty one
+                            # followed by a filled duplicate.
+                            self._pending_file_search_returns.append(tool_response_part)
                             self._parts_manager.handle_part(
                                 vendor_part_id=tool_response_part.tool_call_id, part=tool_response_part
                             )
@@ -1455,21 +1453,25 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                     if file_search_part is not None:
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=file_search_part)
-                elif self._pending_file_search_return is not None:
-                    # On Gemini 3+ the file_search `tool_response` reserved above has its retrieved contexts
-                    # delivered here in `grounding_metadata`. Fill the reserved part and emit its single,
-                    # populated `PartStartEvent` under the same `tool_call_id`, so streaming output matches the
-                    # non-streaming path instead of dropping the citations. If grounding never arrives the part
-                    # keeps its empty content, matching the prior behavior.
-                    _fill_empty_file_search_return_content(
-                        self._pending_file_search_return, candidate.grounding_metadata
-                    )
-                    if self._pending_file_search_return.content is not None:
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=self._pending_file_search_return.tool_call_id,
-                            part=self._pending_file_search_return,
-                        )
-                        self._pending_file_search_return = None
+                elif self._pending_file_search_returns:
+                    # Fill every reserved file_search return from the (aggregate) `grounding_metadata`,
+                    # matching the non-streaming path, and emit each filled part's deferred `PartStartEvent`
+                    # under its reserved slot.
+                    still_pending: list[NativeToolReturnPart] = []
+                    for pending in self._pending_file_search_returns:
+                        _fill_empty_file_search_return_content(pending, candidate.grounding_metadata)
+                        if pending.content is None:
+                            still_pending.append(pending)
+                        else:
+                            yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+                    self._pending_file_search_returns = still_pending
+
+            # Grounding never arrived (or carried no retrieved contexts) for these reserved returns: emit
+            # their deferred `PartStartEvent`s with empty content, so streaming consumers still see every
+            # part present in the final response.
+            for pending in self._pending_file_search_returns:
+                yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
+            self._pending_file_search_returns = []
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
                 raise ModelHTTPError(
@@ -1819,9 +1821,6 @@ def _process_response_from_parts(
         item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
         if item is not None:
             if isinstance(item, NativeToolReturnPart):
-                # On Gemini 3+ the explicit file_search `tool_response` part can be empty, with the retrieved
-                # contexts in `grounding_metadata` instead; metadata reconstruction is skipped above when
-                # explicit parts are present, so fill the part from the grounding metadata here.
                 _fill_empty_file_search_return_content(item, grounding_metadata)
             items.append(item)
 
@@ -2036,9 +2035,10 @@ def _fill_empty_file_search_return_content(
     """Fill an empty file_search `NativeToolReturnPart` from `grounding_metadata` in place.
 
     On Gemini 3+ the API returns explicit file_search `tool_call`/`tool_response` parts but leaves the
-    `tool_response` content empty, delivering the retrieved contexts in `grounding_metadata` instead. Metadata
-    reconstruction is skipped when explicit parts are present (to avoid duplicate parts), so the contexts are
-    recovered by filling the explicit part here. No-op for other tools or when the content is already set.
+    `tool_response` content empty, delivering the retrieved contexts in `grounding_metadata` instead — in
+    streaming, several chunks later. Metadata reconstruction is skipped when explicit parts are present (to
+    avoid duplicate parts), so the contexts are recovered by filling the explicit part here. No-op for other
+    tools or when the content is already set.
     """
     if item.tool_name != FileSearchTool.kind or item.content is not None:
         return

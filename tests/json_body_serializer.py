@@ -156,7 +156,9 @@ def scrub_xml_credentials(
         headers['content-length'] = [str(len(body.encode('utf-8')))]
 
 
-def _store_json_body(data: dict[str, Any], body: str, headers: dict[str, list[str]]) -> None:  # pragma: lax no cover
+def _store_json_body(
+    kind: str, data: dict[str, Any], body: str, headers: dict[str, list[str]]
+) -> None:  # pragma: lax no cover
     """Replace an `application/json` body with a normalized, scrubbed `parsed_body`.
 
     Some endpoints (e.g. resumable file uploads) send a non-JSON body under an `application/json`
@@ -165,10 +167,9 @@ def _store_json_body(data: dict[str, Any], body: str, headers: dict[str, list[st
     try:
         parsed = json.loads(body)
     except json.JSONDecodeError:
-        if isinstance(data.get('body'), dict):
-            data['body']['string'] = body
-        else:
-            data['body'] = body
+        data['body'] = {'string': body} if kind == 'response' else body
+        if 'content-length' in headers:
+            headers['content-length'] = [str(len(body.encode('utf-8')))]
         return
     # Normalize smart quotes and special characters
     data['parsed_body'] = normalize_body(parsed)
@@ -187,7 +188,7 @@ def _store_json_body(data: dict[str, Any], body: str, headers: dict[str, list[st
 
 def serialize(cassette_dict: Any):  # pragma: lax no cover
     for interaction in cassette_dict['interactions']:
-        for _kind, data in interaction.items():
+        for kind, data in interaction.items():
             headers: dict[str, list[str]] = data.get('headers', {})
             # make headers lowercase
             headers = {k.lower(): v for k, v in headers.items()}
@@ -227,7 +228,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                             except (gzip.BadGzipFile, zlib.error):
                                 pass
                         body = body.decode('utf-8')
-                    _store_json_body(data, body, headers)  # pyright: ignore[reportUnknownArgumentType]
+                    _store_json_body(kind, data, body, headers)  # pyright: ignore[reportUnknownArgumentType]
             scrub_form_credentials(data, content_type)
             scrub_xml_credentials(data, headers, content_type)
 
