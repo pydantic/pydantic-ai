@@ -1200,7 +1200,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         {'text': 'See attached document(s).'},
                         *msg['content'],
                     ]
-                    processed_messages[i] = {**msg, 'content': new_content}
+                    processed_messages[i] = cast(MessageUnionTypeDef, {**msg, 'content': new_content})
 
         return system_prompt, processed_messages
 
