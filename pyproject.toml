@@ -400,6 +400,7 @@ exclude_lines = [
     '$\s*assert_never\(',
     'if __name__ == .__main__.:',
     'except ImportError as _import_error:',
+    'except ModuleNotFoundError as _import_error:',
     '$\s*pass$',
     'assert False',
     '@pytest\.mark\.skip',
