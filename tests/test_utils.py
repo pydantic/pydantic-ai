@@ -140,7 +140,7 @@ def test_check_object_json_schema():
     }
 
     array_schema = {'type': 'array', 'items': {'type': 'string'}}
-    with pytest.raises(UserError, match='^Schema must be an object$'):
+    with pytest.raises(UserError, match=r'^Schema must be an object$'):
         check_object_json_schema(array_schema)
 
 
