@@ -64,22 +64,18 @@ class _PydanticAIMessageMetadata(BaseModel):
     timestamp: datetime | None = None
 
 
-def tool_return_output(part: BaseToolReturnPart, *, preserve_file_data: bool = False) -> Any:
-    """Serialize a tool return's content for `ToolOutputAvailablePart.output`.
+def tool_return_output(part: BaseToolReturnPart) -> Any:
+    """Serialize a tool return's full content for `ToolOutputAvailablePart.output`.
 
-    `preserve_file_data` decides whether file data in the return (`BinaryContent`, `ImageUrl`, etc.)
-    is sent to the client:
+    Vercel's `output` field is typed `Any` and carries structured content, so the full return —
+    file data (`BinaryContent`, `ImageUrl`, etc.) included — is always dumped inline; it's rehydrated
+    on load via `ToolReturnContent`'s discriminator (`_validate_tool_output`). No gating: tool-return
+    files always round-trip, matching the AG-UI adapter's inline `ToolMessage.content`.
 
-    - `False` (the default): drop the files and keep only the text (via `model_response_str`). File
-      data stays on the server — the trust-model default from #3971 — and this matches the AG-UI dump path.
-    - `True`: dump the files inline; they're rehydrated on load via `ToolReturnContent`'s discriminator.
-
-    The streaming path (`_tool_return_with_files`) ignores this flag and always replaces files with text
-    placeholders, because event-stream formats can't carry multimodal tool output (#3826). That
-    dump-vs-stream difference is intentional, not a gap to fix.
+    The streaming path (`_tool_return_with_files`) still replaces files with text placeholders, because
+    event-stream formats can't carry multimodal tool output (#3826). That dump-vs-stream difference is
+    intentional, not a gap to fix.
     """
-    if not preserve_file_data and part.files:
-        return part.model_response_str()
     return tool_return_ta.dump_python(part.content, mode='json')
 
 

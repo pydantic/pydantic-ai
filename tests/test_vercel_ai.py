@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
 import pytest
+from pydantic import ValidationError
 
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._deferred_capabilities import (
@@ -4236,10 +4237,9 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
 ):
     """Multimodal `ToolReturnPart.content` round-trips through `ToolOutputAvailablePart.output`.
 
-    With `preserve_file_data=True`, the output field carries the dumped `ToolReturnContent` shape
-    directly; on load, `tool_return_content_ta` rehydrates `MultiModalContent` items via the explicit
-    `Discriminator` lifted onto the recursive alias. The default-drop behavior is covered by
-    `test_adapter_tool_return_multimodal_dropped_by_default`.
+    The `output` field always carries the dumped `ToolReturnContent` shape directly (no flag); on load,
+    `tool_return_content_ta` rehydrates `MultiModalContent` items via the explicit `Discriminator` lifted
+    onto the recursive alias.
     """
     contents: dict[str, Any] = {
         'single-image': tiny_image,
@@ -4257,7 +4257,7 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
         ModelResponse(parts=[TextPart(content='Done')]),
     ]
 
-    ui_messages = VercelAIAdapter.dump_messages(messages, preserve_file_data=True)
+    ui_messages = VercelAIAdapter.dump_messages(messages)
     assistant = next(m for m in ui_messages if m.role == 'assistant')
     tool_part = next(p for p in assistant.parts if isinstance(p, ToolOutputAvailablePart))
     assert tool_part.output == expected_output
@@ -4269,6 +4269,137 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
     )
+
+
+@pytest.mark.parametrize(
+    'data_payload',
+    [
+        pytest.param({'0': 0, '1': 1, '2': 2}, id='uint8array-numeric-keyed-dict'),
+        pytest.param({'type': 'Buffer', 'data': [0, 1, 2]}, id='node-buffer-shape'),
+    ],
+)
+async def test_adapter_load_tool_return_binary_data_from_js_buffer_shape(data_payload: Any):
+    """Frontends that JSON-stringify a `Uint8Array`/`Buffer` instead of base64-encoding it
+    still produce a usable `BinaryContent` after load.
+
+    Regression for https://github.com/pydantic/pydantic-ai/pull/5255 review comment from
+    sadra-barikbin: a deferred frontend-executed tool returned `data` as a numeric-keyed
+    dict (`JSON.stringify(uint8Array)`), and `tool_return_content_ta.validate_python`
+    raised `ValidationError: Input should be a valid bytes` because pydantic's bytes
+    validator does not accept dicts.
+    """
+    ui_messages: list[UIMessage] = [
+        UIMessage(
+            id='m1',
+            role='user',
+            parts=[TextUIPart(text='give me a file')],
+        ),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output={
+                        'kind': 'binary',
+                        'data': data_payload,
+                        'media_type': 'application/pdf',
+                    },
+                )
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    content = tool_returns[0].content
+    assert isinstance(content, BinaryContent)
+    assert content.data == b'\x00\x01\x02'
+    assert content.media_type == 'application/pdf'
+
+
+@pytest.mark.parametrize(
+    'data_payload',
+    [
+        pytest.param({'type': 'Buffer', 'data': 'not-a-list'}, id='buffer-envelope-non-list-data'),
+        pytest.param({'type': 'Buffer', 'data': [256]}, id='buffer-envelope-out-of-range-int'),
+        pytest.param({'0': 1, '2': 3}, id='uint8array-non-contiguous-indices'),
+        pytest.param({'0': 'a'}, id='uint8array-non-int-values'),
+        pytest.param({'00': 5, '1': 6}, id='uint8array-non-canonical-key'),
+        pytest.param({'0': 256}, id='uint8array-out-of-range-value'),
+    ],
+)
+async def test_adapter_load_tool_return_binary_data_unrecognized_shape_passes_through(data_payload: Any):
+    """Unrecognized binary `data` shapes are left untouched by `_js_binary_to_bytes` (no `KeyError`/`TypeError`).
+
+    Because the merged `ToolReturnContent` discriminator wraps the multimodal branch in a passthrough
+    validator (`_validate_multimodal_or_passthrough`), a `kind: 'binary'` dict whose `data` fails bytes
+    validation isn't a hard error — it falls back to the raw mapping. So the helper only needs to avoid
+    crashing on malformed input; the content round-trips as the untouched dict.
+    """
+    ui_messages: list[UIMessage] = [
+        UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output={
+                        'kind': 'binary',
+                        'data': data_payload,
+                        'media_type': 'application/pdf',
+                    },
+                )
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    # The malformed shape is preserved verbatim (not coerced, not dropped), so nothing crashes downstream.
+    assert tool_returns[0].content == {'kind': 'binary', 'data': data_payload, 'media_type': 'application/pdf'}
+
+
+async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserved():
+    """A plain user mapping that merely reuses `kind: 'binary'` (no `media_type`) stays a mapping
+    with its nested `data` untouched — JS-binary coercion is gated on the same type-specific field
+    as the core `ToolReturnContent` discriminator, so it doesn't corrupt non-multimodal user dicts."""
+    ui_messages: list[UIMessage] = [
+        UIMessage(id='m1', role='user', parts=[TextUIPart(text='go')]),
+        UIMessage(
+            id='m2',
+            role='assistant',
+            parts=[
+                ToolOutputAvailablePart(
+                    type='tool-get_file',
+                    tool_call_id='tc-1',
+                    state='output-available',
+                    input={},
+                    output={'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'},
+                )
+            ],
+        ),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].content == snapshot({'kind': 'binary', 'data': {'0': 104, '1': 105}, 'label': 'foo'})
 
 
 async def test_adapter_tool_return_text_only_unchanged():
@@ -4320,7 +4451,7 @@ async def test_adapter_tool_return_none_serializes_as_null():
 
 
 async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage):
-    """Multimodal `NativeToolReturnPart.content` round-trips through the discriminated alias with `preserve_file_data=True`."""
+    """Multimodal `NativeToolReturnPart.content` round-trips through the discriminated alias (no flag)."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
@@ -4341,7 +4472,7 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_i
         ),
     ]
 
-    ui_messages = VercelAIAdapter.dump_messages(messages, preserve_file_data=True)
+    ui_messages = VercelAIAdapter.dump_messages(messages)
     reloaded = VercelAIAdapter.load_messages(ui_messages)
     returns = [
         p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
@@ -4359,11 +4490,11 @@ async def test_adapter_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_i
     )
 
 
-async def test_adapter_tool_return_multimodal_dropped_by_default(tiny_image: BinaryImage, tiny_audio: BinaryContent):
-    """With the default `preserve_file_data=False`, multimodal tool-return content is dropped and only text survives.
+async def test_adapter_tool_return_multimodal_always_serialized(tiny_image: BinaryImage, tiny_audio: BinaryContent):
+    """Multimodal tool-return content is always serialized to the `output` field (no flag) and round-trips.
 
-    Mirrors AG-UI's `test_tool_return_multimodal_dropped_by_default` so both adapters gate
-    `dump_messages` on `preserve_file_data` identically (cross-adapter dump parity).
+    Mirrors AG-UI's inline `ToolMessage.content`: tool-return files always ride in the wire field, so both
+    adapters round-trip them without any opt-in (cross-adapter dump parity).
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Call tool')]),
@@ -4381,8 +4512,28 @@ async def test_adapter_tool_return_multimodal_dropped_by_default(tiny_image: Bin
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
     outputs = [p.output for m in ui_messages for p in m.parts if isinstance(p, ToolOutputAvailablePart)]
-    # Text survives; the file payloads (base64 data / URLs) never reach the wire.
-    assert outputs == snapshot(['the narration says...', ''])
+    # The full content, file payloads (base64 data) included, reaches the wire.
+    assert outputs == snapshot(
+        [
+            [
+                'the narration says...',
+                {
+                    'data': 'EBES',
+                    'media_type': 'audio/mpeg',
+                    'vendor_metadata': None,
+                    'kind': 'binary',
+                    'identifier': 'c4c10d',
+                },
+            ],
+            {
+                'data': 'AAEC',
+                'media_type': 'image/jpeg',
+                'vendor_metadata': None,
+                'kind': 'binary',
+                'identifier': '0c7a62',
+            },
+        ]
+    )
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
     tool_returns = [
@@ -4391,9 +4542,12 @@ async def test_adapter_tool_return_multimodal_dropped_by_default(tiny_image: Bin
     assert tool_returns == snapshot(
         [
             ToolReturnPart(
-                tool_name='get_files', tool_call_id='tc-1', content='the narration says...', timestamp=IsDatetime()
+                tool_name='get_files',
+                tool_call_id='tc-1',
+                content=['the narration says...', tiny_audio],
+                timestamp=IsDatetime(),
             ),
-            ToolReturnPart(tool_name='get_image', tool_call_id='tc-2', content='', timestamp=IsDatetime()),
+            ToolReturnPart(tool_name='get_image', tool_call_id='tc-2', content=tiny_image, timestamp=IsDatetime()),
         ]
     )
 
@@ -9610,8 +9764,6 @@ async def test_adapter_load_binary_content_rejects_invalid_vendor_metadata():
     client value raises `ValidationError` here (matching the URL constructor path),
     instead of being stored unvalidated and crashing a provider model later.
     """
-    from pydantic import ValidationError
-
     ui_messages = [
         UIMessage(
             id='msg-1',
