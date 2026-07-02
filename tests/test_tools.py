@@ -1432,6 +1432,39 @@ def test_function_tool_inconsistent_with_schema():
     assert result == 'Coverage made me call this'
 
 
+def test_function_tool_from_schema_rejects_non_object_schema():
+    def function(*args: Any, **kwargs: Any) -> str:  # pragma: no cover
+        return 'unreachable'
+
+    with pytest.raises(UserError, match='Schema must be an object'):
+        Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema={'type': 'string'})
+
+
+def test_function_tool_from_schema_rejects_unknown_required_property():
+    def function(*args: Any, **kwargs: Any) -> str:  # pragma: no cover
+        return 'unreachable'
+
+    with pytest.raises(UserError, match="Schema `required` property 'known' is not defined in `properties`"):
+        Tool.from_schema(
+            function,
+            name='foobar',
+            description='does foobar stuff',
+            json_schema={'type': 'object', 'required': ['known']},
+        )
+
+    with pytest.raises(UserError, match="Schema `required` property 'missing' is not defined in `properties`"):
+        Tool.from_schema(
+            function,
+            name='foobar',
+            description='does foobar stuff',
+            json_schema={
+                'type': 'object',
+                'properties': {'known': {'type': 'string'}},
+                'required': ['known', 'missing'],
+            },
+        )
+
+
 def test_async_function_tool_consistent_with_schema():
     async def function(*args: Any, **kwargs: Any) -> str:
         assert len(args) == 0

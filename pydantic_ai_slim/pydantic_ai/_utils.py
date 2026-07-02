@@ -31,6 +31,7 @@ from typing import (
     Generic,
     TypeAlias,
     TypeGuard,
+    cast,
     get_args,
     get_origin,
     overload,
@@ -159,6 +160,7 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
     from .exceptions import UserError
 
     if schema.get('type') == 'object':
+        _check_required_properties(schema)
         return schema
     elif ref := schema.get('$ref'):
         prefix = '#/$defs/'
@@ -169,10 +171,27 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
             and resolved.get('type') == 'object'
             and not _contains_ref(resolved)
         ):
+            _check_required_properties(resolved)
             return resolved
         return schema
     else:
         raise UserError('Schema must be an object')
+
+
+def _check_required_properties(schema: JsonSchemaValue) -> None:
+    from .exceptions import UserError
+
+    required = schema.get('required')
+    if not isinstance(required, list):
+        return
+
+    properties = schema.get('properties', {})
+
+    for required_property in cast(list[object], required):
+        if isinstance(required_property, str) and (
+            not isinstance(properties, dict) or required_property not in properties
+        ):
+            raise UserError(f'Schema `required` property {required_property!r} is not defined in `properties`')
 
 
 def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:

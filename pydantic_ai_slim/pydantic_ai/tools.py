@@ -614,6 +614,7 @@ class Tool(Generic[ToolAgentDepsT]):
         Returns:
             A Pydantic tool that calls the function
         """
+        json_schema = _utils.check_object_json_schema(json_schema)
         function_schema = _function_schema.FunctionSchema(
             function=function,
             name=name,
