@@ -1,8 +1,10 @@
+import re
 import sys
 import warnings
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast, get_args
+from typing import Annotated, Any, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
@@ -39,8 +41,11 @@ from pydantic_ai import (
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ToolReturnContent,
     is_multi_modal_content,
+    narrow_message_parts,
 )
 from pydantic_ai.models.test import TestModel
 
@@ -213,7 +218,7 @@ def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
 
 
 def test_audio_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from audio URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from audio URL: foobar.potato')):
         AudioUrl('foobar.potato').media_type
 
 
@@ -233,10 +238,10 @@ def test_image_url_formats(image_url: ImageUrl, media_type: str, format: str):
 
 
 def test_image_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from image URL: foobar.potato')):
         ImageUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from image URL: foobar.potato')):
         ImageUrl('foobar.potato').format
 
 
@@ -274,7 +279,7 @@ def test_document_url_formats(document_url: DocumentUrl, media_type: str, format
 
 
 def test_document_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from document URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from document URL: foobar.potato')):
         DocumentUrl('foobar.potato').media_type
 
     with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
@@ -380,7 +385,7 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 
 
 def test_video_url_invalid():
-    with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
+    with pytest.raises(ValueError, match=re.escape('Could not infer media type from video URL: foobar.potato')):
         VideoUrl('foobar.potato').media_type
 
 
@@ -1285,7 +1290,11 @@ def test_tool_return_content_nested_multimodal():
 def test_multi_modal_content_types_matches_union():
     """Validate that MULTI_MODAL_CONTENT_TYPES matches the MultiModalContent union members,
     and that is_multi_modal_content correctly narrows types."""
-    union_members = set(get_args(get_args(MultiModalContent)[0]))
+    # Unwrap any `Annotated` wrappers (e.g. `BinaryContent` carries an `AfterValidator` that narrows
+    # image content to `BinaryImage`) so the comparison is against the underlying content types.
+    union_members = {
+        get_args(m)[0] if get_origin(m) is Annotated else m for m in get_args(get_args(MultiModalContent)[0])
+    }
     assert set(MULTI_MODAL_CONTENT_TYPES) == union_members
 
     # Positive cases: each multimodal type is recognized
@@ -1299,6 +1308,30 @@ def test_multi_modal_content_types_matches_union():
     assert not is_multi_modal_content('a string')
     assert not is_multi_modal_content({'key': 'value'})
     assert not is_multi_modal_content(42)
+
+
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_binary_image_narrowed_wherever_multimodal_content_is_validated(mode: str):
+    """An image `BinaryContent` narrows to `BinaryImage` on validation of any `MultiModalContent`
+    (here via `UserPromptPart`), not just `FilePart.content`; non-image `BinaryContent` is left as-is.
+    """
+    image = BinaryContent(data=b'\x89PNG', media_type='image/png')
+    audio = BinaryContent(data=b'\x00\x01', media_type='audio/mpeg')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[image, audio])])]
+
+    if mode == 'json':
+        loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    else:
+        loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+
+    part = loaded[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert isinstance(part.content, list)
+    reloaded_image, reloaded_audio = part.content
+    assert type(reloaded_image) is BinaryImage
+    assert reloaded_image.data == image.data and reloaded_image.media_type == image.media_type
+    # Non-image content is not narrowed.
+    assert type(reloaded_audio) is BinaryContent
 
 
 def test_every_multimodal_type_rehydrates_as_tool_return_content():
@@ -1818,3 +1851,114 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     response = part.model_response()
     assert '"input": 42' in response
     assert '"name"' in response
+
+
+def test_narrow_type_leaves_claim_free_part_unchanged_on_invalid_data():
+    """Best-effort: a kwarg `tool_kind` claim whose data doesn't validate against the typed
+    subclass leaves the (claim-free) part untouched instead of raising.
+
+    Not reachable as a unit through one public flow: each part class's lenient branch sits
+    behind a different producer (dict-args providers for calls, UI adapters for returns),
+    so the four classes are pinned directly here.
+    """
+    call = ToolCallPart(tool_name='load_capability', args={'name': 'oops'})
+    assert ToolCallPart.narrow_type(call, tool_kind='capability-load') is call
+
+    tool_return = ToolReturnPart(tool_name='load_capability', tool_call_id='c1', content='error text')
+    assert ToolReturnPart.narrow_type(tool_return, tool_kind='capability-load') is tool_return
+
+    native_call = NativeToolCallPart(tool_name='tool_search', args={'bad': 1})
+    assert NativeToolCallPart.narrow_type(native_call, tool_kind='tool-search') is native_call
+
+    native_return = NativeToolReturnPart(tool_name='tool_search', tool_call_id='c2', content='oops')
+    assert NativeToolReturnPart.narrow_type(native_return, tool_kind='tool-search') is native_return
+
+
+def test_narrow_type_strips_unsubstantiated_tool_kind_set_on_part():
+    """A `tool_kind` set directly on a part whose data doesn't validate against the typed subclass
+    is stripped (rather than left on a base part), across all four part classes.
+
+    Counterpart to the kwarg case above: there the claim is never on the part, here it is, so the
+    narrower must actively clear it.
+    """
+    call = ToolCallPart(tool_name='load_capability', args={'name': 'oops'}, tool_kind='capability-load')
+    assert ToolCallPart.narrow_type(call) == replace(call, tool_kind=None)
+
+    tool_return = ToolReturnPart(
+        tool_name='load_capability', tool_call_id='c1', content='not-a-dict', tool_kind='capability-load'
+    )
+    assert ToolReturnPart.narrow_type(tool_return) == replace(tool_return, tool_kind=None)
+
+    native_call = NativeToolCallPart(tool_name='tool_search', args={'bad': 1}, tool_kind='tool-search')
+    assert NativeToolCallPart.narrow_type(native_call) == replace(native_call, tool_kind=None)
+
+    native_return = NativeToolReturnPart(
+        tool_name='tool_search', tool_call_id='c2', content='oops', tool_kind='tool-search'
+    )
+    assert NativeToolReturnPart.narrow_type(native_return) == replace(native_return, tool_kind=None)
+
+
+def test_structured_content_returns_structured_json_or_none():
+    """`structured_content` parses a JSON-string `content` into structured data (dict/list), returns
+    already-structured content as-is, and yields `None` for anything that isn't structured JSON."""
+    assert ToolReturnPart(tool_name='t', tool_call_id='c1', content='{"a": 1}').structured_content() == {'a': 1}
+    assert ToolReturnPart(tool_name='t', tool_call_id='c2', content={'a': 1}).structured_content() == {'a': 1}
+    assert ToolReturnPart(tool_name='t', tool_call_id='c3', content='[1, 2]').structured_content() == [1, 2]
+    # A non-JSON string, a JSON scalar, and a bare scalar all lack structured JSON data.
+    assert ToolReturnPart(tool_name='t', tool_call_id='c4', content='not json').structured_content() is None
+    assert ToolReturnPart(tool_name='t', tool_call_id='c5', content='"just a string"').structured_content() is None
+    assert ToolReturnPart(tool_name='t', tool_call_id='c6', content=42).structured_content() is None
+
+
+def test_narrow_type_upgrades_json_string_content():
+    """A typed return whose content arrives as a JSON string (as UI adapters transmit it) is parsed
+    and promoted to its typed subclass with structured content, not left as a base part."""
+    tool_return = ToolReturnPart(
+        tool_name='load_capability',
+        tool_call_id='c1',
+        content='{"instructions": "hi"}',
+        tool_kind='capability-load',
+    )
+    narrowed = ToolReturnPart.narrow_type(tool_return)
+    assert type(narrowed) is LoadCapabilityReturnPart
+    assert narrowed.content == {'instructions': 'hi'}
+
+
+def test_stripped_tool_kind_part_survives_roundtrip():
+    """A base part that kept an unvalidatable `tool_kind` would be routed back to the typed subclass
+    by the discriminator and fail validation on reload; stripping it preserves the round-trip."""
+    invalid = ToolReturnPart(
+        tool_name='load_capability', tool_call_id='c1', content='not-a-dict', tool_kind='capability-load'
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolReturnPart.narrow_type(invalid)])]
+    reloaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
+    assert type(reloaded[0].parts[0]) is ToolReturnPart
+
+
+def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
+    """`narrow_message_parts` promotes shape-valid claims to their typed subclass and leaves parts
+    without a `tool_kind` untouched (same object), so callers can hand it a whole history."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='load_capability', tool_call_id='c1', args={'id': 'foo'}, tool_kind='capability-load'
+                ),
+                TextPart(content='hello'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='load_capability',
+                    tool_call_id='c1',
+                    content={'instructions': 'hi'},
+                    tool_kind='capability-load',
+                )
+            ]
+        ),
+    ]
+    narrowed = narrow_message_parts(messages)
+    assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
+    assert narrowed[0].parts[1] is messages[0].parts[1]
+    assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
