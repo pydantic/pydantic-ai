@@ -505,6 +505,17 @@ async def test_evaluate_with_concurrency(
     )
 
 
+@pytest.mark.parametrize('max_concurrency', [0, -1])
+async def test_evaluate_with_invalid_max_concurrency(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], max_concurrency: int
+):
+    async def mock_task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
+        return TaskOutput(answer=inputs.query)
+
+    with pytest.raises(ValueError, match=f'max_concurrency must be >= 1, got {max_concurrency}'):
+        await example_dataset.evaluate(mock_task, max_concurrency=max_concurrency)
+
+
 async def test_evaluate_with_failing_task(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
