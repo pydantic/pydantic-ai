@@ -941,7 +941,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 rapid_mlx_model = OpenAIChatModel(
-    model_name='mlx-community/Qwen3.5-4B-MLX-4bit',
+    model_name='default',
     provider=OpenAIProvider(
         base_url='http://localhost:8000/v1',
         api_key='not-needed',
