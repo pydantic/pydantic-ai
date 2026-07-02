@@ -7,8 +7,8 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
@@ -40,7 +40,7 @@ def test_huggingface_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `HF_TOKEN` environment variable or pass it via `HuggingFaceProvider(api_key=...)`'
-            'to use the HuggingFace provider.'
+            ' to use the HuggingFace provider.'
         ),
     ):
         HuggingFaceProvider()
@@ -126,8 +126,8 @@ def test_huggingface_provider_init_without_hf_client(MockAsyncInferenceClient: M
 
 @patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
 def test_huggingface_provider_init_with_provider_name(MockAsyncInferenceClient: MagicMock):
-    HuggingFaceProvider(api_key='key', provider_name='test-provider')
-    MockAsyncInferenceClient.assert_called_once_with(api_key='key', provider='test-provider', base_url=None)
+    HuggingFaceProvider(api_key='key', provider_name='together')
+    MockAsyncInferenceClient.assert_called_once_with(api_key='key', provider='together', base_url=None)
 
 
 @patch('pydantic_ai.providers.huggingface.AsyncInferenceClient')
@@ -149,6 +149,23 @@ def test_huggingface_provider_base_url():
     assert provider.base_url == 'test-model'
 
 
+def test_huggingface_provider_base_url_from_provider_name():
+    mock_client = Mock(spec=AsyncInferenceClient)
+    mock_client.model = None
+    mock_client.provider = 'together'
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    assert provider.base_url == 'https://router.huggingface.co/together'
+
+
+def test_huggingface_provider_base_url_fallback():
+    mock_client = Mock(spec=AsyncInferenceClient)
+    mock_client.model = None
+    mock_client.provider = None
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    with pytest.raises(UserError, match='Unable to determine base URL'):
+        provider.base_url
+
+
 def test_huggingface_provider_model_profile(mocker: MockerFixture):
     mock_client = Mock(spec=AsyncInferenceClient)
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
@@ -163,27 +180,29 @@ def test_huggingface_provider_model_profile(mocker: MockerFixture):
     deepseek_profile = provider.model_profile('deepseek-ai/DeepSeek-R1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.ignore_streamed_leading_whitespace is True
+    assert deepseek_profile.get('ignore_streamed_leading_whitespace', False) is True
 
     meta_profile = provider.model_profile('meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8')
     meta_model_profile_mock.assert_called_with('llama-4-maverick-17b-128e-instruct-fp8')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     qwen_profile = provider.model_profile('Qwen/QwQ-32B')
     qwen_model_profile_mock.assert_called_with('qwq-32b')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('ignore_streamed_leading_whitespace', False) is True
 
     mistral_profile = provider.model_profile('mistralai/Devstral-Small-2505')
     mistral_model_profile_mock.assert_called_with('devstral-small-2505')
-    assert mistral_profile is None
+    assert mistral_profile is not None
+    assert mistral_profile.get('supports_inline_system_prompts', False) is True
 
     google_profile = provider.model_profile('google/gemma-3-27b-it')
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
+    assert google_profile.get('supports_inline_system_prompts', False) is True
 
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is None

@@ -5,7 +5,6 @@ from datetime import timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.direct import (
@@ -22,6 +21,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
@@ -33,7 +33,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsNow, IsStr
+from ._inline_snapshot import snapshot
+from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -46,6 +47,7 @@ async def test_model_request():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=RequestUsage(input_tokens=51, output_tokens=4),
+            provider_name='test',
         )
     )
 
@@ -65,6 +67,7 @@ async def test_model_request_tool_call():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=RequestUsage(input_tokens=51, output_tokens=2),
+            provider_name='test',
         )
     )
 
@@ -77,6 +80,7 @@ def test_model_request_sync():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             usage=RequestUsage(input_tokens=51, output_tokens=4),
+            provider_name='test',
         )
     )
 
@@ -92,7 +96,17 @@ def test_model_request_stream_sync():
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
+                PartEndEvent(index=0, part=TextPart(content='success (no tool calls)')),
             ]
+        )
+        assert stream.response == snapshot(
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+            )
         )
 
         repr_str = repr(stream)
@@ -111,6 +125,7 @@ async def test_model_request_stream():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
+            PartEndEvent(index=0, part=TextPart(content='success (no tool calls)')),
         ]
     )
 
@@ -136,10 +151,10 @@ def test_model_request_stream_sync_without_context_manager():
         _ = stream_cm.timestamp
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
-        stream_cm.get()
+        _ = stream_cm.response
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
-        stream_cm.usage()
+        _ = stream_cm.usage
 
     with pytest.raises(RuntimeError, match=expected_error_msg):
         list(stream_cm)
@@ -175,7 +190,7 @@ def test_model_request_stream_sync_timeout():
     with patch('pydantic_ai.direct.STREAM_INITIALIZATION_TIMEOUT', 0.01):
         with stream_sync:
             with pytest.raises(RuntimeError, match='Stream failed to initialize within timeout'):
-                stream_sync.get()
+                _ = stream_sync.response
 
 
 def test_model_request_stream_sync_intermediate_get():
@@ -183,10 +198,10 @@ def test_model_request_stream_sync_intermediate_get():
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('x')]
 
     with model_request_stream_sync('test', messages) as stream:
-        response = stream.get()
+        response = stream.response
         assert response is not None
 
-        usage = stream.usage()
+        usage = stream.usage
         assert usage is not None
 
 
@@ -199,6 +214,72 @@ def set_instrument_default(value: bool):
         yield
     finally:
         Agent._instrument_default = initial_value  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_model_request_with_instructions_on_message():
+    """Instructions set on ModelRequest are picked up even without instruction_parts on ModelRequestParameters."""
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def check_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions == 'Be concise.'
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    response = await model_request(
+        FunctionModel(check_instructions),
+        [ModelRequest.user_text_prompt('Hello', instructions='Be concise.')],
+    )
+    assert response.parts[0].content == 'ok'  # type: ignore[union-attr]
+
+
+async def test_model_request_with_instruction_parts_on_parameters():
+    """When instruction_parts is explicitly set on ModelRequestParameters, it is preserved as-is."""
+    from pydantic_ai.messages import InstructionPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def check_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions == 'From params.'
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    response = await model_request(
+        FunctionModel(check_instructions),
+        [ModelRequest.user_text_prompt('Hello')],
+        model_request_parameters=ModelRequestParameters(
+            instruction_parts=[InstructionPart(content='From params.')],
+        ),
+    )
+    assert response.parts[0].content == 'ok'  # type: ignore[union-attr]
+
+
+async def test_model_request_instructions_fallback_with_tool_return():
+    """Instructions from the second-to-last request are used when the last has only tool-return parts."""
+    from pydantic_ai.messages import ToolCallPart, ToolReturnPart, UserPromptPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def check_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions == 'Be helpful.'
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Be helpful.'),
+        ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='my_tool', content='result', tool_call_id='call_1')]),
+    ]
+
+    response = await model_request(FunctionModel(check_instructions), messages)
+    assert response.parts[0].content == 'ok'  # type: ignore[union-attr]
+
+
+async def test_model_request_stream_with_instructions_on_message():
+    """Instructions set on ModelRequest are picked up in streaming mode too."""
+    response_parts: list[str] = []
+    async with model_request_stream(
+        'test',
+        [ModelRequest.user_text_prompt('Hello', instructions='Be concise.')],
+    ) as stream:
+        async for event in stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                response_parts.append(event.part.content)
+    assert len(response_parts) > 0
 
 
 def test_prepare_model():

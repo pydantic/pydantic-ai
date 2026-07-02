@@ -1,79 +1,115 @@
 from __future__ import annotations as _annotations
 
-import warnings
-
-from pydantic_ai.exceptions import UserError
-
+from .._json_schema import JsonSchema, JsonSchemaTransformer
 from . import ModelProfile
-from ._json_schema import JsonSchema, JsonSchemaTransformer
+
+# MIME types supported in native FunctionResponseDict.parts for Gemini 3+.
+# See https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
+_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'application/pdf',
+    'text/plain',
+)
+
+
+class GoogleModelProfile(ModelProfile, total=False):
+    """Profile for models used with `GoogleModel`.
+
+    ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    google_supports_tool_combination: bool
+    """Whether the model supports combining function declarations with native tools and response_schema. Default: `False`.
+
+    Gemini 3+ supports all tool combinations:
+    - function_declarations + native_tools
+    - output_tools (function declarations) + native_tools
+    - response_schema (NativeOutput) + function_declarations
+    See https://ai.google.dev/gemini-api/docs/tool-combination
+    """
+
+    google_supports_server_side_tool_invocations: bool
+    """Whether the model accepts the `include_server_side_tool_invocations` tool-config field. Default: `False`.
+
+    When enabled, Gemini emits explicit `tool_call`/`tool_response` parts for server-side
+    native tools (Google Search, URL Context, File Search) that we round-trip through
+    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] /
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Pre-Gemini-3 models
+    reject the field with `'Tool call context circulation is not enabled'`.
+
+    Distinct from [`google_supports_tool_combination`][pydantic_ai.profiles.google.GoogleModelProfile.google_supports_tool_combination]
+    even though both currently flip on for Gemini 3+ — the former gates the SDK request
+    field, the latter gates which combinations of native / function / output tools are
+    allowed in the same request.
+    """
+
+    google_supported_mime_types_in_tool_returns: tuple[str, ...]
+    """MIME types supported in native FunctionResponseDict.parts. Default: `()`.
+    See https://ai.google.dev/gemini-api/docs/function-calling#multimodal-function-responses"""
+
+    google_supports_thinking_level: bool
+    """Whether the model uses `thinking_level` (enum: LOW/MEDIUM/HIGH) instead of `thinking_budget` (int). Default: `False`.
+
+    Gemini 3+ models use `thinking_level`; Gemini 2.5 uses `thinking_budget`.
+    """
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
-    return ModelProfile(
+    is_image_model = 'image' in model_name
+    is_3_or_newer = 'gemini-3' in model_name
+    is_thinking_model = 'gemini-2.5' in model_name or is_3_or_newer
+    # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
+    is_pro = 'pro' in model_name and 'flash' not in model_name
+    thinking_always_enabled = is_thinking_model and is_pro
+    return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
-        supports_json_schema_output=True,
-        supports_json_object_output=True,
+        supports_image_output=is_image_model,
+        supports_json_schema_output=is_3_or_newer or not is_image_model,
+        supports_json_object_output=is_3_or_newer or not is_image_model,
+        supports_tools=not is_image_model,
+        supports_tool_return_schema=not is_image_model,
+        supports_thinking=is_thinking_model,
+        thinking_always_enabled=thinking_always_enabled,
+        google_supports_tool_combination=is_3_or_newer,
+        google_supports_server_side_tool_invocations=is_3_or_newer,
+        google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
+        google_supports_thinking_level=is_3_or_newer,
     )
 
 
 class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
     """Transforms the JSON Schema from Pydantic to be suitable for Gemini.
 
-    Gemini which [supports](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations)
-    a subset of OpenAPI v3.0.3.
-
-    Specifically:
-    * gemini doesn't allow the `title` keyword to be set
-    * gemini doesn't allow `$defs` — we need to inline the definitions where possible
+    Gemini supports [a subset of OpenAPI v3.0.3](https://ai.google.dev/gemini-api/docs/function-calling#function_declarations).
     """
 
-    def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
-        super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
-
     def transform(self, schema: JsonSchema) -> JsonSchema:
-        # Note: we need to remove `additionalProperties: False` since it is currently mishandled by Gemini
-        additional_properties = schema.pop(
-            'additionalProperties', None
-        )  # don't pop yet so it's included in the warning
-        if additional_properties:
-            original_schema = {**schema, 'additionalProperties': additional_properties}
-            warnings.warn(
-                '`additionalProperties` is not supported by Gemini; it will be removed from the tool JSON schema.'
-                f' Full schema: {self.schema}\n\n'
-                f'Source of additionalProperties within the full schema: {original_schema}\n\n'
-                'If this came from a field with a type like `dict[str, MyType]`, that field will always be empty.\n\n'
-                "If Google's APIs are updated to support this properly, please create an issue on the Pydantic AI GitHub"
-                ' and we will fix this behavior.',
-                UserWarning,
-            )
-
-        schema.pop('title', None)
+        # Remove properties not supported by Gemini
         schema.pop('$schema', None)
         if (const := schema.pop('const', None)) is not None:
             # Gemini doesn't support const, but it does support enum with a single value
             schema['enum'] = [const]
+            # If type is not present, infer it from the const value for Gemini API compatibility
+            if 'type' not in schema:
+                if isinstance(const, str):
+                    schema['type'] = 'string'
+                elif isinstance(const, bool):
+                    # bool must be checked before int since bool is a subclass of int in Python
+                    schema['type'] = 'boolean'
+                elif isinstance(const, int):
+                    schema['type'] = 'integer'
+                elif isinstance(const, float):
+                    schema['type'] = 'number'
         schema.pop('discriminator', None)
         schema.pop('examples', None)
 
-        # TODO: Should we use the trick from pydantic_ai.models.openai._OpenAIJsonSchema
-        #   where we add notes about these properties to the field description?
-        schema.pop('exclusiveMaximum', None)
-        schema.pop('exclusiveMinimum', None)
-
-        # Gemini only supports string enums, so we need to convert any enum values to strings.
-        # Pydantic will take care of transforming the transformed string values to the correct type.
-        if enum := schema.get('enum'):
-            schema['type'] = 'string'
-            schema['enum'] = [str(val) for val in enum]
+        # Remove 'title' due to https://github.com/googleapis/python-genai/issues/1732
+        schema.pop('title', None)
 
         type_ = schema.get('type')
-        if 'oneOf' in schema and 'type' not in schema:  # pragma: no cover
-            # This gets hit when we have a discriminated union
-            # Gemini returns an API error in this case even though it says in its error message it shouldn't...
-            # Changing the oneOf to an anyOf prevents the API error and I think is functionally equivalent
-            schema['anyOf'] = schema.pop('oneOf')
-
         if type_ == 'string' and (fmt := schema.pop('format', None)):
             description = schema.get('description')
             if description:
@@ -81,23 +117,8 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
             else:
                 schema['description'] = f'Format: {fmt}'
 
-        if '$ref' in schema:
-            raise UserError(f'Recursive `$ref`s in JSON Schema are not supported by Gemini: {schema["$ref"]}')
-
-        if 'prefixItems' in schema:
-            # prefixItems is not currently supported in Gemini, so we convert it to items for best compatibility
-            prefix_items = schema.pop('prefixItems')
-            items = schema.get('items')
-            unique_items = [items] if items is not None else []
-            for item in prefix_items:
-                if item not in unique_items:
-                    unique_items.append(item)
-            if len(unique_items) > 1:  # pragma: no cover
-                schema['items'] = {'anyOf': unique_items}
-            elif len(unique_items) == 1:  # pragma: no branch
-                schema['items'] = unique_items[0]
-            schema.setdefault('minItems', len(prefix_items))
-            if items is None:  # pragma: no branch
-                schema.setdefault('maxItems', len(prefix_items))
+        # Note: exclusiveMinimum/exclusiveMaximum are NOT yet supported
+        schema.pop('exclusiveMinimum', None)
+        schema.pop('exclusiveMaximum', None)
 
         return schema

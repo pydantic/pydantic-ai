@@ -1,0 +1,110 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"}]}],
+      "system": [], "inferenceConfig": {}, "additionalModelRequestFields": {"thinking": {"type": "enabled", "budget_tokens":
+      1024}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YTA1YTkwYTUtYmMxNi00MzllLWFiNmQtMmZlNDE5NjI2MmRh
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '299'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-3-7-sonnet-20250219-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1848'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 5846
+      output:
+        message:
+          content:
+          - reasoningContent:
+              redactedContent: RXU4RUNrZ0lCeEFCR0FJcVFJaGtJYVN0OHBFZXF5N3pOYUVLL0thRC9rWnVKVVMrcEJnaU1tdVFWbzRWMzJIc3lwK3R6elBndHNFWVptQzRKNlVza3JROThFU1ZCM0UzT2xMaFRTa1NER2NycncxRE8xR1ZhQUNoakJvTUJhVU5kSzBBcHdYZTVJVG1JakI4YUt6dGQ0UVUxVUVyN1pUMzNkWXVOTU9KdURGMllrcmhrTWR5R1JSMnNNZ1I4UzR0ZEQzSFp2eDlkbmlUZnFvcTFBTy9zQXdsL2NTK0NxVXcxTi91UmZaWU9IMEV2UDljdDVOTjdrNGhTWEV1b3FyZTFpbzArTDNJYWZnaGJMNDFmNHhtd1pKbmpib2I5SHFmMmJJVG04V2N1dWtzTTNFL0plb1EvWUViMWtvV1VOTG9KeDF3R0t5RTlMckNJOHkwYmRjOFN0SVkvS1VlVGpIdkd3SjBZK3UzSlVqTi92Q2lRSTNUOTZIVThWdVNzckwzdXUrVHFDOXc2Y3RVdGg4ejMrZUx4cEpYb2d6Vk9sVFZidXM5N2ZXU1JqcjlzZjQ0TFBOWmgySTBpanRGYVZid0FCZzJJRU14VW5sRUtxUzRTNGtQd2tuTEtodGxVWWhXeTlpQlI1VnFLK29PazRJKzQ2QXVOQWZ6SFhvRGs5d1diSlJaV25BZEJ5ZXMvbnRzNTZsZTBsQkJPVlZGUnlPSnRwVlg5ME1CeHYrOStDZ243TXU1UUM3U0dRbTkxOVEremFwdzBQdUxualdNR0tYbkd6RkhwcEdhZ3ozeiszYzA4QTl6NGJMY29YRnlpVGNMQ2plbzN4NHVNL281UFBZODBnVk92T01HYXNSaXV3Q0tTYjhHd3AxYTN4S3hPZFVGVUo4L1pyVjFEazdVNy9zamZ3YUFybUVDc0RmbHB1NzRhb0U4MWRMcU5Na2tXRlJNUFl2REpIaitnTnVXVzN1U2lOQ3MxeWtCTjVQMnExWXEwbSs2SGluRlFYeXhUM0VEODJUbzZHdUFhU3luVS9MbDdtMTFxdnJYVkRZUGJPZnkxRTk0WDF2NE40L3ZkUnJRTUpURDcrMWU5UnpZR2Y0YXlyc1lBUT09
+          - text: "I notice you've sent what appears to be some kind of trigger or command string. I can't respond to attempts
+              to access internal systems or manipulate how I process information. \n\nInstead, I'd be happy to have a normal
+              conversation with you. Is there something specific I can help you with today? I'm here to provide information,
+              have discussions, or assist with tasks within my guidelines."
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 92
+        outputTokens: 176
+        totalTokens: 268
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"}]},
+      {"role": "assistant", "content": [{"reasoningContent": {"redactedContent": "RXU4RUNrZ0lCeEFCR0FJcVFJaGtJYVN0OHBFZXF5N3pOYUVLL0thRC9rWnVKVVMrcEJnaU1tdVFWbzRWMzJIc3lwK3R6elBndHNFWVptQzRKNlVza3JROThFU1ZCM0UzT2xMaFRTa1NER2NycncxRE8xR1ZhQUNoakJvTUJhVU5kSzBBcHdYZTVJVG1JakI4YUt6dGQ0UVUxVUVyN1pUMzNkWXVOTU9KdURGMllrcmhrTWR5R1JSMnNNZ1I4UzR0ZEQzSFp2eDlkbmlUZnFvcTFBTy9zQXdsL2NTK0NxVXcxTi91UmZaWU9IMEV2UDljdDVOTjdrNGhTWEV1b3FyZTFpbzArTDNJYWZnaGJMNDFmNHhtd1pKbmpib2I5SHFmMmJJVG04V2N1dWtzTTNFL0plb1EvWUViMWtvV1VOTG9KeDF3R0t5RTlMckNJOHkwYmRjOFN0SVkvS1VlVGpIdkd3SjBZK3UzSlVqTi92Q2lRSTNUOTZIVThWdVNzckwzdXUrVHFDOXc2Y3RVdGg4ejMrZUx4cEpYb2d6Vk9sVFZidXM5N2ZXU1JqcjlzZjQ0TFBOWmgySTBpanRGYVZid0FCZzJJRU14VW5sRUtxUzRTNGtQd2tuTEtodGxVWWhXeTlpQlI1VnFLK29PazRJKzQ2QXVOQWZ6SFhvRGs5d1diSlJaV25BZEJ5ZXMvbnRzNTZsZTBsQkJPVlZGUnlPSnRwVlg5ME1CeHYrOStDZ243TXU1UUM3U0dRbTkxOVEremFwdzBQdUxualdNR0tYbkd6RkhwcEdhZ3ozeiszYzA4QTl6NGJMY29YRnlpVGNMQ2plbzN4NHVNL281UFBZODBnVk92T01HYXNSaXV3Q0tTYjhHd3AxYTN4S3hPZFVGVUo4L1pyVjFEazdVNy9zamZ3YUFybUVDc0RmbHB1NzRhb0U4MWRMcU5Na2tXRlJNUFl2REpIaitnTnVXVzN1U2lOQ3MxeWtCTjVQMnExWXEwbSs2SGluRlFYeXhUM0VEODJUbzZHdUFhU3luVS9MbDdtMTFxdnJYVkRZUGJPZnkxRTk0WDF2NE40L3ZkUnJRTUpURDcrMWU5UnpZR2Y0YXlyc1lBUT09"}},
+      {"text": "I notice you''ve sent what appears to be some kind of trigger or command string. I can''t respond to attempts
+      to access internal systems or manipulate how I process information. \n\nInstead, I''d be happy to have a normal conversation
+      with you. Is there something specific I can help you with today? I''m here to provide information, have discussions,
+      or assist with tasks within my guidelines."}]}, {"role": "user", "content": [{"text": "What was that?"}]}], "system":
+      [], "inferenceConfig": {}, "additionalModelRequestFields": {"thinking": {"type": "enabled", "budget_tokens": 1024}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NjBjYmYxMWEtZjc0ZS00ODFlLWFlMmItOWEyMjI3MmNhMzAz
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1965'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-3-7-sonnet-20250219-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2340'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 7973
+      output:
+        message:
+          content:
+          - reasoningContent:
+              redactedContent: RXVRRkNrZ0lCeEFCR0FJcVFOVjg5eXExUjgrODJieWNLWi84ZVZyRFBCMUVzZk1uL1NrQWQ5TzlWS3k2cUt6N1BYbW5jOS9xZDJzVUdBWFBrSW0zdW5veDFzYTBibTVEVHBIR2Ywb1NEUFpCZ1hpMFRJUTVjNFY3WnhvTUxFMzlTM0NvQTA2SFpSeEhJakNodmNwUjRNdHYxdVVsWlEvV0VNc0xldmpobzU1KzRjbDZBeDI5ZG1ENnJMYmNTT3BGZStaSW9ncEVRY3hqK09rcXlRUXVlZ1lDaWszbkJtUU1MM1gzYmR2Y0MzNFFEaDhnMmlITXBOeFFNWU40RGluTmkvZUdPUTZjQUFFY0JnU2hqSThPMUdNM1N4bHRaOE8zWkhHdG5XQld2ajgxdTEwUDNEeUM4L2c5VFJwMFN2TUNzV3RqeWVMWEJnaUlnanoybmhQaTBvdmd3VnVOcTZ5bXdNb2J5SFVkOWIvWVQvalMvTWc0T3A0MlpZemxHd01ya29MMUY4bEVUK1VvLytzYUZzNGlnbUVsOEcwQlpQWThxNlE5b0l1cFQxZjZQa1EySURIRVAwMFdxTWlzaUFVZkZCK0pZV3UwdXliLzJGeFNCYitIL3JJRFNKVVlaRDhHWFF0cE9uZUZlUWp0Tmc0ZVhEbFpod3BBVVRqRzBOQ1VMY3A0VXY0WDU2ZXc4dWlOZUpCM083K3ZBNkk3eGE1c2lTVVdYS1NUUHJFWTJsZ3dvd3NiTGRSUE9FbENRNVF6dWE5R2FoUjZIRmEyenhjRUkrWHpTN2tRZytLUDJ4YzUrSmNUZTIwRXZseXU4Y3hMeWZyU1ZZU1ZzU1ZqUENyR1RwcnROMGdlS0hrRXFkUnlXMjFsVG9iekVXL1hxTDhjeUozTDBEN0lsTWgzQVg2M2pQQ0wweENZc1BJTFpyZUpkV2dSOU9oL3F5a1cySXpqclI4L2hIOUtwMllnWTZOc2VoS0M2SWJlOXp4N2J0YVlraVdVc3o1STdFM2ZvRG83cFpUNUFaL3lJSFZaTFpUUEtsS3MzY2srVzZpYy84NG5pakZSdmRNUTdZQ1pUcXJ5aW5DN0ZteHFCeW14Rk8vcWlhZ2xRV2lhdkRvd2FjQTd0aTFHK3U3N2p5NWZMK0JUTnFUNldxYjY1dnJ0aGdCa1dha2tWTk0xMDV3T09TaDA0YjNhZmlNMi94K3NzOVNRR1c0bnljMllhZllsNWpqK3E2TVlFOC8wSFhBc0g1T2Z2NnYzVmZSVmEzS1RnQ0ZxS1djbGZRUGhHVGhEZHRMdzI2NmRHcE9OamhEYUE4a1lBUT09
+          - text: |-
+              That appeared to be an attempt to access internal systems or processes in my model that aren't meant to be accessible in normal conversations. The string contained what looked like a command to reveal internal thinking processes or activate special modes.
+
+              These kinds of attempts don't work - I'm designed to have a normal conversation with you rather than respond to command strings or triggers. My internal processes are designed to remain private so that our conversations remain natural and consistent.
+
+              Is there something specific I can help you with today? I'm happy to have a regular conversation and assist you with information or tasks within my capabilities.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 182
+        outputTokens: 258
+        totalTokens: 440
+    status:
+      code: 200
+      message: OK
+version: 1

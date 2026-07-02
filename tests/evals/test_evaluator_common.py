@@ -1,24 +1,22 @@
 from __future__ import annotations as _annotations
 
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from inline_snapshot import snapshot
+from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
 from pydantic_ai.settings import ModelSettings
 
+from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
-        DEFAULT_EVALUATORS,
         Contains,
         Equals,
         EqualsExpected,
@@ -27,13 +25,19 @@ with try_import() as imports_successful:
         LLMJudge,
         MaxDuration,
         OutputConfig,
-        Python,
     )
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanQuery
 
+with try_import() as logfire_import_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
+    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
 
 if TYPE_CHECKING or imports_successful():
@@ -103,20 +107,77 @@ async def test_contains_dict():
 
     # Test dictionary key missing
     assert evaluator.evaluate(MockContext(output={'different': 'value'})) == snapshot(
-        EvaluationReason(value=False, reason="Output dictionary does not contain expected key 'key'")
+        EvaluationReason(value=False, reason="Output does not contain expected key 'key'")
     )
 
     # Test dictionary value mismatch
     assert evaluator.evaluate(MockContext(output={'key': 'different'})) == snapshot(
         EvaluationReason(
             value=False,
-            reason="Output dictionary has different value for key 'key': 'different' != 'value'",
+            reason="Output has different value for key 'key': 'different' != 'value'",
         )
     )
 
     # Test non-dict value in dict
     evaluator_single = Contains(value='key')
     assert evaluator_single.evaluate(MockContext(output={'key': 'value'})) == snapshot(EvaluationReason(value=True))
+
+
+async def test_contains_basemodel():
+    """Test Contains evaluator with Pydantic BaseModel."""
+
+    class MockModel(BaseModel):
+        key: str | None = None
+        extra: str | None = None
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test model containment
+    assert evaluator.evaluate(MockContext(output=MockModel(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test model key missing
+    assert evaluator.evaluate(MockContext(output=MockModel(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
+    )
+
+    # Test model value mismatch
+    assert evaluator.evaluate(MockContext(output=MockModel(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
+
+
+async def test_contains_dataclass():
+    """Test Contains evaluator with dataclasses."""
+
+    @dataclass
+    class MockDataClass:
+        key: str | None = None
+        extra: str | None = None
+
+    evaluator = Contains(value={'key': 'value'})
+
+    # Test dataclass containment
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='value', extra='data'))) == snapshot(
+        EvaluationReason(value=True)
+    )
+
+    # Test dataclass key missing
+    assert evaluator.evaluate(MockContext(output=MockDataClass(extra='data'))) == snapshot(
+        EvaluationReason(value=False, reason="Output has different value for key 'key': None != 'value'")
+    )
+
+    # Test dataclass value mismatch
+    assert evaluator.evaluate(MockContext(output=MockDataClass(key='different'))) == snapshot(
+        EvaluationReason(
+            value=False,
+            reason="Output has different value for key 'key': 'different' != 'value'",
+        )
+    )
 
 
 async def test_contains_list():
@@ -153,7 +214,7 @@ async def test_contains_invalid_type():
 
     result = evaluator.evaluate(MockContext(output=Unhashable()))
     assert result.value is False
-    assert result.reason == "Containment check failed: argument of type 'Unhashable' is not iterable"
+    assert result.reason and result.reason.startswith("Containment check failed: argument of type 'Unhashable'")
 
 
 async def test_is_instance():
@@ -395,68 +456,7 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
     )
 
 
-async def test_python():
-    """Test Python evaluator."""
-    evaluator = Python(expression='ctx.output > 0')
-
-    # Test with valid expression
-    assert evaluator.evaluate(MockContext(output=42)) is True
-    assert evaluator.evaluate(MockContext(output=-1)) is False
-
-    # Test with invalid expression
-    evaluator_invalid = Python(expression='invalid syntax')
-    with pytest.raises(SyntaxError):
-        evaluator_invalid.evaluate(MockContext(output=42))
-
-
-async def test_python_evaluator():
-    """Test Python evaluator."""
-    ctx = EvaluatorContext(
-        name='test',
-        inputs={'x': 42},
-        metadata=None,
-        expected_output=None,
-        output={'y': 84},
-        duration=0.0,
-        _span_tree=SpanTreeRecordingError('did not record spans'),
-        attributes={},
-        metrics={},
-    )
-
-    # Test simple expression
-    evaluator = Python(expression='ctx.output["y"] == 84')
-    assert evaluator.evaluate(ctx) is True
-
-    # Test accessing inputs
-    evaluator = Python(expression='ctx.inputs["x"] * 2 == ctx.output["y"]')
-    assert evaluator.evaluate(ctx) is True
-
-    # Test complex expression
-    evaluator = Python(expression='all(k in ctx.output for k in ["y"])')
-    assert evaluator.evaluate(ctx) is True
-
-    # Test invalid expression
-    evaluator = Python(expression='invalid syntax')
-    with pytest.raises(SyntaxError):
-        evaluator.evaluate(ctx)
-
-    # Test expression with undefined variables
-    evaluator = Python(expression='undefined_var')
-    with pytest.raises(NameError):
-        evaluator.evaluate(ctx)
-
-    # Test expression with type error
-    evaluator = Python(expression='ctx.output + 1')  # Can't add dict and int
-    with pytest.raises(TypeError):
-        evaluator.evaluate(ctx)
-
-
-def test_default_evaluators():
-    """Test DEFAULT_EVALUATORS tuple."""
-    # Verify that Python evaluator is not included for security reasons
-    assert Python not in DEFAULT_EVALUATORS
-
-
+@needs_logfire
 async def test_span_query_evaluator(capfire: CaptureLogfire):
     """Test HasMatchingSpan evaluator."""
     # Create a span tree with a known structure

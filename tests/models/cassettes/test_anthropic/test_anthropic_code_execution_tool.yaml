@@ -4,11 +4,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '250'
+      - '413'
       content-type:
       - application/json
       host:
@@ -21,54 +21,66 @@ interactions:
         - text: How much is 3 * 12390?
           type: text
         role: user
-      model: claude-sonnet-4-0
+      model: claude-sonnet-4-6
       stream: false
+      system:
+      - text: Always use the code execution tool for math.
+        type: text
+      thinking:
+        budget_tokens: 3000
+        type: enabled
       tool_choice:
         type: auto
       tools:
       - name: code_execution
-        type: code_execution_20250522
+        type: code_execution_20260120
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
     headers:
       connection:
       - keep-alive
       content-length:
-      - '994'
+      - '1469'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=5649
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
+      vary:
+      - Accept-Encoding
     parsed_body:
       container:
-        expires_at: '2025-08-14T12:35:01.802902Z'
-        id: container_011CS7XodG8mEYj1PnST46H5
+        expires_at: '2026-04-24T11:19:38.758845Z'
+        id: container_011CaNRhtVsGiXZx1CgSETLH
       content:
-      - text: I'll calculate 3 * 12390 for you.
-        type: text
-      - id: srvtoolu_01PZTDQyDyxVNeVikBoNo2fb
+      - signature: EuMBClsIDRgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzHGYHisxljYWpLnrgaDKZKZae+36/i1yGDySIw0y5IUqbGZAIbYwNMB08PQHqnGTATDg6fz5BZamuXOePOJjzuZAIgrLwihf5klQ2GKjY4OpKH9AeabXOH8IMNB0hXb2kKErLgHKRqM1XpUgcb1+CT+WQ44PaSGqORUYphCKXv3rL84J0YAQ==
+        thinking: The user wants to calculate 3 * 12390.
+        type: thinking
+      - id: srvtoolu_01Y5A969cu9rsnDkHF6brfKF
         input:
-          code: |-
-            result = 3 * 12390
-            print(f"3 * 12390 = {result}")
-        name: code_execution
+          command: echo $((3 * 12390))
+        name: bash_code_execution
         type: server_tool_use
       - content:
           content: []
           return_code: 0
           stderr: ''
           stdout: |
-            3 * 12390 = 37170
-          type: code_execution_result
-        tool_use_id: srvtoolu_01PZTDQyDyxVNeVikBoNo2fb
-        type: code_execution_tool_result
-      - text: 3 * 12390 = 37,170
+            37170
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01Y5A969cu9rsnDkHF6brfKF
+        type: bash_code_execution_tool_result
+      - text: The result of **3 × 12,390 = 37,170**.
         type: text
-      id: msg_01RJnbK7VMxvS2SyvtyJAQVU
-      model: claude-sonnet-4-20250514
+      id: msg_01FzttSG1H2WSfUwv2J5qbMB
+      model: claude-sonnet-4-6
       role: assistant
+      stop_details: null
       stop_reason: end_turn
       stop_sequence: null
       type: message
@@ -78,9 +90,110 @@ interactions:
           ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
-        input_tokens: 1630
-        output_tokens: 109
+        inference_geo: global
+        input_tokens: 4692
+        output_tokens: 106
         server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '411'
+      content-type:
+      - application/json
+      cookie:
+      - _cfuvid=j72gcLZrTocYXb_vinek8NA1OCCR6yME.LP4xDAzUm8-1777025974.0505912-1.0.1.1-4G21WdL0FAHoHQLaobcbSsV3hID5SurjleBDz1zHi_E
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How about 4 * 12390?
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      system:
+      - text: Always use the code execution tool for math.
+        type: text
+      thinking:
+        budget_tokens: 3000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1454'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      container:
+        expires_at: '2026-04-24T11:19:44.819633Z'
+        id: container_011CaNRiLGQoB5CoDJP5jaVY
+      content:
+      - signature: EuMBClsIDRgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgw1F/YrMZLYbqWCvIAaDLAuwVJtNlAhRAfAPyIwBNQfxK3FouQBAtlU2oGolIVbYhYiGvWjGrCqU/+HSoYBBUBx1nWMExSOyyUJnNy1KjYI1DEPApNrjV0XjCy3dGoIIeNeBL/viz2uAotZTe1qQaDwmo71S5jILbV1iLihcE1cL9LWFJMYAQ==
+        thinking: The user wants to calculate 4 * 12390.
+        type: thinking
+      - id: srvtoolu_01VjgZr13GE2HYtGnPkHeuHh
+        input:
+          command: echo $((4 * 12390))
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            49560
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_01VjgZr13GE2HYtGnPkHeuHh
+        type: bash_code_execution_tool_result
+      - text: '**4 × 12,390 = 49,560**'
+        type: text
+      id: msg_01GpqA67eRBKk6HEb9w5Rs28
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 4690
+        output_tokens: 103
+        server_tool_use:
+          web_fetch_requests: 0
           web_search_requests: 0
         service_tier: standard
     status:

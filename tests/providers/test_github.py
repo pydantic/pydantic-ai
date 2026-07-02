@@ -4,8 +4,8 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -69,44 +69,44 @@ def test_github_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('meta/Llama-3.2-11B-Vision-Instruct')
     meta_model_profile_mock.assert_called_with('llama-3.2-11b-vision-instruct')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('meta/Llama-3.1-405B-Instruct')
     meta_model_profile_mock.assert_called_with('llama-3.1-405b-instruct')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('deepseek/deepseek-coder')
     deepseek_model_profile_mock.assert_called_with('deepseek-coder')
     assert deepseek_profile is not None
-    assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistral-ai/mixtral-8x7b-instruct')
     mistral_model_profile_mock.assert_called_with('mixtral-8x7b-instruct')
     assert mistral_profile is not None
-    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     cohere_profile = provider.model_profile('cohere/command-r-plus')
     cohere_model_profile_mock.assert_called_with('command-r-plus')
     assert cohere_profile is not None
-    assert cohere_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert cohere_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     grok_profile = provider.model_profile('xai/grok-3-mini')
     grok_model_profile_mock.assert_called_with('grok-3-mini')
     assert grok_profile is not None
-    assert grok_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     microsoft_profile = provider.model_profile('microsoft/Phi-3.5-mini-instruct')
     openai_model_profile_mock.assert_called_with('phi-3.5-mini-instruct')
     assert microsoft_profile is not None
-    assert microsoft_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert microsoft_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('some-unknown-model')
     openai_model_profile_mock.assert_called_with('some-unknown-model')
     assert unknown_profile is not None
-    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     unknown_profile_with_prefix = provider.model_profile('unknown-publisher/some-unknown-model')
     openai_model_profile_mock.assert_called_with('some-unknown-model')
     assert unknown_profile_with_prefix is not None
-    assert unknown_profile_with_prefix.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile_with_prefix.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer

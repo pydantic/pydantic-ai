@@ -1,0 +1,111 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a video file, then describe
+      what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file",
+      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto":
+      {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        NWJlNzgyNzQtMzA3Ny00MjJkLWI2YzktZDk2YjZkZTI0YzJi
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '365'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '305'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 466
+      output:
+        message:
+          content:
+          - toolUse:
+              input: {}
+              name: get_file
+              toolUseId: tooluse_xnKJfBwsqv610Jyy98nOzL
+          role: assistant
+      stopReason: tool_use
+      usage:
+        inputTokens: 901
+        outputTokens: 14
+        serverToolUsage: {}
+        totalTokens: 915
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a video file, then describe
+      what you received."}]}, {"role": "assistant", "content": [{"toolUse": {"toolUseId": "tooluse_xnKJfBwsqv610Jyy98nOzL",
+      "name": "get_file", "input": {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_xnKJfBwsqv610Jyy98nOzL",
+      "content": [{"text": "File attached"}], "status": "success"}}, {"video": {"format": "mp4", "source": {"s3Location":
+      {"uri": "s3://pydantic-ai-test-files/test-files/small_video.mp4"}}}}]}], "system": [], "inferenceConfig": {}, "toolConfig":
+      {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json": {"additionalProperties": false, "properties": {},
+      "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MWU4NmZlMDgtN2Y2Yi00NTZlLWI4MjgtY2Q1NTgzMGRlN2Q4
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '776'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1166'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 6411
+      output:
+        message:
+          content:
+          - text: |-
+              Thanks for sharing the image. I can see it's a beautiful desert landscape captured with a camera mounted on a tripod, and the scene is displayed on a monitor/recorder screen. The image shows:
+
+              - **A dramatic desert canyon** with red rock formations
+              - **Snow-capped mountains** in the background under a clear blue sky
+              - **A dry, rocky trail** leading through the canyon
+              - **Sparse desert vegetation** along the trail
+
+              This appears to be a professional filming setup, possibly for a nature documentary or travel vlog. The composition and lighting suggest it was taken during the golden hour (either sunrise or sunset), which creates warm tones and long shadows that enhance the texture of the rock formations.
+
+              Would you like me to analyze any specific aspects of this image further? For example:
+              - Camera settings/technique
+              - Composition and framing
+              - Lighting conditions
+              - Potential editing suggestions
+              - Or something else?
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 2736
+        outputTokens: 186
+        serverToolUsage: {}
+        totalTokens: 2922
+    status:
+      code: 200
+      message: OK
+version: 1

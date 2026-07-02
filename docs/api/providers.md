@@ -2,9 +2,15 @@
 
 ::: pydantic_ai.providers.Provider
 
+::: pydantic_ai.providers.gateway.gateway_provider
+
+::: pydantic_ai.providers.anthropic.AnthropicProvider
+
 ::: pydantic_ai.providers.google
 
 ::: pydantic_ai.providers.openai
+
+::: pydantic_ai.providers.xai
 
 ::: pydantic_ai.providers.deepseek
 
@@ -16,13 +22,13 @@
 
 ::: pydantic_ai.providers.cohere
 
+::: pydantic_ai.providers.voyageai.VoyageAIProvider
+
 ::: pydantic_ai.providers.cerebras.CerebrasProvider
 
 ::: pydantic_ai.providers.mistral.MistralProvider
 
 ::: pydantic_ai.providers.fireworks.FireworksProvider
-
-::: pydantic_ai.providers.grok.GrokProvider
 
 ::: pydantic_ai.providers.together.TogetherProvider
 
@@ -39,3 +45,15 @@
 ::: pydantic_ai.providers.moonshotai.MoonshotAIProvider
 
 ::: pydantic_ai.providers.ollama.OllamaProvider
+
+::: pydantic_ai.providers.litellm.LiteLLMProvider
+
+::: pydantic_ai.providers.nebius.NebiusProvider
+
+::: pydantic_ai.providers.ovhcloud.OVHcloudProvider
+
+::: pydantic_ai.providers.alibaba.AlibabaProvider
+
+::: pydantic_ai.providers.sambanova.SambaNovaProvider
+
+::: pydantic_ai.providers.zai.ZaiProvider

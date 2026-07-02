@@ -6,21 +6,35 @@ Below are suggestions on how to fix some common errors you might encounter while
 
 ### `RuntimeError: This event loop is already running`
 
-This error is caused by conflicts between the event loops in Jupyter notebook and Pydantic AI's. One way to manage these conflicts is by using [`nest-asyncio`](https://pypi.org/project/nest-asyncio/). Namely, before you execute any agent runs, do the following:
+**Modern Jupyter/IPython (7.0+)**: This environment supports top-level `await` natively. You can use [`Agent.run()`][pydantic_ai.agent.Agent.run] directly in notebook cells without additional setup:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+result = await agent.run('Who let the dogs out?')
+```
+
+**Legacy environments or specific integrations**: If you encounter event loop conflicts, use [`nest-asyncio`](https://pypi.org/project/nest-asyncio/):
 
 ```python {test="skip"}
 import nest_asyncio
 
+from pydantic_ai import Agent
+
 nest_asyncio.apply()
+
+agent = Agent('openai:gpt-5.2')
+result = agent.run_sync('Who let the dogs out?')
 ```
 
-Note: This fix also applies to Google Colab and [Marimo](https://github.com/marimo-team/marimo).
+**Note**: This also applies to Google Colab and [Marimo](https://github.com/marimo-team/marimo) environments.
 
 ## API Key Configuration
 
 ### `UserError: API key must be provided or set in the [MODEL]_API_KEY environment variable`
 
-If you're running into issues with setting the API key for your model, visit the [Models](models/index.md) page to learn more about how to set an environment variable and/or pass in an `api_key` argument.
+If you're running into issues with setting the API key for your model, visit the [Models](models/overview.md) page to learn more about how to set an environment variable and/or pass in an `api_key` argument.
 
 ## Monitoring HTTPX Requests
 

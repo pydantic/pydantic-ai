@@ -1,0 +1,178 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '377'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Search Google for the current population of Tokyo prefecture. Give me just the number.
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - filters:
+          allowed_domains:
+          - wikipedia.org
+        search_context_size: medium
+        type: web_search
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '18860'
+      content-type:
+      - application/json
+      openai-organization:
+      - REDACTED
+      openai-processing-ms:
+      - '39570'
+      openai-project:
+      - REDACTED
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1769475112
+      created_at: 1769475073
+      error: null
+      frequency_penalty: 0.0
+      id: resp_08e7da464e3f8cf70069780c019ccc819b9d7a3f4d04a52f83
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABpeAwpZsYwstCguFUULWk4sbYiWLV1yyDamDKDa6PGc-Rtj7Vp0Jq5gdI26zZ_7375BO5AwSTNyzbOR22pi1ETsjnIFfqYNW9fwqQJ8VfCi8T_syKDk-Ji0jVv7oC16OKFW5nhNw7_SlPLzQ4XE6xXspGngimUIdOq8d0aXV2J31c6qjdEX9keiyiOlELzKvxxP10MfZFCaGs2hbE7BDkDDDsX8P1HyR04HMWVSj4y7F_kFCouFqTLXxO2pVeMWwHDR5qlUdv9xjNziKVrRwlDSdrOaLFU0BqaRbSBYH9Z6s29wCizCfJwnR2B0dcilpOH5TRhiB1oZWqrY7gat5OwSb_ywyyLzn0pXxm5kLft3Yaw0xEYec-Cz7OAa0dr6MeiohlTQPXaFqGqb6Z3oCbW2J1ygJ65p2nz3nLxsznKZ3INgir6v_2z5FTFjz-wja0VQXcA_G6Rj38sTfeS_DmGq2sOlRgte7oO8UrpSAHb3x0jpRITlEPEws91YxxPIZlnVf78hpLH5Oy_uMOHFbrUNEp7xXINCUlj4CaO_2IlXX523fL-dGo7-L-JbmRMs3gJ7GUVWuaxu1yxxGhT_KzwoV8-gYtEbdPyDIMsTL0pioMR_aGp_zh5LmgGRBNAPsxva3CrDB33Qufs-MxtLXSyXk9OaOCVStCSFTa4UbsGzCQ28BaX6EZZa90F7TQAKXpv6fTgn8nWwqwWLEur9Y4Cpzcvngp50XF_akz_jV9laajLUuogZtJIyasUfTKjTfFsXLzLTvDYUoU3jHaz3bDizUsdvhrnHDK43HOthmalJU9_e_WPG8AcZ5I8zAqIPvCd86yhqBxMRGCY4HXRRGUk-Jqnyrdd5czMAR1rD2qYXRbkTAHUU6BjAE2Yg6YGilTHxyoneBcCZwldvnH_oTZSA18EcFmLPpz4UFslQ83G926UR7lkqY_-oL1fn6t59xma2TYr-HfXT8v-rsu29fc_HwS3pTU3XaXLTGID4QW-imw6N9CAUHV-GFhRPUHtMAexZS7q5Tuoe7SkcXl4fivWQ-oc2b2TO6NLW4DHsJHDQIr3sQUM9bQzi7mKLxx2VSmzM8AoWAXwQK3eI31rWO8TPGOgJtrZGHd9j7nl0vSRjJeNGeHi6zFX8COFaUpQThbW0kM9C_5QfeHO8viLPXEAWiceZa4zbfYdeAAds-1Q-p4CJOwx-ka-gDiTgGBS2lWPwKdGVd-pAXvvul8st7tckH36XjAAJwHKaVYTrULStAUZxFEKlPAlNF3pM4jw8zz1PoUBMWJoXiIGM0tMhuujTijOlvaZQQxJqXtZuVrbtQTTfk8ec-p--0W8EdkF-R4ohN9HATCkAoNjrdYul7xG0dAjNbWdUcW-lITRcK2cu-UyO0MzrSv-gvdCHt2q5DPNwVvSTDAU21qbjLEnEKsJU-FuQUr35hHcZ_ZT3U4_eQqu2Sb8fXwJQAD16xWggfaseZy5M_8Fv9XeGKpeXL5EFwlW-22fCPUsPREZtSVQFrEy64ysFJePcRqGCd_0NxZtCHndG_ySLvMuzEtle2lV6s0Yd2oFTaKYFDavEBKG4dT0ft1YFgQwdL3tefjMgvyhZX0diXpZa1MBDqFNKtWYtYbMDjucb960oLP0VvywA3oTBEHQy_CnMhct4ZRBtFEcUFp9-YPS7qc_Fnk7kXC5fZ6JXP7CNrBos3MlJrWkiGEeXvV2fZJqB-A5c7-rCGCB2rPO0RfZLMygRd3BvVYup-YWdHzyo58hNiH8FXOlqGDoMOtw0jbpGs7LprThKHvyooaucT0hec-8ENXFy-xDVZbO89NYptDTNK0nX-Y2N49IUQIRUl1kelobQg0WCQGrloyGdtr-MPpkk8Ge2FS7TZ32qf5BxHEw-JTFaNJFFRN2qnacKL9U1VvvYp_EuJFDUCOkSLJvAH552bDH61opbcGCrQDxr-nr4H8FKiqxmiqsNK94MligNgtFgE813H02hDnmHpxjp-8HFL40nAHJJzl6a3K_qPF5Sdr6-OqhujA_zwob5kgpgZ_L94Btag30G3t1iYX6zfK0Ab7Bql1Uy9c-azfD-hwSma3iFfFxxymb9dNNxpCXa1mbmw1Fr-IEWyFjZaoC_DGIT7iDrlRqiYjpJjcEuY8SPY5abmdFaDDuG96mAUKPPP2DY-SO3d6XWVT1Ni1KomYnLmq9Pd24N61q5b-W6owPcdrNh_zDn81zJwU91USm8PnHkeG7fVY0LzNs0ZQfwfq4l-9zxcJ9BL2cT7hbp0MeJy-7AzKhr0H2swUfYvFjXKjL4DrElqr7ZHwD_PSubL1Z_NIognp7pQonFA4gWJUOGR3Q32TSrjPrMdF3wCCfmm68Q_jH3_LeswHFcjMqjohn942uz43BairbW0jIqVYAnehAIFMdEwkUPyCxpDhkHc4Cg88GHCbCG2_LRGtFWGBtOgZrw25VwRAsX9Td2DA24Lw5oLdHnRkjdlN0Fmv7EpYAlzBn2XAYLr0bWDeHch2vc9RlOcRMaeOkbk9zEfiEAb4A88rklLXqOK2BgF7XtOWH-VjW_QesrJcQ_SCO4gSuAtxfXf_WDDfrQQ==
+        id: rs_08e7da464e3f8cf70069780c0276dc819b806cd0ab2d534a24
+        summary: []
+        type: reasoning
+      - action:
+          queries:
+          - Tokyo population prefecture current site:wikipedia.org
+          - Tokyo Metropolis population site:wikipedia.org
+          - Demographics of Tokyo population site:wikipedia.org
+          query: Tokyo population prefecture current site:wikipedia.org
+          type: search
+        id: ws_08e7da464e3f8cf70069780c0760ac819ba9469051f9e5f511
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABpeAwpPlUsPCqtgzW9df1nYFrj0HQl2F6M8AFcU4n-09-ZHwM7NM2fRKv7MGNIsSVwtZjl14aGZ8Rdlji7huuIY1ILJOWev018DItcXUeWXexxt5p4OKbtFKhPRW4xqsninfkoGbKNYUJUWvwJEZabxT-UtYAshxJv5KBv-3ZB1BYf3_7mdS-YxdWO9cc89KItb_qyJhWtWSQf6hIFTNxfkInqCrLC1fvLL6OIdSJp_ovcugxRgYrE0hLLriKJNhG8UxkH76Hrqdbky3fIXHWFgx9v_iP2cSNxFZr2itNJqZb2FD-laW7LNsD-2DuCGBTNVUXOyKl0mPofItwr7tIhSGw-1d_eTXtrhcIRCIntcz7GC7Valx8H7CPCrXUKbyHQ_SX2Az0yKLKKjGouoVSQP2Ug_2Si-pYYcGHfsgf1InCmA-63pjmNRJ1AYal_JgkEVE5VHJv3iHBpVnykhIFy57OEeX8ksNUnz__4mUSYXgNG2smuXypworqBaZ_DcI8xDxzp9O69Ip2j3F4yYoKq314yquJ0MFFVbBg569iKhhy8EQ1QLv3hh5PgKSm_xPE8WHnVaAmznhiT08XTp2mHP5hoI-hfpQ_Zl3ODf4MMPFXEhSnDc4_WK1TQtaJg7buI3qfDjdojaLsUavsBL7ehKGdkSXnX9F_pWPi6xfknHlvCmBtZpSocVbPNLv1NFzdD9new0HWlxRr_CJAMei8AS1KTpBV1ZaNWyQi-qXosVlXoCYGTztwlP1P6LK1U2eKwWKRb0EdZDTo2YWswqkQhEnYTOMS2yguJ3dnXj1SpcjGq36bTDnHQgKK-5Fhh4BAf2LIaIjoFzDaLBaeGPrTlRXjuwVB219sK2zq56tYhISB5CX9l5frVxsKhPp70vZSTcCx1xjL-19mjPiQ-3ERv726RiXTlXXexWuhORqAZEkaJJFhDJpXhdkj1OlHXiKs1KsLFcYLShLmmqv2vJ3Adv953gYdEkluzYXVYlhhA70BSjWYc5VLqLA7r8lWrLK-xOCM1yvifqeiORRRkNxpUO1Ec63BYcMPIDoId5nGy8vQ-ENvoMM2OJJE0kr3ithI5iRhpaJQsEA6ymNQyYEvoZKa-Zr5KoGwSRO_HWZfZMOpxqN9bU-D81UGFKwHi6oV20qrvQJMAMbZz7eifQUmbhxfmNcImAiboissclLs-7LcePDAzdybpfWyK8ld2_yH3OZs-KXGJ8P4ByA3NvEBKLSIhBxt1HoMCynQLbWxlRIVt3LMlx6cIBinv93eY-ItuS8iw0QFOq8pHLBaadIV99l0NldQB0IES1XvMpRlMeyoCBMtop1Lj6EVINcr5juxlTtfJl1p_ze6se6cym-_5jLpUjb2rhlilAqMRiW4V8cwQM_NYc8Rk8wKgrKBQnME0PSsTAh5pBHgeTgLjfOQznXumtfH9UFG0oD5cW4Sd5m-IPw_Tcjoz1UaOBuxkkLe7p9GOKUFNaSAgdOZ3cdKNUP9OmcLSodKI_RpaVCabPQ8FTeOYACYJ51-ISYQZ6t1eZsDzcFRdDKMRJEkBbhRXqhnq_lW3HwfAUJmz6fU6LHJ3pDQ7in6rmZ5WjCLzhoXLauB5sVRLgpTcixBLBoDoJpdfcyrxBsYoJln1n9Hmp5l5rt4hPE23TxHkCHzWD99-Jak6
+        id: rs_08e7da464e3f8cf70069780c09aee8819b80e82da0c5de0d84
+        summary: []
+        type: reasoning
+      - action:
+          queries:
+          - Tokyo Metropolis population 2025 site:wikipedia.org
+          - Tokyo Prefecture population site:wikipedia.org
+          query: Tokyo Metropolis population 2025 site:wikipedia.org
+          type: search
+        id: ws_08e7da464e3f8cf70069780c0d1c34819ba50e2b797aa61283
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABpeAwpQ4Q0F4Pg7QHQeBPQOrA7Xxddy_29Z_APAnWgAkN3FbgZi-axGTMA99c3V_DPBeoC1TdGM7iaR4FEf0taKu0zv6ph1hgt6ZkgFTIMrfli8r70zpbxOhS1euOVw8VpRcrWWvO7662zDd5xNbKB-Iz-1jeLPOIa7cRt7trBIWFv4vrepdMQ80VHeA38O5mY0MKyCJkGxno3FvoNLYuaNEkqRz161K1NsMNNK-URkegEZ3wnA26YdlQ3Z7WxkRz45E2TaP52q8Z9v0fPymB5UYWJeJu0Dswc1ZpmynQZSsBpH2YJtOmD8Uigb86Qxg1fHrgRNOXqmwqQF2Zt0j58BnNWkimpjRlF3VAQiRNVcPn5LeTfFsbsoqi86RBy-cjMxAY77mtHDLRKxsMGerYA12iJO1HuRfuFKE1E0ruNRIjV_CAYhtOW31z5fTORbbTRkjmm_UbW6_Qo9GCg8j2VzR9zKXljB-E4pSZlbvzZTb7z3yT6K699edTwT_oVCLxiiaiXeO2XMNMKV1TRp1oiUIHa7tMiZHFwDsBWMXUNb9HY88b0PElcrWaxXbNX7OdjaQ7YZcHRufoS1TIEOg6_a5rZcA8aPUI2twScxUy3_dDB0qBGAiH7P9HsQsHantxbC_SYzpKJeZKkphJYJ5E8ywLIbyfpYxY3nACdgRk5n1E2uqYYspa8nmoUE2K2Vq89OTOiOmqvcfRerIrHzwPxDqP2GEAbWmgujUtG4pNJKa_Tz9VrUn05NPBIn-BMmbi6PsZaZ4LZ78mWVvmDPtzK9O-VdbT_kxNDOuiWiovTFQJbhz3hKEmWD7CyfSQZI58W9IEgaR7B9sZDCR2OkHlPEKE5i_Ty0dbK4kwkahEzx31Lhjal9J5Lekko5LnHqLtmgAAPo6U1HhodQrA1RulHuwIBol3a1sFQGSM0224EkUCbkoGL0OPMpLrbQi_aKNmFKM0qR3DpVo3vYainf1heZVNef7r3MCVhpK2SpGrvrcZH7Ns_yocvWZ0sAqqcyh4KTJu7bRLVFJO4g0jPqyQYWXPb5R4a3dB6JvTT5_2kGVzx3DDQzByOoUYCaDUrZu8M6J9CEqs_ES_ZYK7TcKhXdRC-o6OoyuJQz8C0Tg4qauwTFTo1HA-yDL15e-OSEIy-agi3czOK1kgw9icj_oirOYrO63dsCwXoxTQ3ntyEUJHdKjF3JvKI0fS8tIbqpDAH5UQsx_v2Gy6mEJZ6A3OWWAJb2zrrI3Ndak2B4H_KUm74DahPsiplm76mUMzTALZrwHl08De3nW0PnMpLn6lBZekz7ThS0WV6SbjGglu7Qp9eQ64NWLKCufP29HLV8aFvlHavAsBs2ZO4IoQeHZGvi9s1XukAi9vA2Iq_yEv0Qo8RdFse_UtM12zIFbZnLmMeC51T
+        id: rs_08e7da464e3f8cf70069780c0e9ef0819baa7c325cb1e2fd53
+        summary: []
+        type: reasoning
+      - action:
+          type: open_page
+          url: https://en.wikipedia.org/wiki/List_of_Japanese_prefectures_by_population
+        id: ws_08e7da464e3f8cf70069780c102fac819bae37eff938310983
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABpeAwpm8Do4VqoME7QhltDFkzha6yRdNXL_6mgY8nT0tQ0dVJM3_RhsRE5ikUinkaqxHBVZXHfbRXTd75VJ2tPERkJ2HcFUoL1EyqC7BVmTSNl8bvOiL5YT_2a98rBWwe4yIurlL-Ch4FeRGX06TVlLl60pP5weoRFHo5pxpgoq8Eg_DUprtHjdS8IJiQdfT2i5LcYVMjez9_jzArEXAt2ErPfDE85ZZvWJOSJE6p1WG6ndkJC55uwMlOHQD52ZTBcNmJXKWdSQKmmLvquFXh_2QfTXiI7nedgaRqg9j-0oz3xuJ0xRCHYWy2oRANyT6BUi-ojUcSLnZeRo3vSnPtUkAHZ5D72Ju2ebM4vn7-mwOaneBzfw8vOepK0yJtQZU_qbOqdAmXyRwTNmoS6HebOiN_9buxvLCp5-ZW7ndl2e_2uuHu4X30beqy4k9R_KZcjlO2THNia325b1t7dDfSq3kFAPM4skWfEfhc0OryZkmAw9pYP22g-O0e5HdnDqHqPHHSxYTT7IsdU7v9E2n1zcKF3zIwW02KFThtAHEIjcG7Z5ovQY58SQpo6Ie1YnGXhJHTridPU4Aif5Cnla2NsQDCUrzZWd1mju03WEp19cESHwmNLlj5uzfgw843YcPqYyFeRGLbiPpVO2ttOji0Wlox7jUfLCRX-mdwN9kPzGyoBuunsnakdNJmTR3MiqeDliZt4pnDYdS_Tw_KJ1bT0atR_qf8oLuZk0G6qaPgI47adROfaMwVfCww5K-RJ5o3iSUtJVO2fmV7AqI4lQjHhHjC2qg4tA50-0NolWG6_orQXTGEJtKGcCxfTeF6FtaB7qjLGZi1S_WL2ILViNlCYclLRzyBEA4ohlbGx2IbX-x4udZcfLkfNO8bxrtIu-fHqgZc_9FM3_KC8K_03YpvKa5acKOttg5uqOnVFHMHCp_oIJqWHI2AKPCFTyZPPJSTrk3DTL0BZJdvjHWf6FZ2xoaaKFwKmeAgVxH3JnuKipHGSKfz-DlhAO1csmxoqW5Ae_fFCJQt5tgoKPbiaR33w2pdp9ZI0nSPTHkrjja9yo0sgDJvdF6m_kt2y9-a0kUAOMrAx8habV-K2nn6FbB51fchsq7P2uJmH4Zfi7osLoPFRzmYyxOyBSRoo3NC2UfpDg-KBDpLWVaKaAmMgJ5cV89YSr2d22kufhnR7gRARvPxnUEtvkiaeDIKFjLLTeDhyyHrcVFIgICF7ePR-McrnjNBQFl7AwRptutN98YKPVNH8Z2paPKfZFZCuKy3frV67XtCO09vcvkZFn4ui31b08rq4zPi8LwLAgdXrdR46P8ZTL2StB8i1_asAOxvjRjMgUrwxS7MzUBdNcv3DRvTklmu4LtKWPjUYVbhqoFRqiyKtXgsy6DE6zbflH7XZz2qhUlgUvpo5U_Z8cGfvZR2tYHroqbnUfGZzRpJKxrcbrgjrL8BEgzTtQAkLeVMk7rvCIVTyhI-nEKpTcbfR-ILplQW6UQ8GBppRIh-byAb3B2TJR3I6u6FGXGGomnjDtNWte-ol5Q0ZeeTZJbrV6PBiTRggUsacXnXZ7zhkGKHYowMGA-_pggLgZN5iDiC7TdcYp1uozgQd2zSVxEIo8pG9P-W1VgNwCmgq-moGR2_idrwUIWeAU52pck_VXKsvHnd8Ao3dhsW7MUM6txjY3MG92g1KZMETa5haaQQjTXgdp2XoGjBdwINjpOpwscWzhyh88npZJIIeUY0pn869MPR1nzdHyhwMs4tX77Vf1uN5UfQW0Jnc4xzWM1Dm5BX3-gh7P0y86IN2VgqkfVPhvgnX4gGRQwqg-N_Uk15owriKO63NxwAk8xHLK9tK84XxNoNETNKOL1YWoVa1vnQhen_cxY4uqusbvOZ1DBczqIIqrHy80cNHTr7QhezzpxpLnyxjgtjxN1V1RAoWunVFcGTM0u1-j8CJYL7peJTtahK0BxHwFF4-zDFPbOPpyLs9lgYzSfnO7mOmE3TYPxqTWCKHiODu4lFVJsGhWsFlHQauKGNjbCvC610qiV1Cj8QSfi1_1bDvr2AYmpRaDGTOAQjxrTRRyndFytjUAJ2YcgZiKxuuzw5ls_ZyBgMgD7GYDGDWTfq6vPwlqR6dGwZmqdLGAxstMwhnsIDOqs125H5URWyB7pdlTKJ-oC7BXv3YKmPrr4Aqs44vi8rVwijZvl8cU9rdwpYa5B2KB0ynrIGLlYyY7ZJzh1OG3nZ1VrAV4hAoqn4QbS7xecUDKpwTeVjei_xVnIWTgsRmzShnSwie2LL7Xsg92xyzFDi3p4yT1byaKRjWXBpLkbZk9BVWCAYmFaMo3kGn9w4bDg4N_C2bb1ftGyKl57axzRf-qEc5EnlHJJLBEA3cU05-7kHEdTazv2Km7qdcEFFrsCbmfaMX7xTISdrRixWjTWv21SVGXHbVO4b8ShWybp5Yxdzb1GGOM4cdqivbiPRi69IJDTuSeOLEM6Q5LhpSYTYxd2lKdtj9mohJXtKZ8YBm1-CweS1Nteky6hWQ4XZ0_8yso5QVO2F1IOlJnEposTFaq4TNFZ7126U19HTnyjxuKp5yvBp333h55jz4JcWP5DUF-7WZViitEFfRTN4e3RLBpikl_t2qHm89GzHgzMZFMHqqi3VZmoYAYpfvKw8CCrgt3fMRrQuz9x6EWqRj3fuh-iEJcZjcQgg6r7-GyyV1UllzjeAB9OvJZYoi7sfhS3T5Ecl0E-hMEMGjGE97ICsvXPgRqC30lq_LnJOlGbS4-TipUIyyt9E4OHCqx68qrIN24RSekSe81n9W2L44Ua3wELpzqcNtKlooD6qcm8yxe6UGZzo6scrMQ4qXI_aOLtn_JFTnXBrRifFdbytt9YuZiieGpsd1LC7_qljKG4teyjgC906bw4qkuPIDZHrHkQveQnfFJeICT_7Yuh31bLcMxWITA-Uj9MoI35Qx-7_jIUwiZmhF2BU9jsU-aDR0P8nHPg5RShHGH0Ysig9VQq6a7ZM0eDu5OXLkTFh4dVFTZXrNYnuFPcwrepKBKWremvYx0y6sK2Q0y4MMRHDAmykT0xkk2oO9FYFYFrHVsK8UeF7l4eYm4iz20OVrFyPcEsOgZjvJvgVrLqSWrOEVkt6X6gPRZ2yjIvhEYg4EU-iOzhOuaKuHf3EStTSRaMzLaOZ733AZ4Q-akDW2TVh520O2NQaYFR6wkUafd6AnVMzWEQxLZwY0K_72h5LWWY9dgAsqtq2a0IzDHbjcikwFGNK0ycn6clwVmgAJYjSou_Jm4huL9BHxm08WrcfgrCjsir5_Fg4S_9TQMHyFbzr-nRFf_hXGYDqs651BkGYYPJUgB3npS8ngwbDwmr9EkmSKPU3MtoM5qMMc0ldBIl-HCckMrN5GbO4JRPqjlWsLQaL08cBkYFPq9ISO3XzLnB4O0b7ArHkSmf_PTH5oel2oTOt5cbNFcbJYUBwhQ5A1j_CPrqpl6jFEMTdlJnWwh2IG9aotCcslOiFxI0U7J4GuO0QMvB8pGja6Yp6WjGI2gUKXxGNRzAyXN0YdK8ntHlzhT3S8RqVlrhjArMM2xEuWAGuBJYgPILiXWGAaz71Ue5bylLOGZ2JToeosXxC5WgkddPQXK9zkuAreAFIb8CwCnp5pRhkqRYJfr8qOYJLBL1PPnlvfiQnKBO0WS7zrgkrkl4hshnS15Q5KGWWy7zJLiy-IhLYoExxoXfA2j0Q1I1cKr8ZmOBlm_sM6VgZ0RyBxSkZauuSgQEEPyJW2MR0Nd9X4AsKURnQhKf-qWKCQ52I-29TwJu05CkK3m0dVdt98lxs6wUkTrcczskBdMfk1LBnJ35nSkI1Few2okw7zmXiny86w7sScM2iIvZz_hMUp2_Vmcyh0lCwFKsALQhj3vqtaLkUF_SUKfI1llXkusOP7QOWImt-H_rTzRYL0EvtPsr_1NXsESiCwxqEcAgIUH4P8fdchJE5aS_NoTOFJvNFwsg_zztApxvCpc-bT2HmEoAdOCycZATRlW5Gwa2dmvzcOhFP0wgiJOY9J6xoFoKfn-o8pd0TfgfaFkOGxvFf8j7GLlDvT6GDKfrrSSY8ibF5aqLz1Nklw7tDDekjHRH1xrMDXlbaSckijvTb5P6iiP4OUtU-dg0SE4lC2ekO-esUTQAPPxNiGVvaDKLI_13nqf6DltGhgdV04MKAZZJUk7APfgqLk-nCwkukhCvdY_ko6NEzj3ToWeRB0Mw1Kpw5C4Cw2lhbTg4oEFgyAUKqdY26DQ2V5ZCuHnumP-7ULm8Usnc2GeF5aEu_qpSg-fFDSzlMxfw41Q8edFbwm9qdptWnPLvazaGMm7tAEBo507V_6iZx5ZFckC-r4pl5FbOLlS8QEsIxO3x3t9MIBYZ2NNLvKuA9SP5FlqsjtX8fBM8j2sTitOTfVMjyHUur5j4Ct668zprnoGODWkIpkjPMMOQKjreIJf3Hk7OdCYZ2kYVSv3g6KDDZUXXUytgVyPer7HR3jck4DrsSjH5I1SMowfhr4kCSuZ3SyJt2iDuC4Uzg2YV_Vaf23lI_xZrBZAeyk6pc7A2J8zVcjuvoJvg0-1xpbCf_U0BD_C_J5qX813uE7f5j3JLDGcr0t8yGO16DjH3Omi7DiSJk1sCCQPxe20MeokVAzh0WGCXMU6VPKqcQd0CC8y87SCCwQisjb2ABCO5T4Zp9O_tOHv4gxJWA2eYT3BbiBxnf0Ox1bUw4HkvnNP4Ame9Li__ZNcREXuIbmnnA1kHfgd4M_XxH3mLXlSGXSkzkuPuYB1C6-0mfVSnBK23VWPXCJpMSV2SUBvg-gUicPOWnAI9Qg6MeMXNZYIgOwvaUDPzUJ3ndgtBoIE9nVDRRYmWnmyRzsv7r14Fc1AC7QqIFGP1l09i8AkTRgjiTtBptRgFPMo0oYMvG3lgTFukJfnURpDJ4ENW5yzksG64qEgEKDK_lVfsbXAxlwrXWRc00yfme_A-1S0SwyLljy9O3DVruWFq3PdGZak0gdWfb1kxKIoTfETV8ao-jGtSoYB815bXOwBHBIddSyr1sDKDqExbMMub4npRicOa8STaXwD-yNrWOjgp2kyOsmRJaJRVm0KyxWT6Vqnqvx6zcJEjZUwqnuxyWBYDf0J6XGnCEHz135PjRG2rJJAHFJ3IwfnncdmDOVR5Ytb5zRllbLuI0L7yr6jGLXMs2VvUfR52peCYNWFern4bhAUdoarxdV2BAcKk7v3R3ZF7ZFyTP--BjWrlI5RoAUfAGtg7WYPPiFrsBQ8F7_gjVaSrmBxBz5MbMGqvJ8j8US6Hr5pnzXMr5L8hSn13E6ZVLRSDSsOnRlTNaaM-x4moDhVlkZWr_TdJYNaLVM1Zxw3lqUe0NUwxiUT8gi2UZuzzY5cbAUIC0rPZwf7g2M7gta3ZYSnwPVLXRnapxspus=
+        id: rs_08e7da464e3f8cf70069780c11262c819b95f0f44b0bc8937d
+        summary: []
+        type: reasoning
+      - action:
+          type: open_page
+          url: https://en.wikipedia.org/wiki/Demographics_of_Tokyo
+        id: ws_08e7da464e3f8cf70069780c1f76ac819ba8a7b5c5262ecb0b
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABpeAwp7NJzlGYYgSv8uhdlce5x63f5mZF92hy21jypW_LVvslZYBw1b8pF0mfuk5bLkvm8WOI0DbqWlp2NbcdRaY8lbFc61zF2vINvH6MZHCu6A8bTsOvL8Uic4uNU5Lq6B2zGhHc79FmhGmFab9_pk-vKwCgxnS8mwtoIZ39pKVQs5ID6SP6ZI_tOu0FJMhgjKGMit9lNyOwMAr0nSnedkmTOvBr8UeNk2p1LSpLW2qPIZdTW-0QfJ2w4IgVMIDG0WS_vKzDhTtsrS-iCF222u3nekOfR7bRLCPOlSyfIV0ckNRGoGWx4Q9JsnWPpoT6WD-Oxst-1EcXqmIxKayUxxAMY4a48DtyQZtrzqbYwMILwOyF6VmIUT6ER516_0VQUic1-OYidwcompzSyzQbKaRoimBjLioQAwns25O3S093lGclWkcL96aDokWUP73kaL4Hs4XhoeO5cXot4uQd5TEgpjnt61HNdwCW2hhrKlHYEToOub5bWytnpb_X_7evT368xdnL6scShQ50oTs-iHt7M2l8f4g5GOvqJEWu5UDpPt35EnXwv63x9vQCW3QGxJyQ7N9pI32-_LODq0swe18B4HIERw3gC3tnk3vPScjIynArhEF2rsnVrZ_SgdS6Vq42eYiWAEJhtHwROon57TY5piBMfTQhPBoFDOZ21nE4p-p-qNKb_wMQpbqpoq9kBuMoXpk_RWT5Swgzc7B3l97w8DFk1TTja4Kd5e3Cq65yDf4UM7znsutn5ArPcHGBRn8fFnAvRVvKlKsv_kpgiZRMHMTgfFT5_Cqj_WIX3Cxa9yWhoJN6vrc2LselXYKecDcXP83b2KO9CsU-iMkEu-hm-J1PbghSAYnzePykmDS_Dxt4Ce-O5b8yJZP6SXx2kUvDZE9LjuEwbleWzsueqG1m3h8aknTTabqxzohHoHacAONsxqXCMCbIHqkWii54wSd88sA6pn9UqtV1PFZoVzKhdXBn61rygzCY82MkgtGAnRyQfZi0oji8vpK_QA9BltQkHoY7lm6dXyRIZAobBeeonElGXN3WWjusOAH_95o9bDgbdJUZyjJtFfoaCMkhzpU9xNqNFcmqEuVrWQ0IhDgRpCV471YMVhfRZ24xMbKYp5WFc4YbZ4vTHNLwVSN6nSZATXrh8ZQz0VLK8QUtwUROXFJ75RrOzAzWDeY3AC7_AK2fLKAvlf4RhoKOt4cTSt7DzliTaegV1jXcx_B8tiSWhh6sS3z7x2TvUqgwaidVhSVDxMSxbHXmwqTRG1K5T-Uily26SRo6_c4FioDCBEs2ROns1CbWgLF1iCoixgEBajToaXBS0GXfqmMEMoqRXVnM5ejr7C_MnXuuI2qPwpKd2eDvalOTxbxIghGqQsgw-1gB7O1YPWe10U9wzQo61NPI25JFP9xuRZq1UyRCfVr5WK32J5MjKdqF5U0_-F8RCUHLh9KnGOcGXN57YLXP8vBwZrbc-m1Y5TOoX9Kbuz7n8BMppUjKFxs6ZufdH1tOpu4NNGflOD4Mj_-C3RPNdmQP8mNK21V1fPbGkUqyvAmvEH7zd_SEahPzB8vwtaD-eD0U6d6tIk-A71a7dO9hj_poZaGxxEA1Yo6XkXFsTcxSi3Lor6tyf-ec_vv4ESPvHh8Q813AywH_Ub6O7gFa-4mjy0AS_-PpF1Ind5DLXDugBdx9U2TxYVlYLWF-aB896EgIt-YISoUjT8H3hVFbQGi4FpmeQ-F1AmdU-JaTj_VyWSniSlZsmG-a2674lFtsAXVX5TNPy88f8HTFqHkQmiXPPqc8yUE-x_zbKGe53bdDMOFRYikWAUZZ9rgN_iNxqIYgpstLBhQu_uI91ghADr4wO-7TAcnBTYKAHG5R_lG1fHGgf7YS61tvY-pNSYBHy4cEm4BOviBhR0qQKKyDjhEjbuNDbMa5jMiuI0ePD5tXNNLc70W38JCcAoAI5ZLtpvK9uuu6v-DhovDs6X_WktJraKup3ROoWcQCk_2zxOIaIijsIWOZR_ikytU1bYu34nOHNgo6962jk257tJd-8hq9rxf875tIXZl8V-eq8SCL-1O3lanXwChLKbZjN9JiNlzKqCXrnLR9Q6A7bW9KV7La6ovZHeYzQAUKj0ueqHZK3ZbvUYBmjwwxW42TSGYiBREBSKcWgZU3FqubR0eiEYyyNl86KNmMxILWa0_In0livIQ71Vep69mC82hytzyS-oYIgI_L8FVVLhVPEoRPQCkAX3aFNqQ1X6oW4uEdrc98qi8FDiKK_dN8sB8AMAMeSPU6OnpdMdOEK7ua4mGaXK28gGsNY5OmbaUlfqe8h5SkDzRUlaQwH_R4dZOEaB64iugxpPRpEQgiqLMeIrVWXLcKJAaS2q2gr3ICgplAk_gsZBCftXabn3Rw_2s-w2ZUkx690i-bSyN5N8i8rsgBTji5p1vVVsXwXOGtvaWUXFiSNxrEWO-ZTmrm4e-27IuDuRuFyG9rVRsj1SI7dQs6umq8g4G0Nd-2Uy4fIO5ukrSQel8bXfaklf_ufez2F_IGXD44sK8dZSv7wf1RUJC1qEXikOee_Nsm4HyzbXWGfCDUac3L9MhdFG8ouE9YIm5Iy5sqOa5Oa3mLCcSjuveQbAdMm2Ac2ESvN6nMKvvhRmFnM4EOm-ubNC-2pifMkJO_ei1R5MMw3DbyKxS9Qwni-t6yh8bF-JTw1QmLZjJPIF15EAfhloJri9vW79-9e3bPv8a0hsT505PaUVyUzkvfyCfXFAvHBzXP3gJ8hu9wJ4zNEpF7ciCg9LMct9rZgBZ8bVYEd5JaZFa4yFAKOXgZv-5TEPCWr6xTUJYrbpBVDKvwyqiYVTRAYq4f-qkKKwItOZDDT0CPy0YORmWEHiMJny3N_Fa8zEFJ_fRtqLMdqUVL7j67OJF6iSpFBqMHAYEJU1KBobxJq2Y6BkI6Eh-BdJnDfqoQMfdb9zbkasyP6HEtEYY092l_KNuy1UQyAVSmd_h1KcnMYvXkn7Bmh5iSLosQbzCWr5qkaW_277zrTizJqUol2uHF88epGi2_bT-ofRV1HYEXciO6dtvMAa5r4Gh6YcGViYdfE62fVpfDKRLUousecouOuaJ43nm0iDXMNqsRTMiDtkB0sdzdCHzTKglJpDdM6pGdnsNpnUPlhl7B8-6HeJ2HLmOl0pYtc56XD-vOw47CM3ARU0BnbnXhliH3PVtXJUFYvGfyQVPDqgu79No2syDBaqLtHv2THmh8qFrUau7SmT5-9eyd1i3u24Yv300LhQfokFDmI-7Ad085bTqiv_gSbxR6JoTIedBrwFqxApAtW0hrx9AzonlNHoHHtok8HIZ5nWU6vA-majjMeCm5-nCNd9jBXzlvBCk7yQ-9_RLasVZqe8zkrlnhN5POnuxurUEvsNMxN5HNfxbnOVdT55YdbHTOp7n5Jz4ajR2if_V9ercifgi4GZh-XpUsFEV42xlI2408JNKjhXQe8Wq93QOVdhJ7c49p1zkqqGTFejIMvoxYlpOOA7dl34wUckxDFmggj86S205MpJEQhgw==
+        id: rs_08e7da464e3f8cf70069780c207858819b9ff9eb914a157904
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '14195730'
+          type: output_text
+        id: msg_08e7da464e3f8cf70069780c28d520819b8df668fee3b5be9a
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters:
+          allowed_domains:
+          - wikipedia.org
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 22013
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 1737
+        output_tokens_details:
+          reasoning_tokens: 1728
+        total_tokens: 23750
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

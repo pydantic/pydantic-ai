@@ -1,0 +1,131 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What food is in the image you can get from the get_image tool?
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - function:
+          name: get_image
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CkQKQAo+V2hhdCBmb29kIGlzIGluIHRoZSBpbWFnZSB5b3UgY2FuIGdldCBmcm9tIHRoZSBnZXRf
+      aW1hZ2UgdG9vbD8QARIZZ3Jvay00LWZhc3Qtbm9uLXJlYXNvbmluZ4oBUgpQCglnZXRfaW1hZ2Ui
+      Q3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUi
+      OiAib2JqZWN0In2SAQIIAQ==
+  response_sample:
+    json:
+      id: 5f7a33eb-ca6c-ec62-9a5e-102c14488608
+      outputs:
+      - finish_reason: REASON_TOOL_CALLS
+        message:
+          role: ROLE_ASSISTANT
+          tool_calls:
+          - id: call_37730393
+            type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+            status: TOOL_CALL_STATUS_COMPLETED
+            function:
+              name: get_image
+              arguments: '{}'
+      created: '2026-01-16T17:04:41.565926488Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 15
+        prompt_tokens: 356
+        total_tokens: 371
+        prompt_text_tokens: 356
+        cached_prompt_text_tokens: 314
+      settings:
+        parallel_tool_calls: true
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_image
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+    raw: !!binary |
+      CiQ1ZjdhMzNlYi1jYTZjLWVjNjItOWE1ZS0xMDJjMTQ0ODg2MDgSLAgEGigQAhokCg1jYWxsXzM3
+      NzMwMzkzEAEYAVIPCglnZXRfaW1hZ2USAnt9KgwIqd+pywYQ2LTtjQIyGWdyb2stNC1mYXN0LW5v
+      bi1yZWFzb25pbmc6DWZwXzQ2MTZlNzY0MTNKEggPEOQCGPMCIOQCOLoCWOCkE1paEAE6AggBQlIK
+      UAoJZ2V0X2ltYWdlIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVz
+      Ijoge30sICJ0eXBlIjogIm9iamVjdCJ9
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: What food is in the image you can get from the get_image tool?
+        role: ROLE_USER
+      - content:
+        - text: ''
+        role: ROLE_ASSISTANT
+        tool_calls:
+        - id: call_37730393
+          type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
+          status: TOOL_CALL_STATUS_COMPLETED
+          function:
+            name: get_image
+            arguments: '{}'
+      - content:
+        - text: See file bd38f5
+        role: ROLE_TOOL
+      - content:
+        - text: 'This is file bd38f5:'
+        - image_url:
+            image_url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
+            detail: DETAIL_AUTO
+        role: ROLE_USER
+      model: grok-4-fast-non-reasoning
+      tools:
+      - function:
+          name: get_image
+          parameters: '{"additionalProperties": false, "properties": {}, "type": "object"}'
+      tool_choice:
+        mode: TOOL_MODE_AUTO
+    raw: !!binary |
+      CkQKQAo+V2hhdCBmb29kIGlzIGluIHRoZSBpbWFnZSB5b3UgY2FuIGdldCBmcm9tIHRoZSBnZXRf
+      aW1hZ2UgdG9vbD8QAQosCgIKABACIiQKDWNhbGxfMzc3MzAzOTMQARgBUg8KCWdldF9pbWFnZRIC
+      e30KFQoRCg9TZWUgZmlsZSBiZDM4ZjUQBQp6ChYKFFRoaXMgaXMgZmlsZSBiZDM4ZjU6Cl4SXApY
+      aHR0cHM6Ly90My5mdGNkbi5uZXQvanBnLzAwLzg1Lzc5LzkyLzM2MF9GXzg1Nzk5Mjc4XzBCQkdW
+      OU9BZFFEVExuS3dBUEJDY2cxSjdRdGlpZUpZLmpwZxABEAESGWdyb2stNC1mYXN0LW5vbi1yZWFz
+      b25pbmeKAVIKUAoJZ2V0X2ltYWdlIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJw
+      cm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9kgECCAE=
+  response_sample:
+    json:
+      id: 96ad555e-de67-234d-b8b4-6591d6357275
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: The image shows a single raw potato.
+          role: ROLE_ASSISTANT
+      created: '2026-01-16T17:04:42.212306286Z'
+      model: grok-4-fast-non-reasoning
+      system_fingerprint: fp_4616e76413
+      usage:
+        completion_tokens: 8
+        prompt_tokens: 657
+        total_tokens: 665
+        prompt_text_tokens: 401
+        prompt_image_tokens: 256
+        cached_prompt_text_tokens: 371
+      settings:
+        parallel_tool_calls: true
+        tool_choice:
+          mode: TOOL_MODE_AUTO
+        tools:
+        - function:
+            name: get_image
+            parameters: '{"additionalProperties": false, "properties": {}, "type":
+              "object"}'
+    raw: !!binary |
+      CiQ5NmFkNTU1ZS1kZTY3LTIzNGQtYjhiNC02NTkxZDYzNTcyNzUSLAgDGigKJFRoZSBpbWFnZSBz
+      aG93cyBhIHNpbmdsZSByYXcgcG90YXRvLhACKgsIqt+pywYQ7pKeZTIZZ3Jvay00LWZhc3Qtbm9u
+      LXJlYXNvbmluZzoNZnBfNDYxNmU3NjQxM0oVCAgQkQUYmQUgkQMogAI48wJYvNYwWloQAToCCAFC
+      UgpQCglnZXRfaW1hZ2UiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRp
+      ZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In0=

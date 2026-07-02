@@ -7,10 +7,16 @@ from __future__ import annotations
 
 from textwrap import dedent
 
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
 from pydantic_ai import Agent
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 agent = Agent(
-    'openai:gpt-4o-mini',
+    'openai:gpt-5-mini',
     instructions=dedent(
         """
         When planning tasks use tools only, without any other messages.
@@ -23,4 +29,9 @@ agent = Agent(
     ),
 )
 
-app = agent.to_ag_ui()
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])

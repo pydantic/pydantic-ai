@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Mapping
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import logfire_api
 from pydantic import (
+    ConfigDict,
     TypeAdapter,
     ValidationError,
 )
 from typing_extensions import TypeVar
+
+from pydantic_evals._utils import logfire_span
 
 from .context import EvaluatorContext
 from .evaluator import (
@@ -25,8 +26,6 @@ from .evaluator import (
 if TYPE_CHECKING:
     from pydantic_ai.retries import RetryConfig
 
-_logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
-logfire_api.add_non_user_code_prefix(Path(__file__).parent.absolute())
 
 InputsT = TypeVar('InputsT', default=Any, contravariant=True)
 OutputT = TypeVar('OutputT', default=Any, contravariant=True)
@@ -57,14 +56,21 @@ async def run_evaluator(
     evaluate = evaluator.evaluate_async
     if retry is not None:
         # import from pydantic_ai.retries to trigger more descriptive import error if tenacity is missing
-        from pydantic_ai.retries import retry as tenacity_retry
+        from pydantic_ai.retries import retry as tenacity_retry  # pyright: ignore[reportPrivateImportUsage]
 
         evaluate = tenacity_retry(**retry)(evaluate)
 
+    evaluator_version = evaluator.get_evaluator_version()
+    evaluator_name = evaluator.get_default_evaluation_name()
+    source = evaluator.as_spec()
+
     try:
-        with _logfire.span(
-            'evaluator: {evaluator_name}',
-            evaluator_name=evaluator.get_default_evaluation_name(),
+        # Keep `_span_name='evaluator: {evaluator_name}'` stable: existing logfire
+        # queries filter on the span name, so only the user-facing msg_template changes.
+        with logfire_span(
+            'Calling evaluator: {evaluator_name}',
+            evaluator_name=evaluator_name,
+            _span_name='evaluator: {evaluator_name}',
         ):
             raw_results = await evaluate(ctx)
 
@@ -72,28 +78,40 @@ async def run_evaluator(
                 results = _EVALUATOR_OUTPUT_ADAPTER.validate_python(raw_results)
             except ValidationError as e:
                 raise ValueError(f'{evaluator!r}.evaluate returned a value of an invalid type: {raw_results!r}.') from e
+
+            results = _convert_to_mapping(results, scalar_name=evaluator_name)
+
+            details: list[EvaluationResult] = []
+            for name, result in results.items():
+                if not isinstance(result, EvaluationReason):
+                    result = EvaluationReason(value=result)
+                details.append(
+                    EvaluationResult(
+                        name=name,
+                        value=result.value,
+                        reason=result.reason,
+                        source=source,
+                        evaluator_version=evaluator_version,
+                    )
+                )
     except Exception as e:
         return EvaluatorFailure(
-            name=evaluator.get_default_evaluation_name(),
+            name=evaluator_name,
             error_message=f'{type(e).__name__}: {e}',
             error_stacktrace=traceback.format_exc(),
-            source=evaluator.as_spec(),
-        )
-
-    results = _convert_to_mapping(results, scalar_name=evaluator.get_default_evaluation_name())
-
-    details: list[EvaluationResult] = []
-    for name, result in results.items():
-        if not isinstance(result, EvaluationReason):
-            result = EvaluationReason(value=result)
-        details.append(
-            EvaluationResult(name=name, value=result.value, reason=result.reason, source=evaluator.as_spec())
+            source=source,
+            error_type=type(e).__name__,
+            evaluator_version=evaluator_version,
         )
 
     return details
 
 
-_EVALUATOR_OUTPUT_ADAPTER = TypeAdapter[EvaluatorOutput](EvaluatorOutput)
+# `EvaluationReason` is a plain dataclass, so pydantic would otherwise trust
+# existing instances and skip validating `value` against the finite-float constraint.
+_EVALUATOR_OUTPUT_ADAPTER = TypeAdapter[EvaluatorOutput](
+    EvaluatorOutput, config=ConfigDict(revalidate_instances='always')
+)
 
 
 def _convert_to_mapping(

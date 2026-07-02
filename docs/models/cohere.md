@@ -27,7 +27,7 @@ You can then use `CohereModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('cohere:command')
+agent = Agent('cohere:command-r7b-12-2024')
 ...
 ```
 
@@ -37,7 +37,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.cohere import CohereModel
 
-model = CohereModel('command')
+model = CohereModel('command-r7b-12-2024')
 agent = Agent(model)
 ...
 ```
@@ -51,7 +51,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.cohere import CohereModel
 from pydantic_ai.providers.cohere import CohereProvider
 
-model = CohereModel('command', provider=CohereProvider(api_key='your-api-key'))
+model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -67,9 +67,26 @@ from pydantic_ai.providers.cohere import CohereProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = CohereModel(
-    'command',
+    'command-r7b-12-2024',
     provider=CohereProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)
+...
+```
+
+## Model settings
+
+You can customize model behavior using [`CohereModelSettings`][pydantic_ai.models.cohere.CohereModelSettings]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.cohere import CohereModel, CohereModelSettings
+
+model = CohereModel('command-r7b-12-2024')
+settings = CohereModelSettings(
+    temperature=0.2,
+    top_k=40,
+)
+agent = Agent(model, model_settings=settings)
 ...
 ```

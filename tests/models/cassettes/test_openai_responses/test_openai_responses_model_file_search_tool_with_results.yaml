@@ -1,0 +1,420 @@
+interactions:
+- request:
+    body: "--52a5d14bb306956781c8b194fe58521c\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nassistants\r\n--52a5d14bb306956781c8b194fe58521c\r\nContent-Disposition:
+      form-data; name=\"file\"; filename=\"tmpd_9a5dki.txt\"\r\nContent-Type: text/plain\r\n\r\nParis is the capital of France.
+      It is known for the Eiffel Tower.\r\n--52a5d14bb306956781c8b194fe58521c--\r\n"
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '340'
+      content-type:
+      - multipart/form-data; boundary=52a5d14bb306956781c8b194fe58521c
+      host:
+      - api.openai.com
+    method: POST
+    uri: https://api.openai.com/v1/files
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '238'
+      content-type:
+      - application/json
+      openai-organization:
+      - test-org
+      openai-processing-ms:
+      - '274'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      bytes: 65
+      created_at: 1765387621
+      expires_at: null
+      filename: tmpd_9a5dki.txt
+      id: file-2b6dRdmXnzSrqiEbhVJZRU
+      object: file
+      purpose: assistants
+      status: processed
+      status_details: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '40'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Tqb2s5eBKTjzQxBYlSHfE0R1Q1fmOnoUTanlqzxTMmo-1765387621-1.0.1.1-QOKl2b_.wLbLeSYFom054M9g9fi8nAv1ZoMs0HM_umYrRXosZoAZ6TIm8Ev8ENNd98hGYvomRSyqoLus0dz1LKWcRbjrdKRJsGUlLCi5jtk;
+        _cfuvid=UWE0JBmmBkntYIIqrzcv0A.ujekcA1j_p2tuBXvrdEs-1765387621709-0.0.1.1-604800000
+      host:
+      - api.openai.com
+      openai-beta:
+      - assistants=v2
+    method: POST
+    parsed_body:
+      name: test-file-search-with-results
+    uri: https://api.openai.com/v1/vector_stores
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '431'
+      content-type:
+      - application/json
+      openai-organization:
+      - test-org
+      openai-processing-ms:
+      - '480'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1765387622
+      description: null
+      expires_after: null
+      expires_at: null
+      file_counts:
+        cancelled: 0
+        completed: 0
+        failed: 0
+        in_progress: 0
+        total: 0
+      id: vs_6939ad669c648191821c3a46f90cf33d
+      last_active_at: 1765387622
+      metadata: {}
+      name: test-file-search-with-results
+      object: vector_store
+      status: completed
+      usage_bytes: 0
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '41'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Tqb2s5eBKTjzQxBYlSHfE0R1Q1fmOnoUTanlqzxTMmo-1765387621-1.0.1.1-QOKl2b_.wLbLeSYFom054M9g9fi8nAv1ZoMs0HM_umYrRXosZoAZ6TIm8Ev8ENNd98hGYvomRSyqoLus0dz1LKWcRbjrdKRJsGUlLCi5jtk;
+        _cfuvid=UWE0JBmmBkntYIIqrzcv0A.ujekcA1j_p2tuBXvrdEs-1765387621709-0.0.1.1-604800000
+      host:
+      - api.openai.com
+      openai-beta:
+      - assistants=v2
+    method: POST
+    parsed_body:
+      file_id: file-2b6dRdmXnzSrqiEbhVJZRU
+    uri: https://api.openai.com/v1/vector_stores/vs_6939ad669c648191821c3a46f90cf33d/files
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '395'
+      content-type:
+      - application/json
+      openai-organization:
+      - test-org
+      openai-processing-ms:
+      - '881'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      attributes: {}
+      chunking_strategy:
+        static:
+          chunk_overlap_tokens: 400
+          max_chunk_size_tokens: 800
+        type: static
+      created_at: 1765387624
+      id: file-2b6dRdmXnzSrqiEbhVJZRU
+      last_error: null
+      object: vector_store.file
+      status: in_progress
+      usage_bytes: 0
+      vector_store_id: vs_6939ad669c648191821c3a46f90cf33d
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '300'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=Tqb2s5eBKTjzQxBYlSHfE0R1Q1fmOnoUTanlqzxTMmo-1765387621-1.0.1.1-QOKl2b_.wLbLeSYFom054M9g9fi8nAv1ZoMs0HM_umYrRXosZoAZ6TIm8Ev8ENNd98hGYvomRSyqoLus0dz1LKWcRbjrdKRJsGUlLCi5jtk;
+        _cfuvid=UWE0JBmmBkntYIIqrzcv0A.ujekcA1j_p2tuBXvrdEs-1765387621709-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - file_search_call.results
+      input:
+      - content: What is the capital of France?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - type: file_search
+        vector_store_ids:
+        - vs_6939ad669c648191821c3a46f90cf33d
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2538'
+      content-type:
+      - application/json
+      openai-organization:
+      - test-org
+      openai-processing-ms:
+      - '2936'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      created_at: 1765387627
+      error: null
+      id: resp_08aa886305ae5628006939ad6b52b4819a9854a8383e4ef8f7
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: fs_08aa886305ae5628006939ad6cfa30819a85b07d52d61eb121
+        queries:
+        - What is the capital of France?
+        results:
+        - attributes: {}
+          file_id: file-2b6dRdmXnzSrqiEbhVJZRU
+          filename: tmpd_9a5dki.txt
+          score: 0.9716
+          text: Paris is the capital of France. It is known for the Eiffel Tower.
+          vector_store_id: vs_6939ad669c648191821c3a46f90cf33d
+        status: completed
+        type: file_search_call
+      - content:
+        - annotations:
+          - file_id: file-2b6dRdmXnzSrqiEbhVJZRU
+            filename: tmpd_9a5dki.txt
+            index: 30
+            type: file_citation
+          logprobs: []
+          text: The capital of France is Paris.
+          type: output_text
+        id: msg_08aa886305ae5628006939ad6df868819a8b9a43fbf56f93da
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters: null
+        max_num_results: 20
+        ranking_options:
+          ranker: auto
+          score_threshold: 0.0
+        type: file_search
+        vector_store_ids:
+        - vs_6939ad669c648191821c3a46f90cf33d
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 1178
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 45
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 1223
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=zPjmKI1uKEi.iKxKCY0xfZ1_mlwIjiIH9hV7GGhpUF0-1765387630-1.0.1.1-1H2eHVGoIdl__YBV04htTSbp4WONmtxu_sJa.NdaVwkL6fb9X5Ju7NeLsC1UHriO2a3ItZK.w079UTH6atfuaO_nJ2qItJHlaQikwIyS.yc;
+        _cfuvid=B0J8b0.4KWxgkLdtRP7T_ew4ZqkI4ZZckbUxSceAqz4-1765387630339-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: DELETE
+    uri: https://api.openai.com/v1/files/file-2b6dRdmXnzSrqiEbhVJZRU
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '81'
+      content-type:
+      - application/json
+      openai-organization:
+      - test-org
+      openai-processing-ms:
+      - '484'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      deleted: true
+      id: file-2b6dRdmXnzSrqiEbhVJZRU
+      object: file
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=VRiI5YeeCtebzK0Qf9CL8idz1qP0qC11ML_RJwLVCOU-1765387631-1.0.1.1-M0AdmzpdUAqPoRq5HXYwPGuQ_j91i6K3I879W3fYzPYIpR6A2zwLLse20a1wP6oNszR3P69qzvmPIW2pDwhLWSwx_AvxTNU21UjVQiQT20g;
+        _cfuvid=CA73VVEmnOAcFTgd6F.Oq27Zw4okIykT0odu8H7WcpA-1765387631057-0.0.1.1-604800000
+      host:
+      - api.openai.com
+      openai-beta:
+      - assistants=v2
+    method: DELETE
+    uri: https://api.openai.com/v1/vector_stores/vs_6939ad669c648191821c3a46f90cf33d
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '104'
+      content-type:
+      - application/json
+      openai-organization:
+      - test-org
+      openai-processing-ms:
+      - '1058'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      deleted: true
+      id: vs_6939ad669c648191821c3a46f90cf33d
+      object: vector_store.deleted
+    status:
+      code: 200
+      message: OK
+version: 1

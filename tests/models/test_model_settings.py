@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.direct import model_request as direct_model_request
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
 
@@ -55,6 +60,28 @@ def test_wrapper_model_settings_delegation():
     assert wrapper_no_settings.settings is None
 
 
+async def test_wrapper_model_context_manager():
+    wrapper = WrapperModel(TestModel())
+    async with wrapper:
+        pass
+
+
+def test_wrapper_model_customize_request_parameters_delegation():
+    """Test that WrapperModel delegates request parameter customization to wrapped model."""
+
+    class _CustomizingTestModel(TestModel):
+        def customize_request_parameters(
+            self, model_request_parameters: ModelRequestParameters
+        ) -> ModelRequestParameters:
+            return ModelRequestParameters(output_mode='tool', allow_text_output=False)
+
+    wrapper = WrapperModel(_CustomizingTestModel())
+    customized = wrapper.customize_request_parameters(ModelRequestParameters())
+
+    assert customized.output_mode == 'tool'
+    assert customized.allow_text_output is False
+
+
 def test_instrumented_model_settings_delegation():
     """Test that InstrumentedModel correctly delegates settings to wrapped model."""
     # Create a base model with settings
@@ -71,6 +98,35 @@ def test_instrumented_model_settings_delegation():
     assert instrumented_no_settings.settings is None
 
 
+def test_wrapper_model_profile_delegation_is_dynamic():
+    """Test that WrapperModel delegates profile dynamically, not caching it.
+
+    This is important for cases like InstrumentedModel(TemporalModel(...)) where
+    the wrapped model's profile can change dynamically (e.g. via using_model()).
+    """
+    profile_a = ModelProfile(supports_tools=True)
+    profile_b = ModelProfile(supports_tools=False)
+
+    class _DynamicProfileModel(TestModel):
+        active_profile: ModelProfile = profile_a
+
+        @property
+        def profile(self) -> ModelProfile:  # type: ignore[override]
+            return self.active_profile
+
+    inner = _DynamicProfileModel()
+    wrapper = WrapperModel(inner)
+    instrumented = InstrumentedModel(inner)
+
+    assert wrapper.profile is profile_a
+    assert instrumented.profile is profile_a
+
+    # After changing the inner model's profile, wrappers should reflect the change
+    inner.active_profile = profile_b
+    assert wrapper.profile is profile_b
+    assert instrumented.profile is profile_b
+
+
 def test_settings_merge_hierarchy():
     """Test the complete settings merge hierarchy: model -> agent -> run."""
     # Create a function that captures the merged settings
@@ -82,13 +138,14 @@ def test_settings_merge_hierarchy():
         return ModelResponse(parts=[TextPart('captured')])
 
     # Model settings (lowest priority)
-    model_settings = ModelSettings(max_tokens=100, temperature=0.5, top_p=0.8, seed=123)
+    model_settings = ModelSettings(max_tokens=100, temperature=0.5, top_p=0.8, top_k=20, seed=123)
     model = FunctionModel(capture_settings, settings=model_settings)
 
     # Agent settings (medium priority)
     agent_settings = ModelSettings(
         max_tokens=200,  # overrides model
         temperature=0.6,  # overrides model
+        top_k=30,  # overrides model
         frequency_penalty=0.1,  # new setting
     )
     agent = Agent(model=model, model_settings=agent_settings)
@@ -96,6 +153,7 @@ def test_settings_merge_hierarchy():
     # Run settings (highest priority)
     run_settings = ModelSettings(
         temperature=0.7,  # overrides agent and model
+        top_k=40,  # overrides agent and model
         presence_penalty=0.2,  # new setting
         seed=456,  # overrides model
     )
@@ -107,6 +165,7 @@ def test_settings_merge_hierarchy():
     # Verify the merged settings follow the correct precedence
     assert captured_settings is not None
     assert captured_settings['temperature'] == 0.7  # from run_settings
+    assert captured_settings['top_k'] == 40  # from run_settings
     assert captured_settings['max_tokens'] == 200  # from agent_settings
     assert captured_settings['top_p'] == 0.8  # from model_settings
     assert captured_settings['seed'] == 456  # from run_settings
@@ -162,3 +221,39 @@ def test_empty_settings_objects():
     assert captured_settings is not None
     assert captured_settings.get('temperature') == 0.75
     assert len(captured_settings) == 1  # Only one setting should be present
+
+
+def test_direct_model_request_merges_model_settings():
+    """Ensure direct requests merge model defaults with provided run settings."""
+
+    captured_settings = None
+
+    async def capture(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+        nonlocal captured_settings
+        captured_settings = agent_info.model_settings
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(
+        capture,
+        settings=ModelSettings(max_tokens=50, temperature=0.3),
+    )
+
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hi')]
+    run_settings = ModelSettings(temperature=0.9, top_p=0.2)
+
+    async def _run() -> ModelResponse:
+        return await direct_model_request(
+            model,
+            messages,
+            model_settings=run_settings,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+    response = asyncio.run(_run())
+
+    assert response.parts == [TextPart('ok')]
+    assert captured_settings == {
+        'max_tokens': 50,
+        'temperature': 0.9,
+        'top_p': 0.2,
+    }

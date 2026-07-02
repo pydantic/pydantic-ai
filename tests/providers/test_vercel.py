@@ -4,8 +4,8 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -76,49 +76,49 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     profile = provider.model_profile('openai/gpt-4o')
     openai_mock.assert_called_with('gpt-4o')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test anthropic provider
-    profile = provider.model_profile('anthropic/claude-3-sonnet')
-    anthropic_mock.assert_called_with('claude-3-sonnet')
+    profile = provider.model_profile('anthropic/claude-sonnet-4-5')
+    anthropic_mock.assert_called_with('claude-sonnet-4-5')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test bedrock provider
-    profile = provider.model_profile('bedrock/anthropic.claude-3-sonnet')
-    amazon_mock.assert_called_with('anthropic.claude-3-sonnet')
+    profile = provider.model_profile('bedrock/anthropic.claude-sonnet-4-5')
+    amazon_mock.assert_called_with('anthropic.claude-sonnet-4-5')
     assert profile is not None
-    assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     # Test cohere provider
     profile = provider.model_profile('cohere/command-r-plus')
     cohere_mock.assert_called_with('command-r-plus')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test deepseek provider
     profile = provider.model_profile('deepseek/deepseek-chat')
     deepseek_mock.assert_called_with('deepseek-chat')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test mistral provider
     profile = provider.model_profile('mistral/mistral-large')
     mistral_mock.assert_called_with('mistral-large')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test vertex provider
     profile = provider.model_profile('vertex/gemini-1.5-pro')
     google_mock.assert_called_with('gemini-1.5-pro')
     assert profile is not None
-    assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
 
     # Test xai provider
     profile = provider.model_profile('xai/grok-beta')
     grok_mock.assert_called_with('grok-beta')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
 def test_vercel_with_http_client():
@@ -128,11 +128,10 @@ def test_vercel_with_http_client():
     assert str(provider.client.base_url) == 'https://ai-gateway.vercel.sh/v1/'
 
 
-def test_vercel_provider_invalid_model_name():
-    provider = VercelProvider(api_key='api-key')
-
-    with pytest.raises(UserError, match="Model name must be in 'provider/model' format"):
-        provider.model_profile('invalid-model-name')
+def test_vercel_provider_model_name_without_slash():
+    profile = VercelProvider.model_profile('invalid-model-name')
+    assert profile is not None
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
 def test_vercel_provider_unknown_provider():
@@ -140,4 +139,4 @@ def test_vercel_provider_unknown_provider():
 
     profile = provider.model_profile('unknown/gpt-4')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer

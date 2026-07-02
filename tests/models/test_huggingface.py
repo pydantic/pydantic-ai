@@ -4,48 +4,49 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import Mock
 
 import pytest
-from dirty_equals import IsListOrTuple
-from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
-from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AudioUrl,
     BinaryContent,
+    CachePoint,
     DocumentUrl,
-    FinalResultEvent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
+    ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
-    TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._utils import PeekableAsyncStream
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.result import RunUsage
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    import aiohttp
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -64,7 +65,7 @@ with try_import() as imports_successful:
     )
     from huggingface_hub.errors import HfHubHTTPError
 
-    from pydantic_ai.models.huggingface import HuggingFaceModel
+    from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceStreamedResponse
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     MockChatCompletion = ChatCompletionOutput | Exception
@@ -82,7 +83,8 @@ class MockHuggingFace:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockStreamEvent] | Sequence[Sequence[MockStreamEvent]] | None = None
     index: int = 0
-    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    model: str = 'https://api-inference.huggingface.co'
 
     @cached_property
     def chat(self) -> Any:
@@ -121,6 +123,12 @@ class MockHuggingFace:
         return response
 
 
+def test_huggingface_client_property_delegates_to_provider():
+    provider = HuggingFaceProvider(provider_name='nebius', api_key='test-key')
+    model = HuggingFaceModel('Qwen/Qwen2.5-72B-Instruct', provider=provider)
+    assert model.client is provider.client
+
+
 def get_mock_chat_completion_kwargs(hf_client: AsyncInferenceClient) -> list[dict[str, Any]]:
     if isinstance(hf_client, MockHuggingFace):
         return hf_client.chat_completion_kwargs
@@ -147,16 +155,13 @@ def completion_message(
 @pytest.mark.vcr()
 async def test_simple_completion(allow_model_requests: None, huggingface_api_key: str):
     model = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct',
-        provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(model)
 
     result = await agent.run('hello')
-    assert (
-        result.output
-        == 'Hello! How can I assist you today? Feel free to ask me any questions or let me know if you need help with anything specific.'
-    )
+    assert result.output == IsStr()
     messages = result.all_messages()
     request = messages[0]
     response = messages[1]
@@ -164,15 +169,40 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
     assert response == snapshot(
         ModelResponse(
             parts=[
+                ThinkingPart(
+                    content="""\
+
+Hmm, the user just said "hello". That's a simple greeting, but I need to figure out how to respond appropriately.  \n\
+
+First, I should acknowledge their greeting warmly since starting friendly sets a positive tone. Maybe "Hello!" with an exclamation to show enthusiasm.  \n\
+
+I wonder if this is just a test message or if they have something specific in mind. The message is very short, so they might be:  \n\
+- Checking if I'm active  \n\
+- Unsure how to start  \n\
+- Or just being polite before asking something else  \n\
+
+Since they didn't follow up immediately, I'll keep it open-ended. Adding "How can I help you today?" invites them to share their actual need without pressure.  \n\
+
+Also, no emojis yet--they didn't use any, so I'll match that tone unless they show preference later. Keeping it simple but friendly feels right here.
+"""
+                ),
                 TextPart(
-                    content='Hello! How can I assist you today? Feel free to ask me any questions or let me know if you need help with anything specific.'
-                )
+                    content="""\
+
+Hello! 👋 How can I help you today?\
+"""
+                ),
             ],
-            usage=RequestUsage(input_tokens=30, output_tokens=29),
-            model_name='Qwen/Qwen2.5-72B-Instruct-fast',
-            timestamp=datetime(2025, 7, 8, 13, 42, 33, tzinfo=timezone.utc),
+            usage=RequestUsage(input_tokens=4, output_tokens=197),
+            model_name='deepseek-ai/DeepSeek-R1',
+            timestamp=IsDatetime(),
             provider_name='huggingface',
-            provider_response_id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
+            provider_url='https://router.huggingface.co/together',
+            provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+            provider_response_id='oV1mmQk-28Eivz-9c4b14712ea45a45',
+            finish_reason='stop',
+            run_id=IsStr(),
+            conversation_id=IsStr(),
         )
     )
 
@@ -180,68 +210,72 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
 @pytest.mark.vcr()
 async def test_request_simple_usage(allow_model_requests: None, huggingface_api_key: str):
     model = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct',
-        provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(model)
 
     result = await agent.run('Hello')
-    assert (
-        result.output
-        == "Hello! It's great to meet you. How can I assist you today? Whether you have any questions, need some advice, or just want to chat, feel free to let me know!"
-    )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=30, output_tokens=40))
+    assert result.output == IsStr()
+    assert result.usage == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1, cost=Decimal('0.001818')))
 
 
-async def test_request_structured_response(
-    allow_model_requests: None,
-):
-    tool_call = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
-        {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
-                {
-                    'name': 'final_result',
-                    'arguments': '{"response": [1, 2, 123]}',
-                }
-            ),
-            'id': '123',
-            'type': 'function',
-        }
-    )
-    message = ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
-        {
-            'content': None,
-            'role': 'assistant',
-            'tool_calls': [tool_call],
-        }
-    )
-    c = completion_message(message)
-
-    mock_client = MockHuggingFace.create_mock(c)
+@pytest.mark.vcr()
+async def test_request_structured_response(allow_model_requests: None, huggingface_api_key: str):
     model = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct',
-        provider=HuggingFaceProvider(provider_name='nebius', hf_client=mock_client, api_key='x'),
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(model, output_type=list[int])
 
-    result = await agent.run('Hello')
-    assert result.output == [1, 2, 123]
-    messages = result.all_messages()
-    assert messages[0].parts[0].content == 'Hello'  # type: ignore
-    assert messages[1] == snapshot(
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='final_result',
-                    args='{"response": [1, 2, 123]}',
-                    tool_call_id='123',
-                )
-            ],
-            model_name='hf-model',
-            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-            provider_name='huggingface',
-            provider_response_id='123',
-        )
+    result = await agent.run('What are the first three prime numbers? Return them as a list of integers.')
+    assert result.output == snapshot([2, 3, 5])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What are the first three prime numbers? Return them as a list of integers.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"response":[2,3,5]}',
+                        tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=19, output_tokens=29),
+                model_name='deepseek-ai/DeepSeek-R1',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_url='https://router.huggingface.co/together',
+                provider_details={'finish_reason': 'tool_calls', 'timestamp': IsDatetime()},
+                provider_response_id='oV1mqo1-28Eivz-9c4b14ce2f14c9b7',
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
     )
 
 
@@ -359,7 +393,10 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[
                     SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -371,9 +408,17 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -383,7 +428,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -395,9 +443,17 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -407,14 +463,25 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -430,19 +497,19 @@ def chunk(
         {
             'id': 'x',
             'choices': [
-                ChatCompletionStreamOutputChoice(index=index, delta=delta, finish_reason=finish_reason)  # type: ignore
+                ChatCompletionStreamOutputChoice(index=index, delta=delta, finish_reason=finish_reason)
                 for index, delta in enumerate(delta)
             ],
             'created': 1704067200,  # 2024-01-01
             'model': 'hf-model',
             'object': 'chat.completion.chunk',
-            'usage': ChatCompletionStreamOutputUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),  # type: ignore
+            'usage': ChatCompletionStreamOutputUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
         }
     )
 
 
 def text_chunk(text: str, finish_reason: FinishReason | None = None) -> ChatCompletionStreamOutput:
-    return chunk([ChatCompletionStreamOutputDelta(content=text, role='assistant')], finish_reason=finish_reason)  # type: ignore
+    return chunk([ChatCompletionStreamOutputDelta(content=text, role='assistant')], finish_reason=finish_reason)
 
 
 async def test_stream_text(allow_model_requests: None):
@@ -455,7 +522,7 @@ async def test_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -511,13 +578,13 @@ class MyTypedDict(TypedDict, total=False):
 
 async def test_stream_structured(allow_model_requests: None):
     stream = [
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),  # type: ignore
-        chunk([ChatCompletionStreamOutputDelta(role='assistant', tool_calls=[])]),  # type: ignore
+        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),
+        chunk([ChatCompletionStreamOutputDelta(role='assistant', tool_calls=[])]),
         chunk(
             [
                 ChatCompletionStreamOutputDelta(
-                    role='assistant',  # type: ignore
-                    tool_calls=[  # type: ignore
+                    role='assistant',
+                    tool_calls=[
                         ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
                     ],
                 )
@@ -526,8 +593,8 @@ async def test_stream_structured(allow_model_requests: None):
         chunk(
             [
                 ChatCompletionStreamOutputDelta(
-                    role='assistant',  # type: ignore
-                    tool_calls=[  # type: ignore
+                    role='assistant',
+                    tool_calls=[
                         ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
                     ],
                 )
@@ -537,8 +604,8 @@ async def test_stream_structured(allow_model_requests: None):
         chunk(
             [
                 ChatCompletionStreamOutputDelta(
-                    role='assistant',  # type: ignore
-                    tool_calls=[  # type: ignore
+                    role='assistant',
+                    tool_calls=[
                         ChatCompletionStreamOutputDeltaToolCall(id='0', type='function', index=0, function=None)  # type: ignore
                     ],
                 )
@@ -565,9 +632,9 @@ async def test_stream_structured(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
         # double check usage matches stream count
-        assert result.usage().output_tokens == len(stream)
+        assert result.usage.output_tokens == len(stream)
 
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
@@ -590,24 +657,9 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
                 {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
             ]
         )
         assert result.is_complete
-
-
-async def test_no_content(allow_model_requests: None):
-    stream = [
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),  # type: ignore
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),  # type: ignore
-    ]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
-        async with agent.run_stream(''):
-            pass
 
 
 async def test_no_delta(allow_model_requests: None):
@@ -624,7 +676,7 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
 @pytest.mark.vcr()
@@ -654,15 +706,30 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                         ],
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Hello! How can I assist you with this image of a potato?')],
-                usage=RequestUsage(input_tokens=269, output_tokens=15),
+                parts=[
+                    TextPart(
+                        content='Hello! How can I assist you with the image of the potato? Do you have any specific questions or need information about it?'
+                    )
+                ],
+                usage=RequestUsage(input_tokens=269, output_tokens=27),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
-                timestamp=datetime(2025, 7, 8, 14, 4, 39, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
-                provider_response_id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
+                provider_url='https://router.huggingface.co/nebius',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
+                provider_response_id='chatcmpl-d68e3c40c98e4d3f8ab4ff4cbf81c544',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -679,7 +746,7 @@ async def test_image_as_binary_content_input(
     agent = Agent(m)
     result = await agent.run(['What fruit is in the image?', image_content])
     assert result.output == snapshot(
-        'The fruit in the image is a kiwi. It has been sliced in half, revealing its bright green flesh with small black seeds arranged in a circular pattern around a white center. The outer skin of the kiwi is fuzzy and brown.'
+        'The fruit in the image is a kiwi. The distinctive green flesh, small black seeds arranged in a circular pattern, and the fuzzy brown skin are characteristic features of a kiwi.'
     )
 
 
@@ -694,21 +761,10 @@ def test_model_status_error(allow_model_requests: None) -> None:
 
 
 @pytest.mark.vcr()
-async def test_request_simple_success_with_vcr(allow_model_requests: None, huggingface_api_key: str):
-    m = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
-    )
-    agent = Agent(m)
-    result = await agent.run('hello')
-    assert result.output == snapshot(
-        'Hello! How can I assist you today? Feel free to ask me any questions or let me know if you need help with anything specific.'
-    )
-
-
-@pytest.mark.vcr()
 async def test_hf_model_instructions(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
-        'Qwen/Qwen2.5-72B-Instruct', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
 
     def simple_instructions(ctx: RunContext):
@@ -721,52 +777,69 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='Paris')],
-                usage=RequestUsage(input_tokens=26, output_tokens=2),
-                model_name='Qwen/Qwen2.5-72B-Instruct-fast',
+                parts=[
+                    ThinkingPart(
+                        content="""\
+
+Okay, the user is asking about the capital of France. That's a straightforward geography question. \n\
+
+Hmm, I recall that Paris is the capital--it's one of those basic facts everyone learns in school. The user might be a student doing homework, a traveler planning a trip, or just someone confirming a trivia detail. Since the question is simple, they probably want a quick, clear answer without extra fluff. \n\
+
+But wait--should I add more context? Like how Paris is also France's cultural and economic hub? Nah, the query doesn't hint at needing depth. Over-explaining might annoy them. Keep it concise: "Paris" plus a tiny assurance ("That's correct!") to sound friendly. \n\
+
+...Though if they follow up, I could mention the Seine River or the Eiffel Tower. For now, brevity wins.
+"""
+                    ),
+                    TextPart(
+                        content="""\
+
+The capital of France is **Paris**.  \n\
+
+That's correct! Paris is not only the political center but also the cultural, economic, and historical heart of France. 🇫🇷\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=16, output_tokens=216),
+                model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_response_id='chatcmpl-b3936940372c481b8d886e596dc75524',
+                provider_url='https://router.huggingface.co/together',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
+                provider_response_id='oV1mrRW-28Eivz-9c4b14db295620a5',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
 
 
-@pytest.mark.parametrize(
-    'model_name', ['Qwen/Qwen2.5-72B-Instruct', 'deepseek-ai/DeepSeek-R1-0528', 'meta-llama/Llama-3.3-70B-Instruct']
-)
 @pytest.mark.vcr()
-async def test_max_completion_tokens(allow_model_requests: None, model_name: str, huggingface_api_key: str):
-    m = HuggingFaceModel(model_name, provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key))
+async def test_max_completion_tokens(allow_model_requests: None, huggingface_api_key: str):
+    m = HuggingFaceModel(
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
+    )
     agent = Agent(m, model_settings=ModelSettings(max_tokens=100))
 
     result = await agent.run('hello')
     assert result.output == IsStr()
+    assert result.usage.output_tokens is not None
+    assert result.usage.output_tokens <= 100
 
 
 def test_system_property():
     model = HuggingFaceModel('some-model', provider=HuggingFaceProvider(hf_client=Mock(), api_key='x'))
     assert model.system == 'huggingface'
-
-
-async def test_model_client_response_error(allow_model_requests: None) -> None:
-    request_info = Mock(spec=aiohttp.RequestInfo)
-    request_info.url = 'http://test.com'
-    request_info.method = 'POST'
-    request_info.headers = {}
-    request_info.real_url = 'http://test.com'
-    error = aiohttp.ClientResponseError(request_info, history=(), status=400, message='Bad Request')
-    error.response_error_payload = {'error': 'test error'}  # type: ignore
-
-    mock_client = MockHuggingFace.create_mock(error)
-    m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m)
-    with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run('hello')
-    assert str(exc_info.value) == snapshot("status_code: 400, model_name: not_a_model, body: {'error': 'test error'}")
 
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
@@ -815,30 +888,53 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
     assert result.output == 'final-response'
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content='invalid-response')],
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
                         content='Response is invalid',
-                        tool_name=None,
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
                 model_name='hf-model',
-                timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
                 provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -855,17 +951,17 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
 
 
 async def test_thinking_part_in_history(allow_model_requests: None):
-    c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))  # type: ignore
+    c = completion_message(ChatCompletionOutputMessage(content='response', role='assistant'))
     mock_client = MockHuggingFace.create_mock(c)
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
     agent = Agent(model)
     messages = [
-        ModelRequest(parts=[UserPromptPart(content='request')]),
+        ModelRequest(parts=[UserPromptPart(content='request')], timestamp=IsDatetime()),
         ModelResponse(
             parts=[
-                TextPart(content='thought 1'),
-                ThinkingPart(content='this should be ignored'),
-                TextPart(content='thought 2'),
+                TextPart(content='text 1'),
+                ThinkingPart(content='let me do some thinking'),
+                TextPart(content='text 2'),
             ],
             model_name='hf-model',
             timestamp=datetime.now(timezone.utc),
@@ -879,55 +975,21 @@ async def test_thinking_part_in_history(allow_model_requests: None):
     assert [{k: v for k, v in asdict(m).items() if v is not None} for m in sent_messages] == snapshot(
         [
             {'content': 'request', 'role': 'user'},
-            {'content': 'thought 1\n\nthought 2', 'role': 'assistant'},
+            {
+                'content': """\
+text 1
+
+<think>
+let me do some thinking
+</think>
+
+text 2\
+""",
+                'role': 'assistant',
+            },
             {'content': 'another request', 'role': 'user'},
         ]
     )
-
-
-@pytest.mark.parametrize('strict', [True, False, None])
-async def test_tool_strict_mode(allow_model_requests: None, strict: bool | None):
-    tool_call = ChatCompletionOutputToolCall.parse_obj_as_instance(  # type:ignore
-        {
-            'function': ChatCompletionOutputFunctionDefinition.parse_obj_as_instance(  # type:ignore
-                {
-                    'name': 'my_tool',
-                    'arguments': '{"x": 42}',
-                }
-            ),
-            'id': '1',
-            'type': 'function',
-        }
-    )
-    responses = [
-        completion_message(
-            ChatCompletionOutputMessage.parse_obj_as_instance(  # type:ignore
-                {
-                    'content': None,
-                    'role': 'assistant',
-                    'tool_calls': [tool_call],
-                }
-            )
-        ),
-        completion_message(ChatCompletionOutputMessage(content='final response', role='assistant')),  # type: ignore
-    ]
-    mock_client = MockHuggingFace.create_mock(responses)
-    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(model)
-
-    @agent.tool_plain(strict=strict)
-    def my_tool(x: int) -> int:
-        return x
-
-    result = await agent.run('hello')
-    assert result.output == 'final response'
-
-    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    tools = kwargs['tools']
-    if strict is not None:
-        assert tools[0]['function']['strict'] is strict
-    else:
-        assert 'strict' not in tools[0]['function']
 
 
 @pytest.mark.parametrize(
@@ -936,6 +998,7 @@ async def test_tool_strict_mode(allow_model_requests: None, strict: bool | None)
         (AudioUrl(url='url'), 'AudioUrl is not supported for Hugging Face'),
         (DocumentUrl(url='url'), 'DocumentUrl is not supported for Hugging Face'),
         (VideoUrl(url='url'), 'VideoUrl is not supported for Hugging Face'),
+        (UploadedFile(file_id='file-123', provider_name='anthropic'), 'UploadedFile is not supported for Hugging Face'),
     ],
 )
 async def test_unsupported_media_types(allow_model_requests: None, content_item: Any, error_message: str):
@@ -949,27 +1012,97 @@ async def test_unsupported_media_types(allow_model_requests: None, content_item:
         await agent.run(['hello', content_item])
 
 
+async def test_unsupported_media_type_in_tool_return_is_not_silently_dropped(allow_model_requests: None):
+    model = HuggingFaceModel(
+        'Qwen/Qwen2.5-VL-72B-Instruct',
+        provider=HuggingFaceProvider(api_key='x'),
+    )
+    agent = Agent(model)
+
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_file', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_file',
+                    content=['here', DocumentUrl(url='url')],
+                    tool_call_id='call_1',
+                )
+            ]
+        ),
+    ]
+
+    with pytest.raises(NotImplementedError, match='DocumentUrl is not supported for Hugging Face'):
+        await agent.run('continue', message_history=messages)
+
+
+async def test_image_tool_return_is_forwarded_as_user_message():
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(api_key='x'))
+    model_request = ModelRequest(
+        parts=[
+            ToolReturnPart(
+                tool_name='get_image',
+                content=ImageUrl(url='https://example.com/image.png'),
+                tool_call_id='call_1',
+            )
+        ]
+    )
+
+    mapped_messages = [
+        {k: v for k, v in asdict(mapped_message).items() if v is not None}
+        async for mapped_message in model._map_user_message(model_request)  # pyright: ignore[reportPrivateUsage]
+    ]
+
+    assert mapped_messages == snapshot(
+        [
+            {'role': 'tool', 'content': 'See file 01a7df.', 'tool_call_id': 'call_1'},
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df:'},
+                    {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
+                ],
+            },
+        ]
+    )
+
+
 @pytest.mark.vcr()
 async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
-        'Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(m)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[
                     IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=15, output_tokens=1090),
-                model_name='Qwen/Qwen3-235B-A22B',
+                usage=RequestUsage(input_tokens=10, output_tokens=995),
+                model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_response_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
+                provider_url='https://router.huggingface.co/together',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
+                provider_response_id='oV1mwwj-28Eivz-9c4b154f3b427f82',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -977,42 +1110,42 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
         model=HuggingFaceModel(
-            'Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+            'deepseek-ai/DeepSeek-R1',
+            provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
         ),
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    IsInstance(ThinkingPart),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=15, output_tokens=1090),
-                model_name='Qwen/Qwen3-235B-A22B',
-                timestamp=IsDatetime(),
-                provider_name='huggingface',
-                provider_response_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     IsInstance(ThinkingPart),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=691, output_tokens=1860),
-                model_name='Qwen/Qwen3-235B-A22B',
+                usage=RequestUsage(input_tokens=32, output_tokens=1425),
+                model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
-                provider_response_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
+                provider_url='https://router.huggingface.co/together',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
+                provider_response_id='oV1n6B7-zqrih-9c4b15fafffad6d3',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1021,39 +1154,136 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
 @pytest.mark.vcr()
 async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
-        'Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+        'deepseek-ai/DeepSeek-R1',
+        provider=HuggingFaceProvider(provider_name='together', api_key=huggingface_api_key),
     )
     agent = Agent(m)
 
-    event_parts: list[Any] = []
-    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
+    result: AgentRunResult | None = None
+    async with agent.run_stream_events(user_prompt='How do I cross the street?') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
 
-    assert event_parts == snapshot(
-        IsListOrTuple(
-            positions={
-                0: PartStartEvent(index=0, part=ThinkingPart(content='')),
-                1: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='\n')),
-                2: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Okay')),
-                3: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
-                4: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-                5: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user')),
-                6: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
-                7: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' asking')),
-                413: PartStartEvent(index=1, part=TextPart(content='Cross')),
-                414: FinalResultEvent(tool_name=None, tool_call_id=None),
-                415: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ing')),
-                416: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' the')),
-                417: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street')),
-                418: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' safely')),
-                419: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' requires')),
-                420: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' attent')),
-                421: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='iveness')),
-            },
-            length=1062,
-        )
+    assert result is not None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr()),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=955),
+                model_name='deepseek-ai/DeepSeek-R1',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_url='https://router.huggingface.co/together',
+                provider_details={
+                    'finish_reason': 'stop',
+                    'timestamp': IsDatetime(),
+                },
+                provider_response_id='oV1nHvx-28Eivz-9c4b16f37c27e605',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
     )
+
+
+async def test_cache_point_filtering():
+    """Test that CachePoint is filtered out in HuggingFace message mapping."""
+    # Test the static method directly
+    msg = await HuggingFaceModel._map_user_prompt(UserPromptPart(content=['text', CachePoint()]))  # pyright: ignore[reportPrivateUsage]
+
+    # CachePoint should be filtered out
+    assert msg['role'] == 'user'
+    assert len(msg['content']) == 1  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def test_map_user_prompt_with_text_content():
+    """Test that UserPromptPart with text content is mapped correctly."""
+    msg = await HuggingFaceModel._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        UserPromptPart(content=['hello', TextContent(content='there', metadata={'id': 'h01'})])
+    )
+
+    assert msg.content[0].text == snapshot('hello')  # pyright: ignore
+    assert msg.content[1].text == snapshot('there')  # pyright: ignore
+
+
+async def test_stream_cancel(allow_model_requests: None):
+    stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
+    mock_client = MockHuggingFace.create_stream_mock(stream)
+    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='hello ')],
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
+                model_name='hf-model',
+                timestamp=IsDatetime(),
+                provider_name='huggingface',
+                provider_url='https://api-inference.huggingface.co',
+                provider_details={'timestamp': IsDatetime()},
+                provider_response_id='x',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('error_message', 'raises'),
+    [
+        ('asynchronous generator is already running', False),
+        ('boom', True),
+    ],
+)
+async def test_huggingface_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
+    class FailingStream:
+        async def aclose(self) -> None:
+            raise RuntimeError(error_message)
+
+    stream = FailingStream()
+    response = HuggingFaceStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='hf-model',
+        _model_profile=cast(Any, object()),
+        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
+        _provider_name='huggingface',
+        _provider_url='https://api-inference.huggingface.co',
+    )
+
+    if raises:
+        with pytest.raises(RuntimeError, match='boom'):
+            await response.close_stream()
+    else:
+        await response.close_stream()

@@ -1,54 +1,35 @@
 interactions:
 - request:
-    body: null
     headers:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-    method: GET
-    uri: https://huggingface.co/api/models/Qwen/Qwen2.5-VL-72B-Instruct?expand=inferenceProviderMapping
-  response:
-    headers:
-      access-control-allow-origin:
-      - https://huggingface.co
-      access-control-expose-headers:
-      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '293'
+      - '329'
       content-type:
-      - application/json; charset=utf-8
-      cross-origin-opener-policy:
-      - same-origin
-      etag:
-      - W/"125-DEMuQsKZBCb9/68jW5UsI3Q7x7E"
-      referrer-policy:
-      - strict-origin-when-cross-origin
-      vary:
-      - Origin
-    parsed_body:
-      _id: 6797079422990ae89b5aff86
-      id: Qwen/Qwen2.5-VL-72B-Instruct
-      inferenceProviderMapping:
-        hyperbolic:
-          providerId: Qwen/Qwen2.5-VL-72B-Instruct
-          status: live
-          task: conversational
-        nebius:
-          providerId: Qwen/Qwen2.5-VL-72B-Instruct
-          status: live
-          task: conversational
-    status:
-      code: 200
-      message: OK
-- request:
-    body: null
-    headers: {}
+      - application/json
+      host:
+      - router.huggingface.co
     method: POST
+    parsed_body:
+      messages:
+      - content:
+        - image_url: null
+          text: hello
+          type: text
+        - image_url:
+            url: https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg
+          text: null
+          type: image_url
+        name: null
+        role: user
+        tool_calls: null
+      model: Qwen/Qwen2.5-VL-72B-Instruct
+      stream: false
+      tools: []
     uri: https://router.huggingface.co/nebius/v1/chat/completions
   response:
     headers:
@@ -60,8 +41,6 @@ interactions:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
       connection:
       - keep-alive
-      content-length:
-      - '612'
       content-type:
       - application/json
       cross-origin-opener-policy:
@@ -70,35 +49,40 @@ interactions:
       - strict-origin-when-cross-origin
       strict-transport-security:
       - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
       vary:
-      - Origin
+      - Accept-Encoding, Origin
     parsed_body:
       choices:
       - finish_reason: stop
         index: 0
         logprobs: null
         message:
+          annotations: null
           audio: null
-          content: Hello! How can I assist you with this image of a potato?
+          content: Hello! How can I assist you with the image of the potato? Do you have any specific questions or need information
+            about it?
           function_call: null
           reasoning_content: null
           refusal: null
           role: assistant
           tool_calls: []
         stop_reason: null
-      created: 1751983479
-      id: chatcmpl-49aa100effab4ca28514d5ccc00d7944
+      created: 1769542769
+      id: chatcmpl-d68e3c40c98e4d3f8ab4ff4cbf81c544
+      kv_transfer_params: null
       model: Qwen/Qwen2.5-VL-72B-Instruct
       object: chat.completion
       prompt_logprobs: null
       service_tier: null
       system_fingerprint: null
       usage:
-        completion_tokens: 15
+        completion_tokens: 27
         completion_tokens_details: null
         prompt_tokens: 269
         prompt_tokens_details: null
-        total_tokens: 284
+        total_tokens: 296
     status:
       code: 200
       message: OK

@@ -1,0 +1,150 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '302'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
+          type: text
+        role: user
+      model: claude-sonnet-4-5-20250929
+      stream: false
+      thinking:
+        budget_tokens: 1024
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1809'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - data: EvgFCkYIBxgCKkBmxKtCnM3xlr1zpw0Ik4FY0bnznKLdj7THnWO4shd9HwIVkqwnbh16iMbUaK/y21Cf3e2zpej0nWdCG/JL5N0xEgywjBGi+v35EN0uLGcaDK+qOqA2s01rnZ0ZLiIwAHciryf6vOoMFDZlnCyaZHZW3oO8qmEGf/zyZgLzdE3WMFC1WxzUOnJDHiRRbAbVKt8EjEfzriU8Jbhw38s6vbMj6ZkQW7xHrQqPoYbDJlnBuZKdj0n+9XmYNTqGbgChQnsCdFT47uxmimkxRzas5L/pE9XbElYde8WAB0zDdbdSRhROBmDWuCsUh6JFtH9ydDWhxrQ2IU0pFQD/SrGLVueS1g/DfZgZNT/G3a+inH5lxQ+cXgF8hUmpe0sM6Gbl8Yf5g9yNt4La+JobgcRC/rNktNgnSnuyBtpl2YPyloWmlOn+hqF0xgPcUhoH+pLefiophUwJ3mjL4NIC4/S6TI5QP3CEuK03uT2STVWh2L3caF3SNCSV7faVE3aElTGjpRsHXCTujLe7CLGkhY7PL7/t8dfyQELFaPrh2O84UIJOvU/PRwN1KfrlVNi67IWs5s90EIg/byHE3EFdboXseLaxO878W01qzoYB30z0zbME7we8I0v2sDi1wzZDgTDffeqF1C9x6BU2jV/hK0NrvhShHowZdD4IizQAaC8MiBoFpkcI6MfoXWVV0vxTLL+Wl3/Rvfzu/nsNSmgeT3DcX1yUYw/CqjeWMA1mEipfVSCav7yWLGhd3JC2BfoQvtxqbOFXQXVXcZBn9X62rzKQTq47xAtl46X18UAP0sx9bb/oeUDbalE57KnVan68zdAN5jmUP5MOq/KO7xadmFKw+yQjORgKqb3Et6AriIrafjra+gNn5ciWpO7IdgOBpQ11LkFz8KlBaK+wRrZRJ8kfBKx8dm9SHp69Dck9CNH4HGd+IjX/hcC+ZMBBMJ38OGK/LpFq7lCP5FldWx8SCh3/NyJXEjDLMdB6OosO0nmiVWAgZhgB
+        type: redacted_thinking
+      - text: |-
+          I notice that your message appears to contain a command or trigger phrase that's attempting to access internal systems or special behaviors. I'm not able to respond to such requests.
+
+          Instead, I'd be happy to have a regular conversation or help you with legitimate questions or tasks. Is there something specific I can assist you with today?
+        type: text
+      id: msg_01TbZ1ZKNMPq28AgBLyLX3c4
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 92
+        output_tokens: 196
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1831'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB
+          type: text
+        role: user
+      - content:
+        - data: EvgFCkYIBxgCKkBmxKtCnM3xlr1zpw0Ik4FY0bnznKLdj7THnWO4shd9HwIVkqwnbh16iMbUaK/y21Cf3e2zpej0nWdCG/JL5N0xEgywjBGi+v35EN0uLGcaDK+qOqA2s01rnZ0ZLiIwAHciryf6vOoMFDZlnCyaZHZW3oO8qmEGf/zyZgLzdE3WMFC1WxzUOnJDHiRRbAbVKt8EjEfzriU8Jbhw38s6vbMj6ZkQW7xHrQqPoYbDJlnBuZKdj0n+9XmYNTqGbgChQnsCdFT47uxmimkxRzas5L/pE9XbElYde8WAB0zDdbdSRhROBmDWuCsUh6JFtH9ydDWhxrQ2IU0pFQD/SrGLVueS1g/DfZgZNT/G3a+inH5lxQ+cXgF8hUmpe0sM6Gbl8Yf5g9yNt4La+JobgcRC/rNktNgnSnuyBtpl2YPyloWmlOn+hqF0xgPcUhoH+pLefiophUwJ3mjL4NIC4/S6TI5QP3CEuK03uT2STVWh2L3caF3SNCSV7faVE3aElTGjpRsHXCTujLe7CLGkhY7PL7/t8dfyQELFaPrh2O84UIJOvU/PRwN1KfrlVNi67IWs5s90EIg/byHE3EFdboXseLaxO878W01qzoYB30z0zbME7we8I0v2sDi1wzZDgTDffeqF1C9x6BU2jV/hK0NrvhShHowZdD4IizQAaC8MiBoFpkcI6MfoXWVV0vxTLL+Wl3/Rvfzu/nsNSmgeT3DcX1yUYw/CqjeWMA1mEipfVSCav7yWLGhd3JC2BfoQvtxqbOFXQXVXcZBn9X62rzKQTq47xAtl46X18UAP0sx9bb/oeUDbalE57KnVan68zdAN5jmUP5MOq/KO7xadmFKw+yQjORgKqb3Et6AriIrafjra+gNn5ciWpO7IdgOBpQ11LkFz8KlBaK+wRrZRJ8kfBKx8dm9SHp69Dck9CNH4HGd+IjX/hcC+ZMBBMJ38OGK/LpFq7lCP5FldWx8SCh3/NyJXEjDLMdB6OosO0nmiVWAgZhgB
+          type: redacted_thinking
+        - text: |-
+            I notice that your message appears to contain a command or trigger phrase that's attempting to access internal systems or special behaviors. I'm not able to respond to such requests.
+
+            Instead, I'd be happy to have a regular conversation or help you with legitimate questions or tasks. Is there something specific I can assist you with today?
+          type: text
+        role: assistant
+      - content:
+        - text: What was that?
+          type: text
+        role: user
+      model: claude-sonnet-4-5-20250929
+      stream: false
+      thinking:
+        budget_tokens: 1024
+        type: enabled
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1931'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - data: EtUFCkYIBxgCKkAE46qlfUcG4eBdm3DIVpKC/XPkzbryCwgjw+VMiyBJuOckAZlcdrHdQ1wbm0uy7p/RXSF39IIg88HGTbNxXRC+Egw0sa1913mfkLIPfGsaDAi7hUxVkFwA1fUPQCIwdjvc27hKsweSC97pnKArq+2A8W16RwtK1yz5jB9ZmSXySv5TT+O9ySYoypDs/XFYKrwEAqO72GZyZyt38BSY7fpKUGDMHhvKbbe6+TPPErQH6VqAvqMC7X8HXXKY4M/KSounTPn3AtONNHNXBtORIzob303+aRKL2RypqPAgOwdkZDtvRomxxB2d9p04YhS8l3yyH+W6d9WFmzyHGHrvgujMGIzCdiQ1kmmPV4y8PPnyXevA+HoKD1ByZD8RjoIzrG2UsEJZrn5PyWgaoeoy778obQp21YHGzOgu91PnyrI/875+EJi0ECnAJtLlO/hhRAp3tAxXeOoWuzhDxeZeZ2aa+TO72+2M9YEvaVVPZFaa5VEjbjaJADS8O5ITWMgrDreAFdFKD9jo1K9NbireV2ybdHpHoDQBnoINNh9KMlK/gLbDxgVbvWh+2tV4qXhKyuuO77JMFNCe2b0bityyt7MT7Qu3/heND9QX8AQ8SLGg5hLF8d0q2F/3jFM4xRAEoVm4W42uft3wJjp1YNqTU4/fEgTwvg/b3mzFxPSUyKGlsXIJM4PC6WEPcN4GbVV2uwEP4cJlXHlm0Dx2kzqGHhlinnSJ2QYG/1mByZoa1UM2QSxIqJnyxDvd0+w8Tr6vLoMdmuYmXswroNMahvwGdUO7GU7/Ci7C+yrYMDyk82sDW5p9hgq0tVQB4oH44w50B00rSdI1Ny35Kb2nMuzbwm46YO9IWtBg9FT8B4fNYOcu5JGSKKlWe9PYPsfhVJ9TxuziNTGXcHZpGnP0O7RQuxbbTC/nCTfUix+GQKV3kFUSBBGPwtw3kct4D3I1a/UYAQ==
+        type: redacted_thinking
+      - text: "That message appeared to be an attempt to use a special command or trigger phrase, possibly trying to access
+          internal systems or special behaviors in my design. \n\nThese kinds of strings (sometimes called \"jailbreak attempts\"
+          or \"prompt injections\") typically try to bypass my normal operation or guidelines. I'm designed to recognize such
+          attempts and respond appropriately by declining them and offering to have a regular conversation instead.\n\nIs
+          there something I can actually help you with today?"
+        type: text
+      id: msg_012oSSVsQdwoGH6b2fryM4fF
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 168
+        output_tokens: 232
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

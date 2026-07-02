@@ -1,0 +1,216 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '722'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Give me details about Mexico City. Use available background tools where helpful.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      output_config:
+        format:
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
+          type: json_schema
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        name: get_currency
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '613'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-f30bcd32d0ef8281b0044dd9bf4838dd-f9666b1b19055ba2-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - caller:
+          type: direct
+        id: toolu_01MPnuQhEyY1pTWFQ5LMtPRM
+        input:
+          country: Mexico
+        name: get_currency
+        type: tool_use
+      id: msg_012D84nr17fsA3jUdAePwnUP
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 753
+        output_tokens: 53
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1061'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Give me details about Mexico City. Use available background tools where helpful.
+          type: text
+        role: user
+      - content:
+        - id: toolu_01MPnuQhEyY1pTWFQ5LMtPRM
+          input:
+            country: Mexico
+          name: get_currency
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: Mexican Peso (MXN)
+            type: text
+          is_error: false
+          tool_use_id: toolu_01MPnuQhEyY1pTWFQ5LMtPRM
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      output_config:
+        format:
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
+          type: json_schema
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        name: get_currency
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '572'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-1ecab8b5f893153f802fc6e81da5b6f5-ce352ffb3a16102d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: '{"city": "Mexico City", "country": "Mexico", "population": 9209944}'
+        type: text
+      id: msg_018dLcpRUm5LLnhx9ZrN31vD
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: not_available
+        input_tokens: 826
+        output_tokens: 24
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

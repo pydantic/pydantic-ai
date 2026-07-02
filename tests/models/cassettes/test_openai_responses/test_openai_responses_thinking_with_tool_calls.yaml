@@ -1,0 +1,382 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '825'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Compose a 12-line poem where the first letters of the odd-numbered lines form the name "SAMIRA" and the first
+          letters of the even-numbered lines spell out "DAWOOD." Additionally, the first letter of each word in every line
+          should create the capital of a country
+        role: user
+      instructions: You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update
+        it as you make progress against the user's prompt
+      model: gpt-5
+      reasoning:
+        effort: low
+        summary: detailed
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: update_plan
+        parameters:
+          additionalProperties: false
+          properties:
+            plan:
+              type: string
+          required:
+          - plan
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '15420'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '22764'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757687080
+      error: null
+      id: resp_68c42d28772c819684459966ee2201ed0e8bc41441c948f6
+      incomplete_details: null
+      instructions: You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update
+        it as you make progress against the user's prompt
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABoxC0_aDtrISw_zls0dyams-nhm23et1xecYaqlI8y44ih0g9FA5T3R9ueXIOX9seSrysa48qci5QTep_TNFkxcjPMbWeQxolRKeCjWk0jLpC2FdKdscfb56KfeSTklKz_CaD-VubFOUgtqg8bQfJTvrdEtKj8Q74c2-XOtHTB-0OjenFtkZMtLMu3uc009ktnOSiWIxkuaDXcvgENQlU60WswxDC_3j92V9o0XsSnXxS8ZmvfWcmYxsFAo575ybwZin6GI709AxlJ6iPkSYIyRy_Sn_O2B68S5ABs8gq0yzaDtX2Wtibqys1NooceCWvxBSjZUKKD3N3FG9Hx_GzaUyvB5DblDmqgfP3AC_VfxaXm990esMW22fQvrEmuRNJc7AF0-KSBCNjatP6eHKj7WSiyGplUFCukk1tRHxOeDi9GD6s51_jTSyADenpzvdBLoELPR0JQIUuraSBpS3aZS8ODJDUbIX8niI_RYzRCvqBDMbLi9MaI_jTdEJknhEgmZZaV-53FXEVM7LoK6BWBpocwDC0zbcA-Da2rY6y3h_4x-PD-DL_W-V0_XDqwhx6NZOJBDpGrJIKY1BU-QjjEdZeXg1hv7CmLCH9ykOr-ja8B72fGaY2sJ9Lg2dFnaEkalEnYPCOY1hWDok1o5H0YVwA3MoZPr4VuFbGKD1EEAcB10UYgY5_WRK5Zk2CYK9EMOyLMA-_DU5qMLw0qrpj7lGRe7PLM0UYBbjP3jFZX6Gy5e1RcibH2MsrbfH4SlVkc1TTak4vuBEIR7Q4q8dYCoKTPgHAWFULzFbaCwhQQtyL1_lG-OpiGGUSZE_VRj3yVKbrv4Nz1l44ah5DdlG0BCiKthdMqcVxc3Bh3VKofIN6G_rArAtZ4ZmcoPVXIUlkfSPm9efNSx1tUpZPKkFk_dtP9B0dU5gD9F3tTU73I7CtuDaIXfe5JOBegu0_kBjEXb33s1B6mnUJJld1f3c13AwcRhMimtidTdtZFp4iAaKH0hWKrC6fOMlzTmz7O7R79sl_81XTQQbIR31yojRzDSvwhRoenyRWvQQMV4PeZ8h-2ioG2l0DQ89YRjkjeUEwZyog0ZWHflw3nr8zjJ7xkliqfJpspfE0scWrCq5KmY21vYkf3EcH-HU5s_S7_vo-JwnNIlTaDJUHbEo8sl_pJAsWix3OgzBSmBPneL-dknHi4IL8NNoGYkH62mbIKVPlBqn52e9QtO7v_yFLxGrZEBC_Z7jsFQQDarKvKk5L1nmWLRUffZvNP0hEy9M93wPDVNZ7fU51jD15tpuj92gBKXIM2sM2KWXFiVqg5PhkT7FvFHii1f-cc0emUTvzlO-ZU3oV73eSiisAUjHK3CO-rWD_WCiSAy1YSSOgORY0NrpwcIY3iuwu8yKxunf2F_bYK8mZPyAiI87-KYctZA2BLRe3UVhcbdkXQqHMTbOe8_yRmm20RnsHNTAk7ZlPNUihqE4kxbK6T0Bm0rtWLx8kZHWqq_netnSDiLa8Jtxzxu6UrKOtoWi7P26FE4pGwS5vPVCJ1Z55IcOZ6kQ_I2JpZA49MFJw6YDhKVnJlBEw8D5DfRC7A2YJ1x7ZVufyrYKiew6FYPaj4hpM95SN7o2PXz-vgTvp0oM0qknmcqdtuMgQcuWR5NED6cYccQJ4DQV2Nodzn_bFokhIcqbQVeheE7Jzy2MrzF_CJ3bD2LEmTKgDeoRfH4f4APSh00c2JAqtrKGmF7yMpBYC4vTTnbjPD4shMEcwgMeQKv8rWIaoRZR68Uhd_qwhW-wLqLawd42RaMzKebvCX78epU6rMz1VAlhZzlKS1keFXp-5xXjy4JQcu_WY-GXqSv7ah8CWGItBFc2yW2vQaDfgeHxc5MZTg7Q_VJkGSIEhttIb_0na2S6UfKXczrF1aoBFCKfxirIrOs-VHvbQCyWXwUdKidKNIqexkOucVOo4MaDMMKYSX7LINIdf4WPwrsa2SBW_UpFp-jrjF-aHmykLShhIEv_nCAHGMmfPwbu3ZsARJYusP6vRL8JdVq7pigfBkcIONWRVO7aM0X4ae43bGPfIzzLkdOKIBMR7KFsAv-4THPPH3UWTUG0MN0dAQPAAd6Jbp2xe3heqTY1J84QLaPFRY66r6rmZDWt8yzFB2IqLlupMgINWWLL8e0v6BLd0C8_jc7kwHmMvaPoXlZwqVFXed47bJOFfDXgymjs9Uw2ubeb1VMydQFmftVwzFY0vFTqqAWWnHIw5udvxgCTXDv2daFOdWPfrE6wKqVb9azxmGGXsoLcigmzwapcHBIUHAKKBE8SO9G3ciUkVFnK1JQEJ8Q96TdxMbnaXsPfy_CDaNUQFTnLYatnTbNq2kr20TudmpMYbm3V6_51K-gZyBh0-ESsRtsW1xaD68FgwS2Hi4zgd5zmko4c4vh3ncQt5eWB4Zy3VPCcNSPvgEVv_1psLFVPWMhhrC7pwV0PeuEE9h-rr66lwV9cgFIJkQf1Q3NzXMOa65aNKvmjAfP40H6jDUrKW03_JH56kb3R9YwE4kDpkkSJzHUsbPLjWPUr6SOUQKT2je9oxE3ioEgtwAlnYlxf5JU_BPyj7EsgLPpe8ZIuaTn7pU_tU8fBo26MEn78g3rwaFZ7PpWn6DeMTG_hDvAaTSZ0qZ6bAqGoj1UP_XzuQOuRvdbO_jNsclKBfZPj3RQcx1c_4H51aKTrJrYLndXSzsMox2BLoNXuUYoDyIeu_J36iUid5W4M7gykJADbUZBIbag8ordczWIaIYGxJHpxqiZvluHO1ufCLYWj3r8GhNNU_BjdyCmisGVV1he4ZdRiNHNlpfAL5SSQv7QynjdrPTIwmugGfinfzq0E7-2MpEOtBxDwlZtLBQsHLracKuIjYorhTzbj2dnvCBWTdfeBnaut-x7dfKr8ReAZnfhn5-qtvJdwFfx77y3t1kUIEBFr1CTmpUh3q5SJtQvR8TeTcPJORHk31EnafeipUwT4JnqA3oEiiqXLs2wTlLAt1SOx-uwMmyMeBEOhK7FS7Tdwgr2f0K-oEaUP_3AAENamy7U975-bvrQC5NQR91rCee0_h13qvdnYG0S_OS1vswYCoq0Z2wnR6wa4nx-ZoEZmnH0YoGyIt14_gOGQ9X5TAWFNlqbbHzhsOUIrN6TM-f5HQzXF7X_V7c1rMtPR-ZlYeXu7lla81J3_eIO_XzOlD4BO2nosgagiT89GQB5Sj16Ehd_KGMPpCsvqOxg_UpPL_kQ7qJtDs8okP4YmvWjp4IHVD_CmV0kyA26B3tlwkD8IUHzlAq7Bxq3TKgnGIgxi0-scAmiMvN-TlXvDjBp0Uh-AWz2zxwAGqsq298xeLkPRpJJJECMlZVPppr2RdKgCyrqBhGLyWIjmIx5-jWY-1XuwT7cb9NGXe6RFfmCXVX_B_0_1ribDdgLMRtGXziYbI8qxmN3tsw6BmPEsDCuofe6Zqm97JipN17tTmv-rdOHeeV9UgeiYQ0xJe6Q9psmhHBxGW6LVp_e9dWt4-aYZ24hSGf8CileysyUV0etiXPh2fVacS4HKQXry29CMP6j6gO6Ca2T3CNIYYd_aG6hVBO4Lk6ENkS4kkl7Wen5tOTI5TCD0pGAIuHIwey-DIfqPbW-ZHhQO3sBYSVtHPMSXP3hrojuR1qEnFVrVyqLABusBzlqB2mAnvSKZRCpZ9VFGUABN6ytItEXv4JDIu8eo0IvMQmWRRguaADU5pBiyQZ_5C3UEyX_QveHmDri9IXaVQz_3a9gowZfMuGj9CVwuhCq8R3ZLclacFxWRFw6byEOm2KZb6jH5qemc-V-Ci1mtcIsOdVLFQXuHkiOyZE2zISd0ckGUWihME4lg0imlSu_XI1MjWwao049bmP0VD5iqqpccIVsJuNkrSmw15AcrHqjlVhIWrD8u6e90uBqvm_l-Yfxe78_cIl-VuWTTa1qI8yw-LeNWloZCTbls5pRQr7MCm5dkZeAt1PBdnBpXTk-8VcvlDsA_hheV-QVbrdP4UTtDArx6QfxDU8PNLMpMgovTDTn6WnaJpdP-WVTSYH-78a7rp01RAmIQTl12vXuNRhPtj7jlortf8YobH2jMog2vRc4uXQpqZyWtSr-BF4vhh7QfzK6myLiEj_ciHNXqd64WzYl__hPaULy2xkwkpnD6mWQnRkoNeFGA-kt0f5J-M4JrRG3qCOdVrccmyLye-vVQyVkqfqgau6YLXd3QdpJkmA7Puu0ie1BeQBnBG4nJcWvDE1R19MdYBT7v-IDTdFBTtPxc5KerxoUy-Zn7xzvmUt6rRuk0pmBwzriAtzZctD2PI8BfoC4zhP-xpMhcNNaqCUBUQ260pWVdhqUCpkoBrskVHMMndizoMbeIeAcdAp4-lI5l-6zTO2APjygljfVHHLjpbTxs1ZA8DYpjrmzWSC07IXpK54MR258kedSamj-6IcUY4OOVVsuLvioELKt5JHwx5oADllUevxdA6K-9vddx7tuhgvkBvL1TpSp0XxDGwH3dRJDFwcDl3ah_PaOAjc33Z2IlcnXynaERtl3ysxBoPSY_4KPn5NoWQ7YHxzA-zQMKaa9fpi2VLN8Ud8redK0EKc9WwKXp-zmJbCf-KBsVCbFcrj9WUz38x-Iv-JEwFnUVpfTporFsB2eYlAPaMrXbf4Vz-Um1nfSVuq0F1V4cCPtZK6I_H-KWLbIseWZxNTJCWlmCaBe7ZQgt8ICUXqspyD9OOU6VNfr0nU7aW0itJEnvmKSfxnj3wQhrmEJ7HsX8mRHaDqAQKCr5B8YT4FOqTISRnTgDsV16ZRp43TaWH4QFpeanUD3KvmpvvfYGXUKVHlud2dUwPCr5FNM1QRFG9cgMBJn3y7ewbuixmPAIU_se3fYA1nYBtMlPpSHMGfXsqrIlMGNXmwsTs7TjG-kLzFrSA2ku5ZFX6N4wQim45hr1fBHI3GDF7IwoHKVCjXLjrkdCOGW0mV-n5uOAJxu5r_Ire3WFys0V9nlPpp9vy40PaNbXTiO0bLZu2u7LVDKAmxvvHxpUZxtW6v5lzoJjhdy1j4yAYCSgctwmH1pwhe8-wzU3JU9Rt1LFTs9t0XRUq_HXAb2kTGBMvk4OuuE1huBo75zhmFb1DVTzjr3Lpx656PZNk_frJiwupQ3qQj7b77ud_OzWgmRcLfmV2HPratlaB7pHQy6srJX-z2So9VD6TdbUUuOlSoGmK6jd1aGMNyhc2SM99TMQsQwbMEpZQ5tkexBf3Yc2TzQKON23R6xP90ctuAD976TtM2mZhV8o_7oB8jY9pyNwyf4tRUz0TPGIWBGgv3XhPugBTB5gfkRWXRvmeA2-Q38To85FnGpZib0yhVqpfS1ol9fZ6qmGQtgN5iZkXceAhYJRBwIq3jZM5-9Kc4QUO4aW4V8P7OXY66kxtcaoxXFcaug_EXomyGVhvLJ99QDE1zxTfZZ99Z7ZbAhYKQhctP43NCx3WPN4P0dP4HOG1HDhCW4wFOdWTKXQOKA1wOhuGUGyxpi6DcnMkM-vCpbWfHNzeSOKOXkBHbKycZiQ13mAv-eKpd0wg15sgkX3XdzHu8Xxc8HqDxsdJoyK0kT9lA8Y8PpF03mwhSqmOpxM4RjLL5U6HSt4FxDSsdVoTr3bzlKplWA29yVjlOU9D0xcbp9_Vkb981glTcmIhmpkP-10LD88arU_kHIkv_Oprhm-sCnNgI0RzmH71j5RxUuJDEKvj-l9A3f4lLEudcJw8ZBe_y7voD2-wNJ55hB5hYjzX45A5JCGbh7bE45bdq-hZ7a5rHekQAKMe1YO0zRzrkUagXurtqAXrZcLAq6NREGetDb8ICCJWA9fYoBWwz1mIBzn0fXUZlPRST-N7btljgD9RqiScsTA5NmGVG63cFq7JR7q0Na6eXVAKBODjcF6pMa4LIExSQq6W8CgXnfmGGTQp7p48TR0wan6nvSCOaaqty0hnELs2AkOb3otvg3T8ISPj36kApd3M5NcOrxW87LV7WEaN2Xy3aHkhxhZNMhAWHAtQpeg66rIsBat_Enqw56zTnSdjbKAAM7_mda7iQg5QEHKPSxkN4J2dAwzG-XmWTQJZhhxkAG0PDpN0sZkXRORxQV9TRBGmXWarK_GWkw2oAFFtf4H2d1KxlNiNQ6t0_6tWvN5piuPQTPhkIDmbSpbELp_sxYPdp2EBGN_08JbukeZ7P7M-eC4ps1e3mU1-l5j53tc1pYmauqc16J7ulQUe4WTMNWBBg3rBKdnR_E2wWMsirHhRHw8PZwTMmczbHVLAg6TX_RAafz-OOPaqrq2B_m-teT_-89rMWmrhIDnZMUTKPNQiInT0KPqZhZ981yZqkcKPKtJ2wYtliN6DE-GfubhjhCeNEoijF5wx6CruwB8F68SqANak21pj6LFT-gUdVI0S40PGAG87FelsPUVVrOmQJjoLgeE_zaHi684rPgknZbKW9PI-w5DhXfqqwn-8Nw3zanwa9aQ6TNzmZ_3hExa3yn7E4YrGvQFNz2EcpvBmOLl_7aU6OB_ofPFc8xGgwWm2vQQnj2XIMW15AdD9Jw9C63LIfsBd9krF1v9SzmDHVe4C2yRjGoNmaHCpXmzGcCdKKYkLRIVR6jclh5-fs5rU0L4hQC9LjQoS946Dlt731DBShTzh-pzwFn3TwmCOzTw03px_cwGXubDcbV9UP3WwJ5lbmaa9Sb2LLyQ2CE4aDrNeQvIDjnCzkWVHdHDkcTpnaYZCGjOcpf1jcK6lEDN2DKxEosgVM_sR0wg1rKTsm-i_K3Q_ByyYGooRCNv8xTd2mD2YM7AeucLEXDJyNFu5GGjommw8Pm2iq_Y0WyXkkch-PUAnlaDhunHhi0e22faVzG3jfHfy77aArXiWekmRbWwMcWesUVGTP2MMLOSwdbvF4h2Ww84U-V2ez9DHVTjTeN88C9BbAbwVbK5QSLcmAEK89GdSgss4VOI71f-mWih_oAjkMinFQuWW6K2OCrB95lp4SUBlNPOClNOChG1OoRWmbXiejGW8LPIoNK84FsccgEOtk05kjng11Wszj8JTt049ip7xgs1JeFZnazDT0WBzkabPxEEgz1KrZJj7OKqPT3yHtxgZ-NOfXg0AvdJuThwuvKsrQwkQ12AuUDDiODLZtWuBP23Z8wp-IqySHGpC5yrcZkWVBF58n7gSTXcpjsPStPYIXzxmouuRTSujRUcPE3tVgdDoh1jZLZKEOO-z2PWHom508mFbioDC6gluzv9bEv9SyJQcblMbaRR1W7CbvU1W_w6j8wqUVf_ZT3j4zY7CHoSD6AkOrSITmK1nFoivUmZ56LI7ENM34H45TskDgrwV31Jfm9zbnihQ-RTKUrAxRYwCF-5VsoBParjjuJ6qoExAEPXn1Y-yYt6QC29baQVK1lcwuMt05y--cTx0xpDwsLqUki9q6MYQvFAg0toEyW_VNuCJCo8Chsp2VHgG3eNBTfwbQ2M6ipHcldDd5OaEJZmzk6phdbFbaGo8xCJ8PUqiQr3yd5hommaM3W7JgNvUHPif0q8olUK5um-qzUCBSizSzoigdv2vsduE6acPFaHw7I1E4ycTrB1W8FyEsWlMhzofReeoQLmnH0o8IEeGrWMFdrRe5yDw5BjixK_daKBK2REC7mctNl_nx-_DAsgoBjZWYn2cTN0f9nraM0p2PibFqLcOLo-prjcdirllamEIVCSKlgQeBs9VlS5gEFMknLEzeCjkHB3ZQvyo-7VO6N4cDAnSQ_QwZLwIzXZ1Zp1vx5Tc1J8foMb6DP8QU-v4lho48Ac8Pa7PSUTQX-ta3nukBreTGlqmYveL6zBK-K53rHPiZBcn4P3iJ89xCy41LZe6IeUMMejp_65uVSzwMEo1enpzEgFrECaZwt2WezJITOfy0A3VrIdMsGwerm9qpUbOcnxfpBIjkblJHyQ_L8Gdw0uhpQHR44HA4yRKHCsKPP9-J6OP9OakZ_a7kzdhfr8DHNwBb82CG5NCAoQf_i8rD1dImQjOHixPXIITj8NZbnxiUzAYoXBNTqqRsNp4qtd2oQ7mEjTlpIr2w1vm_rTmlfy2zYwL9nRpgkkgVSvhdUJXL052VHDEtyvks3AxxmU5Bx5KqriIzPEK3aLc5whMVpUKjGNPDXC00kCeUmWLaoO3r-9rOAcWJJR6XLN9MrJLiM05E5D1OITRlXIAF4WE31ttkG1v77lpn-VvFtPdYFWfHUVY3dE8ZllQdIjo861QQqxoWgYJYKerDERrtrb_A_oCP-g-iXHNejenr5vCXx5jfOpKfJrFt5mP1w8m-lQe0Nfi_faieqwIT1YypW-DaemCGAI3-CylaoM4qlL9U_mT1qVVkaPgTwoqYeY40W39N0_q4rk3I88HRsUBlCDp6nshfF92Q5pTCnFGDyVJYsBX93qiSvMZiOus2XlNrLF5tVzXP3wwFrmaXi6fRtrJNuq-9-oQWeernrWCP8ArOu2MLcZ81KpGOrVxXmyZt_BEo2UFayEXdVsrS32X76fDPTt7Oxj0iBKWXOcFX9fk0KHWAmaljnnC9pa0qJfR7gHiHFAV3P_RW8IkJNp8QxyVkmFWaFKRAmKTfiaAspbX8qqSiARmUhObJnsWRM6Nhj81GofbF0t15g1NuyZFNm49RCm6ARybWkucUCKqvsVftiKL6uQnVzp30Nx4HZoxWCOd_Viy6cq_E26_ObCN6rHD1v-xjdYKGrtfwHyT3KyZoIBxo0i_H-krjbWpAPn4PNCeEiejKGmkl2ZZDqrap1dE_-BLXtJ1t2BpB2jzAOnyW4Am4P0ELyT37D1JTLZacrrVn9gCdCle3LxbPm3N-3UBPU0g32Knp8ldD9wYVFRY3hDfIoUH7zPm217Q810oRTysntF8TKqtHlNn3cGp1n7iv9zTgS-E2GlFBuPlRM2QtxB3uOYoFE6dl5m8Hcf5ltUeZ9etbogBg3aqcIiCmgOZQqQ9C9QEIHkHLLaaR3eLGPy4Wel1ghGin2DLSaGM-gGSe0nEJdbyj2ctO41r65Xm24uhLxB29vFtcVlJszQedMmN3oifoGwUr0U-E6mAuuN0QfA3-XIn0G7bm6_bBB1fOLN-YTfl2cj1RdEweiQL5rFV7VQ5j_51-UdNZT70PjZab7qovXoYnPmX3NQEqgqq4QilQqrkhVDEZ-oZKZ0CKNa03vESEgCXTdeWmH4AZk-jU0aHK_wyfTmKHltA4VZPDERflMDVpkmZm6BnGACnQo7QmijENqr68fr6YjbrndRTSwungUCxEoZeyqcEJUGhnfn4yJWRb82YvXFkLry-hF7iw_wzGqo4QOhRlVdOWbqMO5Kt_0EOKKWtVARQYr96Y32pzw_Shb2NwotT5xpA2kPZoET2EDdobaAtVAV8h2e7ctCN3pCD-nzd50A0udREP0hl3Hl8L-j28gsEeDETXvfC4PRuZiyJU6F_ac_Qqvu-_wNtuWn_cId5nVbf-hg6YaOi9nAKuQGnlCFMhf1RfDs-Rqegqwvhs9HrXufQUbKpe9DOM4aeW05iSANWB6a3vhaaVJkMdsDc0rrpfQHJJkMht7Mq865810g==
+        id: rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6
+        summary:
+        - text: "**Creating a structured poem**\n\nI need to craft a 12-line poem where the first letters of the odd lines
+            spell \"SAMIRA\" and the even lines spell \"DAWOOD.\" That means I need to have the odd lines correspond to S,
+            A, M, I, R, A, and the even lines correspond to D, A, W, O, O, D. \n\nAdditionally, each line's first word should
+            start with a letter that matches its line number, and all the first letters of the words in each line should spell
+            out a capital city. It's a bit complex, but I’m excited to work through this!"
+          type: summary_text
+        - text: |-
+            **Formulating meaningful lines**
+
+            I want to create 12 lines where the first letter of each odd line spells out a capital starting with S, A, M, I, R, A, and each even line spells out one starting with D, A, W, O, O, D. Each line's first word must also match its line’s initial letter, which leads to some interesting choices.
+
+            For example, for the first line, I could use "Sofia," which gives me the initials S, O, F, I, A. A poetic line could be something like "Softly, old fountains illumine alleys." This approach helps in crafting those lines creatively!
+          type: summary_text
+        - text: |-
+            **Continuing with capital inspiration**
+
+            For line 2, I'm choosing "Doha," which gives me the initials D, O, H, A. A possible line could be: "Dunes over harbor, aglow." Then for line 3, I’m selecting "Athens," which corresponds to A, T, H, E, N, S. I could use a line like, "Ancient temples hum, echoing novas' songs."
+
+            Line 4 needs to start with A again to fit the "DAWOOD" sequence, so I picked "Abuja" with initials A, B, U, J, A, creating: "Amber breezes uplift jasmine avenues." Lastly, for line 5, I went with "Madrid," giving me M, A, D, R, I, D, leading to "Moonlight across distant roofs, inviting dreams."
+          type: summary_text
+        - text: |-
+            **Adding to the poem structure**
+
+            For line 6, I'm choosing "Warsaw," giving me initials W, A, R, S, A, W. A suitable line could be, "Whispers across river, stars awake, wandering."
+
+            Next, for line 7, I picked "Islamabad," which has the initials I, S, L, A, M, A, B, A, D, so I need nine words. I came up with, "Ivory sands lull, as minarets arise, birds ascend, dreaming," which fits perfectly.
+
+            For line 8, I went with "Oslo," using O, S, L, O, and a line like, "Orchards shimmer, lanterns over." Lastly, for line 9, I selected "Rabat," leading to "Rustling almonds breathe amber twilight."
+          type: summary_text
+        - text: |-
+            **Finalizing the poem and updating the plan**
+
+            For line 10, I went with "Ottawa," creating my line as "Oaks tremble, twin auroras weave, alight," which fits the initials O, T, T, A, W, A. Then, for line 11, I selected "Ankara" with the line "Autumn nights kindle amber river arcs," matching A, N, K, A, R, A.
+
+            Lastly, for line 12, I chose "Damascus," resulting in "Dusty alleys murmur, amber spices curl under starlight," which fits D, A, M, A, S, C, U, S.
+
+            I also need to make sure I update my plan using the necessary steps, like mapping initials to capitals and crafting coherent lines. I should use the update_plan tool for that!
+          type: summary_text
+        type: reasoning
+      - arguments: '{"plan":"Plan:\n1) Determine required first-letter acrostics for lines: odd lines -> SAMIRA; even lines
+          -> DAWOOD (12 total lines).\n2) For each line, select a world capital whose name begins with the required first
+          letter.\n3) Compose each line so that the first letter of every word spells that chosen capital (word-initial acrostic),
+          while keeping imagery poetic and coherent.\n4) Double-check all acrostics (line-initial and word-initial) for accuracy.\n5)
+          Deliver the 12-line poem."}'
+        call_id: call_gL7JE6GDeGGsFubqO2XGytyO
+        id: fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6
+        name: update_plan
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: low
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: update_plan
+        parameters:
+          additionalProperties: false
+          properties:
+            plan:
+              type: string
+          required:
+          - plan
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 124
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 1926
+        output_tokens_details:
+          reasoning_tokens: 1792
+        total_tokens: 2050
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '14434'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=zNT9T7vM1MfH9DfOqy8v3AUD.8Ok6SibmaUBLZTVcbY-1757687103-1.0.1.1-mjJJwOJ_tc.8613DFJ2LKkk1UYtakCJX02i_2lqi7CfeX4_fI6ZOnwTyh1.67T5xVSfR_XxAL7C2PhrNl0eqIxBt.CYwqvxJY4sEnypaVPU;
+        _cfuvid=ROJvHoj21KgvU8EAUkFQ6S7ah8h9N2U8BL6ktnkw650-1757687103237-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Compose a 12-line poem where the first letters of the odd-numbered lines form the name "SAMIRA" and the first
+          letters of the even-numbered lines spell out "DAWOOD." Additionally, the first letter of each word in every line
+          should create the capital of a country
+        role: user
+      - encrypted_content: gAAAAABoxC0_aDtrISw_zls0dyams-nhm23et1xecYaqlI8y44ih0g9FA5T3R9ueXIOX9seSrysa48qci5QTep_TNFkxcjPMbWeQxolRKeCjWk0jLpC2FdKdscfb56KfeSTklKz_CaD-VubFOUgtqg8bQfJTvrdEtKj8Q74c2-XOtHTB-0OjenFtkZMtLMu3uc009ktnOSiWIxkuaDXcvgENQlU60WswxDC_3j92V9o0XsSnXxS8ZmvfWcmYxsFAo575ybwZin6GI709AxlJ6iPkSYIyRy_Sn_O2B68S5ABs8gq0yzaDtX2Wtibqys1NooceCWvxBSjZUKKD3N3FG9Hx_GzaUyvB5DblDmqgfP3AC_VfxaXm990esMW22fQvrEmuRNJc7AF0-KSBCNjatP6eHKj7WSiyGplUFCukk1tRHxOeDi9GD6s51_jTSyADenpzvdBLoELPR0JQIUuraSBpS3aZS8ODJDUbIX8niI_RYzRCvqBDMbLi9MaI_jTdEJknhEgmZZaV-53FXEVM7LoK6BWBpocwDC0zbcA-Da2rY6y3h_4x-PD-DL_W-V0_XDqwhx6NZOJBDpGrJIKY1BU-QjjEdZeXg1hv7CmLCH9ykOr-ja8B72fGaY2sJ9Lg2dFnaEkalEnYPCOY1hWDok1o5H0YVwA3MoZPr4VuFbGKD1EEAcB10UYgY5_WRK5Zk2CYK9EMOyLMA-_DU5qMLw0qrpj7lGRe7PLM0UYBbjP3jFZX6Gy5e1RcibH2MsrbfH4SlVkc1TTak4vuBEIR7Q4q8dYCoKTPgHAWFULzFbaCwhQQtyL1_lG-OpiGGUSZE_VRj3yVKbrv4Nz1l44ah5DdlG0BCiKthdMqcVxc3Bh3VKofIN6G_rArAtZ4ZmcoPVXIUlkfSPm9efNSx1tUpZPKkFk_dtP9B0dU5gD9F3tTU73I7CtuDaIXfe5JOBegu0_kBjEXb33s1B6mnUJJld1f3c13AwcRhMimtidTdtZFp4iAaKH0hWKrC6fOMlzTmz7O7R79sl_81XTQQbIR31yojRzDSvwhRoenyRWvQQMV4PeZ8h-2ioG2l0DQ89YRjkjeUEwZyog0ZWHflw3nr8zjJ7xkliqfJpspfE0scWrCq5KmY21vYkf3EcH-HU5s_S7_vo-JwnNIlTaDJUHbEo8sl_pJAsWix3OgzBSmBPneL-dknHi4IL8NNoGYkH62mbIKVPlBqn52e9QtO7v_yFLxGrZEBC_Z7jsFQQDarKvKk5L1nmWLRUffZvNP0hEy9M93wPDVNZ7fU51jD15tpuj92gBKXIM2sM2KWXFiVqg5PhkT7FvFHii1f-cc0emUTvzlO-ZU3oV73eSiisAUjHK3CO-rWD_WCiSAy1YSSOgORY0NrpwcIY3iuwu8yKxunf2F_bYK8mZPyAiI87-KYctZA2BLRe3UVhcbdkXQqHMTbOe8_yRmm20RnsHNTAk7ZlPNUihqE4kxbK6T0Bm0rtWLx8kZHWqq_netnSDiLa8Jtxzxu6UrKOtoWi7P26FE4pGwS5vPVCJ1Z55IcOZ6kQ_I2JpZA49MFJw6YDhKVnJlBEw8D5DfRC7A2YJ1x7ZVufyrYKiew6FYPaj4hpM95SN7o2PXz-vgTvp0oM0qknmcqdtuMgQcuWR5NED6cYccQJ4DQV2Nodzn_bFokhIcqbQVeheE7Jzy2MrzF_CJ3bD2LEmTKgDeoRfH4f4APSh00c2JAqtrKGmF7yMpBYC4vTTnbjPD4shMEcwgMeQKv8rWIaoRZR68Uhd_qwhW-wLqLawd42RaMzKebvCX78epU6rMz1VAlhZzlKS1keFXp-5xXjy4JQcu_WY-GXqSv7ah8CWGItBFc2yW2vQaDfgeHxc5MZTg7Q_VJkGSIEhttIb_0na2S6UfKXczrF1aoBFCKfxirIrOs-VHvbQCyWXwUdKidKNIqexkOucVOo4MaDMMKYSX7LINIdf4WPwrsa2SBW_UpFp-jrjF-aHmykLShhIEv_nCAHGMmfPwbu3ZsARJYusP6vRL8JdVq7pigfBkcIONWRVO7aM0X4ae43bGPfIzzLkdOKIBMR7KFsAv-4THPPH3UWTUG0MN0dAQPAAd6Jbp2xe3heqTY1J84QLaPFRY66r6rmZDWt8yzFB2IqLlupMgINWWLL8e0v6BLd0C8_jc7kwHmMvaPoXlZwqVFXed47bJOFfDXgymjs9Uw2ubeb1VMydQFmftVwzFY0vFTqqAWWnHIw5udvxgCTXDv2daFOdWPfrE6wKqVb9azxmGGXsoLcigmzwapcHBIUHAKKBE8SO9G3ciUkVFnK1JQEJ8Q96TdxMbnaXsPfy_CDaNUQFTnLYatnTbNq2kr20TudmpMYbm3V6_51K-gZyBh0-ESsRtsW1xaD68FgwS2Hi4zgd5zmko4c4vh3ncQt5eWB4Zy3VPCcNSPvgEVv_1psLFVPWMhhrC7pwV0PeuEE9h-rr66lwV9cgFIJkQf1Q3NzXMOa65aNKvmjAfP40H6jDUrKW03_JH56kb3R9YwE4kDpkkSJzHUsbPLjWPUr6SOUQKT2je9oxE3ioEgtwAlnYlxf5JU_BPyj7EsgLPpe8ZIuaTn7pU_tU8fBo26MEn78g3rwaFZ7PpWn6DeMTG_hDvAaTSZ0qZ6bAqGoj1UP_XzuQOuRvdbO_jNsclKBfZPj3RQcx1c_4H51aKTrJrYLndXSzsMox2BLoNXuUYoDyIeu_J36iUid5W4M7gykJADbUZBIbag8ordczWIaIYGxJHpxqiZvluHO1ufCLYWj3r8GhNNU_BjdyCmisGVV1he4ZdRiNHNlpfAL5SSQv7QynjdrPTIwmugGfinfzq0E7-2MpEOtBxDwlZtLBQsHLracKuIjYorhTzbj2dnvCBWTdfeBnaut-x7dfKr8ReAZnfhn5-qtvJdwFfx77y3t1kUIEBFr1CTmpUh3q5SJtQvR8TeTcPJORHk31EnafeipUwT4JnqA3oEiiqXLs2wTlLAt1SOx-uwMmyMeBEOhK7FS7Tdwgr2f0K-oEaUP_3AAENamy7U975-bvrQC5NQR91rCee0_h13qvdnYG0S_OS1vswYCoq0Z2wnR6wa4nx-ZoEZmnH0YoGyIt14_gOGQ9X5TAWFNlqbbHzhsOUIrN6TM-f5HQzXF7X_V7c1rMtPR-ZlYeXu7lla81J3_eIO_XzOlD4BO2nosgagiT89GQB5Sj16Ehd_KGMPpCsvqOxg_UpPL_kQ7qJtDs8okP4YmvWjp4IHVD_CmV0kyA26B3tlwkD8IUHzlAq7Bxq3TKgnGIgxi0-scAmiMvN-TlXvDjBp0Uh-AWz2zxwAGqsq298xeLkPRpJJJECMlZVPppr2RdKgCyrqBhGLyWIjmIx5-jWY-1XuwT7cb9NGXe6RFfmCXVX_B_0_1ribDdgLMRtGXziYbI8qxmN3tsw6BmPEsDCuofe6Zqm97JipN17tTmv-rdOHeeV9UgeiYQ0xJe6Q9psmhHBxGW6LVp_e9dWt4-aYZ24hSGf8CileysyUV0etiXPh2fVacS4HKQXry29CMP6j6gO6Ca2T3CNIYYd_aG6hVBO4Lk6ENkS4kkl7Wen5tOTI5TCD0pGAIuHIwey-DIfqPbW-ZHhQO3sBYSVtHPMSXP3hrojuR1qEnFVrVyqLABusBzlqB2mAnvSKZRCpZ9VFGUABN6ytItEXv4JDIu8eo0IvMQmWRRguaADU5pBiyQZ_5C3UEyX_QveHmDri9IXaVQz_3a9gowZfMuGj9CVwuhCq8R3ZLclacFxWRFw6byEOm2KZb6jH5qemc-V-Ci1mtcIsOdVLFQXuHkiOyZE2zISd0ckGUWihME4lg0imlSu_XI1MjWwao049bmP0VD5iqqpccIVsJuNkrSmw15AcrHqjlVhIWrD8u6e90uBqvm_l-Yfxe78_cIl-VuWTTa1qI8yw-LeNWloZCTbls5pRQr7MCm5dkZeAt1PBdnBpXTk-8VcvlDsA_hheV-QVbrdP4UTtDArx6QfxDU8PNLMpMgovTDTn6WnaJpdP-WVTSYH-78a7rp01RAmIQTl12vXuNRhPtj7jlortf8YobH2jMog2vRc4uXQpqZyWtSr-BF4vhh7QfzK6myLiEj_ciHNXqd64WzYl__hPaULy2xkwkpnD6mWQnRkoNeFGA-kt0f5J-M4JrRG3qCOdVrccmyLye-vVQyVkqfqgau6YLXd3QdpJkmA7Puu0ie1BeQBnBG4nJcWvDE1R19MdYBT7v-IDTdFBTtPxc5KerxoUy-Zn7xzvmUt6rRuk0pmBwzriAtzZctD2PI8BfoC4zhP-xpMhcNNaqCUBUQ260pWVdhqUCpkoBrskVHMMndizoMbeIeAcdAp4-lI5l-6zTO2APjygljfVHHLjpbTxs1ZA8DYpjrmzWSC07IXpK54MR258kedSamj-6IcUY4OOVVsuLvioELKt5JHwx5oADllUevxdA6K-9vddx7tuhgvkBvL1TpSp0XxDGwH3dRJDFwcDl3ah_PaOAjc33Z2IlcnXynaERtl3ysxBoPSY_4KPn5NoWQ7YHxzA-zQMKaa9fpi2VLN8Ud8redK0EKc9WwKXp-zmJbCf-KBsVCbFcrj9WUz38x-Iv-JEwFnUVpfTporFsB2eYlAPaMrXbf4Vz-Um1nfSVuq0F1V4cCPtZK6I_H-KWLbIseWZxNTJCWlmCaBe7ZQgt8ICUXqspyD9OOU6VNfr0nU7aW0itJEnvmKSfxnj3wQhrmEJ7HsX8mRHaDqAQKCr5B8YT4FOqTISRnTgDsV16ZRp43TaWH4QFpeanUD3KvmpvvfYGXUKVHlud2dUwPCr5FNM1QRFG9cgMBJn3y7ewbuixmPAIU_se3fYA1nYBtMlPpSHMGfXsqrIlMGNXmwsTs7TjG-kLzFrSA2ku5ZFX6N4wQim45hr1fBHI3GDF7IwoHKVCjXLjrkdCOGW0mV-n5uOAJxu5r_Ire3WFys0V9nlPpp9vy40PaNbXTiO0bLZu2u7LVDKAmxvvHxpUZxtW6v5lzoJjhdy1j4yAYCSgctwmH1pwhe8-wzU3JU9Rt1LFTs9t0XRUq_HXAb2kTGBMvk4OuuE1huBo75zhmFb1DVTzjr3Lpx656PZNk_frJiwupQ3qQj7b77ud_OzWgmRcLfmV2HPratlaB7pHQy6srJX-z2So9VD6TdbUUuOlSoGmK6jd1aGMNyhc2SM99TMQsQwbMEpZQ5tkexBf3Yc2TzQKON23R6xP90ctuAD976TtM2mZhV8o_7oB8jY9pyNwyf4tRUz0TPGIWBGgv3XhPugBTB5gfkRWXRvmeA2-Q38To85FnGpZib0yhVqpfS1ol9fZ6qmGQtgN5iZkXceAhYJRBwIq3jZM5-9Kc4QUO4aW4V8P7OXY66kxtcaoxXFcaug_EXomyGVhvLJ99QDE1zxTfZZ99Z7ZbAhYKQhctP43NCx3WPN4P0dP4HOG1HDhCW4wFOdWTKXQOKA1wOhuGUGyxpi6DcnMkM-vCpbWfHNzeSOKOXkBHbKycZiQ13mAv-eKpd0wg15sgkX3XdzHu8Xxc8HqDxsdJoyK0kT9lA8Y8PpF03mwhSqmOpxM4RjLL5U6HSt4FxDSsdVoTr3bzlKplWA29yVjlOU9D0xcbp9_Vkb981glTcmIhmpkP-10LD88arU_kHIkv_Oprhm-sCnNgI0RzmH71j5RxUuJDEKvj-l9A3f4lLEudcJw8ZBe_y7voD2-wNJ55hB5hYjzX45A5JCGbh7bE45bdq-hZ7a5rHekQAKMe1YO0zRzrkUagXurtqAXrZcLAq6NREGetDb8ICCJWA9fYoBWwz1mIBzn0fXUZlPRST-N7btljgD9RqiScsTA5NmGVG63cFq7JR7q0Na6eXVAKBODjcF6pMa4LIExSQq6W8CgXnfmGGTQp7p48TR0wan6nvSCOaaqty0hnELs2AkOb3otvg3T8ISPj36kApd3M5NcOrxW87LV7WEaN2Xy3aHkhxhZNMhAWHAtQpeg66rIsBat_Enqw56zTnSdjbKAAM7_mda7iQg5QEHKPSxkN4J2dAwzG-XmWTQJZhhxkAG0PDpN0sZkXRORxQV9TRBGmXWarK_GWkw2oAFFtf4H2d1KxlNiNQ6t0_6tWvN5piuPQTPhkIDmbSpbELp_sxYPdp2EBGN_08JbukeZ7P7M-eC4ps1e3mU1-l5j53tc1pYmauqc16J7ulQUe4WTMNWBBg3rBKdnR_E2wWMsirHhRHw8PZwTMmczbHVLAg6TX_RAafz-OOPaqrq2B_m-teT_-89rMWmrhIDnZMUTKPNQiInT0KPqZhZ981yZqkcKPKtJ2wYtliN6DE-GfubhjhCeNEoijF5wx6CruwB8F68SqANak21pj6LFT-gUdVI0S40PGAG87FelsPUVVrOmQJjoLgeE_zaHi684rPgknZbKW9PI-w5DhXfqqwn-8Nw3zanwa9aQ6TNzmZ_3hExa3yn7E4YrGvQFNz2EcpvBmOLl_7aU6OB_ofPFc8xGgwWm2vQQnj2XIMW15AdD9Jw9C63LIfsBd9krF1v9SzmDHVe4C2yRjGoNmaHCpXmzGcCdKKYkLRIVR6jclh5-fs5rU0L4hQC9LjQoS946Dlt731DBShTzh-pzwFn3TwmCOzTw03px_cwGXubDcbV9UP3WwJ5lbmaa9Sb2LLyQ2CE4aDrNeQvIDjnCzkWVHdHDkcTpnaYZCGjOcpf1jcK6lEDN2DKxEosgVM_sR0wg1rKTsm-i_K3Q_ByyYGooRCNv8xTd2mD2YM7AeucLEXDJyNFu5GGjommw8Pm2iq_Y0WyXkkch-PUAnlaDhunHhi0e22faVzG3jfHfy77aArXiWekmRbWwMcWesUVGTP2MMLOSwdbvF4h2Ww84U-V2ez9DHVTjTeN88C9BbAbwVbK5QSLcmAEK89GdSgss4VOI71f-mWih_oAjkMinFQuWW6K2OCrB95lp4SUBlNPOClNOChG1OoRWmbXiejGW8LPIoNK84FsccgEOtk05kjng11Wszj8JTt049ip7xgs1JeFZnazDT0WBzkabPxEEgz1KrZJj7OKqPT3yHtxgZ-NOfXg0AvdJuThwuvKsrQwkQ12AuUDDiODLZtWuBP23Z8wp-IqySHGpC5yrcZkWVBF58n7gSTXcpjsPStPYIXzxmouuRTSujRUcPE3tVgdDoh1jZLZKEOO-z2PWHom508mFbioDC6gluzv9bEv9SyJQcblMbaRR1W7CbvU1W_w6j8wqUVf_ZT3j4zY7CHoSD6AkOrSITmK1nFoivUmZ56LI7ENM34H45TskDgrwV31Jfm9zbnihQ-RTKUrAxRYwCF-5VsoBParjjuJ6qoExAEPXn1Y-yYt6QC29baQVK1lcwuMt05y--cTx0xpDwsLqUki9q6MYQvFAg0toEyW_VNuCJCo8Chsp2VHgG3eNBTfwbQ2M6ipHcldDd5OaEJZmzk6phdbFbaGo8xCJ8PUqiQr3yd5hommaM3W7JgNvUHPif0q8olUK5um-qzUCBSizSzoigdv2vsduE6acPFaHw7I1E4ycTrB1W8FyEsWlMhzofReeoQLmnH0o8IEeGrWMFdrRe5yDw5BjixK_daKBK2REC7mctNl_nx-_DAsgoBjZWYn2cTN0f9nraM0p2PibFqLcOLo-prjcdirllamEIVCSKlgQeBs9VlS5gEFMknLEzeCjkHB3ZQvyo-7VO6N4cDAnSQ_QwZLwIzXZ1Zp1vx5Tc1J8foMb6DP8QU-v4lho48Ac8Pa7PSUTQX-ta3nukBreTGlqmYveL6zBK-K53rHPiZBcn4P3iJ89xCy41LZe6IeUMMejp_65uVSzwMEo1enpzEgFrECaZwt2WezJITOfy0A3VrIdMsGwerm9qpUbOcnxfpBIjkblJHyQ_L8Gdw0uhpQHR44HA4yRKHCsKPP9-J6OP9OakZ_a7kzdhfr8DHNwBb82CG5NCAoQf_i8rD1dImQjOHixPXIITj8NZbnxiUzAYoXBNTqqRsNp4qtd2oQ7mEjTlpIr2w1vm_rTmlfy2zYwL9nRpgkkgVSvhdUJXL052VHDEtyvks3AxxmU5Bx5KqriIzPEK3aLc5whMVpUKjGNPDXC00kCeUmWLaoO3r-9rOAcWJJR6XLN9MrJLiM05E5D1OITRlXIAF4WE31ttkG1v77lpn-VvFtPdYFWfHUVY3dE8ZllQdIjo861QQqxoWgYJYKerDERrtrb_A_oCP-g-iXHNejenr5vCXx5jfOpKfJrFt5mP1w8m-lQe0Nfi_faieqwIT1YypW-DaemCGAI3-CylaoM4qlL9U_mT1qVVkaPgTwoqYeY40W39N0_q4rk3I88HRsUBlCDp6nshfF92Q5pTCnFGDyVJYsBX93qiSvMZiOus2XlNrLF5tVzXP3wwFrmaXi6fRtrJNuq-9-oQWeernrWCP8ArOu2MLcZ81KpGOrVxXmyZt_BEo2UFayEXdVsrS32X76fDPTt7Oxj0iBKWXOcFX9fk0KHWAmaljnnC9pa0qJfR7gHiHFAV3P_RW8IkJNp8QxyVkmFWaFKRAmKTfiaAspbX8qqSiARmUhObJnsWRM6Nhj81GofbF0t15g1NuyZFNm49RCm6ARybWkucUCKqvsVftiKL6uQnVzp30Nx4HZoxWCOd_Viy6cq_E26_ObCN6rHD1v-xjdYKGrtfwHyT3KyZoIBxo0i_H-krjbWpAPn4PNCeEiejKGmkl2ZZDqrap1dE_-BLXtJ1t2BpB2jzAOnyW4Am4P0ELyT37D1JTLZacrrVn9gCdCle3LxbPm3N-3UBPU0g32Knp8ldD9wYVFRY3hDfIoUH7zPm217Q810oRTysntF8TKqtHlNn3cGp1n7iv9zTgS-E2GlFBuPlRM2QtxB3uOYoFE6dl5m8Hcf5ltUeZ9etbogBg3aqcIiCmgOZQqQ9C9QEIHkHLLaaR3eLGPy4Wel1ghGin2DLSaGM-gGSe0nEJdbyj2ctO41r65Xm24uhLxB29vFtcVlJszQedMmN3oifoGwUr0U-E6mAuuN0QfA3-XIn0G7bm6_bBB1fOLN-YTfl2cj1RdEweiQL5rFV7VQ5j_51-UdNZT70PjZab7qovXoYnPmX3NQEqgqq4QilQqrkhVDEZ-oZKZ0CKNa03vESEgCXTdeWmH4AZk-jU0aHK_wyfTmKHltA4VZPDERflMDVpkmZm6BnGACnQo7QmijENqr68fr6YjbrndRTSwungUCxEoZeyqcEJUGhnfn4yJWRb82YvXFkLry-hF7iw_wzGqo4QOhRlVdOWbqMO5Kt_0EOKKWtVARQYr96Y32pzw_Shb2NwotT5xpA2kPZoET2EDdobaAtVAV8h2e7ctCN3pCD-nzd50A0udREP0hl3Hl8L-j28gsEeDETXvfC4PRuZiyJU6F_ac_Qqvu-_wNtuWn_cId5nVbf-hg6YaOi9nAKuQGnlCFMhf1RfDs-Rqegqwvhs9HrXufQUbKpe9DOM4aeW05iSANWB6a3vhaaVJkMdsDc0rrpfQHJJkMht7Mq865810g==
+        id: rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6
+        summary:
+        - text: "**Creating a structured poem**\n\nI need to craft a 12-line poem where the first letters of the odd lines
+            spell \"SAMIRA\" and the even lines spell \"DAWOOD.\" That means I need to have the odd lines correspond to S,
+            A, M, I, R, A, and the even lines correspond to D, A, W, O, O, D. \n\nAdditionally, each line's first word should
+            start with a letter that matches its line number, and all the first letters of the words in each line should spell
+            out a capital city. It's a bit complex, but I’m excited to work through this!"
+          type: summary_text
+        - text: |-
+            **Formulating meaningful lines**
+
+            I want to create 12 lines where the first letter of each odd line spells out a capital starting with S, A, M, I, R, A, and each even line spells out one starting with D, A, W, O, O, D. Each line's first word must also match its line’s initial letter, which leads to some interesting choices.
+
+            For example, for the first line, I could use "Sofia," which gives me the initials S, O, F, I, A. A poetic line could be something like "Softly, old fountains illumine alleys." This approach helps in crafting those lines creatively!
+          type: summary_text
+        - text: |-
+            **Continuing with capital inspiration**
+
+            For line 2, I'm choosing "Doha," which gives me the initials D, O, H, A. A possible line could be: "Dunes over harbor, aglow." Then for line 3, I’m selecting "Athens," which corresponds to A, T, H, E, N, S. I could use a line like, "Ancient temples hum, echoing novas' songs."
+
+            Line 4 needs to start with A again to fit the "DAWOOD" sequence, so I picked "Abuja" with initials A, B, U, J, A, creating: "Amber breezes uplift jasmine avenues." Lastly, for line 5, I went with "Madrid," giving me M, A, D, R, I, D, leading to "Moonlight across distant roofs, inviting dreams."
+          type: summary_text
+        - text: |-
+            **Adding to the poem structure**
+
+            For line 6, I'm choosing "Warsaw," giving me initials W, A, R, S, A, W. A suitable line could be, "Whispers across river, stars awake, wandering."
+
+            Next, for line 7, I picked "Islamabad," which has the initials I, S, L, A, M, A, B, A, D, so I need nine words. I came up with, "Ivory sands lull, as minarets arise, birds ascend, dreaming," which fits perfectly.
+
+            For line 8, I went with "Oslo," using O, S, L, O, and a line like, "Orchards shimmer, lanterns over." Lastly, for line 9, I selected "Rabat," leading to "Rustling almonds breathe amber twilight."
+          type: summary_text
+        - text: |-
+            **Finalizing the poem and updating the plan**
+
+            For line 10, I went with "Ottawa," creating my line as "Oaks tremble, twin auroras weave, alight," which fits the initials O, T, T, A, W, A. Then, for line 11, I selected "Ankara" with the line "Autumn nights kindle amber river arcs," matching A, N, K, A, R, A.
+
+            Lastly, for line 12, I chose "Damascus," resulting in "Dusty alleys murmur, amber spices curl under starlight," which fits D, A, M, A, S, C, U, S.
+
+            I also need to make sure I update my plan using the necessary steps, like mapping initials to capitals and crafting coherent lines. I should use the update_plan tool for that!
+          type: summary_text
+        type: reasoning
+      - arguments: '{"plan":"Plan:\n1) Determine required first-letter acrostics for lines: odd lines -> SAMIRA; even lines
+          -> DAWOOD (12 total lines).\n2) For each line, select a world capital whose name begins with the required first
+          letter.\n3) Compose each line so that the first letter of every word spells that chosen capital (word-initial acrostic),
+          while keeping imagery poetic and coherent.\n4) Double-check all acrostics (line-initial and word-initial) for accuracy.\n5)
+          Deliver the 12-line poem."}'
+        call_id: call_gL7JE6GDeGGsFubqO2XGytyO
+        id: fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6
+        name: update_plan
+        type: function_call
+      - call_id: call_gL7JE6GDeGGsFubqO2XGytyO
+        output: plan updated
+        type: function_call_output
+      instructions: You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update
+        it as you make progress against the user's prompt
+      model: gpt-5
+      reasoning:
+        effort: low
+        summary: detailed
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: update_plan
+        parameters:
+          additionalProperties: false
+          properties:
+            plan:
+              type: string
+          required:
+          - plan
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2390'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1610'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757687103
+      error: null
+      id: resp_68c42d3fd6a08196bce23d6be960ff8a0e8bc41441c948f6
+      incomplete_details: null
+      instructions: You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update
+        it as you make progress against the user's prompt
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            Softly old fountains illumine alleys
+            Dunes over harbor aglow
+            Ancient temples hum, echoing novas' songs
+            Amber breezes uplift jasmine avenues
+            Moonlight across distant roofs, inviting dreams
+            Whispers across river, stars awake, wandering
+            Ivory sands lull, as minarets arise, birds ascend, dreaming
+            Orchards shimmer, lanterns over
+            Rustling almonds breathe amber twilight
+            Oaks tremble, twin auroras weave, alight
+            Autumn nights kindle amber river arcs
+            Dusty alleys murmur, amber spices curl under starlight
+          type: output_text
+        id: msg_68c42d408eec8196ae1c5883e07c093e0e8bc41441c948f6
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: low
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: update_plan
+        parameters:
+          additionalProperties: false
+          properties:
+            plan:
+              type: string
+          required:
+          - plan
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 2087
+        input_tokens_details:
+          cached_tokens: 2048
+        output_tokens: 124
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 2211
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

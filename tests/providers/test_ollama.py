@@ -4,11 +4,12 @@ import httpx
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
@@ -42,7 +43,7 @@ def test_ollama_provider_need_base_url(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `OLLAMA_BASE_URL` environment variable or pass it via `OllamaProvider(base_url=...)`'
-            'to use the Ollama provider.'
+            ' to use the Ollama provider.'
         ),
     ):
         OllamaProvider()
@@ -77,44 +78,77 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
     cohere_model_profile_mock = mocker.patch(f'{ns}.cohere_model_profile', wraps=cohere_model_profile)
+    harmony_model_profile_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)
 
     meta_profile = provider.model_profile('llama3.2')
     meta_model_profile_mock.assert_called_with('llama3.2')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     google_profile = provider.model_profile('gemma3')
     google_model_profile_mock.assert_called_with('gemma3')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('deepseek-r1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistral-small')
     mistral_model_profile_mock.assert_called_with('mistral-small')
     assert mistral_profile is not None
-    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     qwen_profile = provider.model_profile('qwen3')
     qwen_model_profile_mock.assert_called_with('qwen3')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('ignore_streamed_leading_whitespace', False) is True
+    assert qwen_profile.get('supports_json_schema_output', False) is True
+
+    qwen_profile = provider.model_profile('qwen3.5')
+    qwen_model_profile_mock.assert_called_with('qwen3.5')
+    assert qwen_profile is not None
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('ignore_streamed_leading_whitespace', False) is True
+    assert qwen_profile.get('supports_json_schema_output', False) is True
+    assert qwen_profile.get('supports_json_object_output', False) is True
+
+    qwen_profile = provider.model_profile('qwen3.5:35b')
+    qwen_model_profile_mock.assert_called_with('qwen3.5:35b')
+    assert qwen_profile is not None
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('ignore_streamed_leading_whitespace', False) is True
+    assert qwen_profile.get('supports_json_schema_output', False) is True
+    assert qwen_profile.get('supports_json_object_output', False) is True
 
     qwen_profile = provider.model_profile('qwq')
     qwen_model_profile_mock.assert_called_with('qwq')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert qwen_profile.ignore_streamed_leading_whitespace is True
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('ignore_streamed_leading_whitespace', False) is True
 
     cohere_profile = provider.model_profile('command-r')
     cohere_model_profile_mock.assert_called_with('command-r')
     assert cohere_profile is not None
-    assert cohere_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert cohere_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    harmony_profile = provider.model_profile('gpt-oss')
+    harmony_model_profile_mock.assert_called_with('gpt-oss')
+    assert harmony_profile is not None
+    assert harmony_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert harmony_profile.get('ignore_streamed_leading_whitespace', False) is True
 
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None
-    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    # Ollama does not support strict mode in tool definitions (issue #4116)
+    for model in ('llama3.2', 'qwen3', 'unknown-model'):
+        profile = provider.model_profile(model)
+        assert profile is not None
+        openai_profile = profile
+        assert openai_profile.get('openai_supports_strict_tool_definition', True) is False
+    assert unknown_profile.get('supports_json_schema_output', False) is True
+    assert unknown_profile.get('supports_json_object_output', False) is True

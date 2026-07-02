@@ -5,8 +5,9 @@ from typing import overload
 
 from httpx import AsyncClient
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
@@ -16,7 +17,8 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
     from huggingface_hub import AsyncInferenceClient
-except ImportError as _import_error:  # pragma: no cover
+    from huggingface_hub.constants import INFERENCE_PROXY_TEMPLATE
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `huggingface_hub` package to use the HuggingFace provider, '
         "you can use the `huggingface` optional group — `pip install 'pydantic-ai-slim[huggingface]'`"
@@ -34,13 +36,21 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
 
     @property
     def base_url(self) -> str:
-        return self.client.model  # type: ignore
+        if self._client.model is not None:
+            return self._client.model
+        if self._client.provider is not None:
+            return INFERENCE_PROXY_TEMPLATE.format(provider=self._client.provider)
+        raise UserError(
+            'Unable to determine base URL for HuggingFace provider. '
+            'Please provide `base_url`, `provider_name`, or a pre-configured `hf_client`.'
+        )
 
     @property
     def client(self) -> AsyncInferenceClient:
         return self._client
 
-    def model_profile(self, model_name: str) -> ModelProfile | None:
+    @staticmethod
+    def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'deepseek-ai': deepseek_model_profile,
             'google': google_model_profile,
@@ -50,15 +60,21 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             'moonshotai': moonshotai_model_profile,
         }
 
-        if '/' not in model_name:
+        profile: ModelProfile | None = None
+        recognized = False
+        if '/' in model_name:
+            model_name = model_name.lower()
+            provider, model_name = model_name.split('/', 1)
+            if provider in provider_to_profile:
+                recognized = True
+                profile = provider_to_profile[provider](model_name)
+
+        # Only recognized `provider/model` names get a profile; bare names and unknown providers
+        # return `None` (no fallback overlay). Recognized providers always advertise inline system
+        # prompt support, even when the upstream profile lookup itself returns `None`.
+        if not recognized:
             return None
-
-        model_name = model_name.lower()
-        provider, model_name = model_name.split('/', 1)
-        if provider in provider_to_profile:
-            return provider_to_profile[provider](model_name)
-
-        return None
+        return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True))
 
     @overload
     def __init__(self, *, base_url: str, api_key: str | None = None) -> None: ...
@@ -88,19 +104,19 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             api_key: The API key to use for authentication, if not provided, the `HF_TOKEN` environment variable
                 will be used if available.
             hf_client: An existing
-                [`AsyncInferenceClient`](https://huggingface.co/docs/huggingface_hub/v0.29.3/en/package_reference/inference_client#huggingface_hub.AsyncInferenceClient)
+                [`AsyncInferenceClient`](https://huggingface.co/docs/huggingface_hub/en/package_reference/inference_client#huggingface_hub.AsyncInferenceClient)
                 client to use. If not provided, a new instance will be created.
             http_client: (currently ignored) An existing `httpx.AsyncClient` to use for making HTTP requests.
-            provider_name : Name of the provider to use for inference. available providers can be found in the [HF Inference Providers documentation](https://huggingface.co/docs/inference-providers/index#partners).
+            provider_name: Name of the provider to use for inference. available providers can be found in the [HF Inference Providers documentation](https://huggingface.co/docs/inference-providers/index#partners).
                 defaults to "auto", which will select the first available provider for the model, the first of the providers available for the model, sorted by the user's order in https://hf.co/settings/inference-providers.
                 If `base_url` is passed, then `provider_name` is not used.
         """
-        api_key = api_key or os.environ.get('HF_TOKEN')
+        api_key = api_key or os.getenv('HF_TOKEN')
 
         if api_key is None:
             raise UserError(
                 'Set the `HF_TOKEN` environment variable or pass it via `HuggingFaceProvider(api_key=...)`'
-                'to use the HuggingFace provider.'
+                ' to use the HuggingFace provider.'
             )
 
         if http_client is not None:

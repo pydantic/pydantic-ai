@@ -1,0 +1,296 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '649'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the registered tools and respond exactly as `Capital: <city>`.'
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      system: Always call `country_source` first, then call `capital_lookup` with that result before replying.
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: country_source
+        strict: true
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        name: capital_lookup
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '562'
+      content-type:
+      - application/json
+      retry-after:
+      - '4'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: I'll help you find the capital city using the available tools.
+        type: text
+      - id: toolu_01Ttepb9joVoQFHP568v7UAL
+        input: {}
+        name: country_source
+        type: tool_use
+      id: msg_01CTV3rhAAYCrzRGTEoJbJt7
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 628
+        output_tokens: 50
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '996'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the registered tools and respond exactly as `Capital: <city>`.'
+          type: text
+        role: user
+      - content:
+        - text: I'll help you find the capital city using the available tools.
+          type: text
+        - id: toolu_01Ttepb9joVoQFHP568v7UAL
+          input: {}
+          name: country_source
+          type: tool_use
+        role: assistant
+      - content:
+        - content: Japan
+          is_error: false
+          tool_use_id: toolu_01Ttepb9joVoQFHP568v7UAL
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      system: Always call `country_source` first, then call `capital_lookup` with that result before replying.
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: country_source
+        strict: true
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        name: capital_lookup
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '491'
+      content-type:
+      - application/json
+      retry-after:
+      - '52'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - id: toolu_011j5uC2Tg3TZJo3nmLtJ8Mm
+        input:
+          country: Japan
+        name: capital_lookup
+        type: tool_use
+      id: msg_01KgnnRwGgZEK3kvEGM5nbW8
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 691
+        output_tokens: 53
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1272'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Use the registered tools and respond exactly as `Capital: <city>`.'
+          type: text
+        role: user
+      - content:
+        - text: I'll help you find the capital city using the available tools.
+          type: text
+        - id: toolu_01Ttepb9joVoQFHP568v7UAL
+          input: {}
+          name: country_source
+          type: tool_use
+        role: assistant
+      - content:
+        - content: Japan
+          is_error: false
+          tool_use_id: toolu_01Ttepb9joVoQFHP568v7UAL
+          type: tool_result
+        role: user
+      - content:
+        - id: toolu_011j5uC2Tg3TZJo3nmLtJ8Mm
+          input:
+            country: Japan
+          name: capital_lookup
+          type: tool_use
+        role: assistant
+      - content:
+        - content: Tokyo
+          is_error: false
+          tool_use_id: toolu_011j5uC2Tg3TZJo3nmLtJ8Mm
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: false
+      system: Always call `country_source` first, then call `capital_lookup` with that result before replying.
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: country_source
+        strict: true
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            country:
+              type: string
+          required:
+          - country
+          type: object
+        name: capital_lookup
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '420'
+      content-type:
+      - application/json
+      retry-after:
+      - '36'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: 'Capital: Tokyo'
+        type: text
+      id: msg_0111CmwjQHh6LerTTnrW2GPi
+      model: claude-sonnet-4-5-20250929
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 757
+        output_tokens: 6
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -107,7 +107,7 @@ interactions:
             type: text
           type: document
         role: user
-      model: claude-3-5-sonnet-latest
+      model: claude-sonnet-4-5
       stream: false
     uri: https://api.anthropic.com/v1/messages?beta=true
   response:
@@ -134,7 +134,7 @@ interactions:
           The document also includes metadata about the file itself, including its purpose, type, and version, as well as attribution information indicating that the example content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.
         type: text
       id: msg_0181va21HMXatSVPvFwiTN1k
-      model: claude-3-5-sonnet-20241022
+      model: claude-sonnet-4-5-20250929
       role: assistant
       stop_reason: end_turn
       stop_sequence: null

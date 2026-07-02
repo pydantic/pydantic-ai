@@ -1,33 +1,34 @@
 from __future__ import annotations as _annotations
 
 import json
+import math
 import sys
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
-from dirty_equals import HasRepr, IsNumber
-from inline_snapshot import snapshot
+import yaml
+from dirty_equals import HasRepr, IsNumber, IsOneOf
 from pydantic import BaseModel, TypeAdapter
 
+from .._inline_snapshot import snapshot
 from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
+        EvaluationReason,
         EvaluationResult,
         Evaluator,
         EvaluatorFailure,
         EvaluatorOutput,
         EvaluatorSpec,
         LLMJudge,
-        Python,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
@@ -41,6 +42,20 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
             return self.output
 
+    @dataclass(repr=False)
+    class Python(Evaluator[object, object, object]):
+        expression: str
+        evaluation_name: str | None = field(default=None)
+
+        def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+            # Evaluate the condition, exposing access to the evaluator context as `ctx`.
+            return eval(self.expression, {'ctx': ctx})
+
+
+with try_import() as logfire_import_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
 
 with try_import() as tenacity_import_successful:
     from tenacity import stop_after_attempt
@@ -50,6 +65,15 @@ with try_import() as tenacity_import_successful:
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
+
+# Matchers for fields that vary depending on whether logfire is installed:
+# with CaptureLogfire, spans have sequential IDs and mock-clock durations;
+# without logfire, trace/span IDs are None and durations are real wall-clock values.
+_any_trace_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
+_any_span_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
+_any_duration: float = IsNumber()  # type: ignore[assignment]
+
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup  # pragma: lax no cover
@@ -57,9 +81,11 @@ else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
-@pytest.fixture(autouse=True)
-def use_logfire(capfire: CaptureLogfire):
-    assert capfire
+if logfire_import_successful():
+
+    @pytest.fixture(autouse=True)
+    def use_logfire(capfire: CaptureLogfire):
+        assert capfire
 
 
 class TaskInput(BaseModel):
@@ -98,7 +124,7 @@ def example_cases() -> list[Case[TaskInput, TaskOutput, TaskMetadata]]:
 def example_dataset(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
 ) -> Dataset[TaskInput, TaskOutput, TaskMetadata]:
-    return Dataset[TaskInput, TaskOutput, TaskMetadata](cases=example_cases)
+    return Dataset[TaskInput, TaskOutput, TaskMetadata](name='example', cases=example_cases)
 
 
 @pytest.fixture
@@ -117,12 +143,45 @@ def simple_evaluator() -> type[Evaluator[TaskInput, TaskOutput, TaskMetadata]]:
     return SimpleEvaluator
 
 
+def test_dataset_name_required(
+    example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """Test that omitting the name parameter raises a validation error."""
+    with pytest.raises(Exception, match='name'):
+        Dataset(cases=example_cases)  # pyright: ignore[reportCallIssue]
+
+
+def test_from_file_uses_filename_as_default_name(tmp_path: Path):
+    """Test that from_file uses filename stem as name."""
+    yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
+    yaml_path = tmp_path / 'my_dataset.yaml'
+    yaml_path.write_text(yaml_content)
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert dataset.name == 'my_dataset'
+
+
+def test_from_dict_without_name_raises():
+    """If neither the serialized data nor `default_name` supplies a name, `from_dict` errors."""
+    data = {'cases': [{'name': 'test', 'inputs': {'query': 'hi'}}]}
+    with pytest.raises(ValueError, match='Dataset name is required'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(data)
+
+
+def test_from_dict_without_generic_params_warns():
+    """Calling `from_dict` on the bare `Dataset` class (no generic params) warns and falls back to `Any`."""
+    data = {'name': 'demo', 'cases': [{'name': 'c1', 'inputs': {'q': 'hi'}}]}
+    with pytest.warns(UserWarning, match='Could not determine the generic parameters'):
+        dataset = Dataset.from_dict(data)
+    assert dataset.name == 'demo'
+
+
 async def test_dataset_init(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
 ):
     """Test Dataset initialization."""
-    dataset = Dataset(cases=example_cases, evaluators=[simple_evaluator()])
+    dataset = Dataset(name='test_init', cases=example_cases, evaluators=[simple_evaluator()])
 
     assert len(dataset.cases) == 2
     assert dataset.cases[0].name == 'case1'
@@ -135,6 +194,7 @@ async def test_add_evaluator(
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
 ):
     """Test adding evaluators to a dataset."""
+
     assert len(example_dataset.evaluators) == 0
 
     example_dataset.add_evaluator(simple_evaluator())
@@ -156,6 +216,7 @@ async def test_add_evaluator(
     assert len(example_dataset.evaluators) == 2
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='add_evaluator_test',
         cases=[
             Case(
                 name='My Case 1',
@@ -165,7 +226,7 @@ async def test_add_evaluator(
                 name='My Case 2',
                 inputs=TaskInput(query='What is 2+2?'),
             ),
-        ]
+        ],
     )
     dataset.add_evaluator(Python('ctx.output > 0'))
     dataset.add_evaluator(Python('ctx.output == 2'), specific_case='My Case 1')
@@ -175,6 +236,7 @@ async def test_add_evaluator(
     assert str(exc_info.value) == snapshot("Case 'My Case 3' not found in the dataset")
 
     assert dataset.model_dump(mode='json', exclude_defaults=True, context={'use_short_form': True}) == {
+        'name': 'add_evaluator_test',
         'cases': [
             {
                 'evaluators': [{'Python': 'ctx.output == 2'}],
@@ -217,6 +279,7 @@ async def test_evaluate_async(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -234,12 +297,14 @@ async def test_evaluate_async(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
-            'span_id': '0000000000000003',
-            'task_duration': 1.0,
-            'total_duration': 10.0,
-            'trace_id': '00000000000000000000000000000001',
+            'span_id': _any_span_id,
+            'source_case_name': None,
+            'task_duration': _any_duration,
+            'total_duration': _any_duration,
+            'trace_id': _any_trace_id,
         }
     )
 
@@ -270,6 +335,7 @@ async def test_evaluate_sync(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -287,12 +353,14 @@ async def test_evaluate_sync(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
-            'span_id': '0000000000000003',
-            'task_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
-            'total_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
-            'trace_id': '00000000000000000000000000000001',
+            'span_id': _any_span_id,
+            'source_case_name': None,
+            'task_duration': _any_duration,  # the runtime behavior is not deterministic due to threading
+            'total_duration': _any_duration,  # the runtime behavior is not deterministic due to threading
+            'trace_id': _any_trace_id,
         }
     )
 
@@ -351,6 +419,7 @@ async def test_evaluate_with_retried_task_and_evaluator(
                     'reason': None,
                     'source': {'name': 'RetryEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -368,12 +437,14 @@ async def test_evaluate_with_retried_task_and_evaluator(
                     'reason': None,
                     'source': {'name': 'RetryEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
-            'span_id': '0000000000000003',
-            'task_duration': 1.0,
-            'total_duration': 19.0,
-            'trace_id': '00000000000000000000000000000001',
+            'span_id': _any_span_id,
+            'source_case_name': None,
+            'task_duration': _any_duration,
+            'total_duration': _any_duration,
+            'trace_id': _any_trace_id,
         }
     )
 
@@ -404,6 +475,7 @@ async def test_evaluate_with_concurrency(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': True,
+                    'evaluator_version': None,
                 }
             },
             'attributes': {},
@@ -421,12 +493,14 @@ async def test_evaluate_with_concurrency(
                     'reason': None,
                     'source': {'name': 'SimpleEvaluator', 'arguments': None},
                     'value': 1.0,
+                    'evaluator_version': None,
                 }
             },
-            'span_id': '0000000000000003',
-            'task_duration': 1.0,
-            'total_duration': 5.0,
-            'trace_id': '00000000000000000000000000000001',
+            'span_id': _any_span_id,
+            'source_case_name': None,
+            'task_duration': _any_duration,
+            'total_duration': _any_duration,
+            'trace_id': _any_trace_id,
         }
     )
 
@@ -465,10 +539,10 @@ async def test_evaluate_with_failing_task(
                         name='correct', value=True, reason=None, source=simple_evaluator().as_spec()
                     )
                 },
-                task_duration=1.0,
-                total_duration=5.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[],
             )
         ]
@@ -482,8 +556,8 @@ async def test_evaluate_with_failing_task(
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 error_message='ValueError: Task error',
                 error_stacktrace=IsStr(),
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             )
         ]
     )
@@ -515,16 +589,17 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=12.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='FailingEvaluator',
                         error_message='ValueError: Evaluator error',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -539,16 +614,17 @@ async def test_evaluate_with_failing_evaluator(example_dataset: Dataset[TaskInpu
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=10.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='FailingEvaluator',
                         error_message='ValueError: Evaluator error',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -583,10 +659,10 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=3.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
             ReportCase(
                 name='case2',
@@ -599,10 +675,10 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=3.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
         ]
     )
@@ -642,10 +718,10 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                     ),
                 },
                 assertions={},
-                task_duration=1.0,
-                total_duration=18.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
             ReportCase(
                 name='case2',
@@ -668,10 +744,10 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                     ),
                 },
                 assertions={},
-                task_duration=1.0,
-                total_duration=16.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
         ]
     )
@@ -704,14 +780,14 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                             name='output',
                             value='a',
                             reason=None,
-                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                            source=EvaluatorSpec(name='MockEvaluator', arguments={'output': {'output': 'a'}}),
                         )
                     },
                     assertions={},
-                    task_duration=1.0,
-                    total_duration=10.0,
-                    trace_id='00000000000000000000000000000001',
-                    span_id='0000000000000003',
+                    task_duration=_any_duration,
+                    total_duration=_any_duration,
+                    trace_id=_any_trace_id,
+                    span_id=_any_span_id,
                 ),
                 ReportCase(
                     name='case2',
@@ -727,18 +803,18 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                             name='output',
                             value='a',
                             reason=None,
-                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                            source=EvaluatorSpec(name='MockEvaluator', arguments={'output': {'output': 'a'}}),
                         )
                     },
                     assertions={},
-                    task_duration=1.0,
-                    total_duration=8.0,
-                    trace_id='00000000000000000000000000000001',
-                    span_id='0000000000000007',
+                    task_duration=_any_duration,
+                    total_duration=_any_duration,
+                    trace_id=_any_trace_id,
+                    span_id=_any_span_id,
                 ),
             ],
-            span_id='0000000000000001',
-            trace_id='00000000000000000000000000000001',
+            span_id=_any_span_id,
+            trace_id=_any_trace_id,
         )
     )
 
@@ -746,15 +822,18 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
     assert report == report_adapter.validate_json(report_adapter.dump_json(report, indent=2))
 
 
+@needs_logfire
 async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     async def my_task(inputs: TaskInput) -> TaskOutput:
         with logfire.span(
             'my chat span',
             **{  # type: ignore
                 'gen_ai.operation.name': 'chat',
+                'gen_ai.request.model': 'gpt-5-mini',
                 'gen_ai.usage.input_tokens': 1,
                 'gen_ai.usage.details.special_tokens': 2,
                 'other_attribute': 3,
+                'operation.cost': 1.23,
             },
         ):
             with logfire.span('some other span'):
@@ -770,15 +849,15 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 metadata=TaskMetadata(difficulty='easy', category='general'),
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
-                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                metrics={'cost': 1.23, 'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
                 attributes={},
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=5.0,
-                total_duration=7.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
             ReportCase(
                 name='case2',
@@ -786,15 +865,15 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 metadata=TaskMetadata(difficulty='medium', category='geography'),
                 expected_output=TaskOutput(answer='Paris', confidence=1.0),
                 output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
-                metrics={'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
+                metrics={'cost': 1.23, 'requests': 1, 'input_tokens': 1, 'special_tokens': 2},
                 attributes={},
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=5.0,
-                total_duration=7.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='000000000000000b',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
         ]
     )
@@ -810,8 +889,46 @@ async def test_serialization_to_yaml(example_dataset: Dataset[TaskInput, TaskOut
     # Test loading back
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert len(loaded_dataset.cases) == 2
+    assert loaded_dataset.name == 'example'
     assert loaded_dataset.cases[0].name == 'case1'
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
+
+
+async def test_serialization_to_yaml_preserves_unicode(tmp_path: Path):
+    dataset = Dataset[TaskInput, TaskOutput](
+        name='unicode',
+        cases=[
+            Case(
+                inputs=TaskInput(query='Привет'),
+                expected_output=TaskOutput(answer='Здравствуйте'),
+            )
+        ],
+    )
+    yaml_path = tmp_path / 'test_cases.yaml'
+
+    dataset.to_file(yaml_path)
+
+    content = yaml_path.read_text(encoding='utf-8')
+    assert 'Привет' in content
+    assert 'Здравствуйте' in content
+
+
+async def test_deserializing_without_name(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
+):
+    """Test serializing a dataset to YAML."""
+    # Save the dataset
+    yaml_path = tmp_path / 'test_cases.yaml'
+    example_dataset.to_file(yaml_path)
+
+    # Rewrite the file _without_ a name to test deserializing a name-less file
+    obj = yaml.safe_load(yaml_path.read_text(encoding='utf-8'))
+    obj.pop('name', None)
+    yaml_path.write_text(yaml.dump(obj), encoding='utf-8')
+
+    # Test loading results in the name coming from the filename stem
+    loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert loaded_dataset.name == 'test_cases'
 
 
 async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path):
@@ -827,10 +944,55 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     assert loaded_dataset.cases[0].name == 'case1'
     assert loaded_dataset.cases[0].inputs.query == 'What is 2+2?'
 
-    raw = json.loads(json_path.read_text())
+    raw = json.loads(json_path.read_text(encoding='utf-8'))
     schema = raw['$schema']
     assert isinstance(schema, str)
     assert (tmp_path / schema).exists()
+
+
+def test_serialization_to_json_with_absolute_schema_path(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
+):
+    json_path = tmp_path / 'test_cases.json'
+    schema_path = tmp_path / 'test_cases_schema.json'
+
+    example_dataset.to_file(json_path, schema_path=schema_path, fmt='json')
+
+    raw = json.loads(json_path.read_text(encoding='utf-8'))
+    assert raw['$schema'] == 'test_cases_schema.json'
+    assert schema_path.exists()
+
+
+def test_serializing_parts_with_discriminators(tmp_path: Path):
+    class Foo(BaseModel):
+        foo: str
+        kind: Literal['foo'] = 'foo'
+
+    class Bar(BaseModel):
+        bar: str
+        kind: Literal['bar'] = 'bar'
+
+    items = [Foo(foo='foo'), Bar(bar='bar')]
+
+    dataset = Dataset[list[Foo | Bar]](name='discriminators', cases=[Case(inputs=items)])
+    yaml_path = tmp_path / 'test_cases.yaml'
+    dataset.to_file(yaml_path)
+
+    loaded_dataset = Dataset[list[Foo | Bar]].from_file(yaml_path)
+    assert loaded_dataset == snapshot(
+        Dataset(
+            name='discriminators',
+            cases=[
+                Case(
+                    name=None,
+                    inputs=[
+                        Foo(foo='foo'),
+                        Bar(bar='bar'),
+                    ],
+                )
+            ],
+        )
+    )
 
 
 def test_serialization_errors(tmp_path: Path):
@@ -845,6 +1007,7 @@ def test_serialization_errors(tmp_path: Path):
 async def test_from_text():
     """Test creating a dataset from text."""
     dataset_dict = {
+        'name': 'my dataset',
         'cases': [
             {
                 'name': '1',
@@ -864,6 +1027,7 @@ async def test_from_text():
     }
 
     loaded_dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
+    assert loaded_dataset.name == 'my dataset'
     assert loaded_dataset.cases == snapshot(
         [
             Case(
@@ -989,10 +1153,10 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=12.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='Python',
@@ -1003,6 +1167,7 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                         'type: Ellipsis.',
                         error_stacktrace=IsStr(),
                         source=Python(expression='...').as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1017,10 +1182,10 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=10.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='Python',
@@ -1031,6 +1196,7 @@ async def test_invalid_evaluator_output_type(example_dataset: Dataset[TaskInput,
                         'type: Ellipsis.',
                         error_stacktrace=IsStr(),
                         source=Python(expression='...').as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1056,8 +1222,8 @@ async def test_dataset_evaluate_with_failing_task(example_dataset: Dataset[TaskI
                 expected_output=TaskOutput(answer='4', confidence=1.0),
                 error_message='ValueError: Task failed',
                 error_stacktrace=IsStr(),
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
             ReportCaseFailure(
                 name='case2',
@@ -1066,8 +1232,8 @@ async def test_dataset_evaluate_with_failing_task(example_dataset: Dataset[TaskI
                 expected_output=TaskOutput(answer='Paris', confidence=1.0),
                 error_message='ValueError: Task failed',
                 error_stacktrace=IsStr(),
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
             ),
         ]
     )
@@ -1099,16 +1265,17 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=12.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='FailingEvaluator',
                         error_message='ValueError: Evaluator failed',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1123,16 +1290,17 @@ async def test_dataset_evaluate_with_failing_evaluator(example_dataset: Dataset[
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=10.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='FailingEvaluator',
                         error_message='ValueError: Evaluator failed',
                         error_stacktrace=IsStr(),
                         source=FailingEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1173,10 +1341,10 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=12.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='InvalidEvaluator',
@@ -1188,6 +1356,7 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                         'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().',
                         error_stacktrace=IsStr(),
                         source=InvalidEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1202,10 +1371,10 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                 scores={},
                 labels={},
                 assertions={},
-                task_duration=1.0,
-                total_duration=10.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
+                task_duration=_any_duration,
+                total_duration=_any_duration,
+                trace_id=_any_trace_id,
+                span_id=_any_span_id,
                 evaluator_failures=[
                     EvaluatorFailure(
                         name='InvalidEvaluator',
@@ -1217,6 +1386,7 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
                         'test_dataset_evaluate_with_invalid_evaluator_result.<locals>.MyObject().',
                         error_stacktrace=IsStr(),
                         source=InvalidEvaluator().as_spec(),
+                        error_type='ValueError',
                     )
                 ],
             ),
@@ -1225,13 +1395,53 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
     assert report.failures == snapshot([])
 
 
+@pytest.mark.parametrize(
+    'output_factory',
+    [
+        pytest.param(lambda: math.nan, id='nan-scalar'),
+        pytest.param(lambda: math.inf, id='inf-scalar'),
+        pytest.param(lambda: -math.inf, id='negative-inf-scalar'),
+        pytest.param(lambda: {'score': math.nan}, id='nan-mapping'),
+        pytest.param(lambda: EvaluationReason(value=math.nan, reason='not finite'), id='nan-reason'),
+        pytest.param(lambda: {'score': EvaluationReason(value=math.inf, reason='not finite')}, id='inf-mapped-reason'),
+    ],
+)
+async def test_dataset_evaluate_with_non_finite_evaluator_result(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], output_factory: Callable[[], Any]
+):
+    """Non-finite evaluator scores should be reported as evaluator failures."""
+    output = output_factory()
+
+    class NonFiniteEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> Any:
+            return output
+
+    example_dataset.add_evaluator(NonFiniteEvaluator())
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await example_dataset.evaluate(task)
+
+    assert report.failures == []
+    assert len(report.cases) == 2
+    for case in report.cases:
+        assert case.scores == {}
+        assert len(case.evaluator_failures) == 1
+        failure = case.evaluator_failures[0]
+        assert failure.name == 'NonFiniteEvaluator'
+        assert failure.error_type == 'ValueError'
+        assert 'returned a value of an invalid type' in failure.error_message
+        assert repr(output) in failure.error_message
+
+
 async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with a custom task name."""
 
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    report = await example_dataset.evaluate(task, name='custom_task')
+    report = await example_dataset.evaluate(task, task_name='custom_task')
     assert report.name == 'custom_task'
 
 
@@ -1253,7 +1463,7 @@ async def test_dataset_evaluate_with_no_expected_output(example_dataset: Dataset
         inputs=TaskInput(query='hello'),
         metadata=TaskMetadata(difficulty='easy'),
     )
-    dataset = Dataset(cases=[case])
+    dataset = Dataset(name='no_expected_output', cases=[case])
 
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
@@ -1270,7 +1480,7 @@ async def test_dataset_evaluate_with_no_metadata(example_dataset: Dataset[TaskIn
         inputs=TaskInput(query='hello'),
         expected_output=TaskOutput(answer='HELLO'),
     )
-    dataset = Dataset(cases=[case])
+    dataset = Dataset(name='no_metadata', cases=[case])
 
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
@@ -1282,7 +1492,7 @@ async def test_dataset_evaluate_with_no_metadata(example_dataset: Dataset[TaskIn
 
 async def test_dataset_evaluate_with_empty_cases(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with no cases."""
-    dataset = Dataset(cases=[])
+    dataset = Dataset(name='empty_cases', cases=[])
 
     async def task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
         return TaskOutput(answer=inputs.query.upper())
@@ -1316,6 +1526,7 @@ async def test_dataset_evaluate_with_multiple_evaluators(example_dataset: Datase
 @pytest.mark.anyio
 async def test_unnamed_cases():
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='unnamed_cases',
         cases=[
             Case(
                 name=None,
@@ -1329,7 +1540,7 @@ async def test_unnamed_cases():
                 name=None,
                 inputs=TaskInput(query='What is 1+2?'),
             ),
-        ]
+        ],
     )
 
     async def task(inputs: TaskInput) -> TaskOutput:
@@ -1344,6 +1555,7 @@ async def test_unnamed_cases():
 async def test_duplicate_case_names():
     with pytest.raises(ValueError) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata](
+            name='duplicate_test',
             cases=[
                 Case(
                     name='My Case',
@@ -1353,17 +1565,18 @@ async def test_duplicate_case_names():
                     name='My Case',
                     inputs=TaskInput(query='What is 2+2?'),
                 ),
-            ]
+            ],
         )
     assert str(exc_info.value) == "Duplicate case name: 'My Case'"
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='duplicate_test',
         cases=[
             Case(
                 name='My Case',
                 inputs=TaskInput(query='What is 1+1?'),
             ),
-        ]
+        ],
     )
     dataset.add_case(
         name='My Other Case',
@@ -1386,7 +1599,7 @@ def test_add_invalid_evaluator():
         def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):  # pragma: no cover
             return False
 
-    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](cases=[])
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](name='invalid_evaluator', cases=[])
 
     with pytest.raises(ValueError) as exc_info:
         dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # type: ignore
@@ -1406,12 +1619,14 @@ def test_import_generate_dataset():
     assert generate_dataset
 
 
+@needs_logfire
 def test_evaluate_non_serializable_inputs():
     @dataclass
     class MyInputs:
         output_type: type[str] | type[int]
 
     my_dataset = Dataset[MyInputs, Any, Any](
+        name='non_serializable',
         cases=[
             Case(
                 name='str',
@@ -1450,6 +1665,7 @@ def test_evaluate_non_serializable_inputs():
 """)
 
 
+@needs_logfire
 async def test_evaluate_async_logfire(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
@@ -1465,7 +1681,7 @@ async def test_evaluate_async_logfire(
             return TaskOutput(answer='Paris')
         return TaskOutput(answer='Unknown')  # pragma: no cover
 
-    await example_dataset.evaluate(mock_async_task)
+    await example_dataset.evaluate(mock_async_task, metadata={'key': 'value'})
 
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     spans.sort(key=lambda s: s['start_time'])
@@ -1481,16 +1697,51 @@ async def test_evaluate_async_logfire(
             (
                 'evaluate {name}',
                 {
-                    'name': 'mock_async_task',
-                    'n_cases': 2,
                     'assertion_pass_rate': 1.0,
-                    'logfire.msg_template': 'evaluate {name}',
-                    'logfire.msg': 'evaluate mock_async_task',
-                    'logfire.span_type': 'span',
+                    'dataset_name': 'example',
+                    'gen_ai.operation.name': 'experiment',
                     'logfire.json_schema': {
+                        'properties': {
+                            'assertion_pass_rate': {},
+                            'dataset_name': {},
+                            'gen_ai.operation.name': {},
+                            'n_cases': {},
+                            'name': {},
+                            'metadata': {'type': 'object'},
+                            'logfire.experiment.metadata': {
+                                'type': 'object',
+                                'properties': {
+                                    'averages': {
+                                        'type': 'object',
+                                        'title': 'ReportCaseAggregate',
+                                        'x-python-datatype': 'PydanticModel',
+                                    }
+                                },
+                            },
+                            'task_name': {},
+                        },
                         'type': 'object',
-                        'properties': {'name': {}, 'n_cases': {}, 'assertion_pass_rate': {}},
                     },
+                    'logfire.msg': 'evaluate mock_async_task',
+                    'metadata': {'key': 'value'},
+                    'logfire.msg_template': 'evaluate {name}',
+                    'logfire.span_type': 'span',
+                    'n_cases': 2,
+                    'logfire.experiment.metadata': {
+                        'n_cases': 2,
+                        'metadata': {'key': 'value'},
+                        'averages': {
+                            'name': 'Averages',
+                            'scores': {'confidence': 1.0},
+                            'labels': {},
+                            'metrics': {},
+                            'assertions': 1.0,
+                            'task_duration': _any_duration,
+                            'total_duration': _any_duration,
+                        },
+                    },
+                    'name': 'mock_async_task',
+                    'task_name': 'mock_async_task',
                 },
             ),
             (
@@ -1505,7 +1756,7 @@ async def test_evaluate_async_logfire(
                     'logfire.msg': 'case: case1',
                     'logfire.span_type': 'span',
                     'output': {'answer': '4', 'confidence': 1.0},
-                    'task_duration': 1.0,
+                    'task_duration': _any_duration,
                     'metrics': {},
                     'attributes': {},
                     'assertions': {
@@ -1514,6 +1765,7 @@ async def test_evaluate_async_logfire(
                             'value': True,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'scores': {
@@ -1522,6 +1774,7 @@ async def test_evaluate_async_logfire(
                             'value': 1.0,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'labels': {},
@@ -1574,7 +1827,7 @@ async def test_evaluate_async_logfire(
                     'logfire.msg': 'case: case2',
                     'logfire.span_type': 'span',
                     'output': {'answer': 'Paris', 'confidence': 1.0},
-                    'task_duration': 1.0,
+                    'task_duration': _any_duration,
                     'metrics': {},
                     'attributes': {},
                     'assertions': {
@@ -1583,6 +1836,7 @@ async def test_evaluate_async_logfire(
                             'value': True,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'scores': {
@@ -1591,6 +1845,7 @@ async def test_evaluate_async_logfire(
                             'value': 1.0,
                             'reason': None,
                             'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                            'evaluator_version': None,
                         }
                     },
                     'labels': {},
@@ -1635,9 +1890,12 @@ async def test_evaluate_async_logfire(
                 'evaluator: {evaluator_name}',
                 {
                     'evaluator_name': 'SimpleEvaluator',
-                    'logfire.msg_template': 'evaluator: {evaluator_name}',
-                    'logfire.msg': 'evaluator: SimpleEvaluator',
-                    'logfire.json_schema': {'type': 'object', 'properties': {'evaluator_name': {}}},
+                    'logfire.msg_template': 'Calling evaluator: {evaluator_name}',
+                    'logfire.msg': 'Calling evaluator: SimpleEvaluator',
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {'evaluator_name': {}},
+                    },
                     'logfire.span_type': 'span',
                 },
             ),
@@ -1645,11 +1903,476 @@ async def test_evaluate_async_logfire(
                 'evaluator: {evaluator_name}',
                 {
                     'evaluator_name': 'SimpleEvaluator',
-                    'logfire.msg_template': 'evaluator: {evaluator_name}',
-                    'logfire.msg': 'evaluator: SimpleEvaluator',
-                    'logfire.json_schema': {'type': 'object', 'properties': {'evaluator_name': {}}},
+                    'logfire.msg_template': 'Calling evaluator: {evaluator_name}',
+                    'logfire.msg': 'Calling evaluator: SimpleEvaluator',
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {'evaluator_name': {}},
+                    },
                     'logfire.span_type': 'span',
                 },
             ),
         ]
     )
+
+
+async def test_evaluate_with_experiment_metadata(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that experiment metadata passed to evaluate() appears in the report."""
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    # Pass experiment metadata to evaluate()
+    experiment_metadata = {
+        'model': 'gpt-4o',
+        'prompt_version': 'v2.1',
+        'temperature': 0.7,
+        'max_tokens': 1000,
+    }
+
+    report = await example_dataset.evaluate(task, metadata=experiment_metadata)
+
+    # Verify that the report contains the experiment metadata
+    assert report.experiment_metadata == experiment_metadata
+
+
+# --- Report evaluator serialization/deserialization tests ---
+
+
+async def test_serialization_to_yaml_with_report_evaluators(tmp_path: Path):
+    """Round-trip through YAML with built-in report evaluators."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='with_report_evals',
+        cases=[
+            Case(
+                name='case1',
+                inputs=TaskInput(query='test'),
+                expected_output=TaskOutput(answer='result'),
+            ),
+        ],
+        report_evaluators=[ConfusionMatrixEvaluator()],
+    )
+
+    yaml_path = tmp_path / 'test_report_eval.yaml'
+    dataset.to_file(yaml_path)
+
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
+    assert len(loaded.report_evaluators) == 1
+    assert isinstance(loaded.report_evaluators[0], ConfusionMatrixEvaluator)
+    assert loaded.name == 'with_report_evals'
+
+
+async def test_serialization_to_json_with_report_evaluators(tmp_path: Path):
+    """Round-trip through JSON with built-in report evaluators."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator, PrecisionRecallEvaluator
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='json_report_evals',
+        cases=[
+            Case(
+                name='case1',
+                inputs=TaskInput(query='test'),
+                expected_output=TaskOutput(answer='result'),
+            ),
+        ],
+        report_evaluators=[
+            ConfusionMatrixEvaluator(),
+            PrecisionRecallEvaluator(score_key='confidence', positive_from='assertions', positive_key='is_correct'),
+        ],
+    )
+
+    json_path = tmp_path / 'test_report_eval.json'
+    dataset.to_file(json_path)
+
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(json_path)
+    assert len(loaded.report_evaluators) == 2
+    assert isinstance(loaded.report_evaluators[0], ConfusionMatrixEvaluator)
+    assert isinstance(loaded.report_evaluators[1], PrecisionRecallEvaluator)
+    assert loaded.report_evaluators[1].score_key == 'confidence'
+    assert loaded.report_evaluators[1].positive_key == 'is_correct'
+
+
+async def test_from_text_with_report_evaluators():
+    """Deserialize report_evaluators from YAML text."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+    yaml_text = """\
+name: report_evaluators_test
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator
+"""
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+    assert len(loaded.report_evaluators) == 1
+    assert isinstance(loaded.report_evaluators[0], ConfusionMatrixEvaluator)
+
+
+async def test_from_text_with_report_evaluators_and_args():
+    """Deserialize report_evaluators with arguments from YAML text."""
+    from pydantic_evals.evaluators import ConfusionMatrixEvaluator
+
+    yaml_text = """\
+name: report_evaluators_args_test
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator:
+      predicted_from: labels
+      predicted_key: pred
+      title: Custom CM
+"""
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+    assert len(loaded.report_evaluators) == 1
+    cm = loaded.report_evaluators[0]
+    assert isinstance(cm, ConfusionMatrixEvaluator)
+    assert cm.predicted_from == 'labels'
+    assert cm.predicted_key == 'pred'
+    assert cm.title == 'Custom CM'
+
+
+async def test_custom_report_evaluator_round_trip(tmp_path: Path):
+    """Custom @dataclass report evaluator round-trip via custom_report_evaluator_types."""
+    from pydantic_evals.evaluators import ReportEvaluator, ReportEvaluatorContext
+    from pydantic_evals.reporting.analyses import ScalarResult
+
+    @dataclass
+    class MyAccuracy(ReportEvaluator):
+        threshold: float = 0.5
+
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='Accuracy', value=100.0)
+
+    dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
+        name='custom_re',
+        cases=[Case(name='c1', inputs=TaskInput(query='hi'))],
+        report_evaluators=[MyAccuracy(threshold=0.8)],
+    )
+
+    yaml_path = tmp_path / 'custom_re.yaml'
+    dataset.to_file(yaml_path, custom_report_evaluator_types=[MyAccuracy])
+
+    loaded = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(
+        yaml_path, custom_report_evaluator_types=[MyAccuracy]
+    )
+    assert len(loaded.report_evaluators) == 1
+    assert isinstance(loaded.report_evaluators[0], MyAccuracy)
+    assert loaded.report_evaluators[0].threshold == 0.8
+
+
+async def test_report_evaluator_json_schema():
+    """Verify model_json_schema_with_evaluators includes report_evaluators property."""
+    schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators()
+    assert 'report_evaluators' in schema['properties']
+
+
+def test_invalid_report_evaluator_type():
+    """Error on non-ReportEvaluator subclass or non-@dataclass."""
+    from pydantic_evals.evaluators import ReportEvaluator
+
+    class NotAReportEvaluator:
+        pass
+
+    with pytest.raises(ValueError, match='must be subclasses of ReportEvaluator'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []},
+            custom_report_evaluator_types=(NotAReportEvaluator,),  # type: ignore
+        )
+
+    class NotADataclass(ReportEvaluator):
+        def evaluate(self, ctx: Any) -> Any:  # pragma: no cover
+            pass
+
+    with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []}, custom_report_evaluator_types=(NotADataclass,)
+        )
+
+
+async def test_from_text_with_unknown_report_evaluator():
+    """Loading a YAML with an unknown report evaluator name raises an error."""
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - NonExistentEvaluator
+"""
+    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+
+
+async def test_from_text_with_invalid_report_evaluator_args():
+    """Loading a report evaluator with invalid constructor args raises an error."""
+    yaml_text = """\
+cases:
+  - name: c1
+    inputs:
+      query: hello
+report_evaluators:
+  - ConfusionMatrixEvaluator:
+      nonexistent_param: true
+"""
+    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
+
+
+async def test_duplicate_report_evaluator_class_name():
+    """Duplicate custom report evaluator class names raise an error."""
+    from pydantic_evals.evaluators import ReportEvaluator, ReportEvaluatorContext
+    from pydantic_evals.reporting.analyses import ScalarResult
+
+    @dataclass
+    class DupeEvaluator(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='x', value=0)
+
+    @dataclass
+    class DupeEvaluator2(ReportEvaluator):
+        def evaluate(self, ctx: ReportEvaluatorContext) -> ScalarResult:  # pragma: no cover
+            return ScalarResult(title='x', value=0)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'DupeEvaluator'
+
+    with pytest.raises(ValueError, match='Duplicate report evaluator class name'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
+            {'cases': []},
+            custom_report_evaluator_types=(DupeEvaluator, DupeEvaluator2),
+        )
+
+
+async def test_lifecycle_prepare_context(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that lifecycle.prepare_context can enrich metrics before evaluators run."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class EnrichMetrics(CaseLifecycle[TaskInput, TaskOutput, TaskMetadata]):
+        async def prepare_context(
+            self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]
+        ) -> EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]:
+            ctx.metrics['custom_metric'] = 42
+            ctx.metrics['input_length'] = len(self.case.inputs.query)
+            return ctx
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer='test')
+
+    report = await example_dataset.evaluate(task, lifecycle=EnrichMetrics)
+
+    assert len(report.cases) == 2
+    for case in report.cases:
+        assert case.metrics['custom_metric'] == 42
+        assert 'input_length' in case.metrics
+
+
+async def test_lifecycle_setup_and_teardown(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that lifecycle setup runs before task and teardown runs after evaluators."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    events: list[str] = []
+
+    class TrackingLifecycle(CaseLifecycle[TaskInput, TaskOutput, TaskMetadata]):
+        async def setup(self) -> None:
+            events.append(f'setup:{self.case.name}')
+
+        async def teardown(
+            self,
+            result: ReportCase[TaskInput, TaskOutput, TaskMetadata]
+            | ReportCaseFailure[TaskInput, TaskOutput, TaskMetadata]
+            | None,
+        ) -> None:
+            events.append(f'teardown:{self.case.name}:{type(result).__name__ if result is not None else "NoneType"}')
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer='test')
+
+    await example_dataset.evaluate(task, max_concurrency=1, lifecycle=TrackingLifecycle)
+
+    assert events == snapshot(['setup:case1', 'teardown:case1:ReportCase', 'setup:case2', 'teardown:case2:ReportCase'])
+
+
+async def test_lifecycle_teardown_on_task_failure():
+    """Test that teardown runs even when the task fails, and receives ReportCaseFailure."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    teardown_results: list[ReportCase | ReportCaseFailure | None] = []
+
+    class TeardownTracker(CaseLifecycle[str, str, None]):
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
+            teardown_results.append(result)
+
+    dataset = Dataset[str, str, None](
+        name='teardown_on_failure',
+        cases=[
+            Case(name='success', inputs='hello'),
+            Case(name='failure', inputs='fail'),
+        ],
+    )
+
+    async def task(inputs: str) -> str:
+        if inputs == 'fail':
+            raise ValueError('boom')
+        return inputs.upper()
+
+    report = await dataset.evaluate(task, max_concurrency=1, lifecycle=TeardownTracker)
+
+    assert len(report.cases) == 1
+    assert len(report.failures) == 1
+    assert len(teardown_results) == 2
+    result_types = {type(r).__name__ for r in teardown_results}
+    assert result_types == {'ReportCase', 'ReportCaseFailure'}
+
+
+async def test_lifecycle_per_case_state():
+    """Test that each case gets its own lifecycle instance with independent state."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class StatefulLifecycle(CaseLifecycle[str, str, None]):
+        def __init__(self, case: Case[str, str, None]) -> None:
+            super().__init__(case)
+            self.setup_called = False
+
+        async def setup(self) -> None:
+            self.setup_called = True
+            assert 'StatefulLifecycle(case=' in repr(self)
+
+        async def prepare_context(self, ctx: EvaluatorContext[str, str, None]) -> EvaluatorContext[str, str, None]:
+            assert self.setup_called, 'setup should have been called before prepare_context'
+            ctx.metrics['case_name_length'] = len(self.case.name or '')
+            return ctx
+
+    dataset = Dataset[str, str, None](
+        name='per_case_state',
+        cases=[
+            Case(name='short', inputs='a'),
+            Case(name='much_longer_name', inputs='b'),
+        ],
+    )
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()
+
+    report = await dataset.evaluate(task, lifecycle=StatefulLifecycle)
+
+    assert len(report.cases) == 2
+    metrics_by_name = {c.name: c.metrics for c in report.cases}
+    assert metrics_by_name['short']['case_name_length'] == 5
+    assert metrics_by_name['much_longer_name']['case_name_length'] == 16
+
+
+async def test_lifecycle_evaluator_sees_enriched_context():
+    """Test that evaluators see the context after prepare_context has modified it."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    @dataclass
+    class CheckMetric(Evaluator[str, str, None]):
+        def evaluate(self, ctx: EvaluatorContext[str, str, None]) -> bool:
+            return ctx.metrics.get('enriched') == 1
+
+    class Enricher(CaseLifecycle[str, str, None]):
+        async def prepare_context(self, ctx: EvaluatorContext[str, str, None]) -> EvaluatorContext[str, str, None]:
+            ctx.metrics['enriched'] = 1
+            return ctx
+
+    dataset = Dataset[str, str, None](
+        name='enriched_context',
+        cases=[Case(name='test', inputs='hello')],
+        evaluators=[CheckMetric()],
+    )
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()
+
+    report = await dataset.evaluate(task, lifecycle=Enricher)
+
+    assert len(report.cases) == 1
+    assert report.cases[0].assertions['CheckMetric'].value is True
+
+
+async def test_lifecycle_with_object_types():
+    """Test that a lifecycle with object types works with any dataset."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class GenericLifecycle(CaseLifecycle):
+        async def prepare_context(self, ctx: EvaluatorContext) -> EvaluatorContext:
+            ctx.metrics['generic'] = 1
+            return ctx
+
+    dataset = Dataset[str, str, None](name='object_types', cases=[Case(name='test', inputs='hello')])
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()
+
+    report = await dataset.evaluate(task, lifecycle=GenericLifecycle)
+
+    assert report.cases[0].metrics['generic'] == 1
+
+
+async def test_lifecycle_teardown_exception_propagates():
+    """Test that a teardown exception propagates to the caller."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class BrokenTeardown(CaseLifecycle[str, str, None]):
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
+            raise RuntimeError('teardown exploded')
+
+    dataset = Dataset[str, str, None](name='teardown_exception', cases=[Case(name='case1', inputs='hello')])
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()
+
+    with pytest.raises(ExceptionGroup, match='unhandled errors in a TaskGroup'):
+        await dataset.evaluate(task, lifecycle=BrokenTeardown)
+
+
+async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown():
+    """Test that a setup failure produces ReportCaseFailure and teardown is still called."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    teardown_called = False
+
+    class BrokenSetup(CaseLifecycle[str, str, None]):
+        async def setup(self) -> None:
+            raise RuntimeError('setup failed')
+
+        async def teardown(self, result: ReportCase[str, str, None] | ReportCaseFailure[str, str, None] | None) -> None:
+            nonlocal teardown_called
+            teardown_called = True
+            assert result is not None
+            assert isinstance(result, ReportCaseFailure)
+            assert 'setup failed' in result.error_message
+
+    dataset = Dataset[str, str, None](name='setup_failure', cases=[Case(name='case1', inputs='hello')])
+
+    async def task(inputs: str) -> str:
+        return inputs.upper()  # pragma: no cover
+
+    report = await dataset.evaluate(task, lifecycle=BrokenSetup)
+
+    assert len(report.failures) == 1
+    assert 'setup failed' in report.failures[0].error_message
+    assert teardown_called
+
+
+async def test_lifecycle_via_partial(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that the lifecycle can be passed as a partial to provide additional configuration."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class ConfigurableLifecycle(CaseLifecycle[TaskInput, TaskOutput, TaskMetadata]):
+        def __init__(self, case: Case[TaskInput, TaskOutput, TaskMetadata], my_config: int) -> None:
+            super().__init__(case)
+            self.my_config = my_config
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        raise NotImplementedError()
+
+    lifecycle = partial(ConfigurableLifecycle, my_config=123)
+    await example_dataset.evaluate(task, lifecycle=lifecycle)

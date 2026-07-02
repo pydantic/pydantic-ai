@@ -1,27 +1,39 @@
 from __future__ import annotations as _annotations
 
-import datetime
-from typing import Any
+import json
+import os
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from itertools import count
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
-from inline_snapshot import snapshot
+from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
+    CachePoint,
     DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -32,21 +44,105 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    UploadedFile,
+)
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.output import ToolOutput
+from pydantic_ai.profiles import DEFAULT_PROFILE
+from pydantic_ai.providers import Provider
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsInstance, IsStr, try_import
+from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+    from botocore.exceptions import ClientError
+    from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
+    from vcr.cassette import Cassette
+
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
 ]
+
+
+class _StubBedrockClient:
+    """Minimal Bedrock client that always raises the provided error."""
+
+    def __init__(self, error: ClientError):
+        self._error = error
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub')
+
+    def converse(self, **_: Any) -> None:
+        raise self._error
+
+    def converse_stream(self, **_: Any) -> None:
+        raise self._error
+
+    def count_tokens(self, **_: Any) -> None:
+        raise self._error
+
+
+class _StubBedrockProvider(Provider[Any]):
+    """Provider implementation backed by the stub client."""
+
+    def __init__(self, client: _StubBedrockClient):
+        self._client = client
+
+    @property
+    def name(self) -> str:
+        return 'bedrock-stub'
+
+    @property
+    def base_url(self) -> str:
+        return 'https://bedrock.stub'
+
+    @property
+    def client(self) -> _StubBedrockClient:
+        return self._client
+
+    @staticmethod
+    def model_profile(model_name: str):
+        return DEFAULT_PROFILE
+
+
+async def test_bedrock_client_property_delegates_to_provider(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    assert model.client is bedrock_provider.client
+
+
+async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    assert model.client is bedrock_provider.client
+
+    new_client = cast(Any, SimpleNamespace(meta=SimpleNamespace(endpoint_url='https://bedrock-runtime.example.com')))
+    model.client = new_client
+    assert model.client is new_client
+    assert model.base_url == 'https://bedrock-runtime.example.com'
+
+
+def _bedrock_model_with_client_error(error: ClientError) -> BedrockConverseModel:
+    """Instantiate a BedrockConverseModel wired to always raise the given error."""
+    return BedrockConverseModel(
+        'us.amazon.nova-micro-v1:0',
+        provider=_StubBedrockProvider(_StubBedrockClient(error)),
+    )
 
 
 async def test_bedrock_model(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -58,7 +154,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     assert result.output == snapshot(
         "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
     )
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30))
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30, cost=Decimal('0.000004445')))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -71,7 +167,10 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         content='Hello!',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -83,22 +182,253 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
 
 
+@pytest.mark.vcr()
+async def test_bedrock_model_usage_limit_exceeded(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=23\\)',
+    ):
+        await agent.run(
+            ['The quick brown fox jumps over the lazydog.', CachePoint(), 'What was next?'],
+            usage_limits=UsageLimits(input_tokens_limit=18, count_tokens_before_request=True),
+        )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_model_usage_limit_not_exceeded(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazydog.',
+        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+    )
+
+    assert result.output == snapshot(
+        'I notice there\'s a small typo in your message - it should be "lazy dog" (two words) rather than '
+        '"lazydog."\n\nThe corrected version is: "The quick brown fox jumps over the lazy dog."\n\n'
+        'This is a famous pangram - a sentence that contains every letter of the English alphabet at least once. '
+        "It's commonly used for testing typewriters, keyboards, fonts, and other applications where you want to "
+        "display all the letters.\n\nIs there something specific you'd like to know about this phrase, or were you "
+        'perhaps testing something?'
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_count_tokens_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+
+
+async def test_bedrock_request_non_http_error():
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.request([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot(
+        'An error occurred (TestException) when calling the converse operation: broken connection'
+    )
+
+
+async def test_bedrock_count_tokens_non_http_error():
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'count_tokens')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.count_tokens([ModelRequest.user_text_prompt('hi')], None, params)
+
+    assert exc_info.value.message == snapshot(
+        'An error occurred (TestException) when calling the count_tokens operation: broken connection'
+    )
+
+
+def _bedrock_arn(resource: str) -> str:
+    """Build a Bedrock ARN, using AWS_ACCOUNT_ID env var or a placeholder.
+
+    The placeholder works for VCR replay (the path matcher scrubs account IDs).
+    When re-recording, set AWS_ACCOUNT_ID to your real account ID:
+
+        AWS_ACCOUNT_ID=... uv run pytest ... --record-mode=new_episodes
+    """
+    account_id = os.getenv('AWS_ACCOUNT_ID', '123456789012')
+    region = os.getenv('AWS_REGION', 'us-east-1')
+    return f'arn:aws:bedrock:{region}:{account_id}:{resource}'
+
+
+async def test_bedrock_inference_profile_converse(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
+    settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
+    model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=bedrock_provider, settings=settings)
+    agent = Agent(model)
+
+    result = await agent.run('Say "hello" and nothing else.')
+    assert result.output == snapshot('Hello')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Say "hello" and nothing else.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Hello')],
+                usage=RequestUsage(input_tokens=8, output_tokens=2),
+                model_name='amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_inference_profile_count_tokens(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+):
+    # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
+    # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
+    # supports the count_tokens API.
+    inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
+    settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
+    )
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
+    assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+
+
+async def test_bedrock_count_tokens_additional_model_requests_fields(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`count_tokens` forwards `bedrock_additional_model_requests_fields` to `input.converse` and Bedrock accepts it.
+
+    Here it carries `anthropic_beta: ['context-1m-2025-08-07']`, the header used to opt into Claude's 1M context window.
+    """
+    settings: BedrockModelSettings = {
+        'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
+    }
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
+    )
+    params = ModelRequestParameters()
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
+    assert result.input_tokens > 0
+
+    sent = single_request_body(vcr)
+    assert sent['input']['converse']['additionalModelRequestFields'] == {'anthropic_beta': ['context-1m-2025-08-07']}
+
+
+async def test_bedrock_count_tokens_tool_config(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """`count_tokens` forwards `toolConfig` to `input.converse`, mirroring the real request so tool schemas are counted."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    tool_def = ToolDefinition(
+        name='get_weather',
+        description='Get the weather for a location',
+        parameters_json_schema={'type': 'object', 'properties': {'location': {'type': 'string'}}},
+    )
+    params = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    result = await model.count_tokens([ModelRequest.user_text_prompt('What is the weather in Paris?')], None, params)
+    assert result.input_tokens > 0
+
+    sent = single_request_body(vcr)
+    assert sent['input']['converse']['toolConfig'] == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'get_weather',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {'location': {'type': 'string'}}}},
+                        'description': 'Get the weather for a location',
+                    }
+                }
+            ],
+            'toolChoice': {'auto': {}},
+        }
+    )
+
+
+async def test_bedrock_stream_non_http_error():
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'broken connection'}}, 'converse_stream')
+    model = _bedrock_model_with_client_error(error)
+    params = ModelRequestParameters()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('hi')], None, params) as stream:
+            async for _ in stream:
+                pass
+
+    assert 'broken connection' in exc_info.value.message
+
+
+async def test_stub_provider_properties():
+    # tests the test utility itself...
+    error = ClientError({'Error': {'Code': 'TestException', 'Message': 'test'}}, 'converse')
+    model = _bedrock_model_with_client_error(error)
+    provider = model._provider  # pyright: ignore[reportPrivateUsage]
+
+    assert provider.name == 'bedrock-stub'
+    assert provider.base_url == 'https://bedrock.stub'
+
+
 async def test_bedrock_model_structured_output(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', retries={'tools': 5, 'output': 5})
 
     class Response(TypedDict):
         temperature: str
-        date: datetime.date
+        date: date
         city: str
 
     @agent.tool_plain
-    async def temperature(city: str, date: datetime.date) -> str:
+    async def temperature(city: str, date: date) -> str:
         """Get the temperature in a city on a specific date.
 
         Args:
@@ -111,73 +441,163 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
         return '30°C'
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
-    assert result.output == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=1236, output_tokens=298))
+    assert result.output == snapshot({'temperature': '30°C', 'date': date(2022, 1, 1), 'city': 'London'})
+    assert result.usage == snapshot(
+        RunUsage(requests=3, input_tokens=2019, output_tokens=120, tool_calls=1, cost=Decimal('0.000087465'))
+    )
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What was the temperature in London 1st January 2022?',
-                        timestamp=IsDatetime(),
-                    ),
-                ]
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    TextPart(
-                        content='<thinking> To find the temperature in London on 1st January 2022, I will use the "temperature" tool. I need to provide the date and the city name. The date is already provided as "1st January 2022" and the city name is "London". I will call the "temperature" tool with these parameters.</thinking>\n'
-                    ),
                     ToolCallPart(
                         tool_name='temperature',
                         args={'date': '2022-01-01', 'city': 'London'},
-                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
-                    ),
+                        tool_call_id=IsStr(),
+                    )
                 ],
-                usage=RequestUsage(input_tokens=551, output_tokens=132),
+                usage=RequestUsage(input_tokens=571, output_tokens=22),
                 model_name='us.amazon.nova-micro-v1:0',
-                timestamp=IsDatetime(),
+                timestamp=IsNow(tz=timezone.utc),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='temperature',
                         content='30°C',
-                        tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
-                        timestamp=IsDatetime(),
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> I have received the result from the "temperature" tool. The temperature in London on 1st January 2022 was 30°C. Now, I will use the "final_result" tool to provide this information to the user.</thinking> '
-                    ),
-                    ToolCallPart(
-                        tool_name='final_result',
-                        args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
-                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
-                    ),
+                        content="""\
+
+<thinking> The tool has provided the temperature for London on 1st January 2022, which was 30°C. I will now provide this information to the user.</thinking>
+The temperature in London on 1st January 2022 was 30°C.\
+"""
+                    )
                 ],
-                usage=RequestUsage(input_tokens=685, output_tokens=166),
+                usage=RequestUsage(input_tokens=627, output_tokens=67),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'json_invalid',
+                                'loc': (),
+                                'msg': 'Invalid JSON: expected value at line 2 column 1',
+                                'input': """\
+
+<thinking> The tool has provided the temperature for London on 1st January 2022, which was 30°C. I will now provide this information to the user.</thinking>
+The temperature in London on 1st January 2022 was 30°C.\
+""",
+                            }
+                        ],
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'date': '2022-01-01', 'city': 'London', 'temperature': '30°C'},
+                        tool_call_id='tooluse_qVHAm8Q9QMGoJRkk06_TVA',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=821, output_tokens=31),
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
-                        timestamp=IsDatetime(),
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
                     )
-                ]
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_stream_cancel(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    async with agent.run_stream('What is the capital of France?') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        await result.cancel()  # double cancel is a no-op
+        assert result.cancelled
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                instructions='You are a helpful chatbot.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The')],
+                model_name='us.amazon.nova-micro-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
             ),
         ]
     )
@@ -185,17 +605,18 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
 async def test_bedrock_model_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
     assert data == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, among many other attractions.'
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. Known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral, Paris is often referred to as "The City of Light" or "The City of Love."'
     )
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=13, output_tokens=82))
 
 
 async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
 
     @agent.tool_plain
     async def get_current_temperature(city: str) -> str:
@@ -209,6 +630,7 @@ async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: No
         """
         return '30°C'  # pragma: no cover
 
+    # dated March 2025, update when no longer the case
     # TODO(Marcelo): Anthropic models don't support tools on the Bedrock Converse Interface.
     # I'm unsure what to do, so for the time being I'm just documenting the test. Let's see if someone complains.
     with pytest.raises(Exception):
@@ -218,16 +640,21 @@ async def test_bedrock_model_anthropic_model_with_tools(allow_model_requests: No
 async def test_bedrock_model_anthropic_model_without_tools(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     result = await agent.run('What is the capital of France?')
-    assert result.output == snapshot('Paris is the capital of France.')
+    assert result.output == snapshot(
+        "The capital of France is **Paris**. It's the largest city in France and has been the country's capital since the 12th century. Paris is known for its iconic landmarks like the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and its rich history, culture, and cuisine."
+    )
 
 
 async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     agent = Agent(
-        model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0}, retries=2
+        model=model,
+        instructions='You are a helpful chatbot.',
+        model_settings={'temperature': 0.0},
+        retries={'tools': 2, 'output': 2},
     )
 
     @agent.tool_plain
@@ -244,56 +671,70 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(
-                        content='You are a helpful chatbot.',
-                        timestamp=IsDatetime(),
-                    ),
                     UserPromptPart(
                         content='What is the capital of France?',
                         timestamp=IsDatetime(),
                     ),
-                ]
+                ],
+                instructions='You are a helpful chatbot.',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='<thinking> To find the capital of France, I will use the available tool "get_capital". I will input the country name "France" into the tool. </thinking>\n'
+                        content='<thinking> To determine the capital of France, I can use the provided tool that returns the capital of a given country. Since the country in question is France, I will use the tool with the country parameter set to "France". </thinking>\n'
                     ),
                     ToolCallPart(
                         tool_name='get_capital',
                         args={'country': 'France'},
-                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
+                        tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=417, output_tokens=69),
+                usage=RequestUsage(input_tokens=426, output_tokens=66),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
                         content='The country is not supported.',
                         tool_name='get_capital',
-                        tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                instructions='You are a helpful chatbot.',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
                         content="""\
-<thinking> It seems there was an error in retrieving the capital of France. The tool returned a message saying "The country is not supported." This indicates that the tool does not support the country France. I will inform the user about this limitation and suggest alternative ways to find the information. </thinking>
+<thinking> It appears that there was an error in retrieving the capital of France as the tool indicated that the country is not supported. Since the tool is not able to provide the requested information, I will respond to the User with the information I have access to. </thinking> \n\
 
-I'm sorry, but the tool I have does not support retrieving the capital of France. However, I can tell you that the capital of France is Paris. If you need information on a different country, please let me know!\
+The capital of France is Paris. If you need any further information, feel free to ask!\
 """
                     )
                 ],
-                usage=RequestUsage(input_tokens=509, output_tokens=108),
+                usage=RequestUsage(input_tokens=531, output_tokens=76),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -301,39 +742,43 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
 
 async def test_bedrock_model_max_tokens(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'max_tokens': 5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'max_tokens': 5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is')
 
 
 async def test_bedrock_model_top_p(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'top_p': 0.5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, fashion, gastronomy, and international diplomacy.'
     )
 
 
 async def test_bedrock_model_performance_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(bedrock_performance_configuration={'latency': 'optimized'})
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+        'The capital of France is Paris. It is one of the most visited cities in the world and is known for its rich history, culture, and iconic landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral. Paris is also a major center for finance, diplomacy, commerce, fashion, science, and arts.'
     )
 
 
 async def test_bedrock_model_guardrail_config(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     model_settings = BedrockModelSettings(
-        bedrock_guardrail_config={'guardrailIdentifier': 'guardrailv1', 'guardrailVersion': 'v1', 'trace': 'enabled'}
+        bedrock_guardrail_config={
+            'guardrailIdentifier': 'xbgw7g293v7o',
+            'guardrailVersion': 'DRAFT',
+            'trace': 'enabled',
+        }
     )
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+        "The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, serving as the center of French government, culture, and commerce. It's known for its historical and cultural landmarks such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and many charming neighborhoods like Montmartre."
     )
 
 
@@ -345,6 +790,59 @@ async def test_bedrock_model_other_parameters(allow_model_requests: None, bedroc
         bedrock_request_metadata={'test': 'test'},
         bedrock_additional_model_response_fields_paths=['test'],
     )
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=model_settings)
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot(
+        'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, known for its significant cultural, political, and economic influence both within the country and globally. It is famous for landmarks such as the Eiffel Tower, the Louvre Museum, and the Notre-Dame Cathedral, among many other historical and architectural treasures.'
+    )
+
+
+async def test_bedrock_unified_service_tier(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = ModelSettings(service_tier='priority')
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['serviceTier'] == {'type': 'priority'}
+
+
+async def test_bedrock_unified_service_tier_auto_omits(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+):
+    """Top-level `service_tier='auto'` is omitted from the Bedrock request so the server default applies."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = ModelSettings(service_tier='auto')
+    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert 'serviceTier' not in kwargs
+
+
+async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(bedrock_service_tier={'type': 'flex'})
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
@@ -354,7 +852,7 @@ async def test_bedrock_model_other_parameters(allow_model_requests: None, bedroc
 
 async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'top_p': 0.5})
+    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'top_p': 0.5})
 
     @agent.tool_plain
     async def get_capital(country: str) -> str:
@@ -404,19 +902,32 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' in Paris.</')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='thinking')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='>\n')),
+            PartEndEvent(
+                index=0,
+                part=TextPart(
+                    content='<thinking> To find the temperature of the capital of France, I need to first determine the capital of France and then get the current temperature in that city. The capital of France is Paris. I will use the "get_temperature" tool to find the current temperature in Paris.</thinking>\n'
+                ),
+                next_part_kind='tool-call',
+            ),
             PartStartEvent(
-                index=1, part=ToolCallPart(tool_name='get_temperature', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA')
+                index=1,
+                part=ToolCallPart(tool_name='get_temperature', tool_call_id=IsStr()),
+                previous_part_kind='text',
             ),
             PartDeltaEvent(
                 index=1,
-                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA'),
+                delta=ToolCallPartDelta(args_delta='{"city":"Paris"}', tool_call_id=IsStr()),
+            ),
+            PartEndEvent(
+                index=1,
+                part=ToolCallPart(tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id=IsStr()),
             ),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_temperature',
                     content='30°C',
-                    tool_call_id='tooluse_lAG_zP8QRHmSYOwZzzaCqA',
+                    tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                 )
             ),
@@ -426,6 +937,9 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital of France,')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is 30°C')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=0, part=TextPart(content='The current temperature in Paris, the capital of France, is 30°C.')
+            ),
         ]
     )
 
@@ -435,7 +949,7 @@ async def test_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, bedrock_provider: BedrockProvider
 ):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['What fruit is in the image?', image_content])
     assert result.output == snapshot(
@@ -448,7 +962,7 @@ async def test_video_as_binary_content_input(
     allow_model_requests: None, video_content: BinaryContent, bedrock_provider: BedrockProvider
 ):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot(
@@ -457,9 +971,11 @@ async def test_video_as_binary_content_input(
 
 
 @pytest.mark.vcr()
-async def test_image_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_image_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(
         [
@@ -473,9 +989,11 @@ async def test_image_url_input(allow_model_requests: None, bedrock_provider: Bed
 
 
 @pytest.mark.vcr()
-async def test_video_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_video_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     result = await agent.run(
         [
@@ -489,9 +1007,11 @@ async def test_video_url_input(allow_model_requests: None, bedrock_provider: Bed
 
 
 @pytest.mark.vcr()
-async def test_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_document_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
@@ -502,29 +1022,156 @@ async def test_document_url_input(allow_model_requests: None, bedrock_provider: 
 
 
 @pytest.mark.vcr()
-async def test_text_document_url_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+async def test_text_document_url_input(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, disable_ssrf_protection_for_vcr: None
+):
     m = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     text_document_url = DocumentUrl(url='https://example-files.online-convert.com/document/txt/example.txt')
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
-    assert result.output == snapshot("""\
+    assert result.output == snapshot(
+        """\
 Based on the text in the <document_content> tag, the main content of this document appears to be:
 
 An example text describing the use of "John Doe" as a placeholder name in legal cases, hospitals, and other contexts where a party's real identity is unknown or needs to be withheld. It provides background on how "John Doe" and "Jane Doe" are commonly used in the United States and Canada for this purpose, in contrast to other English speaking countries that use names like "Joe Bloggs". The text gives examples of using John/Jane Doe for legal cases, unidentified corpses, and as generic names on forms. It also mentions how "Baby Doe" and "Precious Doe" are used for unidentified children.\
-""")
+"""
+    )
+
+
+async def test_s3_image_url_input(bedrock_provider: BedrockProvider):
+    """Test that s3:// image URLs are passed directly to Bedrock API without downloading."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    image_url = ImageUrl(url='s3://my-bucket/images/test-image.jpg', media_type='image/jpeg')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', image_url])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'jpeg',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/images/test-image.jpg'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_s3_video_url_input(bedrock_provider: BedrockProvider):
+    """Test that s3:// video URLs are passed directly to Bedrock API."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    video_url = VideoUrl(url='s3://my-bucket/videos/test-video.mp4', media_type='video/mp4')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Describe this video', video_url])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Describe this video'},
+                    {
+                        'video': {
+                            'format': 'mp4',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/videos/test-video.mp4'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_s3_document_url_input(bedrock_provider: BedrockProvider):
+    """Test that s3:// document URLs are passed directly to Bedrock API."""
+    model = BedrockConverseModel('anthropic.claude-v2', provider=bedrock_provider)
+    document_url = DocumentUrl(url='s3://my-bucket/documents/test-doc.pdf', media_type='application/pdf')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is the main content on this document?', document_url])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is the main content on this document?'},
+                    {
+                        'document': {
+                            'format': 'pdf',
+                            'name': 'Document 1',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/documents/test-doc.pdf'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_s3_url_with_bucket_owner(bedrock_provider: BedrockProvider):
+    """Test that s3:// URLs with bucketOwner parameter are parsed correctly."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    image_url = ImageUrl(url='s3://my-bucket/images/test-image.jpg?bucketOwner=123456789012', media_type='image/jpeg')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', image_url])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'jpeg',
+                            'source': {
+                                's3Location': {
+                                    'uri': 's3://my-bucket/images/test-image.jpg',
+                                    'bucketOwner': '123456789012',
+                                }
+                            },
+                        }
+                    },
+                ],
+            }
+        ]
+    )
 
 
 @pytest.mark.vcr()
 async def test_text_as_binary_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
     m = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    agent = Agent(m, instructions='You are a helpful chatbot.')
 
     text_content = BinaryContent(data=b'This is a test document.', media_type='text/plain')
 
     result = await agent.run(['What is the main content on this document?', text_content])
-    assert result.output == snapshot("""\
+    assert result.output == snapshot(
+        """\
 The document you're referring to appears to be a test document, which means its primary purpose is likely to serve as an example or a placeholder rather than containing substantive content. Test documents are commonly used for various purposes such as:
 
 1. **Software Testing**: To verify that a system can correctly handle, display, or process documents.
@@ -533,7 +1180,33 @@ The document you're referring to appears to be a test document, which means its 
 4. **Placeholders**: To fill space in a system or application where real content will eventually be placed.
 
 Since this is a test document, it probably doesn't contain any meaningful or specific information beyond what is necessary to serve its testing purpose. If you have specific questions about the format, structure, or any particular element within the document, feel free to ask!\
-""")
+"""
+    )
+
+
+async def test_map_user_prompt_with_text_content_input(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    m = await model._map_user_prompt(  # pyright: ignore[reportPrivateUsage]
+        part=UserPromptPart(
+            content=[
+                'What is the main content on this document?',
+                TextContent(content='This is a test document.', metadata={'format': 'plain_text'}),
+            ]
+        ),
+        document_count=count(1),
+        supports_prompt_caching=False,
+    )
+    assert m == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is the main content on this document?'},
+                    {'text': 'This is a test document.'},
+                ],
+            }
+        ]
+    )
 
 
 @pytest.mark.vcr()
@@ -550,7 +1223,10 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
                 instructions='You are a helpful assistant.',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -562,6 +1238,11 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -587,9 +1268,14 @@ async def test_bedrock_multiple_documents_in_history(
     result = await agent.run(
         'What is in the documents?',
         message_history=[
-            ModelRequest(parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])]),
+            ModelRequest(
+                parts=[UserPromptPart(content=['Here is a PDF document: ', document_content])], timestamp=IsDatetime()
+            ),
             ModelResponse(parts=[TextPart(content='foo bar')]),
-            ModelRequest(parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])]),
+            ModelRequest(
+                parts=[UserPromptPart(content=['Here is another PDF document: ', document_content])],
+                timestamp=IsDatetime(),
+            ),
             ModelResponse(parts=[TextPart(content='foo bar 2')]),
         ],
     )
@@ -599,65 +1285,1056 @@ async def test_bedrock_multiple_documents_in_history(
     )
 
 
-async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    deepseek_model = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
-    agent = Agent(deepseek_model)
+async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
+    agent = Agent(m)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
-                usage=RequestUsage(input_tokens=12, output_tokens=882),
+                usage=RequestUsage(input_tokens=12, output_tokens=693),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
 
-    anthropic_model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
-        model=anthropic_model,
-        model_settings=BedrockModelSettings(
-            bedrock_additional_model_requests_fields={
-                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
-            }
-        ),
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[IsInstance(TextPart), IsInstance(ThinkingPart)],
-                usage=RequestUsage(input_tokens=12, output_tokens=882),
-                model_name='us.deepseek.r1-v1:0',
-                timestamp=IsDatetime(),
-                provider_name='bedrock',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
                         timestamp=IsDatetime(),
                     )
-                ]
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
+                usage=RequestUsage(input_tokens=33, output_tokens=907),
+                model_name='us.deepseek.r1-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        signature='ErcBCkgIAhABGAIiQMuiyDObz/Z/ryneAVaQDk4iH6JqSNKJmJTwpQ1RqPz07UFTEffhkJW76u0WVKZaYykZAHmZl/IbQOPDLGU0nhQSDDuHLg82YIApYmWyfhoMe8vxT1/WGTJwyCeOIjC5OfF0+c6JOAvXvv9ElFXHo3yS3am1V0KpTiFj4YCy/bqfxv1wFGBw0KOMsTgq7ugqHeuOpzNM91a/RgtYHUdrcAKm9iCRu24jIOCjr5+h',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=42, output_tokens=313),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='bedrock',
                     ),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=636, output_tokens=690),
+                usage=RequestUsage(input_tokens=334, output_tokens=432),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic_legacy(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Multi-turn thinking on pre-4.6 Claude via the unified `thinking` setting.
+
+    Sibling to `test_bedrock_model_thinking_part_anthropic_adaptive`. Proves the
+    legacy `{'type': 'enabled', 'budget_tokens': N}` translation path works
+    end-to-end on a non-adaptive model (Sonnet 4.5) when the user passes the
+    unified `thinking=True` setting (rather than the manual
+    `bedrock_additional_model_requests_fields` workaround the existing
+    `test_bedrock_model_thinking_part_anthropic` covers).
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking=True),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='This is a straightforward question about crossing the street safely. I should provide practical safety advice for pedestrians.',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here's how to cross the street safely:
+
+## Basic Steps
+
+1. **Find a safe crossing spot**
+   - Use crosswalks, intersections, or pedestrian signals when available
+   - Avoid crossing between parked cars or on curves where drivers can't see you
+
+2. **Stop at the curb/edge**
+   - Don't step into the street yet
+
+3. **Look left, right, then left again**
+   - Keep looking while you cross
+
+4. **Listen for traffic**
+   - Remove headphones or turn down volume
+   - Listen for engines, horns, or warning sounds
+
+5. **Make eye contact with drivers**
+   - Ensure they see you before crossing
+
+6. **Wait for a safe gap in traffic**
+   - If there's a signal, wait for the "walk" signal
+   - Don't assume cars will stop
+
+7. **Walk, don't run**
+   - Stay alert and keep watching for cars
+   - Be visible--wear bright colors at night
+
+## Extra Tips
+- Put your phone away while crossing
+- Watch for turning vehicles
+- Be extra careful in bad weather or low light
+- Teach children to hold an adult's hand
+
+Is there a specific crossing situation you're dealing with?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=43, output_tokens=306),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking for an analogy between crossing a street and crossing a river. This is an interesting question that asks me to think about the parallel challenges and solutions. Let me think about the key elements:
+
+Crossing a street:
+- Find safe crossing spots (crosswalks, intersections)
+- Look for hazards (traffic)
+- Use infrastructure when available
+- Timing and safety assessment
+- Stay alert during crossing
+
+Crossing a river:
+- Find safe crossing points (bridges, fords, ferries)
+- Look for hazards (current, depth, obstacles)
+- Use infrastructure when available
+- Assess conditions and safety
+- Stay alert during crossing
+
+This is a nice analogy! I should provide helpful, practical information about river crossing.\
+""",
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Great analogy! Here's how the principles translate:
+
+## Find Safe Crossing Points
+
+**Like using crosswalks:**
+- **Bridges** - the "crosswalk" of rivers (safest option)
+- **Ferries or boats** - the "pedestrian signal" \n\
+- **Fords** - shallow areas (like a quiet intersection)
+- **Stepping stones** - natural crossing infrastructure
+
+## Assess Before Crossing
+
+**Like looking for traffic:**
+- Check water **depth** and **current speed**
+- Look for hazards: debris, slippery rocks, drop-offs
+- Consider **weather** - recent rain means faster current
+- Scout up and downstream for easier spots
+
+## Cross Safely
+
+**Like walking alertly:**
+- Use a **walking stick** for balance (test depth)
+- Cross at an **angle downstream** - don't fight the current
+- **Unbuckle backpack straps** - so you can ditch weight if needed
+- **Never cross alone** if it's risky
+- Turn sideways to reduce resistance in strong current
+
+## Know When NOT to Cross
+
+**Like waiting for traffic to clear:**
+- Water above your knees = dangerous current
+- Fast-moving or murky water
+- Cold water (hypothermia risk)
+- If unsure, find another way
+
+**The key similarity**: Use infrastructure when available, assess the hazards, and don't take unnecessary risks!
+
+What kind of river crossing did you have in mind?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=341, output_tokens=501),
+                model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic_adaptive(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Multi-turn thinking on Sonnet 4.6 via the unified `thinking` setting.
+
+    Reproduces the regression from https://github.com/pydantic/pydantic-ai/issues/5304:
+    pre-fix the legacy `{'type': 'enabled', 'budget_tokens': N}` shape silently disabled
+    thinking on turn 2. With adaptive support wired in, both turns must emit a
+    `ThinkingPart`.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-6',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking=True),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking a simple, practical question about how to cross the street safely.',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here are the basic steps for safely crossing the street:
+
+1. **Find a safe place to cross**
+   - Use a crosswalk or intersection when possible
+   - Avoid crossing between parked cars or on curves
+
+2. **Stop at the curb or edge**
+   - Don't stand in the road while waiting
+
+3. **Look both ways**
+   - Look left, then right, then left again
+   - In some countries, the order may differ based on traffic direction
+
+4. **Wait for a safe gap in traffic**
+   - At a traffic light, wait for the walk signal (green light or "WALK" sign)
+   - Make sure cars have actually stopped before stepping out
+
+5. **Make eye contact with drivers** (when possible)
+   - Ensure they see you before crossing
+
+6. **Walk, don't run**
+   - Walk briskly and directly across
+   - Keep watching for traffic as you cross
+
+7. **Stay alert**
+   - Avoid looking at your phone while crossing
+   - Watch for turning vehicles, cyclists, and other hazards
+
+**Additional tips:**
+- Be extra cautious at night or in bad weather
+- Make yourself visible (wear bright clothing if possible)
+- Never assume a driver sees you
+
+Would you like more specific advice for a particular situation?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=14, output_tokens=322),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking me to analogously apply the principles of crossing a street to crossing a river. This is a fun and interesting question. Let me think about how the steps for crossing a street map to crossing a river.
+
+Let me map the concepts:
+- Finding a safe place to cross → finding a safe crossing point (shallow ford, bridge, etc.)
+- Looking both ways → assessing the river conditions (current, depth, width)
+- Waiting for a safe gap → waiting for safe conditions (water level, weather)
+- Making eye contact with drivers → being aware of hazards
+- Walking, not running → moving carefully and steadily
+- Staying alert → watching for hazards like slippery rocks, currents, etc.
+
+
+- Now I'm considering how these principles apply differently depending on the crossing method--whether I'm using a bridge, wading through a ford, taking a boat, or swimming across.\
+""",
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Great analogy! Here's how crossing a street maps to crossing a river:
+
+## 1. Find a Safe Place to Cross
+- Look for a **bridge** (like using a crosswalk)
+- Or find a **shallow ford** -- avoid deep, wide, or fast-moving sections
+- Avoid crossing near rapids, waterfalls, or steep banks
+
+## 2. Stop and Assess Before Entering
+- Check the **water depth and width**
+- Look for **hazards** (rocks, debris, strong current)
+- Check **upstream and downstream** (like looking left and right)
+
+## 3. Wait for Safe Conditions
+- Like waiting for a walk signal, wait if water levels are **high or rising**
+- Avoid crossing after heavy rain or during flooding
+
+## 4. "Make Eye Contact" -- Know Your Hazards
+- Identify slippery rocks, hidden drop-offs, and current strength
+
+## 5. Cross Carefully and Directly
+- Use a **walking stick** for stability (like walking briskly and steadily)
+- Face slightly **upstream**
+- Unbuckle your pack (if carrying one) for safety
+
+## 6. Stay Alert Throughout
+- Keep watching conditions as you cross
+- Don't look at your phone 😄
+
+## Bonus Options (like different types of crosswalks):
+- **Bridge** = safest
+- **Stepping stones** = moderate
+- **Wading/fording** = requires more caution
+- **Swimming** = last resort
+
+Would you like detail on any specific method?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=358, output_tokens=574),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Sonnet 4.6 with `thinking='high'` — verifies output_config.effort lands on the wire.
+
+    Sibling to `test_bedrock_model_thinking_part_anthropic_adaptive` (which covers bare
+    `thinking=True` and omits effort). Per AWS docs, `effort` must live in the sibling
+    `output_config` field inside `additionalModelRequestFields`, not inside `thinking`.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-6',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking='high'),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user is asking a simple, everyday question about how to cross the street safely.',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here are the basic steps for safely crossing the street:
+
+1. **Find a safe place to cross**, such as:
+   - A marked crosswalk
+   - An intersection with traffic signals
+   - A pedestrian crossing
+
+2. **Stop at the curb** before stepping into the street
+
+3. **Look both ways:**
+   - Look left
+   - Look right
+   - Look left again
+
+4. **Wait for traffic to clear** or for the walk signal if at a traffic light
+
+5. **Make eye contact** with any drivers to be sure they see you
+
+6. **Walk, don't run** across the street
+
+7. **Stay alert** - avoid looking at your phone while crossing
+
+8. **Cross in a straight line** and keep watching for traffic as you go
+
+**Additional tips:**
+- Use crosswalks and signals whenever possible
+- Be extra cautious at night or in bad weather
+- Watch for turning vehicles, even when you have the right of way
+- Be aware of cyclists as well as cars
+
+Would you like more detail on any specific situation, like crossing with children or crossing without a crosswalk?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=14, output_tokens=280),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+The user is asking how to cross a river, using the analogy of crossing the street. They want me to apply similar principles/steps but adapted for crossing a river. Let me think about this carefully.
+
+Crossing a street involves:
+1. Finding a safe place to cross
+2. Stopping and assessing
+3. Looking both ways for hazards
+4. Waiting for the right moment
+5. Moving carefully and alertly
+6. Staying aware throughout
+
+Analogously, crossing a river would involve similar principles but adapted for the river context:
+
+1. Find a safe place to cross (shallow ford, bridge, stepping stones, etc.)
+2. Assess the conditions before entering
+
+
+3. Check upstream and downstream for potential dangers like debris or strong currents
+4. Wait for optimal conditions if the water is too turbulent
+5. Move across deliberately and with full attention
+6. Maintain awareness of changing water conditions the entire time\
+""",
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(
+                        content="""\
+Here's how to cross a river, using the same principles as crossing a street:
+
+## 1. Find a Safe Place to Cross
+- Look for a **bridge** (like using a crosswalk)
+- Find a **shallow ford** where the water is calm and slow
+- Look for **stepping stones**
+- Avoid deep, fast-moving, or narrow sections
+
+## 2. Stop and Assess Before Entering
+- Check the **water depth and speed** (like checking for traffic)
+- Look **upstream and downstream** for hazards (like looking left and right)
+- Watch for debris, rocks, or sudden drop-offs
+
+## 3. Wait for Safe Conditions
+- Avoid crossing during **floods or heavy rain**
+- Let fast currents settle, similar to waiting for traffic to clear
+
+## 4. Cross Carefully
+- **Unbuckle your pack** if carrying one, in case you fall
+- Use a **walking stick** for stability
+- Face **upstream** as you cross
+- Move **slowly and deliberately** (don't run)
+- Cross at an **angle** with the current rather than straight across
+
+## 5. Stay Alert Throughout
+- Keep watching for changing conditions
+- Don't look at distractions
+- Have an **exit plan** if you lose footing
+
+## Key Analogy Points:
+| Street | River |
+|--------|-------|
+| Crosswalk | Bridge/ford |
+| Traffic | Current/debris |
+| Walk signal | Calm water conditions |
+| Looking both ways | Checking upstream/downstream |
+
+Would you like more detail on any specific crossing method?\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=316, output_tokens=573),
+                model_name='us.anthropic.claude-sonnet-4-6',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
+    agent = Agent(m)
+
+    result = await agent.run(
+        'ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=92, output_tokens=176),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'What was that?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What was that?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=182, output_tokens=258),
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_redacted_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
+    agent = Agent(m)
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=92, output_tokens=253),
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature=IsStr(),
+                    provider_name='bedrock',
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature='EtkECkgIBxABGAIqQJTfqS/PYuAFZeOls6R8uGN014YNT7YDIFuhNyywoX1Cjf9oIYThX1ucUFJ1cfckdN55jozmXi1PEgMfufPmD44SDHBw8Yp6gJ8Ys/Gt3BoMYdLaNUOqr7k/MAeYIjBhPIc9z85HrJAbeS8Hz/69R+vKHpRanI0n/B69dnv2nebRe7LKZgHs2AlVPEtNyyoqvgP463qJ7/KvDrAPSnhHQqZ8TH8JBC4eYb4Qow5eX7dI3UXY/DrQ2IOWLADJqshcXBg7zbN78H4l6fTP97Ztzz0qw4fadTzTb36dRR7p8rs2zA/pHWhK+75xvUGh8IdLPvMikKccHssHKdceru4JLG1cMVtq1Ci7ZPAbHRU8/XsjFtLWPHeYLfKGJN33C1MpWX5nQU2BjYICs5Hn+8Z9Smxhp06rZXTjZARiExrd1dgLn5/5PbEzMLJv/Q3c6XJH7kx7iUO4NAonTT1Q3WY1cGa38UNGYuTUae3CNFEZWjS21tWRmjX4t5w8L0BtQ5DSaW/ZzGf0yzUKUaS/fkVjr2xztQBvysFFbb7UrX+/lNw26CHXKUIXFcZzV9l0HrA6z3oQrqSpnwem/pt/Cxdh5YQlXq6DSdzstqwJA53n9Hj3osjT/viH4Y6N5dWLLBTQBvhUEy24FhlytD3scYrvAqCdxW9aDSW+e+Foj5vsjVA9VFrXqZeNSO77Qp5dLw5XcA8CH6YFTE6EWeFTki5vfTfSIw+m4inZGVzIRi8Qk90IzW2EnrxGtx3wsEn5XImQr1vg1Npq2jN6uiOPOp8nsBgB',
+                    provider_name='bedrock',
+                ),
+                next_part_kind='thinking',
+            ),
+            PartStartEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature='EqADCkgIBxABGAIqQB3h5GyHJD4hocRchUq2I40ChRLdpxjVl0xZkyVZrrk6JIJWeInuRQfJG5nJymmQBjH9VDeV53H/D3W9xjIJvPUSDLv7jRCF9b6Tx1Z5EBoMSv3CBw4zUjjSDaqlIjDBpH7V3YQB5twUmulAycDyZRvP3loupy6o2eqrfKAZZjq3rwkApWD9qOqJD3OEfd4qhQJZfOcHs9bt5zCqzYjoaIkxE3raXnhUHOlwq1Jq60bTQt2SQiHqoZTEht/DeDEEgpFy9Z32Zz3/Az0ORgTi3QE56K15OXo6GWMPYq/CTJ/xzPXfH0/yoQ4EP103VfVqvymEpXUru6RQGkou41LKRI92fRsqCK+jPOpxeED4kz7CFhQYMHttk7cOAF85SE3nCcpliARrLDvsApjgMFAYnineZQMLwawmnIm6EB61C20dB1Ft7vLG1TS6fn27EB8JZjr/jeC8O4ZysKv5iUxpMlDZib8jFszfzxCXdFX7NVKO9+dH8cW3RsJ80kzBp6xyoQhXSFx72jFllwDy8e+QlI3OIhweJ8IYAQ==',
+                    provider_name='bedrock',
+                ),
+                previous_part_kind='thinking',
+            ),
+            PartEndEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature='EqADCkgIBxABGAIqQB3h5GyHJD4hocRchUq2I40ChRLdpxjVl0xZkyVZrrk6JIJWeInuRQfJG5nJymmQBjH9VDeV53H/D3W9xjIJvPUSDLv7jRCF9b6Tx1Z5EBoMSv3CBw4zUjjSDaqlIjDBpH7V3YQB5twUmulAycDyZRvP3loupy6o2eqrfKAZZjq3rwkApWD9qOqJD3OEfd4qhQJZfOcHs9bt5zCqzYjoaIkxE3raXnhUHOlwq1Jq60bTQt2SQiHqoZTEht/DeDEEgpFy9Z32Zz3/Az0ORgTi3QE56K15OXo6GWMPYq/CTJ/xzPXfH0/yoQ4EP103VfVqvymEpXUru6RQGkou41LKRI92fRsqCK+jPOpxeED4kz7CFhQYMHttk7cOAF85SE3nCcpliARrLDvsApjgMFAYnineZQMLwawmnIm6EB61C20dB1Ft7vLG1TS6fn27EB8JZjr/jeC8O4ZysKv5iUxpMlDZib8jFszfzxCXdFX7NVKO9+dH8cW3RsJ80kzBp6xyoQhXSFx72jFllwDy8e+QlI3OIhweJ8IYAQ==',
+                    provider_name='bedrock',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(
+                index=2,
+                part=TextPart(content="I notice you've sent what appears to be some"),
+                previous_part_kind='thinking',
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' kind of command or trigger string, but I don')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta="'t respond to special codes or")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=" triggers. That string doesn't have")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' any special meaning to me.')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+If you have a question you\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=2, delta=TextPartDelta(content_delta="'d like to discuss or need assistance with something")
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=", I'd be happy to help in")),
+            PartDeltaEvent(
+                index=2, delta=TextPartDelta(content_delta=' a straightforward conversation. What would you like to')
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' talk about today?')),
+            PartEndEvent(
+                index=2,
+                part=TextPart(
+                    content="""\
+I notice you've sent what appears to be some kind of command or trigger string, but I don't respond to special codes or triggers. That string doesn't have any special meaning to me.
+
+If you have a question you'd like to discuss or need assistance with something, I'd be happy to help in a straightforward conversation. What would you like to talk about today?\
+"""
+                ),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_from_other_model(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, openai_api_key: str
+):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-5', provider=provider)
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(m, instructions='You are a helpful assistant.', model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                instructions='You are a helpful assistant.',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c200091ccc8191b38e07ea231e862d0003919771fccd27',
+                        provider_name='openai',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=23, output_tokens=2030, details={'reasoning_tokens': 1728}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={
+                    'finish_reason': 'completed',
+                    'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=timezone.utc),
+                },
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=BedrockConverseModel(
+            'us.anthropic.claude-sonnet-4-20250514-v1:0',
+            provider=bedrock_provider,
+            settings=BedrockModelSettings(
+                bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+            ),
+        ),
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='You are a helpful assistant.',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=1241, output_tokens=495),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -679,11 +2356,120 @@ async def test_bedrock_anthropic_tool_with_thinking(allow_model_requests: None, 
         return 'Mexico'
 
     result = await agent.run('What is the largest city in the user country?')
-    assert result.output == snapshot("""\
+    assert result.output == snapshot(
+        """\
 Based on your location in Mexico, the largest city is Mexico City (Ciudad de México). It's not only the capital but also the most populous city in Mexico with a metropolitan area population of over 21 million people, making it one of the largest urban agglomerations in the world.
 
 Mexico City is an important cultural, financial, and political center for the country and has a rich history dating back to the Aztec empire when it was known as Tenochtitlán.\
-""")
+"""
+    )
+
+
+@pytest.mark.parametrize(
+    'thinking_field',
+    [
+        pytest.param({'type': 'enabled', 'budget_tokens': 1024}, id='enabled'),
+        pytest.param({'type': 'adaptive'}, id='adaptive'),
+    ],
+)
+async def test_bedrock_output_tool_with_thinking_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, thinking_field: dict[str, Any]
+):
+    """Bedrock does not support output tools (tool_choice=required) with thinking enabled.
+
+    Uses the legacy `bedrock_additional_model_requests_fields` form. See
+    `test_bedrock_output_tool_with_unified_thinking_raises` for the unified `thinking` field.
+    Fixes https://github.com/pydantic/pydantic-ai/issues/3092 (`enabled`) and
+    https://github.com/pydantic/pydantic-ai/issues/5650 (`adaptive`).
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(bedrock_additional_model_requests_fields={'thinking': thinking_field}),
+    )
+
+    agent = Agent(m, output_type=ToolOutput(int))
+
+    with pytest.raises(
+        UserError,
+        match='Bedrock does not support thinking and output tools at the same time',
+    ):
+        await agent.run('What is 3 + 3?')
+
+
+async def test_bedrock_output_tool_with_unified_thinking_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Sibling of `test_bedrock_output_tool_with_thinking_raises` for the unified `thinking` field.
+
+    `Model.prepare_request` strips unified `thinking` into `ModelRequestParameters.thinking`, so
+    `_is_thinking_enabled` must inspect both pre-strip (settings) and post-strip (params) state to
+    catch the conflict regardless of which form the user picked.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(thinking=True),
+    )
+
+    agent = Agent(m, output_type=ToolOutput(int))
+
+    with pytest.raises(
+        UserError,
+        match='Bedrock does not support thinking and output tools at the same time',
+    ):
+        await agent.run('What is 3 + 3?')
+
+
+async def test_bedrock_tool_choice_required_with_thinking(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Agent.run() blocks tool_choice='required' since it prevents final response.
+
+    When explicitly setting tool_choice='required', agent.run() raises UserError
+    before it reaches Bedrock's thinking mode validation.
+    """
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+            tool_choice='required',
+        ),
+    )
+
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'Weather in {city}: sunny'  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match='prevents the agent from producing a final response',
+    ):
+        await agent.run('What is the weather in Paris?')
+
+
+async def test_bedrock_unified_thinking_with_tool_forcing_raises(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Unified `thinking=True` (not the legacy `bedrock_additional_model_requests_fields` form) must
+    still trigger Bedrock's `tool_choice` + thinking incompatibility guard.
+
+    Goes via `model.request` so the agent baseline validator is bypassed and `_support_tool_forcing`
+    is the only thing that can catch the conflict. Before the A3 fix this silently passed because
+    `_is_thinking_enabled` only inspected the legacy field, but `Model.prepare_request` strips unified
+    `thinking` from `model_settings` into `model_request_parameters.thinking` before this check runs.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
+    mrp = ModelRequestParameters(function_tools=[tool_def], allow_text_output=True)
+
+    settings: BedrockModelSettings = {'thinking': True, 'tool_choice': 'required'}
+
+    with pytest.raises(UserError, match='Bedrock does not support forcing specific tools with thinking mode'):
+        await model.request([ModelRequest.user_text_prompt('hi')], settings, mrp)
 
 
 async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):
@@ -691,24 +2477,25 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
     Test that consecutive ToolReturnPart objects are grouped into a single user message for Bedrock.
     """
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    now = datetime.datetime.now()
+    now = datetime.now()
     # Create a ModelRequest with 3 consecutive ToolReturnParts
     req = [
-        ModelRequest(parts=[UserPromptPart(content=['Hello'])]),
+        ModelRequest(parts=[UserPromptPart(content=['Hello'])], timestamp=IsDatetime()),
         ModelResponse(parts=[TextPart(content='Hi')]),
-        ModelRequest(parts=[UserPromptPart(content=['How are you?'])]),
+        ModelRequest(parts=[UserPromptPart(content=['How are you?'])], timestamp=IsDatetime()),
         ModelResponse(parts=[TextPart(content='Cloudy')]),
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='tool1', content='result1', tool_call_id='id1', timestamp=now),
                 ToolReturnPart(tool_name='tool2', content='result2', tool_call_id='id2', timestamp=now),
                 ToolReturnPart(tool_name='tool3', content='result3', tool_call_id='id3', timestamp=now),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
     ]
 
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -729,11 +2516,19 @@ async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: Bed
 
 
 async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
     agent = Agent(m)
 
     event_parts: list[Any] = []
-    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+    async with agent.iter(user_prompt='Hello') as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
@@ -742,708 +2537,91 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='Okay')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', so')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user is')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' asking how to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cross the street')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Let me')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' think')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' about how')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to approach')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' this. First')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', I need')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to make sure')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I cover')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' all the basic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' steps,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' but also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' consider different')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' scenarios. Maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' start with the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' obvious:')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' finding')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a cross')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='walk.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' But wait,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' not all')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' streets')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' have cross')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='walks,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' especially in less')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' urban areas.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' So I should')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' mention looking')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a crosswalk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' pedestrian crossing')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signals')),
-            PartDeltaEvent(
+            PartStartEvent(index=0, part=ThinkingPart(content='The')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user has')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' greeted me with')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a simple "Hello".')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I should respond in')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a friendly and wel')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='coming manner.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' This is a')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' straightforward greeting')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" so I'll respond warm")),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ly and ask')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' how I can help')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' them today.')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='bedrock')),
+            PartEndEvent(
                 index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- first.
-
-"""
+                part=ThinkingPart(
+                    content='The user has greeted me with a simple "Hello". I should respond in a friendly and welcoming manner. This is a straightforward greeting, so I\'ll respond warmly and ask how I can help them today.',
+                    signature='Eu0CCkgIBxABGAIqQJDccbDQkr81n7QjZ0Fi43umSvw0YvnGkMPEpaGAa2btYHyWw06KhwckvsnKzpKcxiRJT35meoG4/pdrTUiy2UISDPDaEWfOl3+HlRVsCxoMzfiqBp252RMvpmEyIjCbQ97Ac9Epkr5mgxeu1vGtJg+fDWIg0UnpMM8NYknhhvJmsXpYrfquwGL1ZnlBslUq0gHtbAAPwlWPmiQXU7gDQCDW9IdMVyw42b4f5MrAlpWkPWOJc9H+yYv0TpP/jY72SD1opqwkWnBgkzbi7A2jPmEFzIMQSO1KDXha5ADqQ3cLYMmVdNTSH9wlM7G7/JJ2/cqowqkwD6/q1AnYzcPte9iC67fY1LYN0NMCOSABFojP1rmkv9YBEulx5Y6eQpeVXBQiIqcGoCmWSumpGBskS1KxGerUmzUB0JmJnTENv4x3fSGSUSEPqMiz6Ebao8sVkb1wCWuZEXWJGtiQLMIm1o471iEYAQ==',
+                    provider_name='bedrock',
                 ),
+                next_part_kind='text',
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Then, check')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for traffic lights')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. If')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" there's")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a traffic light')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', wait')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' walk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signal. But')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' sometimes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' people might not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' know what')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the symbols')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' mean. Maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' explain the "')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='walk"')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and "don')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='\'t walk"')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signals. Also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' some places')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', there')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' are count')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='down tim')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ers which')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' can help.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' But what')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" if there's")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' no traffic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' light?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Then they should')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' look both ways')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for cars.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' But how')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' many')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' times?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Usually')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' left')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-right')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='-left,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' but maybe clarify')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- that.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Wait, but')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' some countries,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' traffic comes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' from the opposite')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' direction')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Like')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the UK,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cars')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' drive on the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' left. So')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' maybe add')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a note')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' about being')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' aware of the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' local traffic direction')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', distractions')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' like')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' using a')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' phone while crossing')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Em')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='phasize the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' importance of staying')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' focused')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' being')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- distracted.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='What')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' about children')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' people')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' with disabilities?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Maybe mention using')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' pedestrian')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' bridges')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or tunnels')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if available.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Also, making')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' eye contact with')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' drivers to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ensure they see')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' you. But')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' all drivers')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' might make')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' eye contact,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' so maybe that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s not")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' always')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- reliable.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Oh')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' jaywalk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ing. Should')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I mention that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" it's illegal")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in some places')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and safer')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to use')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' crosswalks?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Yes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s important for")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' legal')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' safety reasons.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Also, even')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if the walk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signal is on')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', check')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for turning')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' vehicles')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that might not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' stop')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. B')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='icycles and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' motorcycles')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' can be')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' quieter')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' harder to hear')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', so remind')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' listen')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' as')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' well as look')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-.
-
-Wait\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', what about')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' at night')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='? W')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='earing reflective clothing')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or carrying')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a light to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' be more')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' visible. That')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s a good")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' point. Also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in groups')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if possible,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' as more')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' people are more')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' visible.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' But during')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' COVID')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' social distancing affects')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that? Not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' sure if that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s still")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' concern,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' but maybe skip')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' part unless necessary')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-.
-
-Let\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me outline')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the steps:')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 1.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Find a safe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' point. ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='2. Observe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' traffic signals.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 3.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Look both ways')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. ')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='4. Make')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' sure')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' it')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s safe.")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 5.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Stay visible')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. 6')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Walk')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' straight')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' across.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' 7')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Stay')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' alert. Maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' add tips')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' different situations')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' like un')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='marked')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' crossings, intersections')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' signals')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-, etc.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Also')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', include safety')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' tips like avoiding')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' distractions,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' watching')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' for turning')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' vehicles, and')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' being cautious')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' at night.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Maybe mention pedestrian')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' rights')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' but')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' also the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' need')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to be')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cautious regardless')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Should')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I mention')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' using')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' pedestrian')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' bridges')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' or under')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='passes as')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' alternatives?')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Yes, that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta="'s a good")),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- idea.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Wait, but')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' in some countries')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', even')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if you')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' have the right')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' of way,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' drivers might not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' stop.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" So it's")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' better to always')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' ensure')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' vehicle')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is stopping before')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' crossing. Maybe')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' emphasize')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that even')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' if you')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' have the signal')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', check')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' cars are stopping')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
-.
-
-Also\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', the importance')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' of not')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' assuming')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' that drivers can')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' see you.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Sometimes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' drivers')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' are')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' distracted too')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. So')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' being')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' proactive in')),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    content_delta="""\
- ensuring safety.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Let')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' me check if')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I missed')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' anything.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Maybe the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' basic')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' steps are')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' covered')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', but adding')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' extra tips makes')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' it comprehensive')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Okay')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', I think')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=" that's a")),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' solid structure')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Now,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' present it in')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' a clear,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' step-by-step')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' manner with')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' some')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' bullet')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' points or')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' numbered')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' list')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Make sure the')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' language is simple')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' and easy to')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' understand,')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' avoiding jargon.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' Al')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='right, time')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to put it')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' all together.\n')),
-            PartStartEvent(
-                index=1,
-                part=TextPart(
-                    content="""\
-
-
-"""
-                ),
-            ),
+            PartStartEvent(index=1, part=TextPart(content='Hello! It'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Crossing the')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street safely involves')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' careful')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' observation')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and awareness.')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=" Here's")),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' a step')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-by-step guide')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-:
-
-###\
-"""
-                ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s nice")),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to meet you.')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' How can I help')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
+            PartEndEvent(index=1, part=TextPart(content="Hello! It's nice to meet you. How can I help you today?")),
+        ]
+    )
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Basic')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Steps**')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' **Find a')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Safe Spot')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Use a **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='crosswalk**')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or pedestrian signal')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' if available.')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Avoid j')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='aywalking')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', as it')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' many areas')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and less')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' safe.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   -')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' If no')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crosswalk exists')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', choose')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' a well')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-lit area with')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' clear visibility in')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='2. **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Check Traffic Signals')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' - Wait')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for the')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' "walk')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='" signal')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' green light')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' at intersections')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   - Watch')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for count')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='down timers')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to ensure you')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' have enough time')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='3. **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Look Both')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Ways**:  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   - **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Left-Right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-Left**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Glance left')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' left again (')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='or right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-left-right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in countries')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' where traffic drives')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' on the left')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', like the')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' UK).  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   - Listen')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for approaching')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' vehicles,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' especially bikes')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or quiet')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' electric')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='4. **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Ensure All')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Traffic')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Has')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Stopped**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' - Make')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' eye contact with')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' drivers if possible')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' wait')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for vehicles')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to come')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to a')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' complete stop before')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' stepping')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' into')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' the road')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Watch for turning')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' vehicles,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' even if you')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' have the right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='5. **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Cross Prompt')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ly and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Saf')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ely**:  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   - Walk')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' straight across')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='—')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' run or')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' stop')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' midway')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' - Stay inside')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cross')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='walk')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' lines')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' if they')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-.
-
-6\
-"""
-                ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user has greeted me with a simple "Hello". I should respond in a friendly and welcoming manner. This is a straightforward greeting, so I\'ll respond warmly and ask how I can help them today.',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content="Hello! It's nice to meet you. How can I help you today?"),
+                ],
+                usage=RequestUsage(input_tokens=36, output_tokens=73),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='. **Stay')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Alert Until')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' You')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Reach the Other')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Side**:  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='   -')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Keep scanning')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' for traffic as')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you cross')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='. Avoid')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' distractions like phones')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- or headphones.
-
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
----
-
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='### **Additional')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Tips**')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='At')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Night**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Wear reflective')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' clothing or carry')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' a flashlight')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' to improve')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' visibility.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='- **With')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Kids')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Disabilities**: Hold')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' hands with')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' children,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' use assistive')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' devices')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' (e.g')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='., white')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' canes).')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Seek')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' pedestrian bridges')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or under')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='passes if')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' available.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='- **Un')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='marked Roads')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**: Cross')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' where')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' can see on')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='coming traffic clearly')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=', and never')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' assume drivers see')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you.  \n')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='- **')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='International Travel')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**: Note')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' local traffic patterns')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' (e.g')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='., left')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-side driving)')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' and pedestrian')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' customs')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-.
-
-### **\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Remember**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Right')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' of Way ≠')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Inv')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='incibility**:')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Even with')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' signal, double')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='-check that')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cars')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' are stopping.')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Distractions Kill')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**: Stay')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' focused—')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='no texting')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' or scrolling while')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='By following these')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' steps,')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ll minimize')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' risks and')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' cross')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' safely')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='!')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' 🚶')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='♂')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='️🚦')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='')),
         ]
     )
 
 
 async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvider):
-    now = datetime.datetime.now()
+    now = datetime.now()
     req = [
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='tool1', content={'foo': 'bar'}, tool_call_id='id1', timestamp=now),
-            ]
+            ],
+            timestamp=IsDatetime(),
         ),
     ]
 
     # Models other than Mistral support toolResult.content with text, not json
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1459,7 +2637,7 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     # Mistral requires toolResult.content to hold json, not text
     model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
     # Call the mapping function directly
-    _, bedrock_messages = await model._map_messages(req)  # type: ignore[reportPrivateUsage]
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert bedrock_messages == snapshot(
         [
@@ -1473,7 +2651,47 @@ async def test_bedrock_mistral_tool_result_format(bedrock_provider: BedrockProvi
     )
 
 
-async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvider):
+async def test_bedrock_empty_list_tool_result_uses_non_empty_content_block(bedrock_provider: BedrockProvider):
+    now = datetime.now()
+    req = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='lookup', content=[], tool_call_id='id1', timestamp=now),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'text': '[]'}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+    model = BedrockConverseModel('mistral.mistral-7b-instruct-v0:2', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'id1', 'content': [{'json': []}], 'status': 'success'}},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     my_tool = ToolDefinition(
         name='my_tool',
         description='This is my tool',
@@ -1481,9 +2699,9 @@ async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvide
     )
     mrp = ModelRequestParameters(output_mode='tool', function_tools=[my_tool], allow_text_output=False, output_tools=[])
 
-    # Models other than Anthropic support tool_choice
+    # Amazon Nova supports tool_choice
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -1502,9 +2720,30 @@ async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvide
         }
     )
 
-    # Anthropic models don't support tool_choice
+    # Anthropic supports tool_choice
     model = BedrockConverseModel('us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
-    tool_config = model._map_tool_config(mrp)  # type: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(mrp, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'my_tool',
+                        'description': 'This is my tool',
+                        'inputSchema': {
+                            'json': {'type': 'object', 'title': 'Result', 'properties': {'spam': {'type': 'number'}}}
+                        },
+                    }
+                }
+            ],
+            'toolChoice': {'any': {}},
+        }
+    )
+
+    # Other models don't support tool_choice
+    model = BedrockConverseModel('us.meta.llama4-maverick-17b-instruct-v1:0', provider=bedrock_provider)
+    tool_config = model._map_tool_config(mrp, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
 
     assert tool_config == snapshot(
         {
@@ -1521,3 +2760,2353 @@ async def test_bedrock_anthropic_no_tool_choice(bedrock_provider: BedrockProvide
             ]
         }
     )
+
+
+async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockProvider):
+    """Hallucinated tool names with invalid chars (e.g. dots) are sanitized when replayed to Bedrock."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')], timestamp=IsDatetime()),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='search.evidence invalid', args={'q': 'x'}, tool_call_id='tooluse_123')]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='search.evidence invalid',
+                    content='not found',
+                    tool_call_id='tooluse_123',
+                    timestamp=datetime.now(),
+                ),
+            ],
+            timestamp=IsDatetime(),
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hello'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'toolUse': {
+                            'toolUseId': 'tooluse_123',
+                            'name': 'search_evidence_invalid',
+                            'input': {'q': 'x'},
+                        }
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'tooluse_123',
+                            'content': [{'text': 'not found'}],
+                            'status': 'success',
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_thinking_high_openai_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking='high'` flows through to `additionalModelRequestFields.reasoning_effort`."""
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='high'))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'high'}
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content=IsStr()), TextPart(content=IsStr())],
+                usage=RequestUsage(input_tokens=IsInstance(int), output_tokens=IsInstance(int)),
+                model_name='openai.gpt-oss-120b-1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_thinking_true_openai_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=True` maps to the default effort `'medium'` on the wire, exercising
+    the `OPENAI_REASONING_EFFORT_MAP[True]` branch in isolation from `'high'`."""
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=True))
+    await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'medium'}
+
+
+async def test_bedrock_thinking_false_openai_variant_silent_drop(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=False` on gpt-oss is silently dropped — Converse rejects
+    `reasoning_effort='none'`, so the profile is always-on."""
+    model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert 'reasoning_effort' not in sent.get('additionalModelRequestFields', {})
+
+
+async def test_bedrock_thinking_high_qwen_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking='high'` flows through to `additionalModelRequestFields.reasoning_config`."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking='high'))
+    result = await agent.run('Reply with the single word: ok')
+
+    # `single_request_body` not used here because qwen3-32b wraps its initial reply in
+    # `<think>` tags, leaving empty visible text and triggering pydantic-ai's
+    # output-validation retry — the cassette captures two recorded interactions. We
+    # only need to assert on the wire shape of the first one.
+    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
+    # Loose response-shape pin: at least one ThinkingPart survives the
+    # validation-retry roundtrip and reaches the final response.
+    assert any(isinstance(p, ThinkingPart) for p in result.response.parts)
+
+
+async def test_bedrock_thinking_false_qwen_variant_silent_drop(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=False` on qwen3 is silently dropped — Converse exposes only
+    `reasoning_config ∈ {low, high}` with no disable, so the profile is always-on."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert 'reasoning_config' not in sent.get('additionalModelRequestFields', {})
+
+
+async def test_bedrock_thinking_true_qwen_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """`thinking=True` → `reasoning_config='high'` on the wire (Qwen accepts only `{low, high}`)."""
+    model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(thinking=True))
+    await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
+
+
+async def test_bedrock_top_k_anthropic_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """Unified `top_k` rides in `additionalModelRequestFields` as a flat `top_k` for Anthropic models.
+
+    Bedrock's `inferenceConfig` has no `topK` field, so the setting can only reach Claude here.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_k=20))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'top_k': 20}
+    assert 'topK' not in sent['inferenceConfig']
+    assert result.output == IsStr()
+
+
+async def test_bedrock_top_k_nova_variant(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+) -> None:
+    """Unified `top_k` rides in `additionalModelRequestFields` nested under `inferenceConfig.topK` for Nova models."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_k=20))
+    result = await agent.run('Reply with the single word: ok')
+
+    sent = single_request_body(vcr)
+    assert sent['additionalModelRequestFields'] == {'inferenceConfig': {'topK': 20}}
+    assert result.output == IsStr()
+
+
+async def test_bedrock_top_k_user_field_takes_precedence(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """A user-supplied `bedrock_additional_model_requests_fields['top_k']` is never clobbered by unified `top_k`.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(top_k=20, bedrock_additional_model_requests_fields={'top_k': 5})
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['additionalModelRequestFields'] == {'top_k': 5}
+
+
+async def test_bedrock_top_k_nova_merges_with_user_inference_config(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """For Nova, unified `top_k` merges into a user-supplied `inferenceConfig` without dropping its other fields.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin. The Nova
+    branch checks the nested `topK` key (not the parent `inferenceConfig`), so an unrelated field doesn't suppress it.
+    A user-supplied `topK` still wins.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    user_inference_config = {'maxTokens': 100}
+    model_settings = BedrockModelSettings(
+        top_k=20, bedrock_additional_model_requests_fields={'inferenceConfig': user_inference_config}
+    )
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['additionalModelRequestFields'] == {'inferenceConfig': {'maxTokens': 100, 'topK': 20}}
+    # The user's settings dict is not mutated in place.
+    assert user_inference_config == {'maxTokens': 100}
+
+
+async def test_bedrock_top_k_nova_user_top_k_takes_precedence(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """A user-supplied `inferenceConfig['topK']` is never clobbered by unified `top_k` for Nova.
+
+    No-network: the assertion is on the outgoing request shape, which a cassette matcher wouldn't pin.
+    """
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    model_settings = BedrockModelSettings(
+        top_k=20, bedrock_additional_model_requests_fields={'inferenceConfig': {'topK': 5}}
+    )
+    agent = Agent(model, model_settings=model_settings)
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['additionalModelRequestFields'] == {'inferenceConfig': {'topK': 5}}
+
+
+async def test_bedrock_top_k_unsupported_family_dropped(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Models without a `bedrock_top_k_variant` (e.g. Mistral) silently drop `top_k`.
+
+    No-network: Bedrock 400s on an unrecognized `additionalModelRequestFields` key, so forwarding `top_k`
+    to a family that doesn't accept it would be a regression — the field must be absent here.
+    """
+    model = BedrockConverseModel('mistral.mistral-large-2402-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_k=20))
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert 'additionalModelRequestFields' not in kwargs
+
+
+async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel(model_name='openai.gpt-oss-120b-1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    result: AgentRunResult | None = None
+    events: list[AgentStreamEvent] = []
+    async with agent.run_stream_events('Hi') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+            else:
+                events.append(event)
+
+    assert result is not None
+    # The response stream contains `{'contentBlockDelta': {'delta': {'text': ''}, 'contentBlockIndex': 0}}`, but our response should not have any empty text parts.
+    assert not any(part.content == '' for part in result.response.parts if isinstance(part, TextPart))
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='The user just says "Hi". We need to respond appropriately, friendly greeting. No special instructions. Should be short.'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='The user just says "Hi". We need to respond appropriately, friendly greeting. No special instructions. Should be short.'
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=1, part=TextPart(content='Hello! How can I help'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
+            PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello')
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+
+
+@pytest.mark.vcr()
+async def test_bedrock_streaming_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that errors during streaming convert to ModelHTTPError."""
+    model_id = 'us.does-not-exist-model-v1:0'
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == model_id
+    assert exc_info.value.body.get('Error', {}).get('Message') == 'The provided model identifier is invalid.'  # type: ignore[union-attr]
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', id='claude-sonnet-4-5'),
+        pytest.param('us.amazon.nova-lite-v1:0', id='nova-lite'),
+    ],
+)
+async def test_bedrock_cache_point_adds_cache_control(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: BedrockModelName
+):
+    """Record a real Bedrock call to confirm cache points reach AWS (requires ~1k tokens)."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    long_context = 'ONLY SINGLE NUMBER IN RESPONSE\n' * 100  # More tokens to activate a cache
+
+    result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
+    assert result.output == snapshot('5')
+    # Different tokens usage depending on a model - could be written or read depending on the cassette read/write
+    usage = result.usage
+    assert usage.cache_write_tokens >= 1000 or usage.cache_read_tokens >= 1000
+    assert usage.input_tokens >= usage.cache_write_tokens + usage.cache_read_tokens
+
+
+async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    long_context = 'ONLY SINGLE NUMBER IN RESPONSE\n' * 100  # More tokens to activate a cache
+
+    result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
+    assert result.output == snapshot('5')
+    assert result.usage == snapshot(
+        RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1, cost=Decimal('0.00062172'))
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Integration test covering all cache settings using a recorded cassette.
+
+    This test enables all 3 cache settings plus 2 manual CachePoints (5 total),
+    which triggers the _limit_cache_points logic to strip the oldest one (limit is 4).
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU MUST RESPONSE ONLY WITH SINGLE NUMBER\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(
+            bedrock_cache_instructions=True,  # 1 cache point
+            bedrock_cache_tool_definitions=True,  # 1 cache point
+            bedrock_cache_messages=True,  # 1 cache point (on last user message)
+        ),
+    )
+
+    @agent.tool_plain
+    def catalog_lookup() -> str:  # pragma: no cover - exercised via agent call
+        return 'catalog-ok'
+
+    @agent.tool_plain
+    def diagnostics() -> str:  # pragma: no cover - exercised via agent call
+        return 'diagnostics-ok'
+
+    long_context = 'Newer response with something except single number\n' * 10
+    document = BinaryContent(data=b'You are a great mathematician', media_type='text/plain')
+    # 2 CachePoints, more that maximum allowed, so will be stripped.
+    run_args = [long_context, CachePoint(), document, CachePoint(), 'What is 10 + 11?']
+
+    first = await agent.run(run_args)
+    assert first.output == snapshot('21')
+    first_usage = first.usage
+    assert first_usage == snapshot(
+        RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1, cost=Decimal('0.00554235'))
+    )
+
+    second = await agent.run(run_args)
+    assert second.output == snapshot('21')
+    second_usage = second.usage
+    assert second_usage == snapshot(
+        RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1, cost=Decimal('0.00052536'))
+    )
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_with_document_as_last_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test the workaround for the AWS bug where cache points cannot be added after documents, so we insert them before the documents."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(
+            bedrock_cache_messages=True,  # This should add a cache point to the last user message
+        ),
+    )
+
+    # Create a document as the last piece of content in the user message
+    document = BinaryContent(data=b'This is a test document with important analysis data.', media_type='text/plain')
+    document2 = BinaryContent(data=b'This is a test document with unimportant data.', media_type='text/plain')
+    run_args = [
+        'YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\n' * 50,  # More tokens to activate a cache
+        'Please analyze this document:',
+        document,
+        'And this document:',
+        document2,
+    ]
+
+    result = await agent.run(run_args)
+    assert result.output == snapshot("""\
+I'll analyze the documents you've provided:
+
+## Document 1 (Document 1.txt)
+- **Content**: Contains important analysis data
+- **Key characteristic**: Explicitly marked as containing "important" information
+- **Purpose**: Appears to be a test document designed to hold significant analytical data
+
+## Document 2 (Document 2.txt)
+- **Content**: Contains unimportant data
+- **Key characteristic**: Explicitly marked as containing "unimportant" information
+- **Purpose**: Also a test document, but with data of lesser significance
+
+## Summary
+Both documents appear to be test files with minimal content. The main distinction between them is the stated importance level of their data - Document 1 contains information designated as important for analysis, while Document 2's data is marked as unimportant. Without more specific content or a particular analysis goal, these seem to be placeholder documents for testing document analysis capabilities.
+
+Is there a specific aspect of these documents you'd like me to focus on or a particular type of analysis you need?\
+""")
+
+    usage = result.usage
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens == 0
+
+    messages = result.all_messages()
+
+    result = await agent.run('How long is the doc?', message_history=messages)
+    assert result.output == snapshot("""\
+Based on the documents provided:
+
+**Document 1 (Document 1.txt)**: 10 words
+- "This is a test document with important analysis data."
+
+**Document 2 (Document 2.txt)**: 8 words
+- "This is a test document with unimportant data."
+
+Both documents are very short - just single sentences. If you're asking about character count instead:
+
+- Document 1: 55 characters (including spaces)
+- Document 2: 49 characters (including spaces)\
+""")
+
+    usage = result.usage
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens > 0
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_with_image_as_last_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, image_content: BinaryContent
+):
+    """Test that cache points can be added after images without the workaround necessary for documents."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU ARE A HELPFUL ASSISTANT THAT ANALYZES IMAGES.\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(
+            bedrock_cache_messages=True,  # This should add a cache point to the last user message
+        ),
+    )
+
+    # Create a document as the last piece of content in the user message
+    run_args = [
+        'YOU ARE A HELPFUL ASSISTANT THAT ANALYZES IMAGES.\n' * 50,  # More tokens to activate a cache
+        'Please analyze the following image:',
+        image_content,
+    ]
+
+    result = await agent.run(run_args)
+    assert result.output == snapshot("""\
+I'd be happy to analyze this image for you!
+
+This is a close-up photograph of a **kiwi fruit cross-section**. Here are the key details:
+
+## Visual Characteristics:
+- **Color Palette**: Vibrant green flesh with a pale cream/white center
+- **Seeds**: Multiple small, black, teardrop-shaped seeds arranged in a radial pattern around the center
+- **Texture**: The flesh appears juicy and translucent with a gradient from bright green at the edges to lighter green near the center
+- **Skin**: Brown fuzzy skin visible around the perimeter of the slice
+- **Pattern**: Natural starburst or sunburst pattern created by the seed arrangement
+
+## Composition:
+- The slice is photographed from directly above against a white background
+- The fruit is cut perpendicular to its length, showing a perfect circular cross-section
+- The lighting is bright and even, highlighting the fruit's natural moisture and color variations
+
+## Notable Features:
+- The radial symmetry creates an aesthetically pleasing natural pattern
+- Tiny fine hairs (trichomes) are visible on the brown skin edge
+- The flesh shows subtle striations radiating outward from the center
+
+This type of image is commonly used in food photography, nutritional content, or botanical documentation.\
+""")
+
+    usage = result.usage
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens == 0
+
+    messages = result.all_messages()
+
+    result = await agent.run('How large is the image?', message_history=messages)
+    assert result.output == snapshot("""\
+The image dimensions are **597 × 597 pixels** (a perfect square).
+
+This is a relatively small to medium-sized image by modern standards, suitable for web use, thumbnails, or social media posts, but not high-resolution enough for large-format printing.\
+""")
+
+    usage = result.usage
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens > 0
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_with_video_as_last_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, video_content: BinaryContent
+):
+    """Test that cache points can be added after videos without the workaround necessary for documents."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model,
+        system_prompt='YOU ARE A HELPFUL ASSISTANT THAT ANALYZES VIDEOS.\n' * 50,  # More tokens to activate a cache
+        model_settings=BedrockModelSettings(
+            bedrock_cache_messages=True,  # This should add a cache point to the last user message
+        ),
+    )
+
+    # Create a document as the last piece of content in the user message
+    run_args = [
+        'YOU ARE A HELPFUL ASSISTANT THAT ANALYZES VIDEOS.\n' * 50,  # More tokens to activate a cache
+        'Please analyze this video:',
+        video_content,
+    ]
+
+    result = await agent.run(run_args)
+    assert result.output == snapshot(
+        'The video depicts a camera mounted on a tripod, capturing a scenic view of a landscape featuring mountains and a road. The camera remains stationary throughout the video, focusing on the picturesque scenery.'
+    )
+
+    usage = result.usage
+    assert usage.input_tokens > 0
+    assert usage.output_tokens > 0
+    assert usage.cache_write_tokens > 0
+    assert usage.cache_read_tokens == 0
+
+
+async def test_bedrock_cache_point_as_first_content_raises_error(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """CachePoint should raise a UserError if it appears before any other content."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'This should fail'])])]
+    with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
+        await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_bedrock_cache_point_with_only_document_raises_error(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """CachePoint should raise a UserError if the message contains only a document/video with no text."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        BinaryContent(data=b'Document content', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    with pytest.raises(
+        UserError, match='CachePoint cannot be placed when the user message contains only a document or video'
+    ):
+        await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_bedrock_cache_messages_no_duplicate_with_explicit_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """bedrock_cache_messages should not add a duplicate cache point when one already exists before multi-modal content."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Process this document:',
+                        CachePoint(),
+                        BinaryContent(data=b'Document content', media_type='text/plain'),
+                    ]
+                )
+            ]
+        )
+    ]
+    # With bedrock_cache_messages=True, the explicit CachePoint is moved before the document.
+    # The auto-caching logic should not add another cache point (which would be back-to-back).
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Process this document:'},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'Document content'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_no_duplicate_when_text_ends_with_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """bedrock_cache_messages should not add a duplicate cache point when text content already ends with one."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Some text content',
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    # With bedrock_cache_messages=True, the explicit CachePoint is already at the end.
+    # The auto-caching logic should not add another cache point.
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Some text content'},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+        ]
+    )
+
+
+# Bedrock currently errors if a cache point immediately follows documents/videos, so we insert it before them.
+async def test_bedrock_cache_point_before_binary_content(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Process the attached text file. Return the answer only.',
+                        BinaryContent(data=b'What is 2+2? Provide the answer only.', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Process the attached text file. Return the answer only.'},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'What is 2+2? Provide the answer only.'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_point_with_multiple_trailing_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """CachePoint should be placed before the entire trailing group of documents/videos, not just the last one."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Process these documents.',
+                        BinaryContent(data=b'Document 1 content', media_type='text/plain'),
+                        BinaryContent(data=b'Document 2 content', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    # CachePoint should be inserted BEFORE both documents, not between them
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Process these documents.'},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'Document 1 content'},
+                }
+            },
+            {
+                'document': {
+                    'name': 'Document 2',
+                    'format': 'txt',
+                    'source': {'bytes': b'Document 2 content'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_point_with_mixed_content_and_trailing_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """CachePoint should only move before the trailing contiguous group, not all documents."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'First instruction.',
+                        BinaryContent(data=b'Doc 1', media_type='text/plain'),
+                        # Image breaks the trailing document group (images don't have the cache restriction)
+                        BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png'),
+                        BinaryContent(data=b'Doc 2', media_type='text/plain'),
+                        BinaryContent(data=b'Doc 3', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    # CachePoint should be inserted after the image (non-document/video) and before Doc 2 and Doc 3
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'First instruction.'},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'Doc 1'},
+                }
+            },
+            {
+                'image': {
+                    'format': 'png',
+                    'source': {'bytes': b'\x89PNG\r\n\x1a\n'},
+                }
+            },
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {
+                'document': {
+                    'name': 'Document 2',
+                    'format': 'txt',
+                    'source': {'bytes': b'Doc 2'},
+                }
+            },
+            {
+                'document': {
+                    'name': 'Document 3',
+                    'format': 'txt',
+                    'source': {'bytes': b'Doc 3'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_with_multiple_trailing_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """bedrock_cache_messages should place cache point before the entire trailing document group."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Analyze these files.',
+                        BinaryContent(data=b'File 1', media_type='text/plain'),
+                        BinaryContent(data=b'File 2', media_type='text/plain'),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+    # Cache point should be before both documents
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Analyze these files.'},
+            {'cachePoint': {'type': 'default'}},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'File 1'},
+                }
+            },
+            {
+                'document': {
+                    'name': 'Document 2',
+                    'format': 'txt',
+                    'source': {'bytes': b'File 2'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_point_multiple_markers_with_documents_no_back_to_back(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Multiple CachePoints with trailing documents should not create back-to-back cache points.
+
+    When processing ['text', doc1, CachePoint(), doc2, CachePoint()], both documents form
+    a single trailing group. The first CachePoint is placed before the group, and the second
+    CachePoint is skipped to avoid back-to-back cachePoints.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Analyze these:',
+                        BinaryContent(data=b'Doc 1', media_type='text/plain'),
+                        CachePoint(),
+                        BinaryContent(data=b'Doc 2', media_type='text/plain'),
+                        CachePoint(),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    # Both docs are trailing, so first CachePoint goes before both.
+    # Second CachePoint is skipped to avoid back-to-back cachePoints.
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'Analyze these:'},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Doc 1'}}},
+            {'document': {'name': 'Document 2', 'format': 'txt', 'source': {'bytes': b'Doc 2'}}},
+        ]
+    )
+
+
+async def test_bedrock_cache_point_multiple_markers(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-3-5-haiku-20241022-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=['First chunk', CachePoint(), 'Second chunk', CachePoint(), 'Question'])]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'First chunk'},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {'text': 'Second chunk'},
+            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {'text': 'Question'},
+        ]
+    )
+
+
+async def test_bedrock_cache_skipped_for_unsupported_models(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """All cache settings should be silently skipped for models that don't support prompt caching."""
+    # Meta models don't support prompt caching
+    model = BedrockConverseModel('meta.llama3-70b-instruct-v1:0', provider=bedrock_provider)
+
+    # Test CachePoint markers are skipped
+    messages_with_cache_points: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content=['First chunk', CachePoint(), 'Second chunk', CachePoint(), 'Question'])]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages_with_cache_points, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages[0]['content'] == snapshot(
+        [{'text': 'First chunk'}, {'text': 'Second chunk'}, {'text': 'Question'}]
+    )
+
+    # Test bedrock_cache_instructions is skipped
+    messages_with_system: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages_with_system, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_instructions=True)
+    )
+    assert system_prompt == snapshot([{'text': 'System instructions.'}])
+
+    # Test bedrock_cache_messages is skipped
+    messages_user: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='User message.')])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages_user, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
+    )
+    assert bedrock_messages[0]['content'] == snapshot([{'text': 'User message.'}])
+
+
+async def test_bedrock_cache_tool_definitions_skipped_for_nova(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Tool caching should be skipped for Nova models (they only support system/messages caching, not tools)."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_one'),
+            ToolDefinition(name='tool_two'),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+    tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
+        params,
+        BedrockModelSettings(bedrock_cache_tool_definitions=True),
+    )
+    # Nova doesn't support tool caching, so no cachePoint should be added
+    assert tool_config and len(tool_config['tools']) == 2
+    assert all('cachePoint' not in tool for tool in tool_config['tools'])
+
+
+async def test_bedrock_cache_tool_definitions(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_one'),
+            ToolDefinition(name='tool_two'),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+    tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
+        params,
+        BedrockModelSettings(bedrock_cache_tool_definitions=True),
+    )
+    assert tool_config and len(tool_config['tools']) == 3
+    assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default'}}
+
+
+async def test_bedrock_cache_instructions(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions to cache.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'System instructions to cache.'},
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
+
+
+async def test_bedrock_cache_instructions_mixed_static_dynamic(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that cache point is placed after last static instruction when mixed with dynamic."""
+    from pydantic_ai.messages import InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi!')],
+        )
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Static instructions.', dynamic=False),
+            InstructionPart(content='Dynamic context.', dynamic=True),
+        ],
+    )
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    # Cache point should be after the static instruction, before the dynamic one
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+
+
+async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that no cache point is inserted when all instructions are dynamic and there's no system prompt."""
+    from pydantic_ai.messages import InstructionPart
+
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(content='Hi!')],
+        )
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Dynamic only.', dynamic=True),
+        ],
+    )
+    system_prompt, _ = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+    # No cache point should be inserted — nothing static to cache
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Dynamic only.'},
+        ]
+    )
+
+
+async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages adds cache point to the last user message."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='User message to cache.')])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'User message to cache.'},
+                    {'cachePoint': {'type': 'default'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_instructions_and_messages_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='System instructions to cache.'), UserPromptPart(content='Hi!')])
+    ]
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_instructions='1h', bedrock_cache_messages='1h'),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'System instructions to cache.'},
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+        ]
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Hi!'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_tool_definitions_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='tool_one'),
+            ToolDefinition(name='tool_two'),
+        ]
+    )
+    params = model.customize_request_parameters(params)
+    tool_config = model._map_tool_config(  # pyright: ignore[reportPrivateUsage]
+        params,
+        BedrockModelSettings(bedrock_cache_tool_definitions='1h'),
+    )
+    assert tool_config and len(tool_config['tools']) == 3
+    assert tool_config['tools'][-1] == {'cachePoint': {'type': 'default', 'ttl': '1h'}}
+
+
+async def test_bedrock_manual_cache_point_with_explicit_ttl(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Context to cache', CachePoint(ttl='1h'), 'Question'])])
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(),
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context to cache'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                    {'text': 'Question'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_with_binary_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that bedrock_cache_messages does add cache point for document content."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        BinaryContent(data=b'Test document content', media_type='text/plain'),
+                    ]
+                )
+            ]
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should not add cache point for document content
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {'text': 'See attached document(s).'},
+            {'cachePoint': {'type': 'default'}},
+            {
+                'document': {
+                    'name': 'Document 1',
+                    'format': 'txt',
+                    'source': {'bytes': b'Test document content'},
+                }
+            },
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_with_tool_result(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages does add cache point for tool call content."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    timestamp=IsDatetime(),
+                )
+            ],
+        )
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should add cache point for tool call content
+    assert bedrock_messages[0]['content'] == snapshot(
+        [
+            {
+                'toolResult': {
+                    'toolUseId': 'tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    'content': [{'text': 'Final result processed.'}],
+                    'status': 'success',
+                }
+            },
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
+
+
+async def test_bedrock_cache_messages_does_not_duplicate(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages does not add duplicate cache point if already present."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['User message', CachePoint()])])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should not add another cache point since one already exists
+    cache_point_count = sum(1 for block in bedrock_messages[0]['content'] if 'cachePoint' in block)
+    assert cache_point_count == 1
+
+
+async def test_bedrock_cache_messages_no_user_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that bedrock_cache_messages handles case with no user messages."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Only assistant message, no user message
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='Assistant response')])]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Should not crash, no cache point added since no real user message.
+    # Synthetic user message is prepended because Bedrock requires conversations to start with a user turn.
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': '.'}]},
+            {'role': 'assistant', 'content': [{'text': 'Assistant response'}]},
+        ]
+    )
+
+
+async def test_get_last_user_message_content_non_dict_block(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test _get_last_user_message_content returns None when last block is not a dict."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Directly test the helper with a message that has non-dict content
+    messages: list[MessageUnionTypeDef] = [{'role': 'user', 'content': ['string content']}]  # type: ignore[list-item]
+    result = model._get_last_user_message_content(messages)  # pyright: ignore[reportPrivateUsage]
+    assert result is None
+
+
+async def test_get_last_user_message_content_empty_content(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test _get_last_user_message_content returns None when content is empty or not a list."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Test with empty content list
+    messages: list[MessageUnionTypeDef] = [{'role': 'user', 'content': []}]
+    result = model._get_last_user_message_content(messages)  # pyright: ignore[reportPrivateUsage]
+    assert result is None
+
+
+def test_limit_cache_points_filters_excess_cache_points(bedrock_provider: BedrockProvider):
+    """Test that _limit_cache_points filters out excess cache points beyond the limit of 4."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+
+    # Create system prompt (no cache points)
+    system_prompt: list[SystemContentBlockTypeDef] = [{'text': 'System prompt'}]
+
+    # Create messages with 5 standalone cachePoint blocks (limit is 4)
+    bedrock_messages: list[MessageUnionTypeDef] = [
+        {
+            'role': 'user',
+            'content': [
+                {'text': 'Context 1'},
+                {'cachePoint': {'type': 'default'}},  # Will be filtered (oldest, over limit)
+                {'text': 'Context 2'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (4th newest)
+                {'text': 'Context 3'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (3rd newest)
+                {'text': 'Context 4'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (2nd newest)
+                {'text': 'Question'},
+                {'cachePoint': {'type': 'default'}},  # Will be kept (newest)
+            ],
+        },
+    ]
+
+    # Apply limit with no tools (max 4 cache points, we have 5)
+    model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
+
+    # Verify only 4 cache points remain (the newest ones)
+    content = bedrock_messages[0]['content']
+    assert isinstance(content, list)
+
+    # Count remaining cache points
+    cache_points = [b for b in content if isinstance(b, dict) and 'cachePoint' in b]
+    assert len(cache_points) == 4  # Only 4 kept (the limit)
+
+    # Verify no empty blocks exist
+    empty_blocks = [b for b in content if isinstance(b, dict) and not b]
+    assert len(empty_blocks) == 0
+
+
+async def test_limit_cache_points_with_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that cache points are limited when using bedrock_cache_messages + CachePoint markers."""
+    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    # Create messages with 4 CachePoint markers + 1 from bedrock_cache_messages = 5 total
+    # Only 4 should be kept (limit)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Context 1',
+                        CachePoint(),  # Oldest, should be removed
+                        'Context 2',
+                        CachePoint(),  # Should be kept
+                        'Context 3',
+                        CachePoint(),  # Should be kept
+                        'Context 4',
+                        CachePoint(),  # Should be kept
+                        'Question',
+                    ]
+                )
+            ]
+        )
+    ]
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
+    )
+    # Apply limit (this is normally called in _messages_create)
+    model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
+
+    # Count cache points in messages
+    cache_count = 0
+    for msg in bedrock_messages:
+        for block in msg['content']:
+            if 'cachePoint' in block:
+                cache_count += 1
+
+    # Should have exactly 4 cache points (the limit)
+    assert cache_count == 4
+
+
+async def test_limit_cache_points_all_settings(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test cache point limiting with all cache settings enabled."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+
+    # Create messages with 3 CachePoint markers
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System instructions.'),
+                UserPromptPart(
+                    content=[
+                        'Context 1',
+                        CachePoint(),  # Oldest, should be removed
+                        'Context 2',
+                        CachePoint(),  # Should be kept
+                        'Context 3',
+                        CachePoint(),  # Should be kept
+                        'Question',
+                    ]
+                ),
+            ]
+        )
+    ]
+
+    # Map messages with cache_instructions enabled (uses 1 cache point)
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_instructions=True),
+    )
+
+    # Create tools with cache point (uses 1 cache point)
+    tools: list[ToolTypeDef] = [
+        {'toolSpec': {'name': 'tool_one', 'inputSchema': {'json': {}}}},
+        {'cachePoint': {'type': 'default'}},
+    ]
+
+    # Apply limit: 1 (system) + 1 (tools) = 2 used, 2 remaining for messages
+    model._limit_cache_points(system_prompt, bedrock_messages, tools)  # pyright: ignore[reportPrivateUsage]
+
+    # Count cache points in messages only
+    cache_count = 0
+    for msg in bedrock_messages:
+        for block in msg['content']:
+            if 'cachePoint' in block:
+                cache_count += 1
+
+    # Should have exactly 2 cache points in messages (4 total - 1 system - 1 tool = 2)
+    assert cache_count == 2
+
+
+async def test_bedrock_empty_model_response_skipped(bedrock_provider: BedrockProvider):
+    """Test that ModelResponse with empty parts (e.g. content_filtered) is skipped in message mapping."""
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+
+    # Create a message history that includes a ModelResponse with empty parts
+    req = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[],
+            usage=RequestUsage(input_tokens=100, output_tokens=1),
+            model_name='us.amazon.nova-micro-v1:0',
+            provider_name='bedrock',
+            provider_details={'finish_reason': 'content_filtered'},
+            finish_reason='content_filter',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Follow up question')]),
+    ]
+
+    # Call the mapping function directly
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+
+    # The empty ModelResponse should be skipped, so we should only have 2 user messages
+    # that get merged into one since they're consecutive after the empty response is skipped
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Hello'}, {'text': 'Follow up question'}]},
+        ]
+    )
+
+
+async def test_uploaded_file_wrong_provider(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with wrong provider raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with BedrockConverseModel"):
+        await agent.run(['Analyze this file', UploadedFile(file_id='s3://bucket/file.pdf', provider_name='openai')])
+
+
+async def test_uploaded_file_non_s3_url(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with non-S3 URL raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='UploadedFile for Bedrock must use an S3 URL'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(
+                    file_id='https://example.com/file.pdf', provider_name='bedrock', media_type='application/pdf'
+                ),
+            ]
+        )
+
+
+async def test_uploaded_file_no_extension_defaults_to_octet_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that UploadedFile without extension defaults to application/octet-stream which is unsupported."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: application/octet-stream'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(
+                    file_id='s3://bucket/file', provider_name='bedrock'
+                ),  # No extension, defaults to octet-stream
+            ]
+        )
+
+
+async def test_uploaded_file_unsupported_media_type(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with unsupported media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile'):
+        await agent.run(
+            [
+                'Analyze this file',
+                UploadedFile(
+                    file_id='s3://bucket/file.bin', provider_name='bedrock', media_type='application/octet-stream'
+                ),
+            ]
+        )
+
+
+async def test_uploaded_file_image(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with image media type is correctly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(file_id='s3://my-bucket/image.png', provider_name='bedrock', media_type='image/png')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'png',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/image.png'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_video(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with video media type is correctly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(file_id='s3://my-bucket/video.mp4', provider_name='bedrock', media_type='video/mp4')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Describe this video', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Describe this video'},
+                    {
+                        'video': {
+                            'format': 'mp4',
+                            'source': {'s3Location': {'uri': 's3://my-bucket/video.mp4'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_document(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with document media type is correctly mapped."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(
+        file_id='s3://my-bucket/report.pdf', provider_name='bedrock', media_type='application/pdf'
+    )
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this document?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this document?'},
+                    {
+                        'document': {
+                            'format': 'pdf',
+                            'name': IsStr(),
+                            'source': {'s3Location': {'uri': 's3://my-bucket/report.pdf'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_s3_with_bucket_owner(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile S3 URLs with bucketOwner parameter are parsed correctly."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    uploaded_file = UploadedFile(
+        file_id='s3://my-bucket/image.png?bucketOwner=123456789012', provider_name='bedrock', media_type='image/png'
+    )
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this image?'},
+                    {
+                        'image': {
+                            'format': 'png',
+                            'source': {
+                                's3Location': {
+                                    'uri': 's3://my-bucket/image.png',
+                                    'bucketOwner': '123456789012',
+                                }
+                            },
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_uploaded_file_media_type_inference(bedrock_provider: BedrockProvider):
+    """Test that UploadedFile infers media type from file extension."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    # No media_type provided, should infer from .pdf extension
+    uploaded_file = UploadedFile(file_id='s3://my-bucket/report.pdf', provider_name='bedrock')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this document?', uploaded_file])]),
+    ]
+
+    _, bedrock_messages = await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is in this document?'},
+                    {
+                        'document': {
+                            'format': 'pdf',
+                            'name': IsStr(),
+                            'source': {'s3Location': {'uri': 's3://my-bucket/report.pdf'}},
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_map_messages_builtin_tool_provider_filtering(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                # NativeToolCallPart (w/dict) for bedrock (should be included)
+                NativeToolCallPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    args={'snippet': 'print("hello")'},
+                    tool_call_id='call_1',
+                ),
+                # NativeToolReturnPart for bedrock with empty provider_details (should be included)
+                NativeToolReturnPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    content={'stdOut': 'hello', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                    tool_call_id='call_1',
+                    provider_details={},
+                ),
+                # NativeToolCallPart for the other provider (should NOT be included)
+                NativeToolCallPart(
+                    provider_name='anthropic',
+                    tool_name=CodeExecutionTool.kind,
+                    args={'code': 'print("other")'},
+                    tool_call_id='call_2',
+                ),
+                # NativeToolReturnPart for the other provider (should NOT be included)
+                NativeToolReturnPart(
+                    provider_name='anthropic',
+                    tool_name=CodeExecutionTool.kind,
+                    content={'stdOut': 'other', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                    tool_call_id='call_2',
+                ),
+                # NativeToolCallPart (w/str) for bedrock (should be included)
+                NativeToolCallPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    args='{"snippet": "10*5"}',
+                    tool_call_id='call_3',
+                ),
+                # NativeToolReturnPart for the bedrock provider with status (should be included)
+                NativeToolReturnPart(
+                    provider_name='bedrock',
+                    tool_name=CodeExecutionTool.kind,
+                    content={'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                    tool_call_id='call_3',
+                    provider_details={'status': 'success'},
+                ),
+                # NativeToolCallPart for the bedrock provider but unmapped tool (should NOT be included)
+                NativeToolCallPart(
+                    provider_name='bedrock',
+                    tool_name='foo',
+                    args={'snippet': 'print("unknown")'},
+                    tool_call_id='call_4',
+                ),
+                # NativeToolReturnPart for the bedrock provider but unmapped tool (should NOT be included)
+                NativeToolReturnPart(
+                    provider_name='bedrock',
+                    tool_name='foo',
+                    content={'other': 'content'},
+                    tool_call_id='call_4',
+                    provider_details={'status': 'success'},
+                ),
+            ]
+        )
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # type: ignore[reportPrivateUsage]
+        messages,
+        ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            native_tools=[CodeExecutionTool()],
+        ),
+        None,
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': '.'}]},
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'toolUse': {
+                            'toolUseId': 'call_1',
+                            'name': 'nova_code_interpreter',
+                            'input': {'snippet': 'print("hello")'},
+                            'type': 'server_tool_use',
+                        }
+                    },
+                    {
+                        'toolResult': {
+                            'toolUseId': 'call_1',
+                            'content': [{'json': {'stdOut': 'hello', 'stdErr': '', 'exitCode': 0, 'isError': False}}],
+                            'type': 'nova_code_interpreter_result',
+                        }
+                    },
+                    {
+                        'toolUse': {
+                            'toolUseId': 'call_3',
+                            'name': 'nova_code_interpreter',
+                            'input': {'snippet': '10*5'},
+                            'type': 'server_tool_use',
+                        }
+                    },
+                    {
+                        'toolResult': {
+                            'toolUseId': 'call_3',
+                            'content': [{'json': {'stdOut': '50', 'stdErr': '', 'exitCode': 0, 'isError': False}}],
+                            'type': 'nova_code_interpreter_result',
+                            'status': 'success',
+                        }
+                    },
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model=model, system_prompt='You are a helpful chatbot.', capabilities=[NativeTool(CodeExecutionTool())]
+    )
+
+    class Response(TypedDict):
+        result: float
+
+    # First turn
+    result1 = await agent.run('What is 1234 * 5678?', output_type=Response)
+    assert result1.output == snapshot({'result': 7006652.0})
+    assert result1.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What is 1234 * 5678?', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args={'snippet': '1234 * 5678'},
+                        tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
+                        provider_name='bedrock',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                        tool_call_id='tooluse_dV5ehBNfl1hUE-UTM9cIww',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'success'},
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'result': 7006652.0},
+                        tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1002, output_tokens=59),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='tooluse_DaRsVjwcShCI_3pOsIsWqg',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # Second turn
+    result2 = await agent.run('Now multiply that by 2', message_history=result1.new_messages(), output_type=Response)
+    assert result2.output == snapshot({'result': 14013304.0})
+    assert result2.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Now multiply that by 2', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args={'snippet': '7006652 * 2'},
+                        tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
+                        provider_name='bedrock',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={'stdOut': '14013304', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                        tool_call_id='tooluse_VYEuMWAFChlHdy6-56IQ4g',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'success'},
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'result': 14013304.0},
+                        tool_call_id='tooluse_RyG7SphVTsuS_8GFmX9hIA',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1148, output_tokens=59),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='tooluse_RyG7SphVTsuS_8GFmX9hIA',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-2-lite-v1:0', provider=bedrock_provider)
+    agent = Agent(
+        model=model, system_prompt='You are a helpful chatbot.', capabilities=[NativeTool(CodeExecutionTool())]
+    )
+
+    class Response(TypedDict):
+        result: float
+
+    event_parts: list[Any] = []
+    async with agent.iter('What is 1234 * 5678?', output_type=Response) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot({'result': 7006652.0})
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What is 1234 * 5678?', timestamp=IsDatetime()),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='code_execution',
+                        args='{"snippet":"1234 * 5678"}',
+                        tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                        provider_name='bedrock',
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='code_execution',
+                        content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                        tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                        timestamp=IsDatetime(),
+                        provider_name='bedrock',
+                        provider_details={'status': 'success'},
+                    ),
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args='{"result":7006652.0}',
+                        tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=1002, output_tokens=59),
+                model_name='us.amazon.nova-2-lite-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    provider_name='bedrock',
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ToolCallPartDelta(
+                    args_delta='{"snippet":"1234 * 5678"}', tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og'
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=NativeToolCallPart(
+                    tool_name='code_execution',
+                    args='{"snippet":"1234 * 5678"}',
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    provider_name='bedrock',
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=NativeToolReturnPart(
+                    tool_name='code_execution',
+                    content={'stdOut': '7006652', 'stdErr': '', 'exitCode': 0, 'isError': False},
+                    tool_call_id='tooluse_VQNZJRUFMoqZzszVsRd4og',
+                    timestamp=IsDatetime(),
+                    provider_name='bedrock',
+                    provider_details={'status': 'success'},
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2,
+                part=ToolCallPart(tool_name='final_result', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'),
+                previous_part_kind='builtin-tool-return',
+            ),
+            FinalResultEvent(tool_name='final_result', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'),
+            PartDeltaEvent(
+                index=2,
+                delta=ToolCallPartDelta(
+                    args_delta='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
+                ),
+            ),
+            PartEndEvent(
+                index=2,
+                part=ToolCallPart(
+                    tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
+                ),
+            ),
+            OutputToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
+                ),
+                args_valid=True,
+            ),
+            OutputToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw',
+                    timestamp=IsDatetime(),
+                )
+            ),
+        ]
+    )
+
+
+async def test_image_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that ImageUrl with unsupported image format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    image_url = ImageUrl(url='s3://bucket/image.bmp', media_type='image/bmp')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['What is in this image?', image_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported image format: bmp'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_video_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that VideoUrl with unsupported video format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    video_url = VideoUrl(url='s3://bucket/video.avi', media_type='video/avi')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Describe this video', video_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported video format: avi'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_document_url_unsupported_format(bedrock_provider: BedrockProvider):
+    """Test that DocumentUrl with unsupported document format raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    doc_url = DocumentUrl(url='s3://bucket/file.rtf', media_type='application/rtf')
+
+    req = [
+        ModelRequest(parts=[UserPromptPart(content=['Summarize this document', doc_url])]),
+    ]
+
+    with pytest.raises(UserError, match='Unsupported document format: rtf'):
+        await model._map_messages(req, ModelRequestParameters(), None)  # type: ignore[reportPrivateUsage]
+
+
+async def test_uploaded_file_unsupported_video_media_type(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Test that UploadedFile with unsupported video media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Unsupported media type for Bedrock UploadedFile: video/avi'):
+        await agent.run(
+            [
+                'Describe this video',
+                UploadedFile(file_id='s3://bucket/video.avi', provider_name='bedrock', media_type='video/avi'),
+            ]
+        )
+
+
+async def test_uploaded_file_audio_not_supported(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """Test that UploadedFile with audio media type raises an error."""
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    with pytest.raises(UserError, match='Audio files are not supported for Bedrock UploadedFile'):
+        await agent.run(
+            [
+                'Transcribe this audio',
+                UploadedFile(file_id='s3://bucket/audio.wav', provider_name='bedrock', media_type='audio/wav'),
+            ]
+        )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', id='claude-sonnet-4-5'),
+        pytest.param('us.amazon.nova-micro-v1:0', id='nova-micro'),
+    ],
+)
+async def test_bedrock_model_with_instructions_only(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: BedrockModelName
+):
+    """Test that agent.run() works without a user prompt, using only a system prompt.
+
+    Bedrock requires conversations to start with a user message. When called with only a
+    system prompt, the model layer synthesizes a placeholder user message automatically.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    result = await agent.run()
+    assert result.output
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', id='claude-sonnet-4-5'),
+        pytest.param('us.amazon.nova-micro-v1:0', id='nova-micro'),
+    ],
+)
+async def test_bedrock_model_instructions_only_then_message_history(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: BedrockModelName
+):
+    """Test that message_history from a system-prompt-only run works in a follow-up run.
+
+    Verifies the scenario where a first run with only instructions produces a history
+    starting with an assistant message (after system parts are extracted), and a second
+    run using that history doesn't fail.
+    See: https://github.com/pydantic/pydantic-ai/issues/4495
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    agent = Agent(model=model, system_prompt='Generate a short greeting.')
+
+    first_result = await agent.run()
+    second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
+    assert second_result.output
+    assert second_result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart(content='Generate a short greeting.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Now say goodbye.', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=IsInstance(RequestUsage),
+                model_name=model_name,
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Now be terse.'), UserPromptPart(content='what next?')]),
+    ]
+    prepared = model.prepare_messages(messages)
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters(), BedrockModelSettings()
+    )
+
+    assert system_prompt == [{'text': 'You are helpful.'}]
+    text_blocks = [
+        block['text']
+        for msg in cast(list[Any], bedrock_messages)
+        if msg['role'] == 'user'
+        for block in msg['content']
+        if 'text' in block
+    ]
+    assert '<system>Now be terse.</system>' in text_blocks
+    assert 'You are helpful.' not in text_blocks

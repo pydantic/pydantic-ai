@@ -22,11 +22,11 @@ class MyModel(BaseModel):
     country: str
 
 
-model = os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o')
+model = os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-5.2')
 print(f'Using model: {model}')
 agent = Agent(model, output_type=MyModel)
 
 if __name__ == '__main__':
     result = agent.run_sync('The windy city in the US of A.')
     print(result.output)
-    print(result.usage())
+    print(result.usage)

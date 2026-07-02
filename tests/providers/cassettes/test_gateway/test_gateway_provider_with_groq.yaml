@@ -1,0 +1,71 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '128'
+      content-type:
+      - application/json
+      host:
+      - localhost:8787
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: llama-3.3-70b-versatile
+      n: 1
+      stream: false
+    uri: http://localhost:8787/groq/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      content-length:
+      - '635'
+      content-type:
+      - application/json
+      pydantic-ai-gateway-price-estimate:
+      - 0.0000USD
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The capital of France is Paris.
+          role: assistant
+      created: 1762865063
+      id: chatcmpl-f75abe6e-e6d9-4356-bf65-28df1f5707a8
+      model: llama-3.3-70b-versatile
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_e502586a3c
+      usage:
+        completion_time: 0.010003462
+        completion_tokens: 8
+        prompt_time: 0.002448683
+        prompt_tokens: 42
+        pydantic_ai_gateway:
+          cost_estimate: 3.11e-05
+        queue_time: 0.140973397
+        total_time: 0.012452145
+        total_tokens: 50
+      usage_breakdown: null
+      x_groq:
+        id: req_01k9sf49ajfpaarm6q98v0scqe
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,344 @@
+"""AG-UI protocol adapter for Pydantic AI agents.
+
+This module provides classes for integrating Pydantic AI agents with the AG-UI protocol,
+enabling streaming event-based communication for interactive AI applications.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import AsyncIterator, Iterable
+from dataclasses import dataclass, field
+from uuid import uuid4
+
+from ..._utils import now_utc
+from ...messages import (
+    FunctionToolResultEvent,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OutputToolResultEvent,
+    RetryPromptPart,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+    ToolCallPart,
+    ToolCallPartDelta,
+    ToolReturnPart,
+)
+from ...output import OutputDataT
+from ...tools import AgentDepsT, DeferredToolRequests
+from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
+from .._event_stream import describe_file
+from ._interrupt import (
+    HAS_INTERRUPTS,
+    RunFinishedInterruptOutcome,
+    RunFinishedSuccessOutcome,
+    approval_to_interrupt,
+)
+from ._utils import (
+    BUILTIN_TOOL_CALL_ID_PREFIX,
+    DEFAULT_AG_UI_VERSION,
+    INTERRUPTS_VERSION,
+    REASONING_VERSION,
+    parse_ag_ui_version,
+    tool_kind_encrypted_value,
+)
+
+try:
+    from ag_ui.core import (
+        BaseEvent,
+        EventType,
+        RunAgentInput,
+        RunErrorEvent,
+        RunFinishedEvent,
+        RunStartedEvent,
+        TextMessageContentEvent,
+        TextMessageEndEvent,
+        TextMessageStartEvent,
+        ToolCallArgsEvent,
+        ToolCallEndEvent,
+        ToolCallResultEvent,
+        ToolCallStartEvent,
+    )
+    from ag_ui.encoder import EventEncoder
+
+except ImportError as e:  # pragma: no cover
+    raise ImportError(
+        'Please install the `ag-ui-protocol` package to use AG-UI integration, '
+        'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
+    ) from e
+
+
+__all__ = [
+    'AGUIEventStream',
+    'DEFAULT_AG_UI_VERSION',
+    'RunAgentInput',
+    'RunStartedEvent',
+    'RunFinishedEvent',
+]
+
+
+@dataclass
+class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]):
+    """UI event stream transformer for the Agent-User Interaction (AG-UI) protocol."""
+
+    ag_ui_version: str = DEFAULT_AG_UI_VERSION
+
+    _use_reasoning: bool = field(default=False, init=False)
+    _reasoning_message_id: str | None = None
+    _reasoning_started: bool = False
+    _reasoning_text: bool = False
+    _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
+    _error: bool = False
+
+    def __post_init__(self) -> None:
+        self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
+
+    @property
+    def _event_encoder(self) -> EventEncoder:
+        return EventEncoder(accept=self.accept or SSE_CONTENT_TYPE)
+
+    @property
+    def content_type(self) -> str:
+        return self._event_encoder.get_content_type()
+
+    def encode_event(self, event: BaseEvent) -> str:
+        return self._event_encoder.encode(event)
+
+    @staticmethod
+    def _get_timestamp() -> int:
+        return int(now_utc().timestamp() * 1_000)
+
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[BaseEvent]:
+        """Override to set timestamps on all AG-UI events."""
+        async for agui_event in super().handle_event(event):
+            if agui_event.timestamp is None:
+                agui_event.timestamp = self._get_timestamp()
+            yield agui_event
+
+    async def before_stream(self) -> AsyncIterator[BaseEvent]:
+        yield RunStartedEvent(
+            thread_id=self.run_input.thread_id,
+            run_id=self.run_input.run_id,
+            timestamp=self._get_timestamp(),
+        )
+
+    async def before_response(self) -> AsyncIterator[BaseEvent]:
+        # Prevent parts from a subsequent response being tied to parts from an earlier response.
+        # See https://github.com/pydantic/pydantic-ai/issues/3316
+        self.new_message_id()
+        return
+        yield  # Make this an async generator
+
+    async def after_stream(self) -> AsyncIterator[BaseEvent]:
+        if self._error:
+            return
+
+        # `RunFinishedEvent.outcome` only exists in ag-ui-protocol >= 0.1.19. `ConfiguredBaseModel`
+        # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
+        # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
+        # to omit it entirely.
+        if HAS_INTERRUPTS:
+            yield RunFinishedEvent(
+                thread_id=self.run_input.thread_id,
+                run_id=self.run_input.run_id,
+                outcome=self._build_outcome(),
+                timestamp=self._get_timestamp(),
+            )
+        else:
+            yield RunFinishedEvent(
+                thread_id=self.run_input.thread_id,
+                run_id=self.run_input.run_id,
+                timestamp=self._get_timestamp(),
+            )
+
+    def _build_outcome(self) -> RunFinishedInterruptOutcome | RunFinishedSuccessOutcome | None:
+        """Build the `RunFinishedEvent.outcome` from the final agent result.
+
+        Returns `None` when the negotiated AG-UI version predates interrupts, so an old
+        client doesn't receive a field it doesn't understand even if the server SDK
+        does.
+        """
+        if parse_ag_ui_version(self.ag_ui_version) < INTERRUPTS_VERSION:
+            # `outcome=None` only reaches an old client as a bare `RUN_FINISHED` because the SDK's
+            # `EventEncoder` serializes with `exclude_none=True`; the field is valid on this SDK.
+            return None
+        output = self._result.output if self._result else None
+        if isinstance(output, DeferredToolRequests) and output.approvals:
+            return RunFinishedInterruptOutcome(
+                interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
+            )
+        return RunFinishedSuccessOutcome()
+
+    async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
+        self._error = True
+        yield RunErrorEvent(message=str(error), timestamp=self._get_timestamp())
+
+    async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
+        if follows_text:
+            message_id = self.message_id
+        else:
+            message_id = self.new_message_id()
+            yield TextMessageStartEvent(message_id=message_id)
+
+        if part.content:  # pragma: no branch
+            yield TextMessageContentEvent(message_id=message_id, delta=part.content)
+
+    async def handle_text_delta(self, delta: TextPartDelta) -> AsyncIterator[BaseEvent]:
+        if delta.content_delta:  # pragma: no branch
+            yield TextMessageContentEvent(message_id=self.message_id, delta=delta.content_delta)
+
+    async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[BaseEvent]:
+        if not followed_by_text:
+            yield TextMessageEndEvent(message_id=self.message_id)
+
+    async def handle_thinking_start(
+        self, part: ThinkingPart, follows_thinking: bool = False
+    ) -> AsyncIterator[BaseEvent]:
+        self._reasoning_message_id = str(uuid4())
+        self._reasoning_started = False
+
+        if self._use_reasoning:
+            from ._thinking_0_13 import handle_thinking_start as _impl
+        else:
+            from ._thinking_0_10 import handle_thinking_start as _impl
+        async for event in _impl(self, part):
+            yield event
+
+    async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
+        if not delta.content_delta:
+            return  # pragma: no cover
+
+        assert self._reasoning_message_id is not None, (
+            'handle_thinking_start must be called before handle_thinking_delta'
+        )
+
+        if self._use_reasoning:
+            from ._thinking_0_13 import handle_thinking_delta as _impl
+        else:
+            from ._thinking_0_10 import handle_thinking_delta as _impl
+        async for event in _impl(self, delta):
+            yield event
+
+    async def handle_thinking_end(
+        self, part: ThinkingPart, followed_by_thinking: bool = False
+    ) -> AsyncIterator[BaseEvent]:
+        assert self._reasoning_message_id is not None, 'handle_thinking_start must be called before handle_thinking_end'
+
+        if self._use_reasoning:
+            from ._thinking_0_13 import handle_thinking_end as _impl
+        else:
+            from ._thinking_0_10 import handle_thinking_end as _impl
+        async for event in _impl(self, part):
+            yield event
+
+    def handle_tool_call_start(self, part: ToolCallPart | NativeToolCallPart) -> AsyncIterator[BaseEvent]:
+        return self._handle_tool_call_start(part)
+
+    def handle_builtin_tool_call_start(self, part: NativeToolCallPart) -> AsyncIterator[BaseEvent]:
+        tool_call_id = part.tool_call_id
+        builtin_tool_call_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id])
+        self._builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
+        tool_call_id = builtin_tool_call_id
+
+        return self._handle_tool_call_start(part, tool_call_id)
+
+    async def _handle_tool_call_start(
+        self, part: ToolCallPart | NativeToolCallPart, tool_call_id: str | None = None
+    ) -> AsyncIterator[BaseEvent]:
+        tool_call_id = tool_call_id or part.tool_call_id
+        parent_message_id = self.message_id
+
+        yield ToolCallStartEvent(
+            tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=parent_message_id
+        )
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(part.tool_kind)):
+            # Clients echo this back as `ToolCall.encrypted_value`, so `tool_kind` survives
+            # streaming-built histories. The event is 0.1.13+, hence the gated import.
+            from ag_ui.core import ReasoningEncryptedValueEvent
+
+            yield ReasoningEncryptedValueEvent(
+                subtype='tool-call', entity_id=tool_call_id, encrypted_value=encrypted_value
+            )
+        if part.args:
+            yield ToolCallArgsEvent(tool_call_id=tool_call_id, delta=part.args_as_json_str())
+
+    async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseEvent]:
+        tool_call_id = delta.tool_call_id
+        assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
+        if tool_call_id in self._builtin_tool_call_ids:
+            tool_call_id = self._builtin_tool_call_ids[tool_call_id]
+        yield ToolCallArgsEvent(
+            tool_call_id=tool_call_id,
+            delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
+        )
+
+    async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
+        yield ToolCallEndEvent(tool_call_id=part.tool_call_id)
+
+    async def handle_builtin_tool_call_end(self, part: NativeToolCallPart) -> AsyncIterator[BaseEvent]:
+        builtin_id = self._builtin_tool_call_ids[part.tool_call_id]
+        yield ToolCallEndEvent(tool_call_id=builtin_id)
+
+    async def handle_builtin_tool_return(self, part: NativeToolReturnPart) -> AsyncIterator[BaseEvent]:
+        tool_call_id = self._builtin_tool_call_ids[part.tool_call_id]
+        # Use a one-off message ID instead of `self.new_message_id()` to avoid
+        # mutating `self.message_id`, which is used as `parent_message_id` for
+        # subsequent tool calls in the same response.
+        yield ToolCallResultEvent(
+            message_id=str(uuid4()),
+            type=EventType.TOOL_CALL_RESULT,
+            role='tool',
+            tool_call_id=tool_call_id,
+            content=_tool_return_content(part),
+        )
+
+    async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
+        async for e in self._handle_tool_result(event.part):
+            yield e
+
+    async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
+        async for e in self._handle_tool_result(event.part):
+            yield e
+
+    async def _handle_tool_result(self, result: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseEvent]:
+        if isinstance(result, RetryPromptPart):
+            output = result.model_response()
+        else:
+            output = _tool_return_content(result)
+
+        yield ToolCallResultEvent(
+            message_id=self.new_message_id(),
+            type=EventType.TOOL_CALL_RESULT,
+            role='tool',
+            tool_call_id=result.tool_call_id,
+            content=output,
+        )
+
+        # ToolCallResultEvent.content may hold user parts (e.g. text, images) that AG-UI does not currently have events for
+
+        if isinstance(result, ToolReturnPart):
+            # Check for AG-UI events returned by tool calls.
+            possible_event = result.metadata or result.content
+            if isinstance(possible_event, BaseEvent):
+                yield possible_event
+            elif isinstance(possible_event, str | bytes):  # pragma: no branch
+                # Avoid iterable check for strings and bytes.
+                pass
+            elif isinstance(possible_event, Iterable):  # pragma: no branch
+                for item in possible_event:  # type: ignore[reportUnknownMemberType]
+                    if isinstance(item, BaseEvent):  # pragma: no branch
+                        yield item
+
+
+def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:
+    """Return tool output string with file descriptions if present."""
+    output = part.model_response_str()
+    if file_descriptions := [describe_file(f) for f in part.files]:
+        if output:
+            return output + '\n' + '\n'.join(file_descriptions)
+        else:
+            return '\n'.join(file_descriptions)
+    else:
+        return output

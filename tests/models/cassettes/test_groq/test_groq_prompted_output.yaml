@@ -1,0 +1,81 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '516'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: |-
+          Always respond with a JSON object that's compatible with this schema:
+
+          {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+          Don't include any text or Markdown fencing before or after.
+        role: system
+      - content: What is the largest city in Mexico?
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      response_format:
+        type: json_object
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '926'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '{"city":"Mexico City","country":"Mexico"}'
+          reasoning: 'We need to respond with JSON object with properties city and country. The question: "What is the largest
+            city in Mexico?" The answer: City is Mexico City, country is Mexico. Must output compact JSON without any extra
+            text or markdown. So {"city":"Mexico City","country":"Mexico"} Ensure valid JSON.'
+          role: assistant
+      created: 1756843266
+      id: chatcmpl-d7085def-1e9f-45d7-b90b-65633ef23489
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_ed9190d8b7
+      usage:
+        completion_time: 0.173182068
+        completion_tokens: 87
+        prompt_time: 0.006958709
+        prompt_tokens: 177
+        queue_time: 0.212268627
+        total_time: 0.180140777
+        total_tokens: 264
+      usage_breakdown: null
+      x_groq:
+        id: req_01k4609m4zf9qsbf0wwgvw8398
+    status:
+      code: 200
+      message: OK
+version: 1

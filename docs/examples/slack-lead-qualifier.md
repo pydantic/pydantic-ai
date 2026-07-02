@@ -41,7 +41,7 @@ You need to have a Slack workspace and the necessary permissions to create apps.
     - `#new-slack-leads`
     - `#daily-slack-leads-summary`
 
-    These names are hard-coded in the example. If you want to use different channels, you can clone the repo and change them in `examples/pydantic_examples/slack_lead_qualifier/functions.py`.
+    These names are hard-coded in the example. If you want to use different channels, you can clone the repo and change them in `examples/pydantic_ai_examples/slack_lead_qualifier/functions.py`.
 
 ### Logfire Write Token
 
@@ -64,7 +64,7 @@ You need to have a Slack workspace and the necessary permissions to create apps.
 
 ## Usage
 
-1. Make sure you have the [dependencies installed](./index.md#usage).
+1. Make sure you have the [dependencies installed](./setup.md#usage).
 
 2. Authenticate with Modal:
 
@@ -147,7 +147,7 @@ We also define a `Analysis.as_slack_blocks()` helper method that turns the analy
 
 Now it's time to get into Pydantic AI and define the agent that will do the actual analysis!
 
-We specify the model we'll use (`openai:gpt-4o`), provide [instructions](../agents.md#instructions), give the agent access to the [DuckDuckGo search tool](../common-tools.md#duckduckgo-search-tool), and tell it to output either an `Analysis` or `None` using the [Native Output](../output.md#native-output) structured output mode.
+We specify the model we'll use (`openai:gpt-5`), provide [instructions](../agent.md#instructions), give the agent access to the [DuckDuckGo search tool](../common-tools.md#duckduckgo-search-tool), and tell it to output either an `Analysis` or `None` using the [Native Output](../output.md#native-output) structured output mode.
 
 The real meat of the app is in the instructions that tell the agent how to evaluate each new Slack member. If you plan to use this app yourself, you'll of course want to modify them to your own situation.
 

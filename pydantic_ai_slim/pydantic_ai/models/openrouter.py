@@ -1,0 +1,1202 @@
+from __future__ import annotations as _annotations
+
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from typing import Annotated, Any, Literal, TypeAlias, cast
+
+from pydantic import BaseModel, Discriminator, ValidationError, field_validator
+from typing_extensions import TypedDict, assert_never, override
+
+from .. import usage
+from ..exceptions import ModelHTTPError, UserError
+from ..messages import (
+    BinaryContent,
+    CachePoint,
+    FinishReason,
+    ModelMessage,
+    ModelResponseStreamEvent,
+    ThinkingPart,
+    UserContent,
+    VideoUrl,
+)
+from ..native_tools import AbstractNativeTool, WebSearchTool
+from ..profiles import ModelProfileSpec
+from ..providers import Provider
+from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
+from ..settings import ModelSettings, ThinkingLevel
+from ..tools import ToolDefinition
+from . import ModelRequestParameters, download_item
+
+try:
+    from openai import APIError, AsyncOpenAI, omit
+    from openai.types import chat, completion_usage
+    from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
+    from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
+    from openai.types.chat.chat_completion_message import Annotation as _OpenAIAnnotation
+    from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
+    from openai.types.chat.completion_create_params import WebSearchOptions
+    from openai.types.shared import ReasoningEffort
+
+    from .openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIStreamedResponse,
+        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
+        _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
+        _map_usage as _map_openai_usage,  # pyright: ignore[reportPrivateUsage]
+    )
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `openai` to use the OpenRouter model, '
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+    ) from _import_error
+
+_CHAT_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'], FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'tool_calls': 'tool_call',
+    'content_filter': 'content_filter',
+    'error': 'error',
+}
+
+# https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+_OPENROUTER_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'medium', 'high', 'none']] = {
+    True: 'medium',
+    False: 'none',
+    'minimal': 'low',
+    'low': 'low',
+    'medium': 'medium',
+    'high': 'high',
+    'xhigh': 'high',
+}
+
+
+class _VideoURL(TypedDict):
+    """Video URL payload for OpenRouter content parts."""
+
+    url: str
+
+
+class _ChatCompletionContentPartVideoUrlParam(TypedDict):
+    """Video URL content part parameter for OpenRouter.
+
+    OpenRouter supports video_url content parts, which the OpenAI client doesn't support.
+    The structure mirrors the image_url format with a video_url field.
+    """
+
+    video_url: _VideoURL
+
+    type: Literal['video_url']
+    """The type of content part."""
+
+
+class _OpenRouterMaxPrice(TypedDict, total=False):
+    """The object specifying the maximum price you want to pay for this request. USD price per million tokens, for prompt and completion."""
+
+    prompt: int
+    completion: int
+    image: int
+    audio: int
+    request: int
+
+
+KnownOpenRouterProviders = Literal[
+    'z-ai',
+    'cerebras',
+    'venice',
+    'moonshotai',
+    'morph',
+    'stealth',
+    'wandb',
+    'klusterai',
+    'openai',
+    'sambanova',
+    'amazon-bedrock',
+    'mistral',
+    'nextbit',
+    'atoma',
+    'ai21',
+    'minimax',
+    'baseten',
+    'anthropic',
+    'featherless',
+    'groq',
+    'lambda',
+    'azure',
+    'ncompass',
+    'deepseek',
+    'hyperbolic',
+    'crusoe',
+    'cohere',
+    'mancer',
+    'avian',
+    'perplexity',
+    'novita',
+    'siliconflow',
+    'switchpoint',
+    'xai',
+    'inflection',
+    'fireworks',
+    'deepinfra',
+    'inference-net',
+    'inception',
+    'atlas-cloud',
+    'nvidia',
+    'alibaba',
+    'friendli',
+    'infermatic',
+    'targon',
+    'ubicloud',
+    'aion-labs',
+    'liquid',
+    'nineteen',
+    'cloudflare',
+    'nebius',
+    'chutes',
+    'enfer',
+    'crofai',
+    'open-inference',
+    'phala',
+    'gmicloud',
+    'meta',
+    'relace',
+    'parasail',
+    'together',
+    'google-ai-studio',
+    'google-vertex',
+]
+"""Known providers in the OpenRouter marketplace"""
+
+OpenRouterProviderName = str | KnownOpenRouterProviders
+"""Possible OpenRouter provider names.
+
+Since OpenRouter is constantly updating their list of providers, we explicitly list some known providers but
+allow any name in the type hints.
+See [the OpenRouter API](https://openrouter.ai/docs/api-reference/list-available-providers) for a full list.
+"""
+
+OpenRouterTransforms = Literal['middle-out']
+"""Available messages transforms for OpenRouter models with limited token windows.
+
+Currently only supports 'middle-out', but is expected to grow in the future.
+"""
+
+OpenRouterCacheTTL = bool | Literal['5m', '1h']
+"""Cache breakpoint time-to-live for OpenRouter prompt caching.
+
+`True` selects the default TTL ('5m'); '5m' or '1h' may be given explicitly. The TTL is only
+forwarded to downstream providers that support it (Anthropic); it is omitted for Gemini.
+"""
+
+
+class OpenRouterProviderConfig(TypedDict, total=False):
+    """Represents the 'Provider' object from the OpenRouter API."""
+
+    order: list[OpenRouterProviderName]
+    """List of provider slugs to try in order (e.g. ["anthropic", "openai"]). [See details](https://openrouter.ai/docs/features/provider-routing#ordering-specific-providers)"""
+
+    allow_fallbacks: bool
+    """Whether to allow backup providers when the primary is unavailable. [See details](https://openrouter.ai/docs/features/provider-routing#disabling-fallbacks)"""
+
+    require_parameters: bool
+    """Only use providers that support all parameters in your request."""
+
+    data_collection: Literal['allow', 'deny']
+    """Control whether to use providers that may store data. [See details](https://openrouter.ai/docs/features/provider-routing#requiring-providers-to-comply-with-data-policies)"""
+
+    zdr: bool
+    """Restrict routing to only ZDR (Zero Data Retention) endpoints. [See details](https://openrouter.ai/docs/features/provider-routing#zero-data-retention-enforcement)"""
+
+    only: list[OpenRouterProviderName]
+    """List of provider slugs to allow for this request. [See details](https://openrouter.ai/docs/features/provider-routing#allowing-only-specific-providers)"""
+
+    ignore: list[str]
+    """List of provider slugs to skip for this request. [See details](https://openrouter.ai/docs/features/provider-routing#ignoring-providers)"""
+
+    quantizations: list[Literal['int4', 'int8', 'fp4', 'fp6', 'fp8', 'fp16', 'bf16', 'fp32', 'unknown']]
+    """List of quantization levels to filter by (e.g. ["int4", "int8"]). [See details](https://openrouter.ai/docs/features/provider-routing#quantization)"""
+
+    sort: Literal['price', 'throughput', 'latency']
+    """Sort providers by price or throughput. (e.g. "price" or "throughput"). [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting)"""
+
+    max_price: _OpenRouterMaxPrice
+    """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
+
+
+class OpenRouterReasoning(TypedDict, total=False):
+    """Configuration for reasoning tokens in OpenRouter requests.
+
+    Reasoning tokens allow models to show their step-by-step thinking process.
+    You can configure this using either OpenAI-style effort levels or Anthropic-style
+    token limits, but not both simultaneously.
+    """
+
+    effort: Literal['xhigh', 'high', 'medium', 'low', 'minimal', 'none']
+    """OpenAI-style reasoning effort level. Cannot be used with max_tokens."""
+
+    max_tokens: int
+    """Anthropic-style specific token limit for reasoning. Cannot be used with effort."""
+
+    exclude: bool
+    """Whether to exclude reasoning tokens from the response. Default is False. All models support this."""
+
+    enabled: bool
+    """Whether to enable reasoning with default parameters. Default is inferred from effort or max_tokens."""
+
+
+class OpenRouterUsageConfig(TypedDict, total=False):
+    """Configuration for OpenRouter usage."""
+
+    include: bool
+
+
+class OpenRouterModelSettings(ModelSettings, total=False):
+    """Settings used for an OpenRouter model request."""
+
+    # ALL FIELDS MUST BE `openrouter_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+
+    openrouter_models: list[str]
+    """A list of fallback models.
+
+    These models will be tried, in order, if the main model returns an error. [See details](https://openrouter.ai/docs/features/model-routing#the-models-parameter)
+    """
+
+    openrouter_provider: OpenRouterProviderConfig
+    """OpenRouter routes requests to the best available providers for your model. By default, requests are load balanced across the top providers to maximize uptime.
+
+    You can customize how your requests are routed using the provider object. [See more](https://openrouter.ai/docs/features/provider-routing)"""
+
+    openrouter_preset: str
+    """Presets allow you to separate your LLM configuration from your code.
+
+    Create and manage presets through the OpenRouter web application to control provider routing, model selection, system prompts, and other parameters, then reference them in OpenRouter API requests. [See more](https://openrouter.ai/docs/features/presets)"""
+
+    openrouter_transforms: list[OpenRouterTransforms]
+    """To help with prompts that exceed the maximum context size of a model.
+
+    Transforms work by removing or truncating messages from the middle of the prompt, until the prompt fits within the model's context window. [See more](https://openrouter.ai/docs/features/message-transforms)
+    """
+
+    openrouter_reasoning: OpenRouterReasoning
+    """To control the reasoning tokens in the request.
+
+    The reasoning config object consolidates settings for controlling reasoning strength across different models. [See more](https://openrouter.ai/docs/use-cases/reasoning-tokens)
+    """
+
+    openrouter_usage: OpenRouterUsageConfig
+    """To control the usage of the model.
+
+    The usage config object consolidates settings for enabling detailed usage information. [See more](https://openrouter.ai/docs/use-cases/usage-accounting)
+    """
+
+    openrouter_cache_instructions: OpenRouterCacheTTL
+    """Whether to add `cache_control` to stable system instructions.
+
+    When enabled, supported downstream providers (Anthropic, Gemini) can cache stable
+    system instructions and reduce costs. If dynamic instructions are present, the cache
+    point is placed before them, matching Anthropic's static-prefix caching behavior.
+    For Gemini models, this setting is ignored when dynamic instructions are present because
+    OpenRouter normalizes system/developer messages into a single immutable `systemInstruction`.
+    Ignored for other downstream providers.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    TTL is only included for Anthropic models; Gemini does not support explicit TTL.
+
+    See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
+    """
+
+    openrouter_cache_messages: OpenRouterCacheTTL
+    """Convenience setting to enable caching for the last message in the conversation.
+
+    When enabled, this automatically adds `cache_control` to the last content block
+    in the final message (regardless of role), which is useful for Anthropic's prefix-based
+    caching in multi-turn conversations. In tool-use flows, this may target a tool result
+    message rather than a user message, which is correct for prefix caching.
+    Ignored for downstream providers that do not support explicit cache control.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    TTL is only included for Anthropic models; Gemini does not support explicit TTL.
+
+    Note: OpenRouter uses only the last breakpoint across normal message content for
+    Gemini caching. Use this when caching the final message boundary is intentional;
+    use `openrouter_cache_instructions` for stable system context. Anthropic supports
+    prefix-based caching across multi-turn conversations with this setting.
+
+    See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
+    """
+
+    openrouter_cache_tool_definitions: OpenRouterCacheTTL
+    """Whether to add `cache_control` to the last tool definition.
+
+    When enabled, the last tool in the `tools` array will have `cache_control` set,
+    allowing supported downstream providers to cache tool definitions and reduce costs.
+    Ignored for downstream providers that do not support explicit tool definition caching.
+    If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
+    TTL is only included for Anthropic models.
+
+    Currently only effective for Anthropic models via OpenRouter, as tool definition
+    caching is not documented for other providers.
+
+    See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
+    """
+
+
+class _OpenRouterError(BaseModel):
+    """Utility class to validate error messages from OpenRouter."""
+
+    code: int
+    message: str
+
+
+class _BaseReasoningDetail(BaseModel, frozen=True):
+    """Common fields shared across all reasoning detail types."""
+
+    id: str | None = None
+    format: (
+        Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1']
+        | str
+        | None
+    ) = None
+    index: int | None = None
+    type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
+
+
+class _ReasoningSummary(_BaseReasoningDetail, frozen=True):
+    """Represents a high-level summary of the reasoning process."""
+
+    type: Literal['reasoning.summary']
+    summary: str = ''
+
+
+class _ReasoningEncrypted(_BaseReasoningDetail, frozen=True):
+    """Represents encrypted reasoning data."""
+
+    type: Literal['reasoning.encrypted']
+    data: str = ''
+
+
+class _ReasoningText(_BaseReasoningDetail, frozen=True):
+    """Represents raw text reasoning."""
+
+    type: Literal['reasoning.text']
+    text: str = ''
+    signature: str | None = None
+
+
+_OpenRouterReasoningDetail = _ReasoningSummary | _ReasoningEncrypted | _ReasoningText
+
+
+def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail) -> ThinkingPart:
+    provider_name = 'openrouter'
+    provider_details = reasoning.model_dump(include={'format', 'index', 'type'})
+    if isinstance(reasoning, _ReasoningText):
+        return ThinkingPart(
+            id=reasoning.id,
+            content=reasoning.text,
+            signature=reasoning.signature,
+            provider_name=provider_name,
+            provider_details=provider_details,
+        )
+    elif isinstance(reasoning, _ReasoningSummary):
+        return ThinkingPart(
+            id=reasoning.id, content=reasoning.summary, provider_name=provider_name, provider_details=provider_details
+        )
+    elif isinstance(reasoning, _ReasoningEncrypted):
+        return ThinkingPart(
+            id=reasoning.id,
+            content='',
+            signature=reasoning.data,
+            provider_name=provider_name,
+            provider_details=provider_details,
+        )
+    else:
+        assert_never(reasoning)
+
+
+def _into_reasoning_detail(thinking_part: ThinkingPart) -> _OpenRouterReasoningDetail | None:
+    if thinking_part.provider_details is None:  # pragma: lax no cover
+        return None
+
+    data = _BaseReasoningDetail.model_validate(thinking_part.provider_details)
+
+    if data.type == 'reasoning.text':
+        return _ReasoningText(
+            type=data.type,
+            id=thinking_part.id,
+            format=data.format,
+            index=data.index,
+            text=thinking_part.content,
+            signature=thinking_part.signature,
+        )
+    elif data.type == 'reasoning.summary':
+        return _ReasoningSummary(
+            type=data.type,
+            id=thinking_part.id,
+            format=data.format,
+            index=data.index,
+            summary=thinking_part.content,
+        )
+    elif data.type == 'reasoning.encrypted':
+        assert thinking_part.signature is not None
+        return _ReasoningEncrypted(
+            type=data.type,
+            id=thinking_part.id,
+            format=data.format,
+            index=data.index,
+            data=thinking_part.signature,
+        )
+    else:
+        assert_never(data.type)
+
+
+class _OpenRouterFileAnnotation(BaseModel, frozen=True):
+    """File annotation from OpenRouter.
+
+    OpenRouter can return file annotations when processing uploaded files like PDFs.
+    The schema is flexible since OpenRouter doesn't document the exact fields.
+    """
+
+    type: Literal['file']
+    file: dict[str, Any] | None = None
+
+
+_OpenRouterAnnotation: TypeAlias = _OpenAIAnnotation | _OpenRouterFileAnnotation
+
+
+class _OpenRouterFunction(chat_completion_message_function_tool_call.Function):
+    arguments: str | None  # type: ignore[reportIncompatibleVariableOverride]
+    """
+    The arguments to call the function with, as generated by the model in JSON
+    format. Note that the model does not always generate valid JSON, and may
+    hallucinate parameters not defined by your function schema. Validate the
+    arguments in your code before calling your function.
+    """
+
+
+class _OpenRouterChatCompletionMessageFunctionToolCall(chat.ChatCompletionMessageFunctionToolCall):
+    function: _OpenRouterFunction  # type: ignore[reportIncompatibleVariableOverride]
+    """The function that the model called."""
+
+
+_OpenRouterChatCompletionMessageToolCallUnion: TypeAlias = Annotated[
+    _OpenRouterChatCompletionMessageFunctionToolCall | chat.ChatCompletionMessageCustomToolCall,
+    Discriminator(discriminator='type'),
+]
+
+
+class _OpenRouterCompletionMessage(chat.ChatCompletionMessage):
+    """Wrapped chat completion message with OpenRouter specific attributes."""
+
+    reasoning: str | None = None
+    """The reasoning text associated with the message, if any."""
+
+    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    """The reasoning details associated with the message, if any."""
+
+    tool_calls: list[_OpenRouterChatCompletionMessageToolCallUnion] | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """The tool calls generated by the model, such as function calls."""
+
+    annotations: list[_OpenRouterAnnotation] | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """Annotations associated with the message, supporting both url_citation and file types."""
+
+
+class _OpenRouterChoice(chat_completion.Choice):
+    """Wraps OpenAI chat completion choice with OpenRouter specific attributes."""
+
+    native_finish_reason: str | None = None
+    """The provided finish reason by the downstream provider from OpenRouter."""
+
+    finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenRouter specific finish reasons.
+
+    Notably, removes 'function_call' and adds 'error' finish reasons.
+    """
+
+    message: _OpenRouterCompletionMessage  # type: ignore[reportIncompatibleVariableOverride]
+    """A wrapped chat completion message with OpenRouter specific attributes."""
+
+
+@dataclass
+class _OpenRouterCostDetails:
+    """OpenRouter specific cost details."""
+
+    upstream_inference_cost: float | None = None
+    upstream_inference_prompt_cost: float | None = None
+    upstream_inference_completions_cost: float | None = None
+
+
+class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
+    """Wraps OpenAI completion token details with OpenRouter specific attributes."""
+
+    cache_write_tokens: int | None = None
+
+    video_tokens: int | None = None
+
+
+class _OpenRouterCompletionTokenDetails(completion_usage.CompletionTokensDetails):
+    """Wraps OpenAI completion token details with OpenRouter specific attributes."""
+
+    image_tokens: int | None = None
+
+
+class _OpenRouterUsage(completion_usage.CompletionUsage):
+    """Wraps OpenAI completion usage with OpenRouter specific attributes."""
+
+    cost: float | None = None
+
+    cost_details: _OpenRouterCostDetails | None = None
+
+    is_byok: bool | None = None
+
+    prompt_tokens_details: _OpenRouterPromptTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
+
+    completion_tokens_details: _OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
+
+
+class _OpenRouterChatCompletion(_ChatCompletion):
+    """Wraps OpenAI chat completion with OpenRouter specific attributes."""
+
+    provider: str
+    """The downstream provider that was used by OpenRouter."""
+
+    choices: list[_OpenRouterChoice]  # type: ignore[reportIncompatibleVariableOverride]
+    """A list of chat completion choices modified with OpenRouter specific attributes."""
+
+    error: _OpenRouterError | None = None
+    """OpenRouter specific error attribute."""
+
+    usage: _OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenRouter specific usage attribute."""
+
+
+class _OpenRouterErrorResponse(BaseModel, extra='allow'):
+    """OpenRouter error response with null standard fields (see #3994)."""
+
+    error: _OpenRouterError
+    model: str | None = None
+
+
+class _OpenRouterNestedCompletion(_OpenRouterChatCompletion):
+    """Completion nested in the `provider` field where provider name may be null (see #3994)."""
+
+    provider: str = 'unknown'
+    created: int = 0
+
+    @field_validator('provider', mode='before')
+    @classmethod
+    def _coerce_null_provider(cls, v: Any) -> str:
+        return v if isinstance(v, str) else 'unknown'
+
+
+class _OpenRouterNestedProviderResponse(BaseModel, extra='allow'):
+    """OpenRouter response where the real completion is nested in `provider` (see #3994)."""
+
+    provider: _OpenRouterNestedCompletion
+
+
+def _map_openrouter_provider_details(
+    response: _OpenRouterChatCompletion | _OpenRouterChatCompletionChunk,
+) -> dict[str, Any]:
+    provider_details: dict[str, Any] = {}
+
+    provider_details['downstream_provider'] = response.provider
+    if native_finish_reason := response.choices[0].native_finish_reason:
+        provider_details['finish_reason'] = native_finish_reason
+
+    if usage := response.usage:
+        if cost := usage.cost:
+            provider_details['cost'] = cost
+
+        if cost_details := usage.cost_details:
+            provider_details['upstream_inference_cost'] = cost_details.upstream_inference_cost
+            provider_details['upstream_inference_prompt_cost'] = cost_details.upstream_inference_prompt_cost
+            provider_details['upstream_inference_completions_cost'] = cost_details.upstream_inference_completions_cost
+
+        if (is_byok := usage.is_byok) is not None:
+            provider_details['is_byok'] = is_byok
+
+    return provider_details
+
+
+def _map_openrouter_usage(
+    response: _OpenRouterChatCompletion | _OpenRouterChatCompletionChunk,
+    provider: str,
+    provider_url: str,
+    model: str,
+) -> usage.RequestUsage:
+    request_usage = _map_openai_usage(response, provider, provider_url, model)
+
+    if response.usage and (details := response.usage.prompt_tokens_details):
+        if cache_write_tokens := details.cache_write_tokens:
+            request_usage.cache_write_tokens = cache_write_tokens
+
+    return request_usage
+
+
+def _openrouter_settings_to_openai_settings(
+    model_settings: OpenRouterModelSettings, model_request_parameters: ModelRequestParameters
+) -> OpenAIChatModelSettings:
+    """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
+
+    Args:
+        model_settings: The 'OpenRouterModelSettings' object to transform.
+        model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
+
+    Returns:
+        An 'OpenAIChatModelSettings' object with equivalent settings.
+    """
+    extra_body = cast(dict[str, Any], model_settings.get('extra_body', {}))
+
+    if models := model_settings.pop('openrouter_models', None):
+        extra_body['models'] = models
+    if provider := model_settings.pop('openrouter_provider', None):
+        extra_body['provider'] = provider
+    if preset := model_settings.pop('openrouter_preset', None):
+        extra_body['preset'] = preset
+    if transforms := model_settings.pop('openrouter_transforms', None):
+        extra_body['transforms'] = transforms
+    # Fall back to unified thinking when openrouter_reasoning is not set
+    if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
+        thinking = model_request_parameters.thinking
+        openrouter_reasoning: OpenRouterReasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
+        if thinking is not False:
+            # Some reasoning-optional routes require explicit `enabled` even when `effort` is set.
+            openrouter_reasoning['enabled'] = True
+        model_settings['openrouter_reasoning'] = openrouter_reasoning
+
+    if reasoning := model_settings.pop('openrouter_reasoning', None):
+        extra_body['reasoning'] = reasoning
+    if usage := model_settings.pop('openrouter_usage', None):
+        extra_body['usage'] = usage
+
+    # Note: openrouter_cache_instructions, openrouter_cache_messages, and
+    # openrouter_cache_tool_definitions are intentionally NOT popped here - they are consumed
+    # by OpenRouterModel._map_messages and ._get_tool_choice via the model_settings dict, not passed
+    # to the OpenAI SDK.
+
+    for native_tool in model_request_parameters.native_tools:
+        if isinstance(native_tool, WebSearchTool):
+            extra_body.setdefault('plugins', []).append({'id': 'web'})
+            extra_body['web_search_options'] = {'search_context_size': native_tool.search_context_size}
+
+    model_settings['extra_body'] = extra_body
+
+    return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
+
+
+class OpenRouterModel(OpenAIChatModel):
+    """Extends OpenAIChatModel to capture extra metadata for Openrouter."""
+
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        provider: Literal['openrouter'] | Provider[AsyncOpenAI] = 'openrouter',
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
+    ):
+        """Initialize an OpenRouter model.
+
+        Args:
+            model_name: The name of the model to use.
+            provider: The provider to use for authentication and API access. If not provided, a new provider will be created with the default settings.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
+        """
+        super().__init__(model_name, provider=provider or OpenRouterProvider(), profile=profile, settings=settings)
+
+    @property
+    def _resolved_profile(self) -> OpenRouterModelProfile:
+        return cast(OpenRouterModelProfile, self.profile)
+
+    def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
+        """Build a `cache_control` dict for the downstream provider.
+
+        Args:
+            ttl: The cache time-to-live. `True` is treated as `'5m'`.
+                Only included for providers that support it (Anthropic).
+        """
+        resolved_ttl: Literal['5m', '1h'] = '5m' if isinstance(ttl, bool) else ttl
+        cache_control: dict[str, str] = {'type': 'ephemeral'}
+        if self._resolved_profile.get('openrouter_supports_cache_ttl', False):
+            cache_control['ttl'] = resolved_ttl
+        return cache_control
+
+    def _limit_cache_points(
+        self,
+        openai_messages: list[chat.ChatCompletionMessageParam],
+        *,
+        has_tool_cache_point: bool = False,
+    ) -> None:
+        """Limit the number of cache breakpoints to the downstream provider's maximum.
+
+        Anthropic enforces a maximum of 4 cache breakpoints per request. When the limit
+        is exceeded, excess breakpoints are removed from messages (oldest first), preserving
+        tool and system/developer cache points which are typically more valuable.
+
+        Follows the same strategy as the Anthropic and Bedrock models' `_limit_cache_points`:
+        1. Reserve slots for tool cache points (known from `has_tool_cache_point`)
+        2. Count cache points in system/developer messages (always preserved)
+        3. Calculate remaining budget for user/assistant message cache points
+        4. Traverse remaining messages newest-first, removing excess cache points
+
+        Args:
+            openai_messages: The mapped OpenAI messages to limit.
+            has_tool_cache_point: Whether a tool definition cache point was added by `_get_tool_choice`.
+        """
+        max_points = self._resolved_profile.get('openrouter_max_cache_points')
+        if max_points is None:
+            return
+
+        used = int(has_tool_cache_point)
+
+        for msg in openai_messages:
+            if msg.get('role') in ('system', 'developer'):
+                content = msg.get('content')
+                if isinstance(content, list):
+                    used += sum(1 for part in content if 'cache_control' in cast(dict[str, Any], part))
+
+        remaining = max_points - used
+        if remaining < 0:
+            raise UserError(
+                f'Too many cache points for downstream provider. '
+                f'Tool and system cache points already use {used}, '
+                f'which exceeds the maximum of {max_points}.'
+            )
+
+        for msg in reversed(openai_messages):
+            if msg.get('role') in ('system', 'developer'):
+                continue
+            content = msg.get('content')
+            if not isinstance(content, list):
+                continue
+            for part in reversed(content):
+                part_dict = cast(dict[str, Any], part)
+                if 'cache_control' in part_dict:
+                    if remaining > 0:
+                        remaining -= 1
+                    else:
+                        del part_dict['cache_control']
+
+    def _add_cache_control(self, params: list[ChatCompletionContentPartParam], ttl: OpenRouterCacheTTL = '5m') -> None:
+        """Add `cache_control` to the last content part.
+
+        Mirrors the Anthropic model's `_add_cache_control_to_last_param` behavior for
+        OpenRouter's Anthropic and Gemini providers.
+
+        See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
+
+        Args:
+            params: List of content parts to modify.
+            ttl: The cache time-to-live (`True` -> `'5m'`, or `'5m'`/`'1h'`).
+                Ignored for providers that don't support it.
+        """
+        if not self._resolved_profile.get('openrouter_supports_cache_control', False):
+            return
+
+        if not params:
+            raise UserError(
+                'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
+                'To cache system instructions or tool definitions, use the `openrouter_cache_instructions` or `openrouter_cache_tool_definitions` settings instead.'
+            )
+
+        last_param = cast(dict[str, Any], params[-1])
+        last_param['cache_control'] = self._build_cache_control(ttl)
+
+    def _add_cache_control_to_message(
+        self, message: chat.ChatCompletionMessageParam, ttl: OpenRouterCacheTTL = '5m'
+    ) -> None:
+        """Add `cache_control` to the last content block in a mapped chat message."""
+        content = message.get('content')
+        if isinstance(content, str):
+            message['content'] = [  # type: ignore[typeddict-unknown-key]
+                {'type': 'text', 'text': content, 'cache_control': self._build_cache_control(ttl)}
+            ]
+        elif isinstance(content, list) and content:
+            last_part = cast(dict[str, Any], content[-1])
+            last_part.setdefault('cache_control', self._build_cache_control(ttl))
+
+    def _add_cache_control_to_instructions(
+        self,
+        openai_messages: list[chat.ChatCompletionMessageParam],
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        ttl: OpenRouterCacheTTL,
+    ) -> None:
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
+        if not instruction_parts:
+            for msg in reversed(openai_messages):
+                if msg.get('role') in ('system', 'developer'):
+                    self._add_cache_control_to_message(msg, ttl)
+                    break
+            return
+
+        instruction_role = self._resolved_profile.get('openai_system_prompt_role', None) or 'system'
+        if instruction_role not in ('system', 'developer'):
+            return
+
+        has_dynamic_instructions = any(part.dynamic for part in instruction_parts)
+        if has_dynamic_instructions and not self._resolved_profile.get(
+            'openrouter_supports_dynamic_instruction_cache', False
+        ):
+            # OpenRouter normalizes Google system/developer messages into Gemini's single
+            # `systemInstruction`, which Gemini caches as an immutable block (explicit
+            # cache_control path). Unlike Anthropic prefix caching, we can't cache only the
+            # static instruction prefix and leave a dynamic tail uncached in that shape, so
+            # skip instruction caching when dynamic instructions are present.
+            # https://openrouter.ai/docs/guides/best-practices/prompt-caching
+            # https://ai.google.dev/api/caching  ('systemInstruction': Input only. Immutable)
+            return
+
+        instruction_prefix_count = next(
+            (index for index, msg in enumerate(openai_messages) if msg.get('role') != instruction_role),
+            len(openai_messages),
+        )
+        # Instruction parts are mapped as the tail of the system/developer prefix.
+        first_instruction_index = instruction_prefix_count - len(instruction_parts)
+
+        if has_dynamic_instructions:
+            static_instruction_count = sum(1 for part in instruction_parts if not part.dynamic)
+            if static_instruction_count:
+                cache_message_index = first_instruction_index + static_instruction_count - 1
+            elif first_instruction_index > 0:
+                cache_message_index = first_instruction_index - 1
+            else:
+                return
+        else:
+            cache_message_index = instruction_prefix_count - 1
+
+        self._add_cache_control_to_message(openai_messages[cache_message_index], ttl)
+
+    @classmethod
+    @override
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Return the set of builtin tool types this model can handle.
+
+        OpenRouter supports web search via its plugins system.
+        """
+        return frozenset({WebSearchTool})
+
+    @override
+    def prepare_request(
+        self,
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        merged_settings, customized_parameters = super().prepare_request(model_settings, model_request_parameters)
+        new_settings = _openrouter_settings_to_openai_settings(
+            cast(OpenRouterModelSettings, merged_settings or {}), customized_parameters
+        )
+        return new_settings, customized_parameters
+
+    @override
+    def _translate_thinking(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ReasoningEffort | Any:
+        """OpenRouter handles reasoning via extra_body['reasoning'], not the reasoning_effort parameter.
+
+        Only pass through explicit openai_reasoning_effort if set; unified thinking
+        is handled in _openrouter_settings_to_openai_settings via extra_body['reasoning'].
+        """
+        if effort := model_settings.get('openai_reasoning_effort'):
+            return effort
+        return omit
+
+    @override
+    def _get_tool_choice(
+        self,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[chat.ChatCompletionToolParam], ChatCompletionToolChoiceOptionParam | None]:
+        tools, tool_choice = super()._get_tool_choice(model_settings, model_request_parameters)
+
+        if (
+            tools
+            and (cache_tool_defs := model_settings.get('openrouter_cache_tool_definitions'))
+            and self._resolved_profile.get('openrouter_supports_tool_cache', False)
+        ):
+            last_tool = cast(dict[str, Any], tools[-1])
+            last_tool['cache_control'] = self._build_cache_control(cache_tool_defs)
+
+        return tools, tool_choice
+
+    @override
+    async def _map_messages(
+        self,
+        messages: Sequence[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        *,
+        model_settings: ModelSettings | None = None,
+    ) -> list[chat.ChatCompletionMessageParam]:
+        openai_messages = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
+
+        if (
+            openai_messages
+            and model_settings
+            and (cache_messages := model_settings.get('openrouter_cache_messages'))
+            and self._resolved_profile.get('openrouter_supports_cache_control', False)
+        ):
+            self._add_cache_control_to_message(openai_messages[-1], cache_messages)
+
+        if (
+            model_settings
+            and (cache_instructions := model_settings.get('openrouter_cache_instructions'))
+            and self._resolved_profile.get('openrouter_supports_cache_control', False)
+        ):
+            self._add_cache_control_to_instructions(
+                openai_messages, messages, model_request_parameters, cache_instructions
+            )
+
+        has_tool_cache_point = bool(
+            model_settings
+            and model_settings.get('openrouter_cache_tool_definitions')
+            and model_request_parameters.tool_defs
+            and self._resolved_profile.get('openrouter_supports_tool_cache', False)
+        )
+        self._limit_cache_points(openai_messages, has_tool_cache_point=has_tool_cache_point)
+
+        return openai_messages
+
+    @override
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
+        """OpenRouter handles web search via plugins in extra_body, not via the OpenAI web_search_options parameter."""
+        return None
+
+    @override
+    def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
+        response_dict = response.model_dump()
+
+        try:
+            validated = _OpenRouterChatCompletion.model_validate(response_dict)
+        except ValidationError as exc:
+            # OpenRouter intermittently returns responses with null standard fields (#3994).
+            # Try known quirky response shapes before giving up.
+            try:
+                error_response = _OpenRouterErrorResponse.model_validate(response_dict)
+            except ValidationError:
+                pass
+            else:
+                raise ModelHTTPError(
+                    status_code=error_response.error.code,
+                    model_name=error_response.model or self.model_name,
+                    body=error_response.error.message,
+                )
+
+            try:
+                nested = _OpenRouterNestedProviderResponse.model_validate(response_dict)
+            except ValidationError:
+                raise exc
+
+            validated = nested.provider
+            if not validated.created:
+                validated.created = response_dict.get('created') or 0
+
+        if error := validated.error:
+            raise ModelHTTPError(status_code=error.code, model_name=validated.model, body=error.message)
+
+        return validated
+
+    @override
+    def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
+        assert isinstance(message, _OpenRouterCompletionMessage)
+
+        if reasoning_details := message.reasoning_details:
+            return [_from_reasoning_detail(detail) for detail in reasoning_details]
+        else:
+            return super()._process_thinking(message)
+
+    @override
+    def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
+        assert isinstance(response, _OpenRouterChatCompletion)
+
+        provider_details = super()._process_provider_details(response) or {}
+        provider_details.update(_map_openrouter_provider_details(response))
+        return provider_details or None
+
+    @override
+    def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
+        assert isinstance(response, _OpenRouterChatCompletion)
+        return _map_openrouter_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+
+    @dataclass
+    class _MapModelResponseContext(OpenAIChatModel._MapModelResponseContext):  # type: ignore[reportPrivateUsage]
+        reasoning_details: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+
+        def _into_message_param(self) -> chat.ChatCompletionAssistantMessageParam | None:
+            message_param = super()._into_message_param()
+            if self.reasoning_details:
+                if message_param is None:
+                    message_param = chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
+                message_param['reasoning_details'] = self.reasoning_details  # type: ignore[reportGeneralTypeIssues]
+            return message_param
+
+        @override
+        def _map_response_thinking_part(self, item: ThinkingPart) -> None:
+            assert isinstance(self._model, OpenRouterModel)
+            if item.provider_name == self._model.system:
+                if reasoning_detail := _into_reasoning_detail(item):  # pragma: lax no cover
+                    self.reasoning_details.append(reasoning_detail.model_dump())
+            else:  # pragma: lax no cover
+                super()._map_response_thinking_part(item)
+
+    @property
+    @override
+    def _streamed_response_cls(self):
+        return OpenRouterStreamedResponse
+
+    @override
+    async def _map_user_prompt_content_item(
+        self, item: UserContent, content: list[ChatCompletionContentPartParam]
+    ) -> None:
+        if isinstance(item, CachePoint):
+            self._add_cache_control(content, ttl=item.ttl)
+        else:
+            await super()._map_user_prompt_content_item(item, content)
+
+    @override
+    async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
+        """Map a BinaryContent item to a chat completion content part for OpenRouter."""
+        if item.is_video:
+            video_url: _VideoURL = {'url': item.data_uri}
+            return cast(
+                ChatCompletionContentPartParam,
+                _ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
+            )
+
+        return await super()._map_binary_content_item(item)
+
+    @override
+    async def _map_video_url_item(self, item: VideoUrl) -> ChatCompletionContentPartParam:
+        """Map a VideoUrl to a chat completion content part for OpenRouter."""
+        video_url: _VideoURL = {'url': item.url}
+        if item.force_download:
+            video_content = await download_item(item, data_format='base64_uri', type_format='extension')
+            video_url['url'] = video_content['data']
+        # OpenRouter extends OpenAI's API to support video_url, but it's not in the OpenAI client types.
+        # At runtime, the OpenAI client accepts dicts that match the expected structure.
+        return cast(
+            ChatCompletionContentPartParam,
+            _ChatCompletionContentPartVideoUrlParam(video_url=video_url, type='video_url'),
+        )
+
+    @override
+    def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]
+        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
+    ) -> FinishReason | None:
+        return _CHAT_FINISH_REASON_MAP.get(key)
+
+    @override
+    def _map_tool_definition(self, f: ToolDefinition, model_settings: ModelSettings) -> chat.ChatCompletionToolParam:
+        """Map a tool definition, forwarding downstream-provider tool flags through OpenRouter.
+
+        For example, when routing to an Anthropic model with `anthropic_eager_input_streaming`
+        set, the `eager_input_streaming` flag is added to the tool param so OpenRouter forwards
+        it to Anthropic.
+        """
+        tool_def = super()._map_tool_definition(f, model_settings)
+        if self.model_name.startswith('anthropic/') and model_settings.get('anthropic_eager_input_streaming'):
+            tool_def['eager_input_streaming'] = True  # type: ignore[typeddict-item]
+        return tool_def
+
+
+class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
+    """Wrapped chat completion message with OpenRouter specific attributes."""
+
+    reasoning: str | None = None
+    """The reasoning text associated with the message, if any."""
+
+    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    """The reasoning details associated with the message, if any."""
+
+    annotations: list[_OpenRouterAnnotation] | None = None
+    """Annotations associated with the message, supporting both url_citation and file types."""
+
+
+class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
+    """Wraps OpenAI chat completion chunk choice with OpenRouter specific attributes."""
+
+    native_finish_reason: str | None = None
+    """The provided finish reason by the downstream provider from OpenRouter."""
+
+    finish_reason: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error'] | None  # type: ignore[reportIncompatibleVariableOverride]
+    """OpenRouter specific finish reasons for streaming chunks.
+
+    Notably, removes 'function_call' and adds 'error' finish reasons.
+    """
+
+    delta: _OpenRouterChoiceDelta  # type: ignore[reportIncompatibleVariableOverride]
+    """A wrapped chat completion delta with OpenRouter specific attributes."""
+
+
+class _OpenRouterChatCompletionChunk(_ChatCompletionChunk):
+    """Wraps OpenAI chat completion with OpenRouter specific attributes."""
+
+    provider: str | None = None
+    """The downstream provider that was used by OpenRouter.
+
+    May be absent in early streaming chunks; only the final chunk typically carries
+    the provider name.
+    """
+
+    choices: list[_OpenRouterChunkChoice]  # type: ignore[reportIncompatibleVariableOverride]
+    """A list of chat completion chunk choices modified with OpenRouter specific attributes."""
+
+    usage: _OpenRouterUsage | None = None  # type: ignore[reportIncompatibleVariableOverride]
+    """Usage statistics for the completion request."""
+
+
+@dataclass
+class OpenRouterStreamedResponse(OpenAIStreamedResponse):
+    """Implementation of `StreamedResponse` for OpenRouter models."""
+
+    @override
+    async def _validate_response(self):
+        try:
+            async for chunk in self._response:
+                yield _OpenRouterChatCompletionChunk.model_validate(chunk.model_dump())
+        except APIError as e:
+            error = _OpenRouterError.model_validate(e.body)
+            raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
+
+    @override
+    def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
+        assert isinstance(choice, _OpenRouterChunkChoice)
+
+        if reasoning_details := choice.delta.reasoning_details:
+            for i, detail in enumerate(reasoning_details):
+                thinking_part = _from_reasoning_detail(detail)
+                # Use unique vendor_part_id for each reasoning detail type to prevent
+                # different detail types (e.g., reasoning.text, reasoning.encrypted)
+                # from being incorrectly merged into a single ThinkingPart.
+                # This is required for Gemini 3 Pro which returns multiple reasoning
+                # detail types that must be preserved separately for thought_signature handling.
+                vendor_id = f'reasoning_detail_{detail.type}_{i}'
+                yield from self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=vendor_id,
+                    id=thinking_part.id,
+                    content=thinking_part.content,
+                    signature=thinking_part.signature,
+                    provider_name=self._provider_name,
+                    provider_details=thinking_part.provider_details,
+                )
+        else:
+            return super()._map_thinking_delta(choice)
+
+    @override
+    def _map_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
+        assert isinstance(chunk, _OpenRouterChatCompletionChunk)
+
+        provider_details = super()._map_provider_details(chunk) or {}
+        provider_details.update(_map_openrouter_provider_details(chunk))
+        return provider_details or None
+
+    @override
+    def _map_usage(self, response: chat.ChatCompletionChunk) -> usage.RequestUsage:
+        assert isinstance(response, _OpenRouterChatCompletionChunk)
+        return _map_openrouter_usage(response, self._provider_name, self._provider_url, self.model_name)
+
+    @override
+    def _map_finish_reason(  # type: ignore[reportIncompatibleMethodOverride]
+        self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
+    ) -> FinishReason | None:
+        return _CHAT_FINISH_REASON_MAP.get(key)

@@ -4,18 +4,24 @@ import dataclasses
 from copy import copy
 from dataclasses import dataclass, fields
 from decimal import Decimal
+from typing import Annotated, Any
 
-from typing_extensions import deprecated, overload
+from genai_prices.data_snapshot import get_snapshot
+from pydantic import AliasChoices, BeforeValidator, Field
 
 from . import _utils
 from .exceptions import UsageLimitExceeded
 
-__all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
+__all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
 
 
 @dataclass(repr=False, kw_only=True)
 class UsageBase:
-    input_tokens: int = 0
+    input_tokens: Annotated[
+        int,
+        # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
+        Field(validation_alias=AliasChoices('input_tokens', 'request_tokens')),
+    ] = 0
     """Number of input/prompt tokens."""
 
     cache_write_tokens: int = 0
@@ -24,7 +30,11 @@ class UsageBase:
     cache_read_tokens: int = 0
     """Number of tokens read from the cache."""
 
-    output_tokens: int = 0
+    output_tokens: Annotated[
+        int,
+        # `response_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
+        Field(validation_alias=AliasChoices('output_tokens', 'response_tokens')),
+    ] = 0
     """Number of output/completion tokens."""
 
     input_audio_tokens: int = 0
@@ -36,18 +46,20 @@ class UsageBase:
     output_audio_tokens: int = 0
     """Number of audio output tokens."""
 
-    details: dict[str, int] = dataclasses.field(default_factory=dict)
+    details: Annotated[
+        dict[str, int],
+        # `details` can not be `None` any longer, but we still want to support deserializing model responses stored in a DB before this was changed
+        BeforeValidator(lambda d: d or {}),
+    ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
-    @property
-    @deprecated('`request_tokens` is deprecated, use `input_tokens` instead')
-    def request_tokens(self) -> int:
-        return self.input_tokens
-
-    @property
-    @deprecated('`response_tokens` is deprecated, use `output_tokens` instead')
-    def response_tokens(self) -> int:
-        return self.output_tokens
+    def __copy__(self) -> UsageBase:
+        """Shallow copy that also copies mutable fields like `details`."""
+        cls = type(self)
+        new = cls.__new__(cls)
+        new.__dict__.update(self.__dict__)
+        new.details = self.details.copy()
+        return new
 
     @property
     def total_tokens(self) -> int:
@@ -61,7 +73,22 @@ class UsageBase:
             result['gen_ai.usage.input_tokens'] = self.input_tokens
         if self.output_tokens:
             result['gen_ai.usage.output_tokens'] = self.output_tokens
-        details = self.details
+
+        details = self.details.copy()
+        if self.cache_write_tokens:
+            result['gen_ai.usage.cache_creation.input_tokens'] = self.cache_write_tokens
+            # For backwards compat
+            details['cache_write_tokens'] = self.cache_write_tokens
+        if self.cache_read_tokens:
+            result['gen_ai.usage.cache_read.input_tokens'] = self.cache_read_tokens
+            # For backwards compat
+            details['cache_read_tokens'] = self.cache_read_tokens
+        if self.input_audio_tokens:
+            details['input_audio_tokens'] = self.input_audio_tokens
+        if self.cache_audio_read_tokens:
+            details['cache_audio_read_tokens'] = self.cache_audio_read_tokens
+        if self.output_audio_tokens:
+            details['output_audio_tokens'] = self.output_audio_tokens
         if details:
             prefix = 'gen_ai.usage.details.'
             for key, value in details.items():
@@ -110,6 +137,39 @@ class RequestUsage(UsageBase):
         new_usage.incr(other)
         return new_usage
 
+    @classmethod
+    def extract(
+        cls,
+        data: Any,
+        *,
+        provider: str,
+        provider_url: str,
+        provider_fallback: str,
+        api_flavor: str = 'default',
+        details: dict[str, Any] | None = None,
+    ) -> RequestUsage:
+        """Extract usage information from the response data using genai-prices.
+
+        Args:
+            data: The response data from the model API.
+            provider: The actual provider ID
+            provider_url: The provider base_url
+            provider_fallback: The fallback provider ID to use if the actual provider is not found in genai-prices.
+                For example, an OpenAI model should set this to "openai" in case it has an obscure provider ID.
+            api_flavor: The API flavor to use when extracting usage information,
+                e.g. 'chat' or 'responses' for OpenAI.
+            details: Becomes the `details` field on the returned `RequestUsage` for convenience.
+        """
+        details = details or {}
+        for provider_id, provider_api_url in [(None, provider_url), (provider, None), (provider_fallback, None)]:
+            try:
+                provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
+                _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
+                return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
+            except Exception:
+                pass
+        return cls(details=details)
+
 
 @dataclass(repr=False, kw_only=True)
 class RunUsage(UsageBase):
@@ -121,8 +181,11 @@ class RunUsage(UsageBase):
     requests: int = 0
     """Number of requests made to the LLM API."""
 
+    tool_calls: int = 0
+    """Number of successful tool calls executed during the run."""
+
     input_tokens: int = 0
-    """Total number of text input/prompt tokens."""
+    """Total number of input/prompt tokens."""
 
     cache_write_tokens: int = 0
     """Total number of tokens written to the cache."""
@@ -137,12 +200,12 @@ class RunUsage(UsageBase):
     """Total number of audio tokens read from the cache."""
 
     output_tokens: int = 0
-    """Total number of text output/completion tokens."""
+    """Total number of output/completion tokens."""
 
     cost: Decimal = Decimal('0.0')
     """Total cost of the run."""
 
-    details: dict[str, int] = dataclasses.field(default_factory=dict)
+    details: dict[str, int] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
 
     def incr(self, incr_usage: RunUsage | RequestUsage) -> None:
@@ -153,6 +216,7 @@ class RunUsage(UsageBase):
         """
         if isinstance(incr_usage, RunUsage):
             self.requests += incr_usage.requests
+            self.tool_calls += incr_usage.tool_calls
         return _incr_usage_tokens(self, incr_usage)
 
     def __add__(self, other: RunUsage | RequestUsage) -> RunUsage:
@@ -177,19 +241,16 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.cache_read_tokens += incr_usage.cache_read_tokens
     slf.input_audio_tokens += incr_usage.input_audio_tokens
     slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
+    slf.output_audio_tokens += incr_usage.output_audio_tokens
     slf.output_tokens += incr_usage.output_tokens
 
     if isinstance(slf, RunUsage) and isinstance(incr_usage, RunUsage):
         slf.cost += incr_usage.cost
 
     for key, value in incr_usage.details.items():
-        slf.details[key] = slf.details.get(key, 0) + value
-
-
-@dataclass(repr=False, kw_only=True)
-@deprecated('`Usage` is deprecated, use `RunUsage` instead')
-class Usage(RunUsage):
-    """Deprecated alias for `RunUsage`."""
+        # Note: value can be None at runtime from model responses despite the type annotation
+        if isinstance(value, (int, float)):
+            slf.details[key] = slf.details.get(key, 0) + value
 
 
 @dataclass(repr=False, kw_only=True)
@@ -204,6 +265,8 @@ class UsageLimits:
 
     request_limit: int | None = 50
     """The maximum number of requests allowed to the model."""
+    tool_calls_limit: int | None = None
+    """The maximum number of successful tool calls allowed to be executed."""
     input_tokens_limit: int | None = None
     """The maximum number of input/prompt tokens allowed."""
     output_tokens_limit: int | None = None
@@ -212,71 +275,18 @@ class UsageLimits:
     """The maximum number of tokens allowed in requests and responses combined."""
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `request_tokens_limit` ahead of time. This may incur additional overhead
-    (from calling the model's `count_tokens` API before making the actual request) and is disabled by default."""
+    to enforce `input_tokens_limit` ahead of time.
 
-    @property
-    @deprecated('`request_tokens_limit` is deprecated, use `input_tokens_limit` instead')
-    def request_tokens_limit(self) -> int | None:
-        return self.input_tokens_limit
+    This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request)
+    and is disabled by default.
 
-    @property
-    @deprecated('`response_tokens_limit` is deprecated, use `output_tokens_limit` instead')
-    def response_tokens_limit(self) -> int | None:
-        return self.output_tokens_limit
+    Supported by:
 
-    @overload
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.input_tokens_limit = input_tokens_limit
-        self.output_tokens_limit = output_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    @overload
-    @deprecated(
-        'Use `input_tokens_limit` instead of `request_tokens_limit` and `output_tokens_limit` and `total_tokens_limit`'
-    )
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-    ) -> None:
-        self.request_limit = request_limit
-        self.input_tokens_limit = request_tokens_limit
-        self.output_tokens_limit = response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
-
-    def __init__(
-        self,
-        *,
-        request_limit: int | None = 50,
-        input_tokens_limit: int | None = None,
-        output_tokens_limit: int | None = None,
-        total_tokens_limit: int | None = None,
-        count_tokens_before_request: bool = False,
-        # deprecated:
-        request_tokens_limit: int | None = None,
-        response_tokens_limit: int | None = None,
-    ):
-        self.request_limit = request_limit
-        self.input_tokens_limit = input_tokens_limit or request_tokens_limit
-        self.output_tokens_limit = output_tokens_limit or response_tokens_limit
-        self.total_tokens_limit = total_tokens_limit
-        self.count_tokens_before_request = count_tokens_before_request
+    - Anthropic
+    - Google
+    - Bedrock Converse
+    - OpenAI Responses
+    """
 
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.
@@ -323,5 +333,14 @@ class UsageLimits:
         total_tokens = usage.total_tokens
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
+
+    def check_before_tool_call(self, projected_usage: RunUsage) -> None:
+        """Raises a `UsageLimitExceeded` exception if the next tool call(s) would exceed the tool call limit."""
+        tool_calls_limit = self.tool_calls_limit
+        tool_calls = projected_usage.tool_calls
+        if tool_calls_limit is not None and tool_calls > tool_calls_limit:
+            raise UsageLimitExceeded(
+                f'The next tool call(s) would exceed the tool_calls_limit of {tool_calls_limit} ({tool_calls=}).'
+            )
 
     __repr__ = _utils.dataclasses_no_defaults_repr

@@ -3,22 +3,28 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
+from mcp.server.fastmcp.prompts.base import UserMessage
 from mcp.server.session import ServerSession
 from mcp.types import (
+    Annotations,
+    AudioContent,
     BlobResourceContents,
+    CreateMessageResult,
     EmbeddedResource,
+    ImageContent,
     ResourceLink,
     SamplingMessage,
     TextContent,
     TextResourceContents,
+    ToolAnnotations,
 )
 from pydantic import AnyUrl, BaseModel
 
-mcp = FastMCP('Pydantic AI MCP Server')
+mcp = FastMCP('Pydantic AI MCP Server', instructions='Be a helpful assistant.')
 log_level = 'unset'
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title='Celsius to Fahrenheit'))
 async def celsius_to_fahrenheit(celsius: float) -> float:
     """Convert Celsius to Fahrenheit.
 
@@ -46,13 +52,13 @@ async def get_weather_forecast(location: str) -> str:
 
 @mcp.tool()
 async def get_image_resource() -> EmbeddedResource:
-    data = Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
     return EmbeddedResource(
         type='resource',
         resource=BlobResourceContents(
-            uri=AnyUrl('resource://kiwi.png'),
+            uri=AnyUrl('resource://kiwi.jpg'),
             blob=base64.b64encode(data).decode('utf-8'),
-            mimeType='image/png',
+            mimeType='image/jpeg',
         ),
     )
 
@@ -61,14 +67,14 @@ async def get_image_resource() -> EmbeddedResource:
 async def get_image_resource_link() -> ResourceLink:
     return ResourceLink(
         type='resource_link',
-        uri=AnyUrl('resource://kiwi.png'),
-        name='kiwi.png',
+        uri=AnyUrl('resource://kiwi.jpg'),
+        name='kiwi.jpeg',
     )
 
 
-@mcp.resource('resource://kiwi.png', mime_type='image/png')
+@mcp.resource('resource://kiwi.jpg', mime_type='image/jpeg')
 async def kiwi_resource() -> bytes:
-    return Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
+    return Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
 
 
 @mcp.tool()
@@ -118,19 +124,34 @@ async def get_product_name_link() -> ResourceLink:
     )
 
 
-@mcp.resource('resource://product_name.txt', mime_type='text/plain')
+@mcp.resource(
+    'resource://product_name.txt',
+    mime_type='text/plain',
+    annotations=Annotations(audience=['user', 'assistant'], priority=0.5),
+)
 async def product_name_resource() -> str:
-    return Path(__file__).parent.joinpath('assets/product_name.txt').read_text()
+    return Path(__file__).parent.joinpath('assets/product_name.txt').read_text(encoding='utf-8')
+
+
+@mcp.resource('resource://greeting/{name}', mime_type='text/plain')
+async def greeting_resource_template(name: str) -> str:
+    """Dynamic greeting resource template."""
+    return f'Hello, {name}!'
 
 
 @mcp.tool()
 async def get_image() -> Image:
-    data = Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
-    return Image(data=data, format='png')
+    data = Path(__file__).parent.joinpath('assets/kiwi.jpg').read_bytes()
+    return Image(data=data, format='jpg')
 
 
 @mcp.tool()
 async def get_dict() -> dict[str, Any]:
+    return {'foo': 'bar', 'baz': 123}
+
+
+@mcp.tool(structured_output=False)
+async def get_unstructured_dict() -> dict[str, Any]:
     return {'foo': 'bar', 'baz': 123}
 
 
@@ -185,7 +206,7 @@ async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> str:
+async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> CreateMessageResult:
     """Use sampling callback."""
 
     result = await ctx.session.create_message(
@@ -198,11 +219,30 @@ async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> str:
         temperature=0.5,
         stop_sequences=['potato'],
     )
-    return result.model_dump_json(indent=2)
+    return result
 
 
 class UserResponse(BaseModel):
     response: str
+
+
+@mcp.tool()
+async def get_client_info(ctx: Context[ServerSession, None]) -> dict[str, Any] | None:
+    """Get information about the connected MCP client.
+
+    Returns:
+        Dictionary with client info (name, version, etc.) or None if not available.
+    """
+    client_params = ctx.session.client_params
+    if client_params is None:
+        return None
+    client_info = client_params.clientInfo
+    return {
+        'name': client_info.name,
+        'version': client_info.version,
+        'title': getattr(client_info, 'title', None),
+        'websiteUrl': getattr(client_info, 'websiteUrl', None),
+    }
 
 
 @mcp.tool()
@@ -215,6 +255,116 @@ async def use_elicitation(ctx: Context[ServerSession, None], question: str) -> s
         return f'User responded: {result.data.response}'
     else:
         return f'User {result.action}ed the elicitation'
+
+
+async def hidden_tool() -> str:
+    """A tool that is hidden by default."""
+    return 'I was hidden!'
+
+
+@mcp.tool()
+async def enable_hidden_tool(ctx: Context[ServerSession, None]) -> str:
+    """Enable the hidden tool, triggering a ToolListChangedNotification."""
+    mcp._tool_manager.add_tool(hidden_tool)  # pyright: ignore[reportPrivateUsage]
+    await ctx.session.send_tool_list_changed()
+    return 'Hidden tool enabled'
+
+
+@mcp.prompt()
+def simple_prompt() -> str:
+    """A simple prompt template."""
+    return 'This is a simple prompt'
+
+
+@mcp.prompt()
+def parameterized_prompt(name: str, topic: str) -> str:
+    """A prompt template with parameters."""
+    return f"Hello {name}, let's talk about {topic}!"
+
+
+@mcp.prompt()
+def annotated_text_prompt() -> list[UserMessage]:
+    """A prompt template with annotated text content."""
+    return [
+        UserMessage(
+            content=TextContent(
+                type='text',
+                text='annotated text',
+                annotations=Annotations(audience=['user'], priority=1.0),
+            )
+        )
+    ]
+
+
+@mcp.prompt()
+def text_meta_prompt() -> list[UserMessage]:
+    """A prompt template with `_meta` text metadata."""
+    return [UserMessage(content=TextContent(type='text', text='meta text', _meta={'source': 'mcp'}))]
+
+
+@mcp.prompt()
+def image_prompt() -> list[UserMessage]:
+    """A prompt template with image content."""
+    return [
+        UserMessage(
+            content=ImageContent(
+                type='image',
+                data=base64.b64encode(b'image-bytes').decode('utf-8'),
+                mimeType='image/jpeg',
+                annotations=Annotations(audience=['user'], priority=0.8),
+            )
+        )
+    ]
+
+
+@mcp.prompt()
+def audio_prompt() -> list[UserMessage]:
+    """A prompt template with audio content."""
+    return [
+        UserMessage(
+            content=AudioContent(
+                type='audio',
+                data=base64.b64encode(b'audio-bytes').decode('utf-8'),
+                mimeType='audio/mpeg',
+                annotations=Annotations(audience=['assistant'], priority=0.3),
+            )
+        )
+    ]
+
+
+@mcp.prompt()
+def embedded_resource_prompt() -> list[UserMessage]:
+    """A prompt template with an embedded text resource."""
+    return [
+        UserMessage(
+            content=EmbeddedResource(
+                type='resource',
+                resource=TextResourceContents(
+                    uri=AnyUrl('resource://product_name.txt'),
+                    text='Pydantic AI',
+                    mimeType='text/plain',
+                ),
+                annotations=Annotations(audience=['user'], priority=0.5),
+            )
+        )
+    ]
+
+
+@mcp.prompt()
+def resource_link_prompt() -> list[UserMessage]:
+    """A prompt template with a resource link."""
+    return [
+        UserMessage(
+            content=ResourceLink(
+                type='resource_link',
+                uri=AnyUrl('resource://kiwi.jpg'),
+                name='kiwi-image',
+                title='Kiwi Image',
+                description='A photo of a kiwi fruit',
+                mimeType='image/jpeg',
+            )
+        )
+    ]
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]
