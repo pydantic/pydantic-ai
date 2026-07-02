@@ -127,7 +127,7 @@ _(This example is complete, it can be run "as is")_
 
 The `XSearch` capability accepts:
 
-- **`allowed_x_handles`** / **`excluded_x_handles`**: filter results to (or away from) up to 10 X handles. These are mutually exclusive.
+- **`allowed_x_handles`** / **`excluded_x_handles`**: filter results to (or away from) up to 20 X handles. These are mutually exclusive.
 - **`from_date`** / **`to_date`**: restrict results to posts created within the given datetime range (naive datetimes are interpreted as UTC).
 - **`enable_image_understanding`** (default: `False`): analyze images attached to posts.
 - **`enable_video_understanding`** (default: `False`): analyze video content attached to posts.
