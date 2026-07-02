@@ -10,7 +10,7 @@ The toolsets that will be available during an agent run can be specified in four
 * at agent construction time, via the [`toolsets`][pydantic_ai.agent.Agent.__init__] keyword argument to `Agent`, which takes toolset instances as well as functions that generate toolsets [dynamically](#dynamically-building-a-toolset) based on the agent [run context][pydantic_ai.tools.RunContext]
 * at agent run time, via the `toolsets` keyword argument to [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.agent.Agent.iter]. These toolsets will be additional to those registered on the `Agent`
 * [dynamically](#dynamically-building-a-toolset), via the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator which lets you build a toolset based on the agent [run context][pydantic_ai.tools.RunContext]
-* as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.agent.Agent.iter] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
+* as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.agent.Agent.override] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
 
 ```python {title="toolsets.py"}
 from pydantic_ai import Agent, FunctionToolset
@@ -366,9 +366,9 @@ _(This example is complete, it can be run "as is")_
 
 ### Dynamic Tool Definitions {#preparing-tool-definitions}
 
-[`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the  agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns a list of modified `ToolDefinition`s.
+[`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns the tool definitions to expose for that step.
 
-This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets.
+This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) capability hook that prepares all tool definitions registered on an agent across toolsets.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
@@ -389,7 +389,7 @@ descriptions = {
     'current_time': 'Get the current time',
 }
 
-async def add_descriptions(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+async def add_descriptions(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
     return [
         replace(tool_def, description=description)
         if (description := descriptions.get(tool_def.name, None))
@@ -520,9 +520,9 @@ _(This example is complete, it can be run "as is")_
 
 ```python {title="deferred_loading_toolset.py" lint="skip" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerHTTP
+from pydantic_ai.mcp import MCPToolset
 
-mcp = MCPServerHTTP('http://localhost:8000/mcp')
+mcp = MCPToolset('http://localhost:8000/mcp')
 agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
 ```
 
@@ -639,7 +639,7 @@ print(LOG)
 """
 ```
 
-1. All docs examples are tested in CI and their their output is verified, so we need `LOG` to always have the same order whenever this code is run. Since the tools could finish in any order, we sleep an increasing amount of time based on which number tool call we are to ensure that they finish (and log) in the same order they were called in.
+1. All docs examples are tested in CI and their output is verified, so we need `LOG` to always have the same order whenever this code is run. Since the tools could finish in any order, we sleep an increasing amount of time based on which number tool call we are to ensure that they finish (and log) in the same order they were called in.
 2. We use [`TestModel`][pydantic_ai.models.test.TestModel] here as it will automatically call each tool.
 
 _(This example is complete, it can be run "as is")_
@@ -648,7 +648,7 @@ _(This example is complete, it can be run "as is")_
 
 If your agent needs to be able to call [external tools](deferred-tools.md#external-tool-execution) that are provided and executed by an upstream service or frontend, you can build an [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] from a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] containing the tool names, arguments JSON schemas, and descriptions.
 
-When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
+When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
 
 When the tool call results are received from the upstream service or frontend, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception in case the tool call failed and the model should [try again](tools-advanced.md#tool-retries). This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 
@@ -884,10 +884,7 @@ Third-party toolsets can also be wrapped as [capabilities](capabilities.md), whi
 
 ### MCP Servers
 
-Pydantic AI provides two toolsets that allow an agent to connect to and call tools on local and remote MCP Servers:
-
-1. `MCPServer`: the [MCP SDK-based Client](./mcp/client.md) which offers more direct control by leveraging the MCP SDK directly
-2. `FastMCPToolset`: the [FastMCP-based Client](./mcp/fastmcp-client.md) which offers additional capabilities like Tool Transformation, simpler OAuth configuration, and more.
+Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities.md#mcp) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
 
 ### Agent Skills
 
@@ -912,7 +909,7 @@ Toolsets for file operations help agents read, write, and edit files:
 
 Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
 
-* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPServerStdio('uv', args=['run', 'mcp-run-python', 'stdio'])`.
+* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
 
 ### LangChain Tools {#langchain-tools}
 
@@ -931,32 +928,6 @@ toolset = LangChainToolset(toolkit.get_tools())
 
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 # ...
-```
-
-### ACI.dev Tools {#aci-tools}
-
-!!! warning "Deprecated in 1.x, removed in 2.0"
-    `pydantic_ai.ext.aci` (`tool_from_aci` and `ACIToolset`) is deprecated and will be removed in 2.0 (see [#5467](https://github.com/pydantic/pydantic-ai/pull/5467)). Wrap ACI.dev tools yourself using [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema] against `aci.ACI().functions.get_definition(...)`, or call the upstream `aci-sdk` integration directly.
-
-If you'd like to use tools from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the [`ACIToolset`][pydantic_ai.ext.aci.ACIToolset] [toolset](toolsets.md) which takes a list of ACI tool names as well as the `linked_account_owner_id`. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
-
-You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
-
-```python {test="skip"}
-import os
-
-from pydantic_ai import Agent
-from pydantic_ai.ext.aci import ACIToolset
-
-toolset = ACIToolset(
-    [
-        'OPEN_WEATHER_MAP__CURRENT_WEATHER',
-        'OPEN_WEATHER_MAP__FORECAST',
-    ],
-    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
-)
-
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
 ### pydantic-ai-ejentum {#ejentum-tools}

@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -74,7 +74,6 @@ class FallbackModel(Model):
 
     models: list[Model]
 
-    _model_name: str = field(repr=False)
     _exception_handlers: list[ExceptionHandler] = field(repr=False)
     _response_handlers: list[ResponseHandler] = field(repr=False)
 
@@ -251,7 +250,7 @@ class FallbackModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         """Try each model in sequence until one succeeds."""
         exceptions: list[Exception] = []
 

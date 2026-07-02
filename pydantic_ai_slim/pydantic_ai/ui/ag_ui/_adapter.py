@@ -6,19 +6,19 @@ import json
 import uuid
 import warnings
 from base64 import b64decode
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
-    cast,
 )
 
 from typing_extensions import assert_never
 
 from ... import ExternalToolset, ToolDefinition
+from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -26,6 +26,7 @@ from ...messages import (
     CompactionPart,
     DocumentUrl,
     FilePart,
+    ForceDownloadMode,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -38,14 +39,20 @@ from ...messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolPartKind,
     ToolReturnPart,
     UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
+    narrow_message_parts,
 )
 from ...output import OutputDataT
-from ...tools import AgentDepsT
+from ...tools import (
+    AgentDepsT,
+    DeferredToolApprovalResult,
+    DeferredToolResults,
+)
 from ...toolsets import AbstractToolset
 
 try:
@@ -68,17 +75,28 @@ try:
 
     from .. import MessagesBuilder, UIAdapter, UIEventStream
     from ._event_stream import AGUIEventStream
+    from ._interrupt import (
+        HAS_INTERRUPTS,
+        ResumeEntry,
+        interrupt_id_to_tool_call_id,
+        resume_entry_to_approval,
+    )
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
         DEFAULT_AG_UI_VERSION,
+        ENCRYPTED_VALUE_VERSION,
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
         UPLOADED_FILE_ACTIVITY_TYPE,
         parse_ag_ui_version,
+        parse_builtin_tool_call_id,
+        parse_encrypted_tool_kind,
         thinking_encrypted_metadata,
+        tool_kind_encrypted_value_kwargs,
+        warn_tool_kind_not_persisted,
     )
-except ImportError as e:
+except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install the `ag-ui-protocol` package to use AG-UI integration, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
@@ -98,14 +116,14 @@ if TYPE_CHECKING:
 else:
     try:
         from ag_ui.core import ReasoningMessage
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ReasoningMessage:
-            """Stub for ag-ui-protocol < 0.1.13 — no instances exist, so pattern matching is a no-op."""
+            """Stub for ag-ui-protocol < 0.1.11 — no instances exist, so pattern matching is a no-op."""
 
     try:
         from ag_ui.core import AudioInputContent, DocumentInputContent, ImageInputContent, VideoInputContent
-    except ImportError:  # pragma: no cover
+    except ImportError:
 
         class ImageInputContent:
             """Stub for ag-ui-protocol < 0.1.15."""
@@ -203,7 +221,20 @@ def _user_content_to_input(
 
 @dataclass
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
-    """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
+    """UI adapter for the Agent-User Interaction (AG-UI) protocol.
+
+    [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] (inherited from
+    `UIAdapter`, default `False`) gates two behaviors. On the way in, client-submitted
+    [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped during
+    `sanitize_messages` unless it is `True`, since the server resolves them with its own
+    credentials; only set it when the frontend is trusted. On the way out and back in, when
+    `True`, agent-generated files and uploaded files are stored as
+    [activity messages](https://docs.ag-ui.com/concepts/messages) during `dump_messages`
+    and restored during `load_messages`, enabling full round-trip fidelity. When `False`,
+    they are dropped. If your AG-UI frontend uses activities, be aware that
+    `pydantic_ai_*` activity types are reserved for internal round-trip use and should be
+    ignored by frontend activity handlers.
+    """
 
     _: KW_ONLY
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
@@ -226,18 +257,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     of this setting.
     """
 
-    preserve_file_data: bool = False
-    """Whether to preserve agent-generated files and uploaded files in AG-UI message conversion.
-
-    When `True`, agent-generated files and uploaded files are stored as
-    [activity messages](https://docs.ag-ui.com/concepts/activities) during `dump_messages`
-    and restored during `load_messages`, enabling full round-trip fidelity.
-    When `False` (default), they are silently dropped.
-
-    If your AG-UI frontend uses activities, be aware that `pydantic_ai_*` activity types
-    are reserved for internal round-trip use and should be ignored by frontend activity handlers.
-    """
-
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
         """Build an AG-UI run input object from the request body."""
@@ -257,6 +276,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
+        allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -267,6 +287,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
+            allowed_file_url_force_download=allowed_file_url_force_download,
             **kwargs,
         )
 
@@ -286,24 +307,56 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def state(self) -> dict[str, Any] | None:
         """Frontend state from the AG-UI run input."""
         state = self.run_input.state
-        if state is None:
-            return None
+        if is_str_dict(state) and state:
+            return state
 
-        if isinstance(state, Mapping) and not state:
-            return None
-
-        return cast('dict[str, Any]', state)
+        return None
 
     @cached_property
     def conversation_id(self) -> str | None:
         """Conversation ID from the AG-UI `RunAgentInput.threadId`."""
         return self.run_input.thread_id
 
+    @cached_property
+    def deferred_tool_results(self) -> DeferredToolResults | None:
+        """Translate AG-UI `RunAgentInput.resume[]` into Pydantic AI `DeferredToolResults`.
+
+        See [docs.ag-ui.com/concepts/interrupts](https://docs.ag-ui.com/concepts/interrupts).
+
+        Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`.
+        The mapping is **deny-by-default**: approval requires an explicit
+        `payload.approved == True`. Any other shape is treated as a denial so a malformed
+        or hostile client cannot accidentally execute a tool that requires human approval.
+
+        - `status == 'cancelled'` → `ToolDenied('Cancelled by user.')`
+        - `payload.approved is True` with `payload.editedArgs` → `ToolApproved(override_args=...)`
+        - `payload.approved is True` without edits → `ToolApproved()`
+        - Anything else (`False`, missing, `null`, non-bool, non-dict payload) →
+          `ToolDenied(payload.get('reason'))` if `reason` is a non-empty string, else
+          `ToolDenied()` (which carries the default `"The tool call was denied."` message).
+
+        Returns `None` when `resume` is missing or empty, or when the installed
+        ag-ui-protocol predates the interrupt lifecycle.
+        """
+        if not HAS_INTERRUPTS:
+            return None
+        resume: list[ResumeEntry] | None = getattr(self.run_input, 'resume', None)
+        if not resume:
+            return None
+        approvals: dict[str, DeferredToolApprovalResult | bool] = {
+            interrupt_id_to_tool_call_id(entry.interrupt_id): resume_entry_to_approval(entry) for entry in resume
+        }
+        return DeferredToolResults(approvals=approvals)
+
     @classmethod
     def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:  # noqa: C901
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
         tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
+        tool_kinds: dict[str, ToolPartKind] = {}  # Tool call ID to `tool_kind` claim mapping.
+        # `ToolCall`/`ToolMessage.encrypted_value` only exists on the installed model from 0.1.11
+        # onward; older versions drop the client's claim, so the field is only read when present.
+        use_encrypted_value = parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION
         for msg in messages:
             match msg:
                 case UserMessage(content=content):
@@ -369,14 +422,25 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_name = tool_call.function.name
                             tool_calls[tool_call_id] = tool_name
 
-                            if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
-                                _, provider_name, original_id = tool_call_id.split('|', 2)
+                            # The claim is client-supplied, so it's set on the base part and promoted
+                            # best-effort by the final `narrow_message_parts` pass (which strips it if
+                            # it doesn't validate against the typed subclass).
+                            tool_kind = (
+                                parse_encrypted_tool_kind(tool_call.encrypted_value) if use_encrypted_value else None
+                            )
+                            if tool_kind is not None:
+                                tool_kinds[tool_call_id] = tool_kind
+
+                            builtin_id = parse_builtin_tool_call_id(tool_call_id)
+                            if builtin_id is not None:
+                                provider_name, original_id = builtin_id
                                 builder.add(
                                     NativeToolCallPart(
                                         tool_name=tool_name,
                                         args=tool_call.function.arguments,
                                         tool_call_id=original_id,
                                         provider_name=provider_name,
+                                        tool_kind=tool_kind,
                                     )
                                 )
                             else:
@@ -385,6 +449,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         args=tool_call.function.arguments,
+                                        tool_kind=tool_kind,
                                     )
                                 )
                 case ToolMessage() as tool_msg:
@@ -393,8 +458,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if tool_name is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
-                    if tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
-                        _, provider_name, original_id = tool_call_id.split('|', 2)
+                    # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
+                    # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
+                    # results stay untyped — typed return parts imply success to their readers.
+                    tool_kind = None
+                    if tool_msg.error is None:
+                        encrypted_tool_kind = (
+                            parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
+                        )
+                        tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
+
+                    builtin_id = parse_builtin_tool_call_id(tool_call_id)
+                    if builtin_id is not None:
+                        provider_name, original_id = builtin_id
                         content: Any = tool_msg.content
                         if isinstance(content, str):
                             try:
@@ -407,14 +483,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 content=content,
                                 tool_call_id=original_id,
                                 provider_name=provider_name,
+                                tool_kind=tool_kind,
                             )
                         )
                     else:
+                        # AG-UI sends tool content as a string; the final `narrow_message_parts` pass
+                        # parses it into a typed return subclass when the `tool_kind` claim validates,
+                        # and leaves the plain string part (dropping the claim) when it doesn't.
                         builder.add(
                             ToolReturnPart(
                                 tool_name=tool_name,
                                 content=tool_msg.content,
                                 tool_call_id=tool_call_id,
+                                tool_kind=tool_kind,
                             )
                         )
 
@@ -445,9 +526,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             raise ValueError(
                                 f'ActivityMessage with activity_type={FILE_ACTIVITY_TYPE!r} must have a non-empty url.'
                             )
+                        binary_content = BinaryContent.from_data_uri(url)
+                        vendor_metadata = activity_content.get('vendor_metadata')
+                        # `vendor_metadata` is client-supplied and typed `Any`; assignment on the
+                        # (non-`validate_assignment`) `BinaryContent` dataclass bypasses validation,
+                        # so ignore anything that isn't a dict rather than let it reach the provider.
+                        if is_str_dict(vendor_metadata):
+                            binary_content.vendor_metadata = vendor_metadata
                         builder.add(
                             FilePart(
-                                content=BinaryContent.from_data_uri(url),
+                                content=binary_content,
                                 id=activity_content.get('id'),
                                 provider_name=activity_content.get('provider_name'),
                                 provider_details=activity_content.get('provider_details'),
@@ -485,17 +573,27 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         stacklevel=2,
                     )
 
-        return builder.messages
+        # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
+        # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
+        return narrow_message_parts(builder.messages)
 
     @staticmethod
-    def _dump_request_parts(
+    def _dump_request_parts(  # noqa: C901
         msg: ModelRequest,
         *,
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
         preserve_file_data: bool = False,
     ) -> list[Message]:
-        """Convert a `ModelRequest` into AG-UI messages."""
+        """Convert a `ModelRequest` into AG-UI messages.
+
+        Uses a flush pattern to preserve part ordering: buffered user content is flushed before
+        each tool message, so a `ToolReturnPart` that precedes a `UserPromptPart` in the original
+        request keeps its position instead of being reordered after the user prompt.
+        """
         use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION
+        # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) landed in 0.1.11 — see
+        # `tool_kind_encrypted_value`.
+        use_encrypted_value = parse_ag_ui_version(ag_ui_version) >= ENCRYPTED_VALUE_VERSION
         result: list[Message] = []
         system_content: list[str] = []
         user_content: list[
@@ -506,6 +604,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             | VideoInputContent
             | DocumentInputContent
         ] = []
+
+        def flush_user_content() -> None:
+            nonlocal user_content
+            if not user_content:
+                return
+            # Simplify to plain string if only a single text item.
+            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
+                result.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
+            else:
+                result.append(UserMessage(id=_new_message_id(), content=user_content))
+            user_content = []
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
@@ -519,6 +628,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             # AG-UI has no native uploaded-file message type. We repurpose
                             # ActivityMessage with a reserved `pydantic_ai_*` activity_type
                             # for round-trip fidelity. See UploadedFileActivityContent.
+                            flush_user_content()
                             uploaded_content: dict[str, Any] = {
                                 'file_id': item.file_id,
                                 'provider_name': item.provider_name,
@@ -539,15 +649,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             if converted is not None:
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
+                flush_user_content()
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
                         content=part.model_response_str(),
                         tool_call_id=part.tool_call_id,
+                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name:
+                    flush_user_content()
                     result.append(
                         ToolMessage(
                             id=_new_message_id(),
@@ -564,12 +677,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         messages: list[Message] = []
         if system_content:
             messages.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
-        if user_content:
-            # Simplify to plain string if only single text item
-            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-                messages.append(UserMessage(id=_new_message_id(), content=user_content[0].text))
-            else:
-                messages.append(UserMessage(id=_new_message_id(), content=user_content))
+        flush_user_content()
         messages.extend(result)
         return messages
 
@@ -587,6 +695,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         text_content: list[str] = []
         tool_calls_list: list[ToolCall] = []
         tool_messages: list[ToolMessage] = []
+
+        version = parse_ag_ui_version(ag_ui_version)
+        # `ReasoningMessage` is a REASONING_* type (0.1.13+); the `tool_kind` carrier
+        # `ToolCall`/`ToolMessage.encrypted_value` landed earlier in 0.1.11 — see
+        # `tool_kind_encrypted_value`.
+        use_reasoning = version >= REASONING_VERSION
+        use_encrypted_value = version >= ENCRYPTED_VALUE_VERSION
 
         builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)}
 
@@ -612,7 +727,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     flush()
                 text_content.append(part.content)
             elif isinstance(part, ThinkingPart):
-                if parse_ag_ui_version(ag_ui_version) >= REASONING_VERSION:
+                if use_reasoning:
                     from ag_ui.core import ReasoningMessage
 
                     flush()
@@ -629,6 +744,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=part.tool_call_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
             elif isinstance(part, NativeToolCallPart):
@@ -637,6 +753,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ToolCall(
                         id=prefixed_id,
                         function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
                 )
                 if builtin_return := builtin_returns.get(part.tool_call_id):
@@ -645,6 +762,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             id=_new_message_id(),
                             content=builtin_return.model_response_str(),
                             tool_call_id=prefixed_id,
+                            **tool_kind_encrypted_value_kwargs(builtin_return.tool_kind, supported=use_encrypted_value),
                         )
                     )
             elif isinstance(part, NativeToolReturnPart):
@@ -666,6 +784,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         file_content['provider_name'] = part.provider_name
                     if part.provider_details is not None:
                         file_content['provider_details'] = part.provider_details
+                    if part.content.vendor_metadata is not None:
+                        file_content['vendor_metadata'] = part.content.vendor_metadata
                     result.append(
                         ActivityMessage(
                             id=_new_message_id(),
@@ -698,6 +818,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
+        - `tool_kind` is lost when `ag_ui_version < '0.1.11'` (before its `encrypted_value` carrier
+          existed), so typed tool parts reload as their base classes.
+        - `tool_kind` is not restored on error/denied tool returns (a typed return implies
+          success to its readers), so those reload as plain `ToolReturnPart`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `ThinkingPart` is dropped when `ag_ui_version='0.1.10'`.
@@ -715,6 +839,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             A list of AG-UI Message objects.
         """
         result: list[Message] = []
+
+        if parse_ag_ui_version(ag_ui_version) < ENCRYPTED_VALUE_VERSION and any(
+            isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
+            and part.tool_kind is not None
+            for msg in messages
+            for part in msg.parts
+        ):
+            warn_tool_kind_not_persisted(ag_ui_version)
 
         for msg in messages:
             if isinstance(msg, ModelRequest):

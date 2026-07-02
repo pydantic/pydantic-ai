@@ -35,7 +35,7 @@ class HandleDeferredToolCalls(AbstractCapability[AgentDepsT]):
 
 
         async def handle_deferred(
-            ctx: RunContext[None], requests: DeferredToolRequests
+            ctx: RunContext, requests: DeferredToolRequests
         ) -> DeferredToolResults:
             # Auto-approve all tools that need approval
             return requests.build_results(approve_all=True)
