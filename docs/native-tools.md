@@ -161,7 +161,7 @@ _(This example is complete, it can be run "as is")_
 | Parameter | OpenAI | Anthropic | xAI | Groq | OpenRouter |
 |-----------|--------|-----------|-----|------|------------|
 | `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
-| `user_location` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `user_location` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
