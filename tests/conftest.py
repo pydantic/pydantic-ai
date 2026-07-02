@@ -74,8 +74,6 @@ pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 if TYPE_CHECKING:
-    from typing import TypeVar
-
     from pluggy import Result
     from vcr.cassette import Cassette
 
@@ -820,6 +818,11 @@ def xai_api_key() -> str:
 @pytest.fixture(scope='session')
 def tavily_api_key() -> str:
     return os.getenv('TAVILY_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def zai_api_key() -> str:
+    return os.getenv('ZAI_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name

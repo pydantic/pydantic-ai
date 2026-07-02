@@ -66,7 +66,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
         raise ValueError('No WorkflowRunner provided to the Pydantic AI plugin.')  # pragma: no cover
 
     if not isinstance(runner, SandboxedWorkflowRunner):
-        return runner  # pragma: no cover
+        return runner
 
     return replace(
         runner,
@@ -116,7 +116,7 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
 class PydanticAIPlugin(SimplePlugin):
     """Temporal client and worker plugin for Pydantic AI."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='PydanticAIPlugin',
             data_converter=_data_converter,
