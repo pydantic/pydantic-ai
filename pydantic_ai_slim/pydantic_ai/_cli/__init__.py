@@ -260,7 +260,7 @@ subcommands:
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
     parser.add_argument(
         '--mcp-config',
-        help='Path to MCP servers configuration file (JSON, same format as Claude Desktop).',
+        help='Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Cursor, and the MCP specification).',
     )
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
