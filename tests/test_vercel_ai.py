@@ -4957,7 +4957,7 @@ async def test_adapter_dump_load_roundtrip():
 
 
 async def test_adapter_dump_load_roundtrip_preserves_text_content_metadata():
-    original_messages = [
+    original_messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
                 UserPromptPart(
@@ -4972,15 +4972,9 @@ async def test_adapter_dump_load_roundtrip_preserves_text_content_metadata():
 
     ui_messages = VercelAIAdapter.dump_messages(original_messages)
     reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
 
-    [reloaded_request] = reloaded_messages
-    assert isinstance(reloaded_request, ModelRequest)
-    [reloaded_part] = reloaded_request.parts
-    assert isinstance(reloaded_part, UserPromptPart)
-    assert reloaded_part.content[0] == 'Hello'
-    assert isinstance(reloaded_part.content[1], TextContent)
-    assert reloaded_part.content[1].content == 'World'
-    assert reloaded_part.content[1].metadata == {'source': 'mcp', 'part_id': 'abc123'}
+    assert reloaded_messages == original_messages
 
 
 async def test_adapter_dump_load_roundtrip_without_timestamps():
