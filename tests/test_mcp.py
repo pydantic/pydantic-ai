@@ -12,17 +12,20 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import AsyncMock
 
+import anyio
 import httpx
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import models
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -132,7 +135,7 @@ class TestMCPToolsetConstruction:
 
     def test_pre_built_client_with_handler_kwargs_raises(self):
         client = Client('https://example.com/mcp')
-        with pytest.raises(ValueError, match='pre-built `fastmcp.Client`'):
+        with pytest.raises(ValueError, match=re.escape('pre-built `fastmcp.Client`')):
             MCPToolset(client, headers={'X-Key': 'foo'})
 
     def test_pre_built_client_with_overridden_init_timeout_raises(self):
@@ -151,7 +154,7 @@ class TestMCPToolsetConstruction:
         assert toolset.client is client
 
     def test_sampling_model_and_handler_conflict(self):
-        with pytest.raises(ValueError, match='sampling_model.*sampling_handler'):
+        with pytest.raises(ValueError, match=r'sampling_model.*sampling_handler'):
             MCPToolset(
                 'https://example.com/mcp',
                 sampling_model=models.infer_model('test'),
@@ -478,6 +481,75 @@ class TestMCPToolsetIntegration:
             tools = await toolset.get_tools(run_context)
             with pytest.raises(ToolError):
                 await toolset.call_tool('boom', {}, run_context, tools['boom'])
+
+    @pytest.mark.parametrize(
+        'leaf_factory',
+        [
+            pytest.param(lambda: ToolError('grouped tool error'), id='tool-error'),
+            pytest.param(lambda: McpError(mcp_types.ErrorData(code=400, message='grouped tool error')), id='mcp-error'),
+        ],
+    )
+    async def test_call_tool_unwraps_real_exception_group_to_model_retry(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext, leaf_factory: Any
+    ):
+        """A tool/protocol error that surfaces wrapped in an `ExceptionGroup` is converted to a
+        recoverable `ModelRetry`, not a fatal crash.
+
+        This is a unit test because the wrapping is a timing-dependent race in the MCP client's
+        anyio task group (an empty-bodied tool error colliding with the session's GET-stream
+        teardown) that can't be triggered deterministically. Rather than hand-build the group, we
+        inject a failure at the real escape seam — `self.client.call_tool` — and let a genuine
+        `anyio` task group produce the `ExceptionGroup`, so its structure matches production.
+        """
+        toolset = MCPToolset(fastmcp_server)
+
+        async def call_tool_in_failing_task_group(*args: Any, **kwargs: Any) -> Any:
+            async def fail() -> None:
+                raise leaf_factory()
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(fail)
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_in_failing_task_group
+            with pytest.raises(ModelRetry, match='grouped tool error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    async def test_call_tool_reraises_grouped_errors_it_must_not_convert(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Groups we must not silently turn into a retry are re-raised unchanged: a group that also
+        contains a non-tool error, and (with `tool_error_behavior='error'`) any grouped tool error."""
+
+        def failing_call_tool(*excs: BaseException) -> Any:
+            async def call_tool(*args: Any, **kwargs: Any) -> Any:
+                async def fail(exc: BaseException) -> None:
+                    raise exc
+
+                async with anyio.create_task_group() as tg:
+                    for exc in excs:
+                        tg.start_soon(fail, exc)
+
+            return call_tool
+
+        # A mixed group (tool error + an unrelated error) must propagate, not be swallowed.
+        retry_toolset = MCPToolset(fastmcp_server)
+        async with retry_toolset:
+            tools = await retry_toolset.get_tools(run_context)
+            retry_toolset.client.call_tool = failing_call_tool(
+                ToolError('grouped tool error'), ValueError('unrelated failure')
+            )
+            with pytest.raises(BaseExceptionGroup):
+                await retry_toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+        # With `tool_error_behavior='error'`, even a pure tool-error group propagates unchanged.
+        error_toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
+        async with error_toolset:
+            tools = await error_toolset.get_tools(run_context)
+            error_toolset.client.call_tool = failing_call_tool(ToolError('grouped tool error'))
+            with pytest.raises(BaseExceptionGroup):
+                await error_toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
     async def test_process_tool_call_hook_runs(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         seen: list[tuple[str, dict[str, Any]]] = []

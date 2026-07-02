@@ -483,7 +483,9 @@ async def test_cache_point_as_first_content_raises_error(allow_model_requests: N
 
     with pytest.raises(
         UserError,
-        match='CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.',
+        match=re.escape(
+            'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.'
+        ),
     ):
         await agent.run([CachePoint(), 'This should fail'])
 
@@ -2915,7 +2917,7 @@ async def test_uploaded_file_wrong_provider(allow_model_requests: None) -> None:
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with AnthropicModel"):
+    with pytest.raises(UserError, match=r"provider_name='openai'.*cannot be used with AnthropicModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')])
 
 
@@ -2929,7 +2931,7 @@ async def test_uploaded_file_unsupported_media_type(allow_model_requests: None) 
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match='Unsupported media type.*audio/mpeg'):
+    with pytest.raises(UserError, match=r'Unsupported media type.*audio/mpeg'):
         await agent.run(
             [
                 'Analyze this file',
@@ -6683,7 +6685,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     )
 
     # Get tools from model
-    tools, _, _ = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
+    tools, _, beta_features = m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
         [], model_request_parameters, AnthropicModelSettings()
     )
 
@@ -6693,6 +6695,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
 
     # Verify all parameters are passed correctly
     assert web_fetch_tool_param.get('type') == 'web_fetch_20250910'
+    assert 'web-fetch-2025-09-10' in beta_features
     assert web_fetch_tool_param.get('max_uses') == 5
     assert web_fetch_tool_param.get('allowed_domains') == ['example.com', 'ai.pydantic.dev']
     assert web_fetch_tool_param.get('blocked_domains') is None
@@ -10119,7 +10122,7 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
     )
     agent = Agent(anthropic_model, capabilities=[NativeTool(MemoryTool())])
 
-    with pytest.raises(UserError, match="Native `MemoryTool` requires a 'memory' tool to be defined."):
+    with pytest.raises(UserError, match=re.escape("Native `MemoryTool` requires a 'memory' tool to be defined.")):
         await agent.run('Where do I live?')
 
     class FakeMemoryTool(BetaAbstractMemoryTool):
@@ -10268,10 +10271,10 @@ async def test_anthropic_count_tokens_omits_native_tools(allow_model_requests: N
     assert {tool['name'] for tool in create_kwargs['tools']} == {'lookup', 'code_execution', 'web_fetch', 'memory'}
     assert {tool['name']: tool['type'] for tool in create_kwargs['tools'] if 'type' in tool} == {
         'code_execution': 'code_execution_20260120',
-        'web_fetch': 'web_fetch_20250910',
+        'web_fetch': 'web_fetch_20260209',
         'memory': 'memory_20250818',
     }
-    assert create_kwargs['betas'] == ['context-management-2025-06-27', 'web-fetch-2025-09-10']
+    assert create_kwargs['betas'] == ['context-management-2025-06-27']
 
 
 async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_requests: None):
@@ -10441,23 +10444,6 @@ async def test_anthropic_count_tokens_error(allow_model_requests: None, anthropi
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.model_name == model_id
-
-
-async def test_anthropic_bedrock_count_tokens_not_supported(env: TestEnv):
-    """Test that AsyncAnthropicBedrock raises UserError for count_tokens."""
-    from anthropic import AsyncAnthropicBedrock
-
-    bedrock_client = AsyncAnthropicBedrock(
-        aws_access_key='test-access-key',
-        aws_secret_key='test-secret-key',
-        aws_region='us-east-1',
-    )
-    provider = AnthropicProvider(anthropic_client=bedrock_client)
-    model = AnthropicModel('anthropic.claude-3-5-sonnet-20241022-v2:0', provider=provider)
-    agent = Agent(model)
-
-    with pytest.raises(UserError, match='AsyncAnthropicBedrock client does not support `count_tokens` api.'):
-        await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=20, count_tokens_before_request=True))
 
 
 @pytest.mark.vcr()

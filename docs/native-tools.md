@@ -82,7 +82,7 @@ making it ideal for queries that require up-to-date data.
 | OpenAI Responses | ✅ | Full feature support. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] [model setting](agent.md#model-run-settings). |
 | Anthropic | ✅ | Full feature support |
 | Google | ✅ | No parameter support. No [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] is generated when streaming. Using native tools and function tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| xAI | ✅ | Supports `blocked_domains` and `allowed_domains` parameters. |
+| xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | OpenRouter | ✅ | Web search via [plugins](https://openrouter.ai/docs/features/web-search). Supports `search_context_size`. Uses native search for supported providers (OpenAI, Anthropic, Perplexity, xAI), Exa for others. |
 | OpenAI Chat Completions | ❌ | Not supported |
@@ -161,13 +161,31 @@ _(This example is complete, it can be run "as is")_
 | Parameter | OpenAI | Anthropic | xAI | Groq | OpenRouter |
 |-----------|--------|-----------|-----|------|------------|
 | `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
-| `user_location` | ✅ | ✅ | ❌ | ❌ | ❌ |
+| `user_location` | ✅ | ✅ | ✅ | ❌ | ❌ |
 | `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
 | `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
+!!! note "Anthropic Web Search Tool Versions"
+    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
+    the web search tool version from the model profile and Anthropic client: `web_search_20260209`
+    for models and platforms that support Anthropic's dynamic-filtering web tools, and
+    `web_search_20250305` otherwise.
+    The legacy Amazon Bedrock client does not support Anthropic web search, so Pydantic AI raises
+    a `UserError` if you use `WebSearchTool` with `AsyncAnthropicBedrock`.
+    On Vertex AI, `WebSearchTool` always uses `web_search_20250305`, as Anthropic does not offer the
+    dynamic-filtering version there, so dynamic filtering is unavailable even on otherwise-supported models.
+    See the [Anthropic web search docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool)
+    and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
+    for current model support and platform availability.
+
+    Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
+    Anthropic's standalone code execution tool; it is not needed to use `web_search_20260209`.
+    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
+    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## X Search Tool
 
@@ -226,7 +244,7 @@ OpenAI announced their latest model updates, while Anthropic shared research on 
 _(This example is complete, it can be run "as is")_
 
 !!! note "Handle Filtering"
-    You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 10 handles maximum.
+    You can only use one of `allowed_x_handles` or `excluded_x_handles`, not both. Each list is limited to 20 handles maximum.
 
 !!! note "Including raw search results"
     By default, xAI only returns the model's text summary of the search. To get programmatic access to the underlying posts, sources, and metadata, set `include_output=True` on [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] (analogous to [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] for OpenAI web search). The raw results are then available on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] exposed via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls]. As an alternative, you can enable it globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](agent.md#model-run-settings). See the [xAI docs](models/xai.md#x-search) for the recommended `XSearch` capability-based approach.
@@ -570,6 +588,24 @@ _(This example is complete, it can be run "as is")_
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
+
+!!! note "Anthropic Web Fetch Tool Versions"
+    Pydantic AI does not expose a `dynamic_filtering` option. For Anthropic, Pydantic AI selects
+    the web fetch tool version from the model profile and Anthropic client: `web_fetch_20260209`
+    for models and platforms that support Anthropic's dynamic-filtering web tools, and
+    `web_fetch_20250910` otherwise.
+    `WebFetchTool` is unavailable on the legacy Amazon Bedrock and Vertex AI Anthropic clients, so
+    Pydantic AI raises a `UserError` if you use it with `AsyncAnthropicBedrock` or
+    `AsyncAnthropicVertex`.
+    See the
+    [Anthropic web fetch docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)
+    and [tool reference](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference)
+    for current model support and platform availability.
+
+    Add [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] only when you want
+    Anthropic's standalone code execution tool; it is not needed to use `web_fetch_20260209`.
+    For Zero Data Retention behavior with `_20260209` web tools, see Anthropic's
+    [server tools docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
 
 ## Memory Tool
 

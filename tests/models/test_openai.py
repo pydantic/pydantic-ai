@@ -1837,7 +1837,7 @@ async def test_uploaded_file_wrong_provider_chat(allow_model_requests: None) -> 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
@@ -1857,7 +1857,7 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
 
@@ -4177,6 +4177,41 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ),
         ]
     )
+
+
+@pytest.mark.parametrize('send_mode', ['field', 'auto'])
+async def test_thinking_only_response_skipped_in_history(
+    allow_model_requests: None, send_mode: Literal['field', 'auto']
+):
+    """A thinking-only response has no Chat Completions-valid assistant payload.
+
+    Custom reasoning fields like `reasoning_content` do not satisfy Chat Completions'
+    requirement that assistant messages have `content` unless `tool_calls` is populated.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage.model_construct(
+                content=None, reasoning_content='Let me think about this...', role='assistant'
+            )
+        ),
+        completion_message(ChatCompletionMessage(content='hello back', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    m = OpenAIChatModel(
+        'deepseek-reasoner',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_chat_thinking_field='reasoning_content',
+            openai_chat_send_back_thinking_parts=send_mode,
+        ),
+    )
+    agent = Agent(m)
+
+    await agent.run('hello')
+
+    second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
+    assistant_messages = [message for message in second_call_messages if message.get('role') == 'assistant']
+    assert assistant_messages == []
 
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):

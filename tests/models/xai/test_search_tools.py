@@ -179,11 +179,16 @@ def test_x_search_tool_validation():
     with pytest.raises(ValueError, match='Cannot specify both allowed_x_handles and excluded_x_handles'):
         XSearchTool(allowed_x_handles=['foo'], excluded_x_handles=['bar'])
 
-    with pytest.raises(ValueError, match='allowed_x_handles cannot contain more than 10 handles'):
-        XSearchTool(allowed_x_handles=['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8', 'h9', 'h10', 'h11'])
+    handles = [f'h{i}' for i in range(1, 21)]
+    assert XSearchTool(allowed_x_handles=handles).allowed_x_handles == handles
+    assert XSearchTool(excluded_x_handles=handles).excluded_x_handles == handles
 
-    with pytest.raises(ValueError, match='excluded_x_handles cannot contain more than 10 handles'):
-        XSearchTool(excluded_x_handles=['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'h7', 'h8', 'h9', 'h10', 'h11'])
+    handles = [f'h{i}' for i in range(1, 22)]
+    with pytest.raises(ValueError, match='allowed_x_handles cannot contain more than 20 handles'):
+        XSearchTool(allowed_x_handles=handles)
+
+    with pytest.raises(ValueError, match='excluded_x_handles cannot contain more than 20 handles'):
+        XSearchTool(excluded_x_handles=handles)
 
     tool = XSearchTool(allowed_x_handles=['handle1', 'handle2'])
     assert tool.allowed_x_handles == ['handle1', 'handle2']

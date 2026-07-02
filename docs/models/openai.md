@@ -374,6 +374,12 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ```
 
+#### Models that accept only one leading system message
+
+Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to, since more than one leading system message can be produced in several ways.
+
+Set `openai_chat_supports_multiple_system_messages=False` on the model's [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (as shown above) to merge the leading run of system messages into one, joined with two newlines, before the request is sent. The merge is lossless, so it's safe to enable whenever a backend rejects multiple system messages.
+
 ### DeepSeek
 
 To use the [DeepSeek](https://deepseek.com) provider, first create an API key by following the [Quick Start guide](https://api-docs.deepseek.com/).
@@ -769,6 +775,13 @@ print(result.output)
 ...
 ```
 
+!!! note
+    If your model rejects requests with more than one leading system message (for example, you
+    see `System message must be at the beginning.`), set
+    `openai_chat_supports_multiple_system_messages=False` on its profile. See
+    [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message)
+    for details.
+
 ### Nebius AI Studio
 
 Go to [Nebius AI Studio](https://studio.nebius.com/) and create an API key.
@@ -887,4 +900,52 @@ model = OpenAIChatModel(
 )
 agent = Agent(model)
 ...
+```
+
+### Atlas Cloud
+
+[Atlas Cloud](https://www.atlascloud.ai/) is an OpenAI-compatible API gateway that provides access to 300+ models from a single endpoint, including DeepSeek, Qwen, Claude, GPT, and Gemini.
+
+Atlas Cloud doesn't have a dedicated provider class, so you can use it with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] by setting the `base_url` and `api_key`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'deepseek-ai/deepseek-v4-pro',
+    provider=OpenAIProvider(
+        base_url='https://api.atlascloud.ai/v1',
+        api_key='your-atlas-cloud-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+### Rapid-MLX (Apple Silicon)
+
+[Rapid-MLX](https://github.com/raullenchai/Rapid-MLX) is an OpenAI-compatible inference server for Apple Silicon, built on Apple's MLX framework.
+
+```bash
+pip install rapid-mlx
+rapid-mlx serve mlx-community/Qwen3.5-4B-MLX-4bit
+```
+
+The server listens on `http://localhost:8000/v1` and implements the OpenAI chat completions API, so you can point [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] at it:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+rapid_mlx_model = OpenAIChatModel(
+    model_name='default',
+    provider=OpenAIProvider(
+        base_url='http://localhost:8000/v1',
+        api_key='not-needed',
+    ),
+)
+agent = Agent(rapid_mlx_model)
 ```

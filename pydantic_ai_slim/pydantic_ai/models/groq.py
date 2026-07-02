@@ -636,11 +636,15 @@ class GroqModel(Model[AsyncGroq]):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')
                         image_url_str = downloaded['data']
-                    image_url = ImageURL(url=image_url_str)
+                    image_url: ImageURL = {'url': image_url_str}
+                    if metadata := item.vendor_metadata:
+                        image_url['detail'] = metadata.get('detail', 'auto')
                     content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
-                        image_url = ImageURL(url=item.data_uri)
+                        image_url: ImageURL = {'url': item.data_uri}
+                        if metadata := item.vendor_metadata:
+                            image_url['detail'] = metadata.get('detail', 'auto')
                         content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     else:
                         raise NotImplementedError('Only images are supported for BinaryContent in Groq user prompts')
@@ -813,12 +817,19 @@ def _map_usage(
         return usage.RequestUsage()
 
     usage_data = response_usage.model_dump(exclude_none=True)
-    details = {
+    details: dict[str, int] = {
         k: v
         for k, v in usage_data.items()
         if k not in {'prompt_tokens', 'completion_tokens', 'total_tokens'}
         if isinstance(v, int)
     }
+    # `completion_tokens_details` carries `reasoning_tokens`, which the genai-prices
+    # extractors don't surface, so lift its integer fields into `details` here.
+    # `cached_tokens` (from `prompt_tokens_details`) is intentionally left to the
+    # genai-prices extractors invoked by `RequestUsage.extract`; see
+    # https://github.com/pydantic/genai-prices/issues/414.
+    completion_tokens_details: dict[str, Any] = usage_data.get('completion_tokens_details') or {}
+    details.update({k: v for k, v in completion_tokens_details.items() if isinstance(v, int)})
 
     return usage.RequestUsage.extract(
         dict(model=model, usage=usage_data),

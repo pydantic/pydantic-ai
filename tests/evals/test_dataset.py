@@ -5,6 +5,7 @@ import math
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -947,6 +948,19 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     schema = raw['$schema']
     assert isinstance(schema, str)
     assert (tmp_path / schema).exists()
+
+
+def test_serialization_to_json_with_absolute_schema_path(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
+):
+    json_path = tmp_path / 'test_cases.json'
+    schema_path = tmp_path / 'test_cases_schema.json'
+
+    example_dataset.to_file(json_path, schema_path=schema_path, fmt='json')
+
+    raw = json.loads(json_path.read_text(encoding='utf-8'))
+    assert raw['$schema'] == 'test_cases_schema.json'
+    assert schema_path.exists()
 
 
 def test_serializing_parts_with_discriminators(tmp_path: Path):
@@ -2091,7 +2105,7 @@ cases:
 report_evaluators:
   - NonExistentEvaluator
 """
-    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+    with pytest.raises(ExceptionGroup, match=r'error.*loading evaluators'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
 
 
@@ -2106,7 +2120,7 @@ report_evaluators:
   - ConfusionMatrixEvaluator:
       nonexistent_param: true
 """
-    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+    with pytest.raises(ExceptionGroup, match=r'error.*loading evaluators'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
 
 
@@ -2346,3 +2360,19 @@ async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown(
     assert len(report.failures) == 1
     assert 'setup failed' in report.failures[0].error_message
     assert teardown_called
+
+
+async def test_lifecycle_via_partial(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that the lifecycle can be passed as a partial to provide additional configuration."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class ConfigurableLifecycle(CaseLifecycle[TaskInput, TaskOutput, TaskMetadata]):
+        def __init__(self, case: Case[TaskInput, TaskOutput, TaskMetadata], my_config: int) -> None:
+            super().__init__(case)
+            self.my_config = my_config
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        raise NotImplementedError()
+
+    lifecycle = partial(ConfigurableLifecycle, my_config=123)
+    await example_dataset.evaluate(task, lifecycle=lifecycle)

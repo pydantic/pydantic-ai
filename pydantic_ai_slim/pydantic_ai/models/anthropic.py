@@ -51,6 +51,7 @@ from ..messages import (
     is_multi_modal_content,
 )
 from ..native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
     CodeExecutionTool,
     MCPServerTool,
@@ -63,7 +64,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
@@ -131,6 +132,7 @@ try:
         BetaContentBlock,
         BetaContentBlockParam,
         BetaContextManagementConfigParam,
+        BetaDirectCaller,
         BetaFileDocumentSourceParam,
         BetaFileImageSourceParam,
         BetaImageBlockParam,
@@ -159,6 +161,8 @@ try:
         BetaRequestDocumentBlockParam,
         BetaRequestMCPServerToolConfigurationParam,
         BetaRequestMCPServerURLDefinitionParam,
+        BetaServerToolCaller,
+        BetaServerToolCaller20260120,
         BetaServerToolUseBlock,
         BetaServerToolUseBlockParam,
         BetaSignatureDelta,
@@ -187,9 +191,11 @@ try:
         BetaToolUseBlockParam,
         BetaUsage,
         BetaWebFetchTool20250910Param,
+        BetaWebFetchTool20260209Param,
         BetaWebFetchToolResultBlock,
         BetaWebFetchToolResultBlockParam,
         BetaWebSearchTool20250305Param,
+        BetaWebSearchTool20260209Param,
         BetaWebSearchToolResultBlock,
         BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
@@ -236,6 +242,15 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
 # `AsyncAnthropicBedrockMantle`) expose the full Messages API, including both tool-search variants, so they
 # keep the `bm25` default.
 _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
+# Anthropic web-tool availability is client/platform-specific:
+# * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch
+#   are unavailable.
+# * Vertex AI supports basic web search only.
+# * Direct Anthropic API, Claude Platform on AWS (`AsyncAnthropicBedrockMantle`), and Microsoft
+#   Foundry support dynamic-filtering web tools on supported model profiles.
+_WEB_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
+_WEB_FETCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+_WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
 
 _ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
@@ -257,7 +272,10 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-AnthropicModelName = LatestAnthropicModelNames
+# TODO(anthropic): drop the `claude-sonnet-5` literal once the `anthropic` floor is bumped past the
+# SDK release that adds it to `ModelParam` (installed 0.109.0 still lags). See PR #5849 for the same
+# bridge-then-drop pattern applied to `claude-fable-5`.
+AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5']
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
@@ -274,6 +292,7 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES: tuple[_AnthropicCodeExecutionToolName, ...
     'text_editor_code_execution',
 )
 _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
+_ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
@@ -506,7 +525,33 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @cached_property
     def profile(self) -> AnthropicModelProfile:
-        return cast(AnthropicModelProfile, super().profile)
+        """The model profile.
+
+        Anthropic web-tool availability depends on both model support and the client/platform, so the
+        profile's `supported_native_tools` and `anthropic_supports_dynamic_filtering` are narrowed here
+        for clients that don't support them (e.g. Bedrock, Vertex).
+        """
+        _profile = super().profile
+        provider = self.provider
+        if provider is None:
+            return cast(AnthropicModelProfile, _profile)
+        client = provider.client
+        supported_native_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        if isinstance(client, _WEB_SEARCH_UNSUPPORTED_CLIENTS):
+            supported_native_tools = supported_native_tools - {WebSearchTool}
+        if isinstance(client, _WEB_FETCH_UNSUPPORTED_CLIENTS):
+            supported_native_tools = supported_native_tools - {WebFetchTool}
+        supports_dynamic_filtering = _profile.get('anthropic_supports_dynamic_filtering', False) and not isinstance(
+            client, _WEB_TOOLS_20260209_UNSUPPORTED_CLIENTS
+        )
+        _profile = merge_profile(
+            _profile,
+            AnthropicModelProfile(
+                supported_native_tools=supported_native_tools,
+                anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
+            ),
+        )
+        return cast(AnthropicModelProfile, _profile)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -854,9 +899,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> BetaMessageTokensCount:
-        if isinstance(self.client, AsyncAnthropicBedrock):
-            raise UserError('AsyncAnthropicBedrock client does not support `count_tokens` api.')
-
         # Anthropic docs: https://platform.claude.com/docs/en/api/messages-count-tokens
         # The `count_tokens` endpoint rejects server-side tools (`web_search`, `code_execution`,
         # `web_fetch`, `tool_search`) and the `mcp_servers` param with a 400, so restrict the wire
@@ -889,6 +931,30 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
+
+            with _map_api_errors(self.model_name):
+                return await count_tokens_via_bedrock(
+                    self.client,
+                    self._model_name,
+                    system=system_prompt or OMIT,
+                    messages=anthropic_messages,
+                    max_tokens=model_settings.get('max_tokens', 4096),
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice or OMIT,
+                    mcp_servers=mcp_servers or OMIT,
+                    betas=sorted(betas) or OMIT,
+                    output_config=output_config or OMIT,
+                    cache_control=auto_cache_control or OMIT,
+                    thinking=self._translate_thinking(model_settings, model_request_parameters),
+                    context_management=context_management or OMIT,
+                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    speed=self._effective_speed(model_settings, anthropic_profile),
+                    extra_headers=extra_headers,
+                    extra_body=model_settings.get('extra_body'),
+                )
+
         with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
@@ -1043,6 +1109,60 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return 'regex'
         return strategy or 'bm25'
 
+    @staticmethod
+    def _map_web_search_tool(
+        tool: WebSearchTool, supports_dynamic_filtering: bool
+    ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
+        user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
+        if supports_dynamic_filtering:
+            return BetaWebSearchTool20260209Param(
+                name='web_search',
+                type='web_search_20260209',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                user_location=user_location,
+            )
+        return BetaWebSearchTool20250305Param(
+            name='web_search',
+            type='web_search_20250305',
+            max_uses=tool.max_uses,
+            allowed_domains=tool.allowed_domains,
+            blocked_domains=tool.blocked_domains,
+            user_location=user_location,
+        )
+
+    @staticmethod
+    def _map_web_fetch_tool(
+        tool: WebFetchTool, supports_dynamic_filtering: bool
+    ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
+        citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
+        if supports_dynamic_filtering:
+            return (
+                BetaWebFetchTool20260209Param(
+                    name='web_fetch',
+                    type='web_fetch_20260209',
+                    max_uses=tool.max_uses,
+                    allowed_domains=tool.allowed_domains,
+                    blocked_domains=tool.blocked_domains,
+                    citations=citations,
+                    max_content_tokens=tool.max_content_tokens,
+                ),
+                None,
+            )
+        return (
+            BetaWebFetchTool20250910Param(
+                name='web_fetch',
+                type='web_fetch_20250910',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                citations=citations,
+                max_content_tokens=tool.max_content_tokens,
+            ),
+            'web-fetch-2025-09-10',
+        )
+
     def _add_native_tools(
         self,
         tools: list[BetaToolUnionParam],
@@ -1051,38 +1171,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[list[BetaToolUnionParam], list[BetaRequestMCPServerURLDefinitionParam], set[str]]:
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
+        supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
+
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                user_location = (
-                    BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
-                )
-                tools.append(
-                    BetaWebSearchTool20250305Param(
-                        name='web_search',
-                        type='web_search_20250305',
-                        max_uses=tool.max_uses,
-                        allowed_domains=tool.allowed_domains,
-                        blocked_domains=tool.blocked_domains,
-                        user_location=user_location,
-                    )
-                )
+                tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
-                tools.append(
-                    BetaWebFetchTool20250910Param(
-                        name='web_fetch',
-                        type='web_fetch_20250910',
-                        max_uses=tool.max_uses,
-                        allowed_domains=tool.allowed_domains,
-                        blocked_domains=tool.blocked_domains,
-                        citations=citations,
-                        max_content_tokens=tool.max_content_tokens,
-                    )
-                )
-                beta_features.add('web-fetch-2025-09-10')
+                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, supports_dynamic_filtering)
+                tools.append(web_fetch_tool)
+                if beta_feature is not None:
+                    beta_features.add(beta_feature)
             elif isinstance(tool, MemoryTool):  # pragma: no branch
                 if 'memory' not in model_request_parameters.tool_defs:
                     raise UserError("Native `MemoryTool` requires a 'memory' tool to be defined.")
@@ -1386,6 +1487,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     name='web_search',
                                     input=response_part.args_as_dict(),
                                 )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name in (
                                 CodeExecutionTool.kind,
@@ -1399,6 +1501,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     name=anthropic_tool_name,
                                     input=response_part.args_as_dict(),
                                 )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == WebFetchTool.kind:
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
@@ -1407,6 +1510,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     name='web_fetch',
                                     input=response_part.args_as_dict(),
                                 )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == ToolSearchTool.kind:
                                 if tool_use_id in orphan_tool_search_call_ids:
@@ -1457,6 +1561,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     name=native_name,
                                     input=wire_input,
                                 )
+                                _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif (
                                 response_part.tool_name.startswith(MCPServerTool.kind)
@@ -1480,16 +1585,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 WebSearchTool.kind,
                                 'web_search_tool_result',  # Backward compatibility
                             ) and isinstance(response_part.content, dict | list):
-                                assistant_content_params.append(
-                                    BetaWebSearchToolResultBlockParam(
-                                        tool_use_id=tool_use_id,
-                                        type='web_search_tool_result',
-                                        content=cast(
-                                            BetaWebSearchToolResultBlockParamContentParam,
-                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                        ),
-                                    )
+                                block = BetaWebSearchToolResultBlockParam(
+                                    tool_use_id=tool_use_id,
+                                    type='web_search_tool_result',
+                                    content=cast(
+                                        BetaWebSearchToolResultBlockParamContentParam,
+                                        response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                    ),
                                 )
+                                _add_anthropic_caller_param(block, response_part)
+                                assistant_content_params.append(block)
                             elif response_part.tool_name in (
                                 CodeExecutionTool.kind,
                                 'code_execution_tool_result',  # Backward compatibility
@@ -1533,16 +1638,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             elif response_part.tool_name == WebFetchTool.kind and isinstance(
                                 response_part.content, dict
                             ):
-                                assistant_content_params.append(
-                                    BetaWebFetchToolResultBlockParam(
-                                        tool_use_id=tool_use_id,
-                                        type='web_fetch_tool_result',
-                                        content=cast(
-                                            WebFetchToolResultBlockParamContent,
-                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
-                                        ),
-                                    )
+                                block = BetaWebFetchToolResultBlockParam(
+                                    tool_use_id=tool_use_id,
+                                    type='web_fetch_tool_result',
+                                    content=cast(
+                                        WebFetchToolResultBlockParamContent,
+                                        response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                    ),
                                 )
+                                _add_anthropic_caller_param(block, response_part)
+                                assistant_content_params.append(block)
                             elif isinstance(response_part, NativeToolSearchReturnPart):
                                 assistant_content_params.append(
                                     _build_tool_search_replay_block(response_part, tool_use_id, available_tool_names)
@@ -2505,6 +2610,34 @@ def _anthropic_code_execution_tool_provider_details(
     return {_ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL: tool_name}
 
 
+def _anthropic_caller_provider_details(
+    caller: BetaDirectCaller | BetaServerToolCaller | BetaServerToolCaller20260120 | None,
+) -> dict[str, Any]:
+    # A `direct` caller is the implicit default (the server tool was invoked directly, not from within a
+    # code execution tool), so it carries no state worth round-tripping; only non-direct callers (e.g.
+    # `code_execution_*`) need to be preserved and re-emitted on replay.
+    if caller is None or caller.type == 'direct':
+        return {}
+    return {_ANTHROPIC_SERVER_TOOL_CALLER_DETAIL: caller.model_dump(mode='json')}
+
+
+def _add_anthropic_caller_param(
+    block: BetaServerToolUseBlockParam | BetaWebSearchToolResultBlockParam | BetaWebFetchToolResultBlockParam,
+    part: NativeToolCallPart | NativeToolReturnPart,
+) -> None:
+    if part.provider_details is None:
+        return
+
+    caller = part.provider_details.get(_ANTHROPIC_SERVER_TOOL_CALLER_DETAIL)
+    if not _utils.is_str_dict(caller):
+        return
+
+    # Re-emit whatever caller `_anthropic_caller_provider_details` stored. That producer only stores
+    # genuine SDK callers, so replaying the stored value as-is keeps the read/write paths symmetric and
+    # forward-compatible with new caller types, rather than dropping any not in a hardcoded allow-list.
+    block['caller'] = caller  # pyright: ignore[reportGeneralTypeIssues]
+
+
 def _get_anthropic_code_execution_tool_name(
     part: NativeToolCallPart | NativeToolReturnPart,
 ) -> _AnthropicCodeExecutionToolName:
@@ -2546,6 +2679,7 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_name=kind,
             args=tool_args,
             tool_call_id=item.id,
+            provider_details=_anthropic_caller_provider_details(item.caller) or None,
         )
         if item.name == 'code_execution':
             part.otel_metadata = {'code_arg_name': 'code', 'code_arg_language': 'python'}
@@ -2556,11 +2690,15 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
         # `{"pattern": "..."}`. The variant goes on `provider_details` so same-provider
         # replay can pick the original tool name back out.
         normalized_args = _normalize_tool_search_args(tool_args, item.name)
+        provider_details: dict[str, Any] = {
+            'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25',
+            **_anthropic_caller_provider_details(item.caller),
+        }
         return NativeToolSearchCallPart(
             provider_name=provider_name,
             args=normalized_args,
             tool_call_id=item.id,
-            provider_details={'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25'},
+            provider_details=provider_details,
         )
     if item.name == 'bash_code_execution':
         return NativeToolCallPart(
@@ -2568,7 +2706,10 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_name=CodeExecutionTool.kind,
             args=tool_args,
             tool_call_id=item.id,
-            provider_details=_anthropic_code_execution_tool_provider_details('bash_code_execution'),
+            provider_details={
+                **_anthropic_code_execution_tool_provider_details('bash_code_execution'),
+                **_anthropic_caller_provider_details(item.caller),
+            },
         )
     if item.name == 'text_editor_code_execution':
         return NativeToolCallPart(
@@ -2576,7 +2717,10 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             tool_name=CodeExecutionTool.kind,
             args=tool_args,
             tool_call_id=item.id,
-            provider_details=_anthropic_code_execution_tool_provider_details('text_editor_code_execution'),
+            provider_details={
+                **_anthropic_code_execution_tool_provider_details('text_editor_code_execution'),
+                **_anthropic_caller_provider_details(item.caller),
+            },
         )
     if item.name == 'advisor':  # pragma: no cover
         raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
@@ -2651,9 +2795,9 @@ def _finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> 
 def _map_tool_search_tool_result_block(
     item: BetaToolSearchToolResultBlock, provider_name: str
 ) -> NativeToolSearchReturnPart:
-    """Map a tool-search result block into a typed :class:`NativeToolSearchReturnPart`.
+    """Map a tool-search result block into a typed [`NativeToolSearchReturnPart`][pydantic_ai.messages.NativeToolSearchReturnPart].
 
-    Writes a cross-provider :class:`ToolSearchReturnContent` to `content` (no
+    Writes a cross-provider [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent] to `content` (no
     provider-shape smuggling) and stashes the Anthropic-specific error fields on
     `provider_details` so we can faithfully reconstruct the original block on replay.
     """
@@ -2683,6 +2827,7 @@ def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provid
         tool_name=WebSearchTool.kind,
         content=web_search_tool_result_content_ta.dump_python(item.content, mode='json'),
         tool_call_id=item.tool_use_id,
+        provider_details=_anthropic_caller_provider_details(item.caller) or None,
     )
 
 
@@ -2743,6 +2888,7 @@ def _map_web_fetch_tool_result_block(item: BetaWebFetchToolResultBlock, provider
         # Store just the content field (BetaWebFetchBlock) which has {content, type, url, retrieved_at}
         content=item.content.model_dump(mode='json'),
         tool_call_id=item.tool_use_id,
+        provider_details=_anthropic_caller_provider_details(item.caller) or None,
     )
 
 
