@@ -397,12 +397,21 @@ def sync_anext(iterator: Iterator[T]) -> T:
 
 
 def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
-    loop = get_event_loop()
-    while True:
-        try:
-            yield loop.run_until_complete(anext(async_iter))
-        except StopAsyncIteration:
-            break
+    try:
+        while True:
+            try:
+                yield run_until_complete(anext(async_iter))
+            except StopAsyncIteration:
+                break
+    finally:
+        # Close the underlying async iterator so its `async with`/`finally` blocks (which close
+        # model streams and HTTP connections) run even when the consumer breaks out early or is
+        # interrupted (Ctrl-C closing this generator with `GeneratorExit`), not just when the
+        # stream is exhausted.
+        aclose: Callable[[], Awaitable[None]] | None = getattr(async_iter, 'aclose', None)
+        if aclose is not None:  # pragma: no branch
+            with suppress(BaseException):
+                run_until_complete(aclose())
 
 
 def now_utc() -> datetime:
@@ -808,6 +817,31 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
+
+
+def run_until_complete(coro: Awaitable[T]) -> T:
+    """Run `coro` to completion on the event loop, cleaning up after itself if interrupted.
+
+    If the caller interrupts `loop.run_until_complete()` (e.g. by pressing Ctrl-C, raising
+    `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
+    `async with`/`finally` blocks un-run, leaking the task and any open model streams and HTTP
+    connections. We cancel *our own* task and drive its cleanup to completion before re-raising,
+    so those blocks close their resources. Unlike cancelling every task via `asyncio.all_tasks()`,
+    this never touches other tasks on the (caller-owned) loop.
+    """
+    loop = get_event_loop()
+    task = asyncio.ensure_future(coro, loop=loop)
+    try:
+        return loop.run_until_complete(task)
+    except BaseException:
+        if not task.done():
+            task.cancel()
+            # Run the loop again to let the cancellation propagate through `coro`'s cleanup.
+            # Suppress everything (including a second Ctrl-C): we're only finishing cleanup and
+            # retrieving the task's exception, not replacing the one we're about to re-raise.
+            with suppress(BaseException):
+                loop.run_until_complete(task)
+        raise
 
 
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:

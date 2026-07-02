@@ -1,15 +1,17 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextlib
 import contextvars
 import functools
 import importlib
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import distributions
+from typing import Any, cast
 
 import pytest
 
@@ -180,6 +182,90 @@ async def test_peekable_async_stream_aclose_before_iteration():
     await peekable_async_stream.aclose()
 
     assert await peekable_async_stream.is_exhausted()
+
+
+def test_run_until_complete_cleans_up_own_task_on_interrupt():
+    """A `KeyboardInterrupt` during `run_until_complete` must drive our own coroutine's cleanup
+    (closing model streams and HTTP connections via its `async with`/`finally` blocks) and leave no
+    pending task, without cancelling other tasks on the caller-owned loop.
+
+    This is a unit test rather than a public-API/VCR test because it requires a real interrupt to
+    arrive mid-`run_until_complete` while the coroutine is suspended, which can't be triggered
+    reliably through the public API; we simulate the interrupt by patching the loop.
+    """
+    cleaned: list[str] = []
+
+    async def coro() -> None:
+        try:
+            await asyncio.Event().wait()  # suspends forever
+        finally:
+            cleaned.append('cleaned')
+
+    loop = utils_module.get_event_loop()
+
+    # An unrelated task on the (caller-owned) loop that must survive: the reporter's `all_tasks()`
+    # sledgehammer would cancel this, ours must not.
+    async def bystander() -> None:
+        await asyncio.Event().wait()
+
+    bystander_task = loop.create_task(bystander())
+    tasks_before = asyncio.all_tasks(loop)
+
+    real_run_until_complete = loop.run_until_complete
+    calls = 0
+
+    def interrupt_once(future: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Let our task (and the bystander) start and suspend, then simulate Ctrl-C reaching the
+            # caller of `run_until_complete`.
+            loop.call_soon(loop.stop)
+            loop.run_forever()
+            raise KeyboardInterrupt
+        return real_run_until_complete(future)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, 'run_until_complete', interrupt_once)
+        with pytest.raises(KeyboardInterrupt):
+            utils_module.run_until_complete(coro())
+
+    assert cleaned == ['cleaned']  # our coroutine's cleanup ran
+    assert not bystander_task.cancelled()  # the unrelated task was left alone
+    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
+
+    bystander_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        loop.run_until_complete(bystander_task)
+
+
+def test_sync_async_iterator_closes_source_on_early_break():
+    """Breaking out of the sync stream early must close the underlying async iterator so its
+    `async with`/`finally` blocks (which close model streams and connections) run, not only when
+    the stream is exhausted."""
+    closed: list[str] = []
+
+    async def agen() -> AsyncIterator[int]:
+        try:
+            i = 0
+            while True:
+                yield i
+                i += 1
+        finally:
+            closed.append('closed')
+
+    iterator = utils_module.sync_async_iterator(agen())
+    collected: list[int] = []
+    for value in iterator:
+        collected.append(value)
+        if value == 2:
+            break
+    # Tearing down the consumer's frame sends `GeneratorExit` into the sync iterator; do it explicitly
+    # here so the test is deterministic instead of relying on garbage collection.
+    cast('Generator[int, None, None]', iterator).close()
+
+    assert collected == [0, 1, 2]
+    assert closed == ['closed']
 
 
 def test_package_versions(capsys: pytest.CaptureFixture[str]):
