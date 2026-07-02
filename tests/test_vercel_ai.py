@@ -5977,6 +5977,29 @@ def test_constructor_preserve_file_data_deprecated_alias():
         assert VercelAIAdapter(agent=agent, run_input=run_input).allow_uploaded_files is False
 
 
+@pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
+async def test_dispatch_request_preserve_file_data_deprecated_alias():
+    """The deprecated `preserve_file_data` argument to `dispatch_request` maps onto `allow_uploaded_files`."""
+    run_input = SubmitMessage(
+        trigger='submit-message',
+        id='req_1',
+        messages=[UIMessage(id='msg1', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='preserve_file_data'):
+        response = await VercelAIAdapter.dispatch_request(starlette_request, agent=agent, preserve_file_data=True)
+    assert isinstance(response, StreamingResponse)
+
+
 async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
     """Test converting a user prompt with UploadedFile that has vendor_metadata and custom identifier."""
     from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
