@@ -55,3 +55,5 @@
 ::: pydantic_ai.providers.alibaba.AlibabaProvider
 
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
+
+::: pydantic_ai.providers.zai.ZaiProvider
