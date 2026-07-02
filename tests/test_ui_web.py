@@ -6,7 +6,7 @@ import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -309,6 +309,11 @@ async def test_get_ui_html_refetches_empty_cache_file(monkeypatch: pytest.Monkey
 
 
 def test_write_cached_file_removes_temp_file_on_replace_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """A failed `os.replace` unlinks the temp file and leaves the destination intact.
+
+    The cleanup path only fires when the rename fails, which `_get_ui_html` can't trigger on demand,
+    so the private helper is driven directly with a forced `os.replace` failure.
+    """
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     cache_file.write_bytes(b'old content')
     temp_paths: list[Path] = []
@@ -327,6 +332,41 @@ def test_write_cached_file_removes_temp_file_on_replace_error(monkeypatch: pytes
     assert cache_file.read_bytes() == b'old content'
     assert temp_paths
     assert not temp_paths[0].exists()
+
+
+def test_write_cached_file_closes_temp_handle_before_replace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The temp file handle is closed before `os.replace`, so the rename can't fail on Windows.
+
+    Windows refuses to replace a file that still has an open handle, so an `os.replace` fired while
+    the `NamedTemporaryFile` handle is open would break the atomic write there. Capturing the temp
+    file object and asserting it is already closed when `os.replace` runs pins the close-before-replace
+    ordering on every platform (POSIX allows renaming an open file, so it would otherwise hide the bug).
+    """
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    temp_files: list[IO[bytes]] = []
+    real_named_temporary_file = app_module.tempfile.NamedTemporaryFile
+
+    def capturing_named_temporary_file(*, dir: Path, prefix: str, delete: bool) -> IO[bytes]:
+        tmp_file = real_named_temporary_file(dir=dir, prefix=prefix, delete=delete)
+        temp_files.append(tmp_file)
+        return tmp_file
+
+    monkeypatch.setattr(app_module.tempfile, 'NamedTemporaryFile', capturing_named_temporary_file)
+
+    closed_at_replace: list[bool] = []
+    real_replace = app_module.os.replace
+
+    def instrumented_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        closed_at_replace.append(temp_files[0].closed)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(app_module.os, 'replace', instrumented_replace)
+
+    content = b'<html>UI</html>'
+    app_module._write_cached_file(cache_file, content)  # pyright: ignore[reportPrivateUsage]
+
+    assert closed_at_replace == [True]
+    assert cache_file.read_bytes() == content
 
 
 @pytest.mark.anyio

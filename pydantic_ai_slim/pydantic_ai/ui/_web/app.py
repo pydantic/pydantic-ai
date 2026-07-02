@@ -68,15 +68,18 @@ def _write_cached_file(cache_file: Path, content: bytes) -> None:
     unlinked on any failure — including a write failure or interruption — so a crashed write can
     never leave the destination existing-but-incomplete nor leak a temp file.
     """
-    with tempfile.NamedTemporaryFile(dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False) as tmp_file:
-        tmp_path = Path(tmp_file.name)
-        try:
+    tmp_file = tempfile.NamedTemporaryFile(dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False)
+    tmp_path = Path(tmp_file.name)
+    try:
+        # Close the handle before the rename: Windows refuses to replace a file that still has an
+        # open handle, which would break the atomic write there.
+        with tmp_file:
             tmp_file.write(content)
             tmp_file.flush()
-            os.replace(tmp_path, cache_file)
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)
-            raise
+        os.replace(tmp_path, cache_file)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
