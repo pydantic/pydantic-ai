@@ -185,7 +185,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         # Override with PrefectModel and PrefectMCPToolset in the toolsets.
         # A per-run `event_stream_handler` is stashed on a `ContextVar` that `PrefectModel` reads inside its
         # task (via `_effective_event_stream_handler`), so the runtime handler is honored without rebuilding
-        # the model and re-registering its Prefect tasks.
+        # the model and re-registering its Prefect tasks. When no per-run handler is given, keep whatever an
+        # outer call already stashed (e.g. the `toolsets` property re-entering these overrides).
         token = self._run_event_stream_handler.set(event_stream_handler or self._run_event_stream_handler.get())
         try:
             with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
@@ -331,7 +332,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                         retries=retries,
                         infer_name=infer_name,
                         toolsets=toolsets,
-                        event_stream_handler=event_stream_handler,
+                        # `event_stream_handler` is intentionally not forwarded: `_prefect_overrides` stashed
+                        # it on a `ContextVar`, and the base run resolves it via the `event_stream_handler`
+                        # property. Forwarding it too would also invoke it at the graph level (against the
+                        # empty, already-consumed stream) on top of the in-task invocation.
                         capabilities=capabilities,
                         spec=spec,
                     )
@@ -480,7 +484,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                             retries=retries,
                             infer_name=infer_name,
                             toolsets=toolsets,
-                            event_stream_handler=event_stream_handler,
+                            # `event_stream_handler` is intentionally not forwarded (stashed on a `ContextVar`
+                            # by `_prefect_overrides` and resolved via the `event_stream_handler` property);
+                            # forwarding it too would invoke it again at the graph level against the empty,
+                            # already-consumed stream on top of the in-task invocation.
                             capabilities=capabilities,
                             spec=spec,
                         )

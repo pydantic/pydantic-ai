@@ -655,7 +655,10 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
     steps = await dbos.list_workflow_steps_async(wfid)
     step_names = [step['function_name'] for step in steps]
     assert step_names[0] == 'runtime_handler_stream_agent__model.request_stream'
-    assert step_names.count('runtime_event_stream_handler') == 2
+    # The per-run handler fires live, nested inside the model-request step (delivering the streamed
+    # events asserted below). It is no longer invoked a second time at the graph level against the
+    # already-consumed, empty stream, so it doesn't appear as a separate top-level workflow step.
+    assert 'runtime_event_stream_handler' not in step_names
 
     exported_event_messages = [
         event
@@ -670,11 +673,9 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
 async def test_dbos_agent_event_stream_handler_property_outside_workflow(dbos: DBOS) -> None:
     # Outside a DBOS workflow, the `event_stream_handler` property resolves to the effective handler
     # directly, rather than the in-workflow per-event dispatcher.
-    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None: ...
-
     agent = Agent(TestModel(), name='event_stream_handler_property_agent')
-    dbos_agent = DBOSAgent(agent, event_stream_handler=handler)
-    assert dbos_agent.event_stream_handler is handler
+    dbos_agent = DBOSAgent(agent, event_stream_handler=runtime_event_stream_handler)
+    assert dbos_agent.event_stream_handler is runtime_event_stream_handler
 
 
 async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, dbos: DBOS) -> None:

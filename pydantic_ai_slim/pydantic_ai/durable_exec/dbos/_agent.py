@@ -171,7 +171,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     retries=retries,
                     infer_name=infer_name,
                     toolsets=toolsets,
-                    event_stream_handler=event_stream_handler,
+                    # `event_stream_handler` is intentionally not forwarded: `_dbos_overrides` stashed it on
+                    # a `ContextVar`, and the base run resolves it via the `event_stream_handler` property.
+                    # Forwarding it too would also invoke it at the graph level (against the empty,
+                    # already-consumed stream) on top of the in-step invocation.
                     capabilities=capabilities,
                     spec=spec,
                 )
@@ -218,7 +221,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     retries=retries,
                     infer_name=infer_name,
                     toolsets=toolsets,
-                    event_stream_handler=event_stream_handler,
+                    # `event_stream_handler` is intentionally not forwarded: `_dbos_overrides` stashed it on
+                    # a `ContextVar`, and the base run resolves it via the `event_stream_handler` property.
+                    # Forwarding it too would also invoke it at the graph level (against the empty,
+                    # already-consumed stream) on top of the in-step invocation.
                     capabilities=capabilities,
                     spec=spec,
                 )
@@ -281,7 +287,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         # Use the configured parallel execution mode for deterministic event ordering during DBOS replay.
         # A per-run `event_stream_handler` is stashed on a `ContextVar` that `DBOSModel` reads inside its
         # step (via `_effective_event_stream_handler`), so the runtime handler is honored without rebuilding
-        # the model and re-registering its DBOS steps.
+        # the model and re-registering its DBOS steps. When no per-run handler is given, keep whatever an
+        # outer call already stashed (e.g. the `toolsets` property re-entering these overrides).
         token = self._run_event_stream_handler.set(event_stream_handler or self._run_event_stream_handler.get())
         try:
             with (
@@ -837,7 +844,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 [`Agent.__init__`][pydantic_ai.agent.Agent.__init__] for semantics of the two enforcement paths.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://ai.pydantic.dev/capabilities/) for this run, merged with the agent's configured capabilities.
             spec: Optional agent spec to apply for this run.
 
