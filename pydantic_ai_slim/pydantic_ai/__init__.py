@@ -130,6 +130,7 @@ from .profiles import (
     ModelProfileSpec,
 )
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
+from .sanitization import sanitize_message_history
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .tools import (
     AgentNativeTool,
@@ -265,6 +266,7 @@ __all__ = (
     'VideoFormat',
     'VideoMediaType',
     'VideoUrl',
+    'sanitize_message_history',
     # profiles
     'ModelProfile',
     'ModelProfileSpec',
