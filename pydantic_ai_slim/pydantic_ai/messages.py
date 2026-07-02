@@ -2494,11 +2494,14 @@ def sanitize_messages(
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
       tool return parts.
-    - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s and
-      [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart]s at the end of the history
-      that aren't in `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied
-      history doesn't correspond to a paused agent run and shouldn't be executed. If stripping
-      leaves the final response with no parts, the response is dropped from history entirely.
+    - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
+      `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
+      correspond to a paused agent run and shouldn't be executed.
+      [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart]s are left in place: the provider
+      executes them server-side and pairs each with a
+      [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] in the same response, and the
+      agent loop never dispatches them, so they aren't a client-injection risk. If stripping leaves the
+      final response with no parts, the response is dropped from history entirely.
 
     Args:
         messages: Messages to sanitize.
@@ -2638,13 +2641,19 @@ def _strip_dangling_tail_tool_calls(
     back over trailing responses so several dropped messages can't hide a dangling call, keeping
     calls in `resolved_tool_call_ids` so a same-request human-in-the-loop resume still works.
 
+    Only user-executed `ToolCallPart`s are stripped;
+    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart]s are left in place since the
+    provider resolves them server-side (paired with a
+    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]) and the agent loop never
+    dispatches them.
+
     Mutates `sanitized` (dropping/rewriting trailing responses) and appends stripped tool names to
     `dangling_names` in place.
     """
     while sanitized and isinstance(tail := sanitized[-1], ModelResponse):
         kept_parts: list[ModelResponsePart] = []
         for part in tail.parts:
-            if isinstance(part, BaseToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
+            if isinstance(part, ToolCallPart) and part.tool_call_id not in resolved_tool_call_ids:
                 dangling_names.append(part.tool_name)
             else:
                 kept_parts.append(part)

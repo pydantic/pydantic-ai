@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from pydantic_ai import (
@@ -9,6 +11,8 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -70,6 +74,32 @@ def test_sanitize_messages_keeps_resolved_trailing_tool_call():
     with pytest.warns(UserWarning, match=r'unresolved tool call.*do_thing'):
         dropped = sanitize_messages(messages)
     assert dropped == snapshot([ModelRequest(parts=[UserPromptPart(content='do the thing', timestamp=IsDatetime())])])
+
+
+def test_sanitize_messages_keeps_trailing_native_tool_calls():
+    """Trailing `NativeToolCallPart`s are never stripped, whether or not a return is paired with them.
+
+    Native tool calls are executed by the provider server-side, not dispatched by the agent loop, so a
+    promptless run can't be tricked into executing an injected one. Stripping them would also orphan the
+    paired `NativeToolReturnPart` that rides in the same response.
+    """
+    paired: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='search the web')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(tool_name='web_search', tool_call_id='native-1'),
+                NativeToolReturnPart(tool_name='web_search', content='results', tool_call_id='native-1'),
+            ]
+        ),
+    ]
+    lone: list[ModelMessage] = [
+        ModelResponse(parts=[NativeToolCallPart(tool_name='web_search', tool_call_id='native-2')]),
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
+        assert sanitize_messages(paired) == paired
+        assert sanitize_messages(lone) == lone
 
 
 def test_sanitize_messages_strips_dangling_call_exposed_by_dropped_tail():
