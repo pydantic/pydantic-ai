@@ -284,11 +284,16 @@ class TrajectoryJudge(Evaluator):
             # Degrade gracefully, like the built-in evaluators on this page.
             return EvaluationReason(value=False, reason='No span tree available.')
 
-        # Read span attributes to build a plain-text trajectory summary.
+        # Build a plain-text trajectory summary, mirroring what the built-in
+        # evaluators count as a tool call: tool spans are named 'running tool'
+        # (v2) or 'execute_tool {name}' (v3+); deferred calls never ran, and
+        # output functions share the tool span shape but aren't tool calls.
         tool_names = [
             node.attributes['gen_ai.tool.name']
             for node in span_tree
             if 'gen_ai.tool.name' in node.attributes
+            and 'pydantic_ai.tool.deferral.name' not in node.attributes
+            and (node.name == 'running tool' or node.name.startswith('execute_tool '))
             and not str(node.attributes.get('logfire.msg', '')).startswith('running output function:')
         ]
         trajectory = ', '.join(str(n) for n in tool_names) or '(none)'
