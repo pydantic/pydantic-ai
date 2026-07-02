@@ -13,6 +13,7 @@ from pydantic_core import to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
+    GEN_AI_TURN_INDEX_ATTRIBUTE,
     InstrumentationNames,
     get_agent_run_baggage_attributes,
     get_instructions,
@@ -72,6 +73,7 @@ class Instrumentation(AbstractCapability[Any]):
     # a run — if the agent loop ever issues concurrent model requests, accesses to
     # these fields would race.
     _agent_name: str = field(default='agent', repr=False, init=False)
+    _model_request_index: int = field(default=0, repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
@@ -253,7 +255,14 @@ class Instrumentation(AbstractCapability[Any]):
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
         self._last_messages = request_context.messages
 
-        with open_model_request_span(self.settings, request_context) as (finish, prepared_request_context):
+        turn_index = self._model_request_index
+        self._model_request_index += 1
+
+        with open_model_request_span(
+            self.settings,
+            request_context,
+            extra_attributes={GEN_AI_TURN_INDEX_ATTRIBUTE: turn_index},
+        ) as (finish, prepared_request_context):
             # Stash for `_run_span_end_attributes`: feeding the parameters into
             # `get_instructions` lets it use the canonical `instruction_parts` source
             # (which includes prompted-output template instructions and is properly sorted)

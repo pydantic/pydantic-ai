@@ -34,6 +34,7 @@ CONVERSATION_ID_BAGGAGE_KEY = 'gen_ai.conversation.id'
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 GEN_AI_PROVIDER_NAME_ATTRIBUTE = 'gen_ai.provider.name'
+GEN_AI_TURN_INDEX_ATTRIBUTE = 'gen_ai.turn.index'
 
 MODEL_SETTING_ATTRIBUTES: tuple[
     Literal[
@@ -180,6 +181,7 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
+    extra_attributes: dict[str, AttributeValue] | None = None,
 ) -> Generator[tuple[Callable[[ModelResponse], None], ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
@@ -208,6 +210,7 @@ def open_model_request_span(
         **model_attributes(model),
         **model_request_parameters_attributes(prepared_parameters),
         **get_agent_run_baggage_attributes(),
+        **(extra_attributes or {}),
         'logfire.json_schema': to_json(
             {
                 'type': 'object',
