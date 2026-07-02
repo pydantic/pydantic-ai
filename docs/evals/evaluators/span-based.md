@@ -113,6 +113,18 @@ Match spans with specific attributes:
 {'has_attribute_keys': ['user_id', 'request_id']}
 ```
 
+### Status Conditions
+
+Match spans by their [status][pydantic_evals.otel.SpanStatus]:
+
+```python
+# Spans that recorded an error
+{'has_status': 'error'}
+
+# Spans explicitly marked OK (note: successful spans are typically 'unset', not 'ok')
+{'has_status': 'ok'}
+```
+
 ### Duration Conditions
 
 Match based on execution time:
@@ -169,7 +181,7 @@ Query relationships between spans:
 {'all_children_have': {'max_duration': 0.5}}
 
 # No children match query
-{'no_child_has': {'has_attributes': {'error': True}}}
+{'no_child_has': {'has_status': 'error'}}
 
 # Descendant queries (recursive)
 {'min_descendant_count': 5}
@@ -188,7 +200,7 @@ Query span hierarchy:
 # Ancestor queries
 {'some_ancestor_has': {'name_equals': 'agent_run'}}
 {'all_ancestors_have': {'max_duration': 10.0}}
-{'no_ancestor_has': {'has_attributes': {'error': True}}}
+{'no_ancestor_has': {'has_status': 'error'}}
 ```
 
 ### Stop Recursing
@@ -288,15 +300,26 @@ evaluators = [
 
 ### Error Detection
 
-Check for error conditions:
+Check for error conditions using span [status][pydantic_evals.otel.SpanStatus]:
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
 
 evaluators = [
-    # No errors occurred
+    # An error occurred somewhere in the trace
     HasMatchingSpan(
-        query={'not_': {'has_attributes': {'error': True}}},
+        query={'has_status': 'error'},
+        evaluation_name='had_errors',
+    ),
+
+    # No errors occurred: since HasMatchingSpan passes if *any* span matches,
+    # anchor the query on the root span and check it and all its descendants
+    HasMatchingSpan(
+        query={
+            'name_equals': 'task_execution',
+            'not_': {'has_status': 'error'},
+            'no_descendant_has': {'has_status': 'error'},
+        },
         evaluation_name='no_errors',
     ),
 

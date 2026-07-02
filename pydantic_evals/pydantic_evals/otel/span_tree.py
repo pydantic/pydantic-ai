@@ -46,6 +46,9 @@ class SpanQuery(TypedDict, total=False):
     has_attributes: dict[str, Any]
     has_attribute_keys: list[str]
 
+    ## Status conditions
+    has_status: SpanStatus
+
     ## Timing conditions
     min_duration: timedelta | float
     max_duration: timedelta | float
@@ -281,6 +284,10 @@ class SpanNode:
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(
             key in self.attributes for key in has_attributes_keys
         ):
+            return False
+
+        # Status conditions
+        if (has_status := query.get('has_status')) and self.status != has_status:
             return False
 
         # Timing conditions

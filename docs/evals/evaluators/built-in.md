@@ -392,7 +392,7 @@ dataset = Dataset(
         ),
         # Check for errors
         HasMatchingSpan(
-            query={'has_attributes': {'error': True}},
+            query={'has_status': 'error'},
             evaluation_name='had_errors',
         ),
         # Check duration constraints
