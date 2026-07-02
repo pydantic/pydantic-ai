@@ -15,8 +15,9 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
+from pydantic_ai._cost import best_effort_cost
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, best_effort_cost
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7

@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from typing_extensions import TypeVar
 
 from . import _utils, exceptions, messages as _messages, models
-from ._instrumentation import best_effort_cost
+from ._cost import best_effort_cost
 from ._output import (
     OutputDataT_inv,
     OutputSchema,

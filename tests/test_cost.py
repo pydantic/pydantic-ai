@@ -20,7 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai._instrumentation import CostCalculationFailedWarning
+from pydantic_ai._warnings import CostCalculationFailedWarning
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
