@@ -82,6 +82,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
     ToolDenied,
 )
+from pydantic_ai.toolsets import ExternalToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ._inline_snapshot import snapshot
@@ -336,6 +337,20 @@ async def test_basic_user_message() -> None:
     events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
+
+
+async def test_frontend_tool_without_parameters_uses_empty_object_schema() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Hello!'),
+        tools=[Tool(name='current_time', description='Get the current time')],
+    )
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+
+    toolset = adapter.toolset
+
+    assert isinstance(toolset, ExternalToolset)
+    assert toolset.tool_defs[0].parameters_json_schema == {'type': 'object', 'properties': {}}
 
 
 async def test_empty_messages() -> None:

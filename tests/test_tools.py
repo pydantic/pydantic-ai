@@ -1890,6 +1890,35 @@ async def test_deferred_tool_without_output_type():
             await result.get_output()
 
 
+def test_external_toolset_rejects_invalid_parameters_schema():
+    with pytest.raises(UserError) as exc_info:
+        ExternalToolset(
+            [
+                ToolDefinition(
+                    name='search',
+                    parameters_json_schema={'properties': {'query': {'type': 'string'}}, 'required': ['query']},
+                )
+            ]
+        )
+
+    assert str(exc_info.value) == "Invalid parameters_json_schema for external tool 'search': Schema must be an object"
+
+    with pytest.raises(UserError) as exc_info:
+        ExternalToolset(
+            [
+                ToolDefinition(
+                    name='lookup',
+                    parameters_json_schema={'type': 'object', 'required': ['id']},
+                )
+            ]
+        )
+
+    assert (
+        str(exc_info.value)
+        == "Invalid parameters_json_schema for external tool 'lookup': required keys are missing from properties: 'id'"
+    )
+
+
 def test_output_type_deferred_tool_requests_by_itself():
     with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolRequests`.'):
         Agent(TestModel(), output_type=DeferredToolRequests)

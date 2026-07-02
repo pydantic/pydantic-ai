@@ -158,7 +158,7 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
                 ToolDefinition(
                     name=tool.name,
                     description=tool.description,
-                    parameters_json_schema=tool.parameters or {},
+                    parameters_json_schema=tool.parameters or {'type': 'object', 'properties': {}},
                 )
                 for tool in tools
             ]
