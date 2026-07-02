@@ -214,6 +214,7 @@ extend-select = [
     "Q",
     "RUF100",
     "RUF018", # https://docs.astral.sh/ruff/rules/assignment-in-assert/
+    "RUF043", # https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern/
     "C90",
     "UP",
     "I",

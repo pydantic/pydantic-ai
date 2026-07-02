@@ -1349,7 +1349,9 @@ async def test_agent_name_collision(allow_model_requests: None, client: Client):
 async def test_agent_without_name():
     with pytest.raises(
         UserError,
-        match="An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow.",
+        match=re.escape(
+            "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
+        ),
     ):
         TemporalAgent(Agent())
 
@@ -1357,7 +1359,9 @@ async def test_agent_without_name():
 async def test_agent_without_model():
     with pytest.raises(
         UserError,
-        match="The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time.",
+        match=re.escape(
+            "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
+        ),
     ):
         TemporalAgent(Agent(name='test_agent'))
 
