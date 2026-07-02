@@ -302,7 +302,11 @@ def _run_chat_command(
                 'Please install the `mcp` package to use --mcp-config, '
                 'you can use the `mcp` optional group - `pip install "pydantic-ai-slim[mcp]"`'
             ) from e
-        toolsets = load_mcp_toolsets(args.mcp_config)
+        try:
+            toolsets = load_mcp_toolsets(args.mcp_config)
+        except (FileNotFoundError, ValidationError, ValueError) as e:
+            console.print(f'[red]Error: Could not load MCP config from {args.mcp_config}:\n{e}[/red]')
+            return 1
 
     model_arg_set = args.model is not None
     if agent.model is None or model_arg_set:

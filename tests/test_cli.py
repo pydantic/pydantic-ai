@@ -170,6 +170,39 @@ def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path):
     assert 'Called tool temp_get_weather_forecast' in capfd.readouterr().out
 
 
+@pytest.mark.parametrize(
+    'config,expected',
+    [
+        pytest.param(None, 'not found', id='missing-file'),
+        pytest.param('{ not valid json ', 'Could not load MCP config', id='malformed-json'),
+        pytest.param(
+            json.dumps({'mcpServers': {'x': {'command': 'echo', 'args': ['${UNDEFINED_VAR_XYZ}']}}}),
+            'is not defined',
+            id='undefined-env-var',
+        ),
+        pytest.param(
+            json.dumps({'mcpServers': {'x': {}}}),
+            'must have either `command` or `url`',
+            id='missing-command-or-url',
+        ),
+    ],
+)
+def test_mcp_config_errors(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, config: str | None, expected: str):
+    """A bad `--mcp-config` prints a friendly error and exits 1 instead of a raw traceback."""
+    env.set('OPENAI_API_KEY', 'test')
+    config_file = tmp_path / 'mcp_servers.json'
+    if config is None:
+        target = tmp_path / 'does_not_exist.json'
+    else:
+        config_file.write_text(config)
+        target = config_file
+
+    assert cli(['--mcp-config', str(target), 'hi']) == 1
+    out = capfd.readouterr().out
+    assert 'Could not load MCP config' in out
+    assert expected in out
+
+
 def test_no_command_defaults_to_chat(mocker: MockerFixture):
     """Test that running clai with no command defaults to chat mode."""
     # Mock _run_chat_command to avoid actual execution
