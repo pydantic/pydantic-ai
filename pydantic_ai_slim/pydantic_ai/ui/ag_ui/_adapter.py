@@ -221,23 +221,7 @@ def _user_content_to_input(
 
 @dataclass
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
-    """UI adapter for the Agent-User Interaction (AG-UI) protocol.
-
-    Two independent settings control file handling:
-
-    - [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] (inherited from
-      `UIAdapter`, default `False`) is the inbound security gate: client-submitted
-      [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped during
-      `sanitize_messages` unless it is `True`, since the server resolves them with its own
-      credentials. Only set it when the frontend is trusted.
-    - [`preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data] (default
-      `False`) is the AG-UI-specific representation opt-in: `FilePart` and `UploadedFile`
-      round-trip through reserved `pydantic_ai_*`
-      [activity messages](https://docs.ag-ui.com/concepts/messages) on `dump_messages`/`load_messages`.
-      The protocol has no native slot for them, so a frontend only round-trips them if it echoes
-      the activity messages back; frontend activity handlers should ignore `pydantic_ai_*` types.
-      (Multimodal tool-return files ride inline in `ToolMessage.content` and are unaffected by this flag.)
-    """
+    """UI adapter for the Agent-User Interaction (AG-UI) protocol."""
 
     _: KW_ONLY
     ag_ui_version: str = DEFAULT_AG_UI_VERSION

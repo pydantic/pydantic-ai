@@ -86,12 +86,15 @@ subclass (`ImageUrl`, `DocumentUrl`, etc.) when sanitizing a file URL."""
 
 
 def resolve_allow_uploaded_files(
-    allow_uploaded_files: bool, preserve_file_data: bool | None, *, stacklevel: int = 3
+    allow_uploaded_files: bool,
+    preserve_file_data: bool | None,  # TODO(v3): remove preserve_file_data
+    *,
+    stacklevel: int = 3,
 ) -> bool:
     """Map the deprecated `preserve_file_data` argument onto `allow_uploaded_files`.
 
     Returns `allow_uploaded_files` unchanged when `preserve_file_data` is omitted (`None`).
-    When `preserve_file_data` is passed, emits a [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]
+    When `preserve_file_data` is passed, emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]
     and returns its value. Used by adapters that exposed the old `preserve_file_data` argument for
     honoring client-submitted uploaded files (now `allow_uploaded_files`).
 

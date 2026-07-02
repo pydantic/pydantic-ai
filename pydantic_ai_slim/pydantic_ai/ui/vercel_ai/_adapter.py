@@ -138,7 +138,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
 
-    preserve_file_data: InitVar[bool | None] = None
+    preserve_file_data: InitVar[bool | None] = None  # TODO(v3): remove preserve_file_data
     """Deprecated alias for [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]."""
 
     def __post_init__(self, preserve_file_data: bool | None) -> None:
