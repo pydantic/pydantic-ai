@@ -739,6 +739,28 @@ async def test_image_as_binary_content_tool_response(
     )
 
 
+async def test_image_detail_vendor_metadata(
+    allow_model_requests: None, groq_api_key: str, image_content: BinaryContent, vcr: Any
+):
+    """`vendor_metadata['detail']` is forwarded to the Groq API for image inputs."""
+    m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m)
+
+    image_url = ImageUrl(
+        url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+        vendor_metadata={'detail': 'high'},
+    )
+    binary_image = BinaryContent(
+        data=image_content.data, media_type=image_content.media_type, vendor_metadata={'detail': 'low'}
+    )
+
+    await agent.run(['Describe these images.', image_url, binary_image])
+
+    request_body = json.loads(vcr.requests[0].body)
+    image_parts = [item['image_url'] for item in request_body['messages'][0]['content'] if item['type'] == 'image_url']
+    assert [part['detail'] for part in image_parts] == snapshot(['high', 'low'])
+
+
 @pytest.mark.parametrize('media_type', ['audio/wav', 'audio/mpeg'])
 async def test_audio_as_binary_content_input(allow_model_requests: None, media_type: str):
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
@@ -5406,7 +5428,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=301, output_tokens=52),
+                usage=RequestUsage(input_tokens=301, output_tokens=52, details={'reasoning_tokens': 22}),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5440,7 +5462,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         content='The first call failed due to missing and extra parameters, as expected. The second call succeeded and returned: "Something with name: test".'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=336, output_tokens=96),
+                usage=RequestUsage(input_tokens=336, output_tokens=96, details={'reasoning_tokens': 59}),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5545,7 +5567,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         tool_call_id='fc_bfb39741-3748-4def-9886-a93fc9c64a90',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=304, output_tokens=49),
+                usage=RequestUsage(input_tokens=304, output_tokens=49, details={'reasoning_tokens': 23}),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5577,7 +5599,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                     ),
                     TextPart(content='The tool returned the expected result for the valid call.'),
                 ],
-                usage=RequestUsage(input_tokens=339, output_tokens=58),
+                usage=RequestUsage(input_tokens=339, output_tokens=58, details={'reasoning_tokens': 38}),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5661,7 +5683,7 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                         tool_call_id='fc_beee8d84-e6d7-4980-bec6-298d3ec7a73f',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=254, output_tokens=174),
+                usage=RequestUsage(input_tokens=254, output_tokens=174, details={'reasoning_tokens': 147}),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5772,7 +5794,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                         tool_call_id='fc_299e8414-9e94-4d9c-bd06-c096f8919768',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=343, output_tokens=180),
+                usage=RequestUsage(input_tokens=343, output_tokens=180, details={'reasoning_tokens': 153}),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',

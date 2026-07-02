@@ -1409,6 +1409,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             prompt=user_prompt,
             new_message_index=len(message_history) if message_history else 0,
             resumed_request=None,
+            resumed_request_index=None,
             model=model_used,
             get_model_settings=get_model_settings,
             usage_limits=usage_limits,

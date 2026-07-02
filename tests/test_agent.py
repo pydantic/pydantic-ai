@@ -169,6 +169,11 @@ requires_groq = pytest.mark.skipif(GroqProvider is None, reason='groq not instal
 requires_litellm = pytest.mark.skipif(LiteLLMProvider is None, reason='litellm not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral not installed')  # pyright: ignore[reportUnnecessaryComparison]
 
+# Wall-clock guard for the readiness `Event.wait()`s in the cancellation tests below. The events are set
+# near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
+# configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
+READINESS_WAIT_TIMEOUT = 10
+
 
 def test_result_tuple():
     def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1200,6 +1205,7 @@ def test_output_tool_return_content_str_return():
             usage=RequestUsage(input_tokens=51, output_tokens=4),
             model_name='test',
             timestamp=IsDatetime(),
+            provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),
         )
@@ -3007,6 +3013,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3025,6 +3032,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3049,6 +3057,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3067,6 +3076,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3081,6 +3091,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=55, output_tokens=13),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3123,6 +3134,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3141,6 +3153,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3155,6 +3168,7 @@ def test_run_with_history_new():
                 usage=RequestUsage(input_tokens=55, output_tokens=13),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3196,6 +3210,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3220,6 +3235,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3256,6 +3272,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3274,6 +3291,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3304,6 +3322,7 @@ def test_run_with_history_new_structured():
                 usage=RequestUsage(input_tokens=59, output_tokens=13),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3395,6 +3414,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
                 usage=RequestUsage(input_tokens=61, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3559,6 +3579,7 @@ Summarize this conversation to include all important facts about the user and
                 usage=RequestUsage(input_tokens=73, output_tokens=43),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4851,6 +4872,7 @@ class TestMultipleToolCalls:
                     usage=RequestUsage(input_tokens=57, output_tokens=4),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4878,6 +4900,7 @@ class TestMultipleToolCalls:
                     usage=RequestUsage(input_tokens=58, output_tokens=9),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -6621,8 +6644,8 @@ class TestMultipleToolCalls:
             return 'done'  # pragma: no cover
 
         task = asyncio.create_task(agent.run('test'))
-        await asyncio.wait_for(first_done.wait(), timeout=1)
-        await asyncio.wait_for(pending_started.wait(), timeout=1)
+        await asyncio.wait_for(first_done.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        await asyncio.wait_for(pending_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -6791,6 +6814,7 @@ def test_nested_capture_run_messages() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6821,6 +6845,7 @@ def test_double_capture_run_messages() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6946,7 +6971,7 @@ async def test_tool_execution_cancellation_captures_partial_request() -> None:
                 captured = list(messages)
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(first_done.wait(), timeout=1)
+    await asyncio.wait_for(first_done.wait(), timeout=READINESS_WAIT_TIMEOUT)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -6991,6 +7016,7 @@ def test_dynamic_false_no_reevaluate():
                 usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7023,6 +7049,7 @@ def test_dynamic_false_no_reevaluate():
                 usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7039,6 +7066,7 @@ def test_dynamic_false_no_reevaluate():
                 usage=RequestUsage(input_tokens=54, output_tokens=8),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7087,6 +7115,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7120,6 +7149,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7136,6 +7166,7 @@ def test_dynamic_true_reevaluate_system_prompt():
                 usage=RequestUsage(input_tokens=54, output_tokens=8),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 kind='response',
                 conversation_id=IsStr(),
@@ -7244,6 +7275,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -7265,6 +7297,7 @@ def test_capture_run_messages_tool_agent() -> None:
                 usage=RequestUsage(input_tokens=54, output_tokens=11),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -7364,7 +7397,7 @@ def test_binary_content_serializable():
                     'details': {},
                 },
                 'model_name': 'test',
-                'provider_name': None,
+                'provider_name': 'test',
                 'provider_details': None,
                 'provider_response_id': None,
                 'provider_url': None,
@@ -7439,7 +7472,7 @@ def test_image_url_serializable_missing_media_type():
                 },
                 'model_name': 'test',
                 'timestamp': IsStr(),
-                'provider_name': None,
+                'provider_name': 'test',
                 'provider_details': None,
                 'provider_url': None,
                 'provider_response_id': None,
@@ -7520,7 +7553,7 @@ def test_image_url_serializable():
                 },
                 'model_name': 'test',
                 'timestamp': IsStr(),
-                'provider_name': None,
+                'provider_name': 'test',
                 'provider_details': None,
                 'provider_url': None,
                 'provider_response_id': None,
@@ -7772,6 +7805,7 @@ def test_instructions_with_message_history():
                 usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -7865,6 +7899,7 @@ def test_multi_agent_instructions_with_structured_output():
                 usage=RequestUsage(input_tokens=51, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8724,6 +8759,7 @@ def test_prepare_output_tools():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8751,6 +8787,7 @@ def test_prepare_output_tools():
                 usage=RequestUsage(input_tokens=52, output_tokens=12),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -9048,8 +9085,8 @@ async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks(
         return 'done'  # pragma: no cover
 
     task = asyncio.create_task(agent.run('call tools'))
-    await asyncio.wait_for(completed_tool_finished.wait(), timeout=1)
-    await asyncio.wait_for(pending_tool_started.wait(), timeout=1)
+    await asyncio.wait_for(completed_tool_finished.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    await asyncio.wait_for(pending_tool_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -9082,7 +9119,7 @@ async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellatio
     agent = Agent(TestModel(), capabilities=[WrapRunCapability()])
 
     task = asyncio.create_task(agent.run('test'))
-    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -9131,11 +9168,11 @@ async def test_parallel_tool_outer_cancellation_waits_for_tool_cleanup():
         return 'done'  # pragma: no cover
 
     task = asyncio.create_task(agent.run('call tools'))
-    await asyncio.wait_for(started.wait(), timeout=1)
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
     task.cancel()
 
-    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
     assert not task.done()
     cleanup_can_finish.set()
 
