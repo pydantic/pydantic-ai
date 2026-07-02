@@ -2175,6 +2175,7 @@ async def test_temporal_agent_realtime_session_outside_workflow():
     # Outside a workflow, the session is delegated to the wrapped agent.
     async with simple_temporal_agent.realtime_session(model=_FakeRealtimeModel()) as session:
         assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
 
 
 async def simple_event_stream_handler(

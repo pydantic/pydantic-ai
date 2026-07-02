@@ -920,6 +920,7 @@ async def test_dbos_agent_realtime_session_outside_workflow():
     # Outside a workflow, the session is delegated to the wrapped agent.
     async with simple_dbos_agent.realtime_session(model=_FakeRealtimeModel()) as session:
         assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
 
 
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):
