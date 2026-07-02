@@ -113,6 +113,91 @@ CASES = [
         expect_warning='`groq_reasoning_effort` will be ignored',
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
+    # gpt-oss on Groq: unified `thinking` levels drive the graded `reasoning_effort` (low/medium/high).
+    WireCase(
+        id='groq-gpt-oss-thinking-high',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='high',
+        present={'reasoning_effort': 'high', 'reasoning_format': 'parsed'},
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-medium',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='medium',
+        present={'reasoning_effort': 'medium', 'reasoning_format': 'parsed'},
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-minimal-folds-to-low',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='minimal',
+        # gpt-oss has no `minimal`, so it folds to the nearest accepted value, `low`.
+        present={'reasoning_effort': 'low', 'reasoning_format': 'parsed'},
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-xhigh-folds-to-high',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='xhigh',
+        # gpt-oss has no `xhigh`, so it folds to the nearest accepted value, `high`.
+        present={'reasoning_effort': 'high', 'reasoning_format': 'parsed'},
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-true-maps-to-medium',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking=True,
+        # Bare enable maps to the neutral `medium`, mirroring other providers' default.
+        present={'reasoning_effort': 'medium', 'reasoning_format': 'parsed'},
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-false-noop',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking=False,
+        # gpt-oss always reasons and can't disable via effort (none/default → 400), so `thinking=False`
+        # is silently ignored: no `reasoning_effort` and (since it's stripped as always-on) no `reasoning_format`.
+        absent=('reasoning_effort', 'reasoning_format'),
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-gpt-oss-explicit-effort-overrides-thinking',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='low',
+        groq_reasoning_effort='high',
+        # Explicit `groq_reasoning_effort` wins over the unified `thinking` mapping (`low` → `low`).
+        present={'reasoning_effort': 'high', 'reasoning_format': 'parsed'},
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-gpt-oss-thinking-merges-user-extra-body',
+        provider='groq',
+        model_name='openai/gpt-oss-120b',
+        thinking='high',
+        extra_body={'service_tier': 'on_demand'},
+        # The user's own `extra_body` must survive the merge that injects the mapped `reasoning_effort`.
+        present={'reasoning_effort': 'high', 'reasoning_format': 'parsed', 'service_tier': 'on_demand'},
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
+    WireCase(
+        id='groq-qwen3-enable-level-sends-no-effort',
+        provider='groq',
+        model_name='qwen/qwen3-32b',
+        thinking='high',
+        # qwen3 only accepts none/default effort (no gradation), so a unified enable *level* sends no
+        # `reasoning_effort` — reasoning is still enabled via `reasoning_format='parsed'`.
+        present={'reasoning_format': 'parsed'},
+        absent=('reasoning_effort',),
+        marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
+    ),
     WireCase(
         id='cerebras-gpt-oss-always-on',
         provider='cerebras',
