@@ -27,7 +27,6 @@ jobs:
           PR_NUMBER="${GITHUB_EVENT_PULL_REQUEST_NUMBER}"
           PR_AUTHOR="${GITHUB_EVENT_PULL_REQUEST_USER_LOGIN}"
           AUTHOR_ASSOCIATION="${GITHUB_EVENT_PULL_REQUEST_AUTHOR_ASSOCIATION}"
-          PR_BODY=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""')
 
           echo "PR #${PR_NUMBER} by ${PR_AUTHOR} (${AUTHOR_ASSOCIATION})"
 
@@ -67,19 +66,23 @@ jobs:
                 ;;
             esac
 
-            CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate --jq '.[].filename') || CHANGED_FILES=""
-            if [ -n "$CHANGED_FILES" ]; then
-              DOCS_ONLY="true"
-              while IFS= read -r CHANGED_FILE; do
-                case "$CHANGED_FILE" in
-                  docs/*|*.md|mkdocs.yml) ;;
-                  *) DOCS_ONLY="false"; break ;;
-                esac
-              done <<< "$CHANGED_FILES"
-              if [ "$DOCS_ONLY" = "true" ]; then
-                echo "PR only touches documentation; not closing for missing issue link."
-                return 0
-              fi
+            # If the changed files can't be determined, err on the side of leaving
+            # the PR open: closing is destructive and the docs-only exemption
+            # can't be ruled out.
+            if ! CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate --jq '.[].filename') || [ -z "$CHANGED_FILES" ]; then
+              echo "Could not determine changed files; not closing for missing issue link."
+              return 0
+            fi
+            DOCS_ONLY="true"
+            while IFS= read -r CHANGED_FILE; do
+              case "$CHANGED_FILE" in
+                docs/*|*.md|mkdocs.yml) ;;
+                *) DOCS_ONLY="false"; break ;;
+              esac
+            done <<< "$CHANGED_FILES"
+            if [ "$DOCS_ONLY" = "true" ]; then
+              echo "PR only touches documentation; not closing for missing issue link."
+              return 0
             fi
 
             echo "Closing PR #${PR_NUMBER} — no linked issue."
@@ -91,13 +94,30 @@ jobs:
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
           }
 
-          # Parse closing keywords from PR body
-          # GitHub recognizes: close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved
-          # Case-insensitive, with optional leading - or *
-          ISSUE_NUMBERS=$(printf '%s\n' "$PR_BODY" | grep -ioE '(^|\s|[-*]\s*)(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
+          # Ask GitHub which issues this PR would close, rather than parsing the
+          # body ourselves: GitHub's own parser is the authority on closing-keyword
+          # syntax ("Fixes #123", "Fixes: #123", "Fixes owner/repo#123", full issue
+          # URLs) and only counts references that resolve to real issues. Closed
+          # issues are included (with state CLOSED), so the checks below still see
+          # them. References to issues in other repos don't count: the policy
+          # requires an issue in this repo. If the query fails, set -e fails the
+          # job and the PR is left open.
+          ISSUE_NUMBERS=$(gh api graphql \
+            -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$PR_NUMBER" \
+            -f query='
+              query($owner: String!, $name: String!, $number: Int!) {
+                repository(owner: $owner, name: $name) {
+                  pullRequest(number: $number) {
+                    closingIssuesReferences(first: 100) {
+                      nodes { number repository { nameWithOwner } }
+                    }
+                  }
+                }
+              }' \
+            --jq ".data.repository.pullRequest.closingIssuesReferences.nodes[] | select(.repository.nameWithOwner == \"${REPO}\") | .number")
 
           if [ -z "$ISSUE_NUMBERS" ]; then
-            echo "No closing keywords found in PR body."
+            echo "No linked issues found in PR body."
             close_for_missing_issue
             exit 0
           fi
