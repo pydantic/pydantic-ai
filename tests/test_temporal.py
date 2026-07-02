@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import (
+    AbstractToolset,
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
@@ -1448,6 +1449,225 @@ async def test_dynamic_toolset_outside_workflow():
         'Get the weather for Paris', deps=DynamicToolsetDeps(user_name='Bob')
     )
     assert result.output == snapshot('{"get_dynamic_weather":"Weather in a for Bob: sunny."}')
+
+
+# --- DynamicToolset.get_instructions test (issue #5282) ---
+# A dynamic toolset whose resolved toolset implements `get_instructions()` must contribute those
+# instructions under `TemporalAgent`, resolved inside an activity like `get_tools`.
+
+
+def _echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
+
+
+dynamic_instructions_agent = Agent(FunctionModel(_echo_instructions), name='dynamic_instructions_agent')
+
+
+@dynamic_instructions_agent.toolset(id='dynamic_instruction_toolset', per_run_step=False)
+def dynamic_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+    # A toolset that only contributes instructions, no tools.
+    return FunctionToolset(instructions='SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET', id='instruction-only-toolset')
+
+
+dynamic_instructions_temporal_agent = TemporalAgent(
+    dynamic_instructions_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class DynamicInstructionsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await dynamic_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_in_workflow(allow_model_requests: None, client: Client):
+    """A dynamic toolset's `get_instructions()` reaches the model under `TemporalAgent` (issue #5282).
+
+    The model echoes the request's instructions back as its output, so the sentinel in the output
+    proves the resolved dynamic toolset's instructions were collected via the new activity.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicInstructionsAgentWorkflow],
+        plugins=[AgentPlugin(dynamic_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            DynamicInstructionsAgentWorkflow.run,
+            args=['hello'],
+            id='test_dynamic_toolset_instructions_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('SENTINEL_INSTRUCTION_FROM_DYNAMIC_TOOLSET')
+
+
+def test_dynamic_toolset_temporal_activities():
+    """`TemporalDynamicToolset` collects instructions inside `get_tools`, so it has no separate `get_instructions` activity."""
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in dynamic_instructions_temporal_agent.temporal_activities
+    }
+    prefix = 'agent__dynamic_instructions_agent__dynamic_toolset__dynamic_instruction_toolset'
+    assert {f'{prefix}__get_tools', f'{prefix}__call_tool'} <= activity_names
+    assert f'{prefix}__get_instructions' not in activity_names
+
+
+# --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
+# The per-run instructions cache is written by `get_tools` and read by `get_instructions` each
+# step; this guards against it serving a stale step-1 value on a later step.
+
+
+def _echo_instructions_after_tool_call(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # First request: call a tool to force a second model-request step.
+    # Second request (carrying the tool return): echo the instructions, which by then must
+    # reflect the current step — proving the cache is repopulated by `get_tools` each step.
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    if any(isinstance(part, ToolReturnPart) for part in request.parts):
+        return ModelResponse(parts=[TextPart(request.instructions or '<no instructions>')])
+    return ModelResponse(parts=[ToolCallPart('noop', {})])
+
+
+multi_step_instructions_agent = Agent(
+    FunctionModel(_echo_instructions_after_tool_call), name='multi_step_instructions_agent'
+)
+
+
+@multi_step_instructions_agent.toolset(id='multi_step_instruction_toolset')
+def multi_step_instruction_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+    # Instructions encode the run step, so a stale step-1 cached value read at step 2 would
+    # surface as the wrong sentinel in the model output.
+    toolset = FunctionToolset[object](
+        instructions=f'INSTRUCTIONS_FOR_STEP_{ctx.run_step}', id='step-instruction-toolset'
+    )
+
+    @toolset.tool_plain
+    def noop() -> str:
+        return 'noop'
+
+    return toolset
+
+
+multi_step_instructions_temporal_agent = TemporalAgent(
+    multi_step_instructions_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class MultiStepInstructionsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await multi_step_instructions_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
+    allow_model_requests: None, client: Client
+):
+    """A dynamic toolset's instructions are refreshed each run step under `TemporalAgent` (issue #5282).
+
+    The toolset encodes the run step in its instructions; the model calls a tool on the first request to
+    force a second step, then echoes the instructions on the second request. The output being the step-2
+    sentinel (not the step-1 one) proves `get_tools` repopulates the per-run instructions cache each step
+    rather than serving a stale step-1 value.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MultiStepInstructionsAgentWorkflow],
+        plugins=[AgentPlugin(multi_step_instructions_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            MultiStepInstructionsAgentWorkflow.run,
+            args=['hello'],
+            id='test_dynamic_toolset_instructions_refresh_workflow',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('INSTRUCTIONS_FOR_STEP_2')
+
+
+# --- DynamicToolset instructions replay determinism (issue #5282) ---
+# The per-run instructions cache lives on a `for_run` copy of the wrapper rather than on the
+# process-shared, module-level instance. A history recorded on one worker must replay on a
+# freshly-constructed (cold) one, proving the `for_run` override reconstructs identically and
+# introduces no `TMPRL1100` nondeterminism.
+
+# A holder lets the replay step swap in a freshly-constructed (cold-process) instance.
+dynamic_instructions_replay_holder: dict[str, TemporalAgent[object, str]] = {}
+
+
+def _make_dynamic_instructions_replay_agent() -> TemporalAgent[object, str]:
+    agent = Agent(FunctionModel(_echo_instructions_after_tool_call), name='dynamic_instructions_replay_agent')
+
+    @agent.toolset(id='replay_instruction_toolset')
+    def _replay_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+        toolset = FunctionToolset[object](
+            instructions=f'INSTRUCTIONS_FOR_STEP_{ctx.run_step}', id='step-instruction-toolset'
+        )
+
+        @toolset.tool_plain
+        def noop() -> str:
+            return 'noop'
+
+        return toolset
+
+    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+dynamic_instructions_replay_holder['agent'] = _make_dynamic_instructions_replay_agent()
+
+
+@workflow.defn
+class DynamicInstructionsReplayWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await dynamic_instructions_replay_holder['agent'].run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_requests: None, client: Client):
+    """The per-run `for_run` instructions cache must be replay-deterministic (issue #5282).
+
+    Instructions resolved by `get_tools` are held on a per-run `for_run` copy of the wrapper, not
+    on the module-level instance. This records a two-step workflow (instructions differ per step)
+    and replays its history on a freshly-constructed cold instance — the worker-restart scenario —
+    asserting no nondeterminism, so the `for_run` copy is reconstructed identically on replay.
+    """
+    warm = _make_dynamic_instructions_replay_agent()
+    dynamic_instructions_replay_holder['agent'] = warm
+
+    # Unsandboxed so the module-level instance is shared across the run exactly as a long-running
+    # worker process shares it in production.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicInstructionsReplayWorkflow],
+        activities=warm.temporal_activities,
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        wf_id = DynamicInstructionsReplayWorkflow.__name__
+        output = await client.execute_workflow(
+            DynamicInstructionsReplayWorkflow.run, args=['hello'], id=wf_id, task_queue=TASK_QUEUE
+        )
+        assert output == snapshot('INSTRUCTIONS_FOR_STEP_2')
+        history = await client.get_workflow_handle(wf_id).fetch_history()
+
+    # Warm-recorded history replayed on a freshly-constructed cold instance (worker-restart trigger).
+    dynamic_instructions_replay_holder['agent'] = _make_dynamic_instructions_replay_agent()
+    try:
+        await Replayer(
+            workflows=[DynamicInstructionsReplayWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            data_converter=pydantic_data_converter,
+        ).replay_workflow(history)
+    finally:
+        dynamic_instructions_replay_holder['agent'] = warm
 
 
 # --- MCP-based DynamicToolset test ---
