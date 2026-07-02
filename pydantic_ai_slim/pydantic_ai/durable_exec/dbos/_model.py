@@ -28,7 +28,7 @@ class DBOSModel(WrapperModel):
         *,
         step_name_prefix: str,
         step_config: StepConfig,
-        get_event_stream_handler: Callable[[], EventStreamHandler[Any] | None] | None = None,
+        get_event_stream_handler: Callable[[], EventStreamHandler[Any] | None],
     ):
         super().__init__(model)
         self.step_config = step_config
@@ -63,9 +63,7 @@ class DBOSModel(WrapperModel):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any] | None = None,
         ) -> ModelResponse:
-            event_stream_handler = (
-                self._get_event_stream_handler() if self._get_event_stream_handler is not None else None
-            )
+            event_stream_handler = self._get_event_stream_handler()
             async with super(DBOSModel, self).request_stream(
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:

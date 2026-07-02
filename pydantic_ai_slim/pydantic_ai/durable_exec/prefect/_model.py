@@ -28,7 +28,7 @@ class PrefectModel(WrapperModel):
         model: Any,
         *,
         task_config: TaskConfig,
-        get_event_stream_handler: Callable[[], EventStreamHandler[Any] | None] | None = None,
+        get_event_stream_handler: Callable[[], EventStreamHandler[Any] | None],
     ):
         super().__init__(model)
         self.task_config = default_task_config | (task_config or {})
@@ -55,9 +55,7 @@ class PrefectModel(WrapperModel):
             model_request_parameters: ModelRequestParameters,
             ctx: RunContext[Any] | None,
         ) -> ModelResponse:
-            event_stream_handler = (
-                self._get_event_stream_handler() if self._get_event_stream_handler is not None else None
-            )
+            event_stream_handler = self._get_event_stream_handler()
             async with super(PrefectModel, self).request_stream(
                 messages, model_settings, model_request_parameters, ctx
             ) as streamed_response:

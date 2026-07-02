@@ -667,6 +667,16 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
     assert exported_event_messages != []
 
 
+async def test_dbos_agent_event_stream_handler_property_outside_workflow(dbos: DBOS) -> None:
+    # Outside a DBOS workflow, the `event_stream_handler` property resolves to the effective handler
+    # directly, rather than the in-workflow per-event dispatcher.
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None: ...
+
+    agent = Agent(TestModel(), name='event_stream_handler_property_agent')
+    dbos_agent = DBOSAgent(agent, event_stream_handler=handler)
+    assert dbos_agent.event_stream_handler is handler
+
+
 async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, dbos: DBOS) -> None:
     """Verify that wrapper-level caching is skipped when cache_tools=False.
 

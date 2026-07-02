@@ -172,15 +172,10 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         with self._prefect_overrides():
             return super().toolsets
 
-    def _effective_event_stream_handler(
-        self, event_stream_handler: EventStreamHandler[AgentDepsT] | None = None
-    ) -> EventStreamHandler[AgentDepsT] | None:
-        return (
-            event_stream_handler
-            or self._run_event_stream_handler.get()
-            or self._event_stream_handler
-            or super().event_stream_handler
-        )
+    def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        # The per-run handler (stashed on the `ContextVar` by `_prefect_overrides`) takes precedence over
+        # the constructor-level handler and the wrapped agent's handler.
+        return self._run_event_stream_handler.get() or self._event_stream_handler or super().event_stream_handler
 
     @contextmanager
     def _prefect_overrides(
