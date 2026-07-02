@@ -41,6 +41,8 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    narrow_message_parts,
+    parse_tool_kind,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
@@ -151,6 +153,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
+        preserve_file_data: bool = False,
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters."""
@@ -162,6 +165,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
+            preserve_file_data=preserve_file_data,
             **kwargs,
         )
 
@@ -191,6 +195,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
+        preserve_file_data: bool = False,
         **kwargs: Any,
     ) -> Response:
         """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
@@ -217,6 +222,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
+            preserve_file_data=preserve_file_data,
             **kwargs,
         )
 
@@ -274,11 +280,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     if isinstance(part, TextUIPart):
                         user_prompt_content.append(part.text)
                     elif isinstance(part, FileUIPart):
+                        provider_meta = load_provider_metadata(part.provider_metadata)
+                        # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
+                        # already does, #5571/#5772): it carries only the requester's own request params and is
+                        # dict-validated by the constructors below.
+                        vendor_metadata = provider_meta.get('vendor_metadata')
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError:
                             # Check provider_metadata for UploadedFile data
-                            provider_meta = load_provider_metadata(part.provider_metadata)
                             uploaded_file_id = provider_meta.get('file_id')
                             uploaded_file_provider = provider_meta.get('provider_name')
                             if uploaded_file_id and uploaded_file_provider:
@@ -286,20 +296,44 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     file_id=uploaded_file_id,
                                     provider_name=cast(UploadedFileProviderName, uploaded_file_provider),
                                     media_type=part.media_type,
-                                    vendor_metadata=provider_meta.get('vendor_metadata'),
+                                    vendor_metadata=vendor_metadata,
                                     identifier=provider_meta.get('identifier'),
                                 )
                             else:
                                 media_type_prefix = part.media_type.split('/', 1)[0]
                                 match media_type_prefix:
                                     case 'image':
-                                        file = ImageUrl(url=part.url, media_type=part.media_type)
+                                        file = ImageUrl(
+                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                        )
                                     case 'video':
-                                        file = VideoUrl(url=part.url, media_type=part.media_type)
+                                        file = VideoUrl(
+                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                        )
                                     case 'audio':
-                                        file = AudioUrl(url=part.url, media_type=part.media_type)
+                                        file = AudioUrl(
+                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                        )
                                     case _:
-                                        file = DocumentUrl(url=part.url, media_type=part.media_type)
+                                        file = DocumentUrl(
+                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                        )
+                        else:
+                            # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
+                            # Reconstruct through the constructor so a malformed client value is rejected
+                            # here (matching the URL constructor path) instead of being stored unvalidated
+                            # and crashing a provider model later. Re-narrow afterwards so an image
+                            # round-trips back to `BinaryImage` (as `from_data_uri` returned it), not
+                            # plain `BinaryContent`.
+                            if vendor_metadata is not None:
+                                file = BinaryContent.narrow_type(
+                                    BinaryContent(
+                                        data=file.data,
+                                        media_type=file.media_type,
+                                        identifier=file.identifier,
+                                        vendor_metadata=vendor_metadata,
+                                    )
+                                )
                         user_prompt_content.append(file)
                     elif isinstance(part, DataUIPart):
                         # Contains custom data that shouldn't be sent to the model
@@ -344,6 +378,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 'Vercel AI integration can currently only handle assistant file parts with data URIs.'
                             ) from e
                         provider_meta = load_provider_metadata(part.provider_metadata)
+                        vendor_metadata = provider_meta.get('vendor_metadata')
+                        # `vendor_metadata` is client-supplied and unconstrained; assignment on the
+                        # (non-`validate_assignment`) `BinaryContent` dataclass bypasses validation,
+                        # so ignore anything that isn't a dict rather than let it reach the provider.
+                        if _is_str_dict(vendor_metadata):
+                            file.vendor_metadata = vendor_metadata
                         builder.add(
                             FilePart(
                                 content=file,
@@ -380,6 +420,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         part_id = provider_meta.get('id')
                         provider_name = provider_meta.get('provider_name')
                         provider_details = provider_meta.get('provider_details')
+                        raw_tool_kind = provider_meta.get('tool_kind')
+                        tool_kind = parse_tool_kind(raw_tool_kind) if isinstance(raw_tool_kind, str) else None
 
                         if builtin_tool:
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
@@ -401,6 +443,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             if has_tool_output:
                                 call_meta, return_meta = cls._load_builtin_tool_meta(provider_meta)
 
+                            # `tool_kind` comes from client-supplied metadata, so each claim is validated
+                            # to a known `ToolPartKind` (else dropped) before being set on the base part;
+                            # the final `narrow_message_parts` pass then promotes it best-effort and
+                            # strips any claim whose data doesn't validate against the typed subclass.
+                            raw_call_tool_kind = call_meta.get('tool_kind')
+                            call_tool_kind = (
+                                parse_tool_kind(raw_call_tool_kind) if isinstance(raw_call_tool_kind, str) else None
+                            )
+                            raw_return_tool_kind = return_meta.get('tool_kind')
+                            return_tool_kind = (
+                                parse_tool_kind(raw_return_tool_kind) if isinstance(raw_return_tool_kind, str) else None
+                            )
                             builder.add(
                                 NativeToolCallPart(
                                     tool_name=tool_name,
@@ -409,6 +463,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     id=call_meta.get('id') or part_id,
                                     provider_name=call_meta.get('provider_name') or provider_name,
                                     provider_details=call_meta.get('provider_details') or provider_details,
+                                    tool_kind=call_tool_kind or tool_kind,
                                 )
                             )
 
@@ -434,6 +489,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         provider_name=return_meta.get('provider_name') or provider_name,
                                         provider_details=return_meta.get('provider_details') or provider_details,
                                         outcome=outcome,
+                                        # As in the non-builtin branch below, error/denied returns carry
+                                        # no `tool_kind`: a typed return subclass signals shape-valid
+                                        # success to readers like `parse_discovered_tools`.
+                                        tool_kind=(return_tool_kind or tool_kind) if outcome == 'success' else None,
                                     )
                                 )
                         else:
@@ -445,13 +504,22 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     id=part_id,
                                     provider_name=provider_name,
                                     provider_details=provider_details,
+                                    tool_kind=tool_kind,
                                 )
                             )
 
                             if part.state == 'output-available':
                                 builder.add(
-                                    ToolReturnPart(tool_name=tool_name, tool_call_id=tool_call_id, content=part.output)
+                                    ToolReturnPart(
+                                        tool_name=tool_name,
+                                        tool_call_id=tool_call_id,
+                                        content=part.output,
+                                        tool_kind=tool_kind,
+                                    )
                                 )
+                            # Error/denied returns deliberately carry no `tool_kind`: typed return
+                            # subclasses only ever wrap successful, shape-valid content, and readers
+                            # like `parse_loaded_capabilities` treat their presence as proof of success.
                             elif part.state == 'output-error':
                                 builder.add(
                                     ToolReturnPart(
@@ -494,7 +562,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             if (target := builder.last_modified(checkpoint, of_type=target_type)) is not None:
                 apply_message_metadata(target, msg.metadata)
 
-        return builder.messages
+        # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
+        # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
+        return narrow_message_parts(builder.messages)
 
     @staticmethod
     def _dump_builtin_tool_meta(
@@ -507,8 +577,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     def _load_builtin_tool_meta(
         provider_metadata: ProviderMetadata,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Use special keys (call_meta and return_meta) to load combined provider metadata."""
-        return provider_metadata.get('call_meta') or {}, provider_metadata.get('return_meta') or {}
+        """Use special keys (call_meta and return_meta) to load combined provider metadata.
+
+        `call_provider_metadata` is client-controlled, so a forged non-dict `call_meta`/`return_meta`
+        reads as an empty dict rather than crashing the downstream `.get(...)` lookups.
+        """
+        call_meta = provider_metadata.get('call_meta')
+        return_meta = provider_metadata.get('return_meta')
+        return (
+            call_meta if isinstance(call_meta, dict) else {},
+            return_meta if isinstance(return_meta, dict) else {},
+        )
 
     @staticmethod
     def _dump_request_message(msg: ModelRequest) -> tuple[list[UIMessagePart], list[UIMessagePart]]:
@@ -560,7 +639,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     ui_parts[-1].text += part.content
                 else:
                     provider_metadata = dump_provider_metadata(
-                        id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                        id=part.id,
+                        provider_name=part.provider_name,
+                        provider_details=part.provider_details,
                     )
                     ui_parts.append(TextUIPart(text=part.content, state='done', provider_metadata=provider_metadata))
             elif isinstance(part, ThinkingPart):
@@ -577,7 +658,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         url=part.content.data_uri,
                         media_type=part.content.media_type,
                         provider_metadata=dump_provider_metadata(
-                            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                            id=part.id,
+                            provider_name=part.provider_name,
+                            provider_details=part.provider_details,
+                            vendor_metadata=part.content.vendor_metadata,
                         ),
                     )
                 )
@@ -598,11 +682,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         id=part.id,
                         provider_name=part.provider_name,
                         provider_details=part.provider_details,
+                        tool_kind=part.tool_kind,
                     )
                     return_meta = dump_provider_metadata(
                         wrapper_key=None,
                         provider_name=builtin_return.provider_name,
                         provider_details=builtin_return.provider_details,
+                        tool_kind=builtin_return.tool_kind,
                     )
                     combined_provider_meta = cls._dump_builtin_tool_meta(call_meta, return_meta)
 
@@ -650,7 +736,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
                 else:
                     call_provider_metadata = dump_provider_metadata(
-                        id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+                        id=part.id,
+                        provider_name=part.provider_name,
+                        provider_details=part.provider_details,
+                        tool_kind=part.tool_kind,
                     )
                     # No result found → the tool call is deferred (awaiting approval or external result).
                     # On v6, emit `approval-requested` so the frontend can render approve/reject buttons on reload.
@@ -696,7 +785,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
         call_provider_metadata = dump_provider_metadata(
-            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            id=part.id,
+            provider_name=part.provider_name,
+            provider_details=part.provider_details,
+            tool_kind=part.tool_kind,
         )
         tool_type = f'tool-{part.tool_name}'
         ui_parts: list[UIMessagePart] = []
@@ -886,9 +978,25 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
             elif isinstance(item, TextContent):
                 ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):
-                ui_parts.append(FileUIPart(url=item.data_uri, media_type=item.media_type))
+                ui_parts.append(
+                    FileUIPart(
+                        url=item.data_uri,
+                        media_type=item.media_type,
+                        # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
+                        # Google `video_metadata`); see `BinaryContent.vendor_metadata`.
+                        provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                    )
+                )
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
-                ui_parts.append(FileUIPart(url=item.url, media_type=item.media_type))
+                ui_parts.append(
+                    FileUIPart(
+                        url=item.url,
+                        media_type=item.media_type,
+                        # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
+                        # Google `video_metadata`); see `FileUrl.vendor_metadata`.
+                        provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                    )
+                )
             elif isinstance(item, UploadedFile):
                 # Store uploaded file info in provider_metadata for round-trip support
                 provider_metadata = dump_provider_metadata(

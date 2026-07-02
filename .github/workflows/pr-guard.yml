@@ -43,6 +43,17 @@ jobs:
             exit 0
           fi
 
+          # pydanty is the autonomous agent that opens PRs from issues. Its PRs are
+          # never auto-closed for duplication; instead a pydanty PR supersedes a
+          # competing PR opened within WINDOW_SECONDS before it (see the loop below).
+          PYDANTY_LOGIN="pydanty[bot]"
+          WINDOW_SECONDS=600
+          IS_PYDANTY_PR="false"
+          if [ "$PR_AUTHOR" = "$PYDANTY_LOGIN" ]; then
+            IS_PYDANTY_PR="true"
+          fi
+          PR_CREATED_EPOCH=$(date -u -d "$GITHUB_EVENT_PULL_REQUEST_CREATED_AT" +%s)
+
           # Parse closing keywords from PR body
           # GitHub recognizes: close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved
           # Case-insensitive, with optional leading - or *
@@ -103,6 +114,7 @@ jobs:
             fi
 
             FOUND_OPEN_ISSUE="true"
+            ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.user.login')
 
             # Check for duplicate/blocking PRs first — this must run regardless of assignment outcome.
             # Look for any other open PR (excluding this one) that references this issue.
@@ -126,6 +138,33 @@ jobs:
                 continue
               fi
 
+              # pydanty's own PR is never closed here. Instead it supersedes a
+              # competing PR that opened within WINDOW_SECONDS before it, unless
+              # that PR belongs to the issue author (who keeps priority).
+              if [ "$IS_PYDANTY_PR" = "true" ]; then
+                if [ "$EXISTING_PR_AUTHOR" = "$PYDANTY_LOGIN" ]; then
+                  echo "PR #${EXISTING_PR_NUM} is also pydanty's; leaving it."
+                  continue
+                fi
+                if [ "$EXISTING_PR_AUTHOR" = "$ISSUE_AUTHOR" ]; then
+                  echo "PR #${EXISTING_PR_NUM} is by the issue author (${ISSUE_AUTHOR}); leaving both open for a maintainer."
+                  continue
+                fi
+                EXISTING_EPOCH=$(date -u -d "$(echo "$PR_JSON" | jq -r '.created_at')" +%s)
+                DELTA=$(( PR_CREATED_EPOCH - EXISTING_EPOCH ))
+                if [ "$DELTA" -ge 0 ] && [ "$DELTA" -le "$WINDOW_SECONDS" ]; then
+                  echo "pydanty PR #${PR_NUMBER} opened ${DELTA}s after PR #${EXISTING_PR_NUM} (<= ${WINDOW_SECONDS}s); superseding it."
+                  SUPERSEDE_COMMENT=$(printf '%s\n\n%s' \
+                    "An automated pull request from @${PYDANTY_LOGIN} addressing issue #${ISSUE_NUM} opened within ~10 minutes of this one, so it is taking precedence and this PR has been closed to avoid duplicate effort." \
+                    "Thanks for contributing — if you'd like to keep working on this, please comment on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) and a maintainer can help coordinate.")
+                  gh pr close "$EXISTING_PR_NUM" --repo "$REPO"
+                  gh pr comment "$EXISTING_PR_NUM" --repo "$REPO" --body "$SUPERSEDE_COMMENT" || true
+                else
+                  echo "PR #${EXISTING_PR_NUM} opened more than ${WINDOW_SECONDS}s before pydanty's; leaving both open for a maintainer."
+                fi
+                continue
+              fi
+
               # Collect all non-stale blocking PRs
               if [ -z "$BLOCKING_PRS" ]; then
                 BLOCKING_PRS="#${EXISTING_PR_NUM}"
@@ -134,7 +173,7 @@ jobs:
               fi
             done <<< "$MATCHING_PRS"
 
-            if [ -n "$BLOCKING_PRS" ]; then
+            if [ "$IS_PYDANTY_PR" != "true" ] && [ -n "$BLOCKING_PRS" ]; then
               echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} already has active PRs: ${BLOCKING_PRS}"
 
               COMMENT=$(printf '%s\n\n%s\n\n%s' \
@@ -164,8 +203,8 @@ jobs:
             fi
           done
 
-          # If we found closed issues but no open ones, close the PR
-          if [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
+          # If we found closed issues but no open ones, close the PR (pydanty PRs are exempt).
+          if [ "$IS_PYDANTY_PR" != "true" ] && [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
             echo "All referenced issues are closed. Closing PR."
             gh pr close "$PR_NUMBER" --repo "$REPO"
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "All issues referenced by this PR are already closed. If you believe an issue should be reopened, please comment on it first." || true
@@ -176,4 +215,5 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_EVENT_PULL_REQUEST_USER_LOGIN: ${{ github.event.pull_request.user.login }}
           GITHUB_EVENT_PULL_REQUEST_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          GITHUB_EVENT_PULL_REQUEST_CREATED_AT: ${{ github.event.pull_request.created_at }}
           GITHUB_EVENT_PULL_REQUEST_DRAFT: ${{ github.event.pull_request.draft }}

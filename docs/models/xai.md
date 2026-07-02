@@ -57,6 +57,25 @@ agent = Agent(model)
 ...
 ```
 
+For gateway, regional, or proxy deployments you can also point the provider at a custom host and set a client-level default timeout, both of which are forwarded to the underlying `xai_sdk.AsyncClient`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModel
+from pydantic_ai.providers.xai import XaiProvider
+
+provider = XaiProvider(
+    api_key='your-api-key',
+    api_host='gateway.example.com',
+    timeout=30,
+)
+model = XaiModel('grok-4.3', provider=provider)
+agent = Agent(model)
+...
+```
+
+`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. The provider-level `timeout` is distinct from [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout], which overrides the timeout for an individual request. Both options are omitted when left unset, so the SDK's own defaults apply.
+
 Or with a custom `xai_sdk.AsyncClient`:
 
 ```python
@@ -131,6 +150,24 @@ agent = Agent(
 ```
 
 Set `xai_reasoning_effort='none'` or `thinking=False` to disable reasoning on Grok 4.3. xAI redirects several retired text model slugs to `grok-4.3`; choose `grok-4.3` and an explicit reasoning effort when you need predictable behavior and cost. See the [xAI May 15 retirement guide](https://docs.x.ai/developers/migration/may-15-retirement) for details.
+
+## Agentic turns
+
+When a request uses xAI's server-side [native tools](../native-tools.md) (e.g. web search, code execution, X search), xAI runs its own loop — calling those tools and processing their results — before returning a final response. You can cap how many turns that server-side loop may take with [`XaiModelSettings.xai_max_turns`][pydantic_ai.models.xai.XaiModelSettings.xai_max_turns]:
+
+```py {title="xai_max_turns.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModelSettings
+
+agent = Agent(
+    'xai:grok-4.3',
+    model_settings=XaiModelSettings(xai_max_turns=5),
+)
+```
+
+`xai_max_turns` only governs xAI's server-side native-tool loop. It has no effect on ordinary client-side tools or on Pydantic AI's own agent loop — to bound those, use [`UsageLimits`][pydantic_ai.usage.UsageLimits].
+
+Note that when parallel tool calls are enabled, multiple tool calls can occur within a single turn, so `xai_max_turns` does not necessarily equal the total number of tool calls made.
 
 ## Streaming cancellation
 

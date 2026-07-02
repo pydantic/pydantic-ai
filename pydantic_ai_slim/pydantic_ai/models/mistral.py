@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -101,7 +101,7 @@ except ImportError as e:  # pragma: lax no cover
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
+def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except SDKError as e:
@@ -181,7 +181,7 @@ class MistralModel(Model[Mistral]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile)
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> Mistral:
@@ -226,7 +226,7 @@ class MistralModel(Model[Mistral]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
@@ -264,6 +264,8 @@ class MistralModel(Model[Mistral]):
                 top_p=model_settings.get('top_p', 1),
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
                 random_seed=model_settings.get('seed', UNSET),
+                presence_penalty=model_settings.get('presence_penalty'),
+                frequency_penalty=model_settings.get('frequency_penalty'),
                 stop=model_settings.get('stop_sequences', None),
                 http_headers={'User-Agent': get_user_agent()},
             )
@@ -642,12 +644,16 @@ class MistralModel(Model[Mistral]):
                     if item.force_download:
                         downloaded = await download_item(item, data_format='base64_uri')
                         image_url = MistralImageURL(url=downloaded['data'])
-                        content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                     else:
-                        content.append(MistralImageURLChunk(image_url=MistralImageURL(url=item.url)))
+                        image_url = MistralImageURL(url=item.url)
+                    if metadata := item.vendor_metadata:
+                        image_url.detail = metadata.get('detail', 'auto')
+                    content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     if item.is_image:
                         image_url = MistralImageURL(url=item.data_uri)
+                        if metadata := item.vendor_metadata:
+                            image_url.detail = metadata.get('detail', 'auto')
                         content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
                     elif item.media_type == 'application/pdf':
                         content.append(MistralDocumentURLChunk(document_url=item.data_uri, type='document_url'))

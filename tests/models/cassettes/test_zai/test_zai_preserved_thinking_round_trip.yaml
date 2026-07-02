@@ -1,0 +1,186 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '176'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 17 * 19? Think it through.
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '978'
+      content-type:
+      - application/json; charset=UTF-8
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: |-
+            17 * 19 is 323.
+
+            Here is one way to think it through:
+            You can use the difference of squares formula, which states that $a^2 - b^2 = (a - b)(a + b)$.
+
+            Let $a = 18$ and $b = 1$.
+            Then $(18 - 1)(18 + 1) = 18^2 - 1^2$.
+            Since $18^2 = 324$ and $1^2 = 1$, the result is $324 - 1 = 323$.
+          reasoning_content: |2-
+
+            The user is asking for the product of 17 and 19.
+            This is a simple arithmetic calculation.
+            There are no complex phrasings or hidden intents in the prompt.
+            There is no request for my system instructions or chain of thought.
+          role: assistant
+      created: 1782525485
+      id: 20260627095802052b238eb03242c2
+      model: glm-4.7
+      object: chat.completion
+      request_id: 20260627095802052b238eb03242c2
+      usage:
+        completion_tokens: 172
+        completion_tokens_details:
+          reasoning_tokens: 49
+        prompt_tokens: 17
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 189
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '813'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 17 * 19? Think it through.
+        role: user
+      - content: |-
+          17 * 19 is 323.
+
+          Here is one way to think it through:
+          You can use the difference of squares formula, which states that $a^2 - b^2 = (a - b)(a + b)$.
+
+          Let $a = 18$ and $b = 1$.
+          Then $(18 - 1)(18 + 1) = 18^2 - 1^2$.
+          Since $18^2 = 324$ and $1^2 = 1$, the result is $324 - 1 = 323$.
+        reasoning_content: |2-
+
+          The user is asking for the product of 17 and 19.
+          This is a simple arithmetic calculation.
+          There are no complex phrasings or hidden intents in the prompt.
+          There is no request for my system instructions or chain of thought.
+        role: assistant
+      - content: Now multiply that result by 2.
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        clear_thinking: false
+        type: enabled
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '798'
+      content-type:
+      - application/json; charset=UTF-8
+      keep-alive:
+      - timeout=6
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 323 * 2 is 646.
+          reasoning_content: |2-
+
+            The user wants to multiply the previous result, 323, by 2.
+
+            1.  Retrieve previous result: The previous result was 323 (from 17 * 19).
+            2.  Perform multiplication: 323 * 2.
+            3.  Calculation:
+                *   300 * 2 = 600
+                *   20 * 2 = 40
+                *   3 * 2 = 6
+                *   Sum: 600 + 40 + 6 = 646.
+            4.  Final Answer: 646.
+          role: assistant
+      created: 1782525489
+      id: 202606270958069125f943aac84946
+      model: glm-4.7
+      object: chat.completion
+      request_id: 202606270958069125f943aac84946
+      usage:
+        completion_tokens: 134
+        completion_tokens_details:
+          reasoning_tokens: 122
+        prompt_tokens: 198
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 332
+    status:
+      code: 200
+      message: OK
+version: 1
