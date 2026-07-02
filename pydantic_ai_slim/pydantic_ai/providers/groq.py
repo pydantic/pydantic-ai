@@ -92,11 +92,21 @@ class GroqProvider(Provider[AsyncGroq]):
         # profile must never claim reasoning support (`supports_thinking` / `thinking_always_enabled`)
         # for a model Groq doesn't actually expose reasoning controls for — it would silently override
         # the Groq base and reintroduce the mismatch this overlay fixes.
-        return merge_profile(
-            groq_model_profile(model_name),
+        groq_profile = groq_model_profile(model_name)
+        merged_profile = merge_profile(
+            groq_profile,
             profile,
             ModelProfile(supports_inline_system_prompts=True),
         )
+        if reasoning_efforts := groq_profile.get('groq_reasoning_efforts'):
+            merged_profile = merge_profile(
+                merged_profile,
+                ModelProfile(
+                    supports_thinking=True,
+                    thinking_always_enabled='none' not in reasoning_efforts,
+                ),
+            )
+        return merged_profile
 
     @overload
     def __init__(self, *, groq_client: AsyncGroq | None = None) -> None: ...

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import json
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -45,6 +45,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
@@ -88,10 +89,15 @@ def test_init():
     assert m.base_url == 'https://api.groq.com'
 
 
+def _create_kwargs_factory() -> list[dict[str, Any]]:
+    return []
+
+
 @dataclass
 class MockGroq:
     completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
     stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
+    create_kwargs: list[dict[str, Any]] = field(default_factory=_create_kwargs_factory)
     index: int = 0
     base_url: str = 'https://api.groq.com'
 
@@ -114,6 +120,7 @@ class MockGroq:
     async def chat_completions_create(
         self, *_args: Any, stream: bool = False, **_kwargs: Any
     ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
+        self.create_kwargs.append(_kwargs)
         if stream:
             assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
             if isinstance(self.stream[0], Sequence):
@@ -220,6 +227,57 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
+
+
+@pytest.mark.parametrize(
+    ('thinking', 'expected_extra_body'),
+    [
+        (True, {'service_tier': 'on_demand'}),
+        ('minimal', {'reasoning_effort': 'low', 'service_tier': 'on_demand'}),
+        ('low', {'reasoning_effort': 'low', 'service_tier': 'on_demand'}),
+        ('medium', {'reasoning_effort': 'medium', 'service_tier': 'on_demand'}),
+        ('high', {'reasoning_effort': 'high', 'service_tier': 'on_demand'}),
+        ('xhigh', {'reasoning_effort': 'high', 'service_tier': 'on_demand'}),
+    ],
+)
+async def test_groq_gpt_oss_unified_thinking_maps_to_reasoning_effort(
+    allow_model_requests: None, thinking: ThinkingLevel, expected_extra_body: dict[str, object]
+):
+    c = completion_message(ChatCompletionMessage(content='ok', role='assistant'))
+    mock_client = MockGroq(completions=c)
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(groq_client=cast(AsyncGroq, mock_client)))
+    agent = Agent(
+        m,
+        model_settings=ModelSettings(
+            thinking=thinking,
+            extra_body={'service_tier': 'on_demand'},
+        ),
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    assert mock_client.create_kwargs[0]['extra_body'] == expected_extra_body
+
+
+async def test_groq_qwen3_unified_effort_level_does_not_send_unsupported_reasoning_effort(
+    allow_model_requests: None,
+):
+    c = completion_message(ChatCompletionMessage(content='ok', role='assistant'))
+    mock_client = MockGroq(completions=c)
+    m = GroqModel('qwen/qwen3-32b', provider=GroqProvider(groq_client=cast(AsyncGroq, mock_client)))
+    agent = Agent(
+        m,
+        model_settings=ModelSettings(
+            thinking='low',
+            extra_body={'service_tier': 'on_demand'},
+        ),
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'ok'
+    assert mock_client.create_kwargs[0]['extra_body'] == {'service_tier': 'on_demand'}
 
 
 async def test_request_structured_response(allow_model_requests: None):

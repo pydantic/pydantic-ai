@@ -1,6 +1,11 @@
 from __future__ import annotations as _annotations
 
+from typing import Literal, TypeAlias
+
 from . import ModelProfile
+
+GroqReasoningEffort: TypeAlias = Literal['none', 'default', 'low', 'medium', 'high']
+"""Native Groq `reasoning_effort` values."""
 
 
 class GroqModelProfile(ModelProfile, total=False):
@@ -19,6 +24,9 @@ class GroqModelProfile(ModelProfile, total=False):
     *output* via `reasoning_format='hidden'` while still reasoning internally.
     """
 
+    groq_reasoning_efforts: frozenset[GroqReasoningEffort]
+    """Native `reasoning_effort` values supported by the Groq model. Default: empty (`frozenset()`)."""
+
 
 def groq_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for a Groq model."""
@@ -30,13 +38,24 @@ def groq_model_profile(model_name: str) -> ModelProfile:
             'qwen-qwq',  # legacy (deprecated)
             'deepseek-r1',  # legacy (deprecated)
             'llama-4-maverick',  # legacy (deprecated)
+            'openai/gpt-oss',
         )
     )
     is_qwen3 = model_name.startswith('qwen/qwen3')
-    return GroqModelProfile(
+    is_gpt_oss = model_name.startswith('openai/gpt-oss')
+    if is_qwen3:
+        reasoning_efforts = frozenset[GroqReasoningEffort]({'none', 'default'})
+    elif is_gpt_oss:
+        reasoning_efforts = frozenset[GroqReasoningEffort]({'low', 'medium', 'high'})
+    else:
+        reasoning_efforts = frozenset[GroqReasoningEffort]()
+    profile = GroqModelProfile(
         groq_always_has_web_search_builtin_tool=model_name.startswith('compound-'),
         supports_thinking=is_reasoning_model,
         # qwen3 can disable reasoning with reasoning_effort='none'; legacy models can't
         thinking_always_enabled=is_reasoning_model and not is_qwen3,
         groq_supports_reasoning_disable=is_qwen3,
     )
+    if reasoning_efforts:
+        profile['groq_reasoning_efforts'] = reasoning_efforts
+    return profile
