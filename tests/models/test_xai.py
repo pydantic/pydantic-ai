@@ -1651,7 +1651,7 @@ async def test_uploaded_file_wrong_provider_xai(allow_model_requests: None):
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with XaiModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with XaiModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 

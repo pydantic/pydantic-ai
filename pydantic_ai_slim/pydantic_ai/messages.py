@@ -11,14 +11,14 @@ from datetime import datetime
 from mimetypes import MimeTypes
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, TypeAlias, TypeGuard, cast, get_args, overload
 from urllib.parse import urlparse
 
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeVar, assert_never
 
 from . import _otel_messages, _utils
 from ._instrumentation import serialize_any
@@ -1189,6 +1189,18 @@ Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
 `'function'`, `'output'`, `'external'`, `'unapproved'`).
 """
 
+_TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
+
+
+def parse_tool_kind(value: str) -> ToolPartKind | None:
+    """Return `value` if it's a known [`ToolPartKind`][pydantic_ai.messages.ToolPartKind], else `None`.
+
+    UI adapters call this at the wire boundary to validate an untrusted client-supplied `tool_kind`
+    string before setting it on a part, so an unknown value degrades to `None` rather than asserting a
+    bogus discriminator.
+    """
+    return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
+
 
 @dataclass(repr=False)
 class BaseToolReturnPart:
@@ -1348,6 +1360,29 @@ class BaseToolReturnPart:
         else:
             return {RETURN_VALUE_KEY: json_content}
 
+    def structured_content(self) -> dict[str, Any] | list[Any] | None:
+        """Return `content` as structured JSON data (a `dict` or `list`), or `None` if it has none.
+
+        A JSON string is parsed; already-structured content is returned as-is; a plain/non-JSON
+        string, scalar, or multimodal content yields `None` (there is no structured payload). A
+        read-side companion to [`files`][pydantic_ai.messages.BaseToolReturnPart.files] and
+        [`model_response_object`][pydantic_ai.messages.BaseToolReturnPart.model_response_object]; some
+        UI wire formats (e.g. AG-UI) transmit tool results as JSON strings, so
+        [`narrow_type`][pydantic_ai.messages.ToolReturnPart.narrow_type] uses it to recover the
+        structured payload a typed return subclass expects.
+        """
+        content = self.content
+        if isinstance(content, str):
+            try:
+                content = pydantic_core.from_json(content)
+            except ValueError:
+                return None
+        if isinstance(content, dict):
+            return cast('dict[str, Any]', content)
+        if isinstance(content, list):
+            return cast('list[Any]', content)
+        return None
+
     def model_response_str_and_user_content(self) -> tuple[str, list[UserContent]]:
         """Build a text-only tool result with multimodal files extracted for a trailing user message.
 
@@ -1408,18 +1443,13 @@ class ToolReturnPart(BaseToolReturnPart):
     def narrow_type(part: ToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> ToolReturnPart:
         """Promote a base `ToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
-        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone, dropping the need for an upstream
-        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
-        promotes automatically via the discriminated-union dispatch on
-        [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
-            return part
-        narrower = _TOOL_RETURN_NARROWERS.get(kind)
-        return narrower(part) if narrower else part
+        return _narrow_return(part, _TOOL_RETURN_NARROWERS, tool_kind)
 
 
 @dataclass(repr=False)
@@ -1453,17 +1483,13 @@ class NativeToolReturnPart(BaseToolReturnPart):
     def narrow_type(part: NativeToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolReturnPart:
         """Promote a base `NativeToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
-        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
-        deserialization promotes automatically via the discriminated-union dispatch on
-        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
-            return part
-        narrower = _NATIVE_RETURN_NARROWERS.get(kind)
-        return narrower(part) if narrower else part
+        return _narrow_return(part, _NATIVE_RETURN_NARROWERS, tool_kind)
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -1937,18 +1963,13 @@ class ToolCallPart(BaseToolCallPart):
     def narrow_type(part: ToolCallPart, *, tool_kind: ToolPartKind | None = None) -> ToolCallPart:
         """Promote a base `ToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
-        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone, dropping the need for an upstream
-        `replace(part, tool_kind=...)`. Use this on direct construction; Pydantic deserialization
-        promotes automatically via the discriminated-union dispatch on
-        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
-            return part
-        narrower = _TOOL_CALL_NARROWERS.get(kind)
-        return narrower(part) if narrower else part
+        return _narrow_call(part, _TOOL_CALL_NARROWERS, tool_kind)
 
 
 @dataclass(repr=False)
@@ -1999,17 +2020,13 @@ class NativeToolCallPart(BaseToolCallPart):
     def narrow_type(part: NativeToolCallPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolCallPart:
         """Promote a base `NativeToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
-        Returns the input unchanged when neither the `tool_kind` kwarg nor `part.tool_kind` resolves
-        to a registered subclass. Pass `tool_kind` to inject the discriminator inline — the narrower
-        applies it as part of its single dataclass clone. Use this on direct construction; Pydantic
-        deserialization promotes automatically via the discriminated-union dispatch on
-        [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
+        Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
+        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
+        validate against that subclass — keeping it on a base part would break a
+        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
+        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
         """
-        kind = tool_kind if tool_kind is not None else part.tool_kind
-        if kind is None:
-            return part
-        narrower = _NATIVE_CALL_NARROWERS.get(kind)
-        return narrower(part) if narrower else part
+        return _narrow_call(part, _NATIVE_CALL_NARROWERS, tool_kind)
 
 
 # Registry of typed promoters for `NativeToolCallPart` / `NativeToolReturnPart`.
@@ -2023,6 +2040,44 @@ _NATIVE_RETURN_NARROWERS: dict[str, Callable[[NativeToolReturnPart], NativeToolR
 # without native tool search.
 _TOOL_CALL_NARROWERS: dict[str, Callable[[ToolCallPart], ToolCallPart]] = {}
 _TOOL_RETURN_NARROWERS: dict[str, Callable[[ToolReturnPart], ToolReturnPart]] = {}
+
+
+_CallPartT = TypeVar('_CallPartT', bound='BaseToolCallPart')
+_ReturnPartT = TypeVar('_ReturnPartT', bound='BaseToolReturnPart')
+
+
+def _narrow_call(
+    part: _CallPartT, narrowers: dict[str, Callable[[_CallPartT], _CallPartT]], tool_kind: ToolPartKind | None
+) -> _CallPartT:
+    """Best-effort promotion shared by the call-part `narrow_type` methods. See `ToolCallPart.narrow_type`."""
+    kind = tool_kind if tool_kind is not None else part.tool_kind
+    narrower = narrowers.get(kind) if kind is not None else None
+    if narrower is None:
+        return part
+    try:
+        return narrower(part)
+    except pydantic.ValidationError:
+        return replace(part, tool_kind=None) if part.tool_kind is not None else part
+
+
+def _narrow_return(
+    part: _ReturnPartT, narrowers: dict[str, Callable[[_ReturnPartT], _ReturnPartT]], tool_kind: ToolPartKind | None
+) -> _ReturnPartT:
+    """Best-effort promotion shared by the return-part `narrow_type` methods. See `ToolReturnPart.narrow_type`."""
+    kind = tool_kind if tool_kind is not None else part.tool_kind
+    narrower = narrowers.get(kind) if kind is not None else None
+    if narrower is None:
+        return part
+    # Restructure JSON-string content for the narrower, but only when parsing changed it, so an
+    # already-typed part keeps its identity (the narrower short-circuits on it) instead of a rebuild.
+    structured = part.structured_content()
+    narrow_input = (
+        replace(part, content=structured) if structured is not None and structured is not part.content else part
+    )
+    try:
+        return narrower(narrow_input)
+    except pydantic.ValidationError:
+        return replace(part, tool_kind=None) if part.tool_kind is not None else part
 
 
 _TYPED_PART_TAGS: dict[tuple[str, str], str] = {}
@@ -2359,6 +2414,51 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
+
+
+def _narrow_response_part(part: ModelResponsePart) -> ModelResponsePart:
+    if isinstance(part, NativeToolCallPart):
+        return NativeToolCallPart.narrow_type(part)
+    if isinstance(part, NativeToolReturnPart):
+        return NativeToolReturnPart.narrow_type(part)
+    if isinstance(part, ToolCallPart):
+        return ToolCallPart.narrow_type(part)
+    return part
+
+
+def _narrow_request_part(part: ModelRequestPart) -> ModelRequestPart:
+    if isinstance(part, ToolReturnPart):
+        return ToolReturnPart.narrow_type(part)
+    return part
+
+
+def narrow_message_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Promote each tool call/return part across `messages` to its typed subclass via its `tool_kind`.
+
+    Best-effort and idempotent: a part whose `tool_kind` resolves to a registered typed subclass and
+    whose data validates against it is promoted; a part with no `tool_kind`, an unregistered one, or
+    shape-invalid data is left a base part (an unsubstantiated `tool_kind` is stripped — see
+    [`ToolCallPart.narrow_type`][pydantic_ai.messages.ToolCallPart.narrow_type]).
+
+    UI adapters reconstruct base parts from the wire format with `tool_kind` set from client-echoed
+    metadata, then call this once instead of narrowing each part inline. Pydantic deserialization of a
+    `ModelMessage` performs the same promotion via its discriminated-union dispatch; this is the
+    direct-construction equivalent for callers that build parts by hand.
+    """
+    narrowed: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            new_response_parts = [_narrow_response_part(part) for part in message.parts]
+            if any(new is not old for new, old in zip(new_response_parts, message.parts)):
+                message = replace(message, parts=new_response_parts)
+        elif isinstance(message, ModelRequest):
+            new_request_parts = [_narrow_request_part(part) for part in message.parts]
+            if any(new is not old for new, old in zip(new_request_parts, message.parts)):
+                message = replace(message, parts=new_request_parts)
+        else:
+            assert_never(message)
+        narrowed.append(message)
+    return narrowed
 
 
 @dataclass(repr=False)

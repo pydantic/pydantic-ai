@@ -2105,7 +2105,7 @@ cases:
 report_evaluators:
   - NonExistentEvaluator
 """
-    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+    with pytest.raises(ExceptionGroup, match=r'error.*loading evaluators'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
 
 
@@ -2120,7 +2120,7 @@ report_evaluators:
   - ConfusionMatrixEvaluator:
       nonexistent_param: true
 """
-    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+    with pytest.raises(ExceptionGroup, match=r'error.*loading evaluators'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
 
 
