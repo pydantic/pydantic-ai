@@ -71,6 +71,17 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
     assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
 
 
+def test_run_until_complete_propagates_coroutine_error():
+    """When the coroutine itself raises, the task is already done so no cleanup is attempted and the
+    exception propagates unchanged."""
+
+    async def coro() -> None:
+        raise ValueError('boom')
+
+    with pytest.raises(ValueError, match='boom'):
+        run_until_complete(coro())
+
+
 def test_unset():
     """Test Unset singleton."""
     assert isinstance(UNSET, Unset)

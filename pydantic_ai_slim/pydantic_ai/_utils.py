@@ -45,7 +45,10 @@ from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from pydantic_graph._utils import AbstractSpan, run_until_complete
+from pydantic_graph._utils import (
+    AbstractSpan,
+    run_until_complete as run_until_complete,  # re-exported for the sync wrappers
+)
 from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
