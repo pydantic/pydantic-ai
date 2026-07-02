@@ -28,10 +28,10 @@ from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     ForceDownloadMode,
     ModelMessage,
+    sanitize_messages,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT, OutputSpec
-from pydantic_ai.sanitization import sanitize_message_history
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
@@ -336,11 +336,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         Called on the messages produced from the protocol-specific run input before
         they're passed to the agent. Caller-supplied `message_history` is not passed
         through this method — it is trusted as coming from server-side persistence. Use
-        [`sanitize_message_history`][pydantic_ai.sanitization.sanitize_message_history] before
+        [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before
         passing `message_history` that came from an untrusted client.
 
         Delegates to
-        [`sanitize_message_history`][pydantic_ai.sanitization.sanitize_message_history] — see its
+        [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] — see its
         docstring for the full list of what's stripped — with these adapter-specific settings:
 
         - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped only when
@@ -361,7 +361,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             resolved_tool_call_ids.update(deferred_tool_results.approvals)
             resolved_tool_call_ids.update(deferred_tool_results.calls)
 
-        return sanitize_message_history(
+        return sanitize_messages(
             messages,
             strip_system_prompts=self.manage_system_prompt == 'server',
             allowed_file_url_schemes=self.allowed_file_url_schemes,
