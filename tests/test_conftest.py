@@ -26,7 +26,7 @@ def test_pytest_recording_configure_drops_google_oauth_token_requests() -> None:
 
     before_record_request = vcr.before_record_request
     assert before_record_request is not None
-    request = Request('POST', 'https://oauth2.googleapis.com/token', None, {})
+    request = Request('POST', 'https://oauth2.googleapis.com/token', None, dict[str, str]())
 
     assert before_record_request(request) is None
 
@@ -39,8 +39,8 @@ def test_check_vcr_cassette_usage_allows_loaded_unused_cassette_by_default() -> 
 
 def test_check_vcr_cassette_usage_reports_unused_interactions() -> None:
     cassette = Cassette('fake.yaml', record_mode=RecordMode.NONE)
-    cassette.append(Request('POST', 'https://example.com/one', b'{}', {}), {})  # pyright: ignore[reportUnknownMemberType]
-    cassette.append(Request('POST', 'https://example.com/two', b'{}', {}), {})  # pyright: ignore[reportUnknownMemberType]
+    cassette.append(Request('POST', 'https://example.com/one', b'{}', dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
+    cassette.append(Request('POST', 'https://example.com/two', b'{}', dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
     cassette.play_counts[0] = 1  # pyright: ignore[reportUnknownMemberType]
 
     with pytest.raises(pytest.fail.Exception, match=r'played 1/2; unused indexes: \[1\]'):
@@ -49,8 +49,8 @@ def test_check_vcr_cassette_usage_reports_unused_interactions() -> None:
 
 def test_check_vcr_cassette_usage_allows_fully_used_cassette() -> None:
     cassette = Cassette('fake.yaml', record_mode=RecordMode.NONE)
-    cassette.append(Request('POST', 'https://example.com/one', b'{}', {}), {})  # pyright: ignore[reportUnknownMemberType]
-    cassette.append(Request('POST', 'https://example.com/two', b'{}', {}), {})  # pyright: ignore[reportUnknownMemberType]
+    cassette.append(Request('POST', 'https://example.com/one', b'{}', dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
+    cassette.append(Request('POST', 'https://example.com/two', b'{}', dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
     cassette.play_counts[0] = 1  # pyright: ignore[reportUnknownMemberType]
     cassette.play_counts[1] = 1  # pyright: ignore[reportUnknownMemberType]
 

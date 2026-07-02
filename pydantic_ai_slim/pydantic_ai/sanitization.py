@@ -38,7 +38,7 @@ def sanitize_message_history(
     strip_system_prompts: bool = True,
     allowed_file_url_schemes: Collection[str] = ('http', 'https'),
     allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
-    preserve_file_data: bool = False,
+    allow_uploaded_files: bool = False,
     resolved_tool_call_ids: Collection[str] = (),
 ) -> list[ModelMessage]:
     """Strip message history parts that aren't safe to honor from untrusted input.
@@ -61,7 +61,7 @@ def sanitize_message_history(
       `False` that aren't in `allowed_file_url_force_download`, resetting them to `False`. Both
       `True` and `'allow-local'` are reset by default. Applies to file URLs in user content and
       those nested in tool return parts.
-    - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless `preserve_file_data=True`.
+    - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless `allow_uploaded_files=True`.
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
       tool return parts.
@@ -80,7 +80,9 @@ def sanitize_message_history(
         allowed_file_url_force_download: Additional
             [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to allow.
             `False` is always allowed. Defaults to no additional values.
-        preserve_file_data: Whether to keep [`UploadedFile`][pydantic_ai.messages.UploadedFile] items.
+        allow_uploaded_files: Whether to honor [`UploadedFile`][pydantic_ai.messages.UploadedFile] items
+            from the untrusted input. Off by default, since an uploaded file references an object the model
+            provider fetches using the server-side IAM role.
         resolved_tool_call_ids: Tool call IDs to preserve when the final response ends with tool calls.
             Use this for human-in-the-loop resumption when matching tool results are being submitted
             with the same request.
@@ -103,7 +105,7 @@ def sanitize_message_history(
                 strip_system_prompts=strip_system_prompts,
                 allowed_file_url_schemes=allowed_schemes,
                 allowed_file_url_force_download=allowed_force_download,
-                preserve_file_data=preserve_file_data,
+                allow_uploaded_files=allow_uploaded_files,
                 disallowed_schemes=disallowed_url_schemes,
                 reset_force_download_values=reset_force_download_values,
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
@@ -118,7 +120,7 @@ def sanitize_message_history(
                 message.parts,
                 allowed_file_url_schemes=allowed_schemes,
                 allowed_file_url_force_download=allowed_force_download,
-                preserve_file_data=preserve_file_data,
+                allow_uploaded_files=allow_uploaded_files,
                 disallowed_schemes=disallowed_url_schemes,
                 reset_force_download_values=reset_force_download_values,
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
@@ -169,10 +171,10 @@ def sanitize_message_history(
     if dropped_uploaded_file_providers:
         warnings.warn(
             f'Client-submitted uploaded file(s) for provider(s) {sorted(dropped_uploaded_file_providers)!r} '
-            f'were dropped because `preserve_file_data` is `False` (the default). Like a non-HTTP file URL, '
+            f'were dropped because `allow_uploaded_files` is `False` (the default). Like a non-HTTP file URL, '
             f'an uploaded file references an object the model provider fetches using the server-side IAM role '
             f'or service account, so it should only be accepted from trusted clients. To keep uploaded files '
-            f'from the client, set `preserve_file_data=True`, or pass them on trusted server-side '
+            f'from the client, set `allow_uploaded_files=True`, or pass them on trusted server-side '
             f'`message_history` directly to `Agent.run`.',
             UserWarning,
             stacklevel=2,
@@ -231,7 +233,7 @@ def _sanitize_request_parts(
     strip_system_prompts: bool,
     allowed_file_url_schemes: set[str],
     allowed_file_url_force_download: set[ForceDownloadMode],
-    preserve_file_data: bool,
+    allow_uploaded_files: bool,
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
@@ -255,7 +257,7 @@ def _sanitize_request_parts(
                 part.content,
                 allowed_file_url_schemes,
                 allowed_file_url_force_download,
-                preserve_file_data,
+                allow_uploaded_files,
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
@@ -269,7 +271,7 @@ def _sanitize_request_parts(
                 part.content,
                 allowed_file_url_schemes,
                 allowed_file_url_force_download,
-                preserve_file_data,
+                allow_uploaded_files,
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
@@ -284,7 +286,7 @@ def _filter_user_content(
     content: Sequence[UserContent],
     allowed_file_url_schemes: set[str],
     allowed_file_url_force_download: set[ForceDownloadMode],
-    preserve_file_data: bool,
+    allow_uploaded_files: bool,
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
@@ -293,7 +295,7 @@ def _filter_user_content(
 
     Drops file URLs whose scheme isn't in the allowlist, and resets `force_download` values that
     aren't `False` and aren't in `allowed_file_url_force_download` on kept items to `False`. Drops
-    uploaded files unless `preserve_file_data` is set.
+    uploaded files unless `allow_uploaded_files` is set.
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
@@ -307,7 +309,7 @@ def _filter_user_content(
                 disallowed_schemes.add(scheme)
                 continue
             item = _sanitize_file_url(item, allowed_file_url_force_download, reset_force_download_values)
-        elif isinstance(item, UploadedFile) and not preserve_file_data:
+        elif isinstance(item, UploadedFile) and not allow_uploaded_files:
             dropped_uploaded_file_providers.add(item.provider_name)
             continue
         filtered.append(item)
@@ -333,7 +335,7 @@ def _sanitize_tool_return_content(
     content: ToolReturnContent,
     allowed_file_url_schemes: set[str],
     allowed_file_url_force_download: set[ForceDownloadMode],
-    preserve_file_data: bool,
+    allow_uploaded_files: bool,
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
@@ -343,7 +345,7 @@ def _sanitize_tool_return_content(
     Tool return content is an arbitrarily nested structure of files, sequences, and mappings,
     so any `FileUrl` or `UploadedFile` it contains — including those introduced by multimodal tool
     returns — is walked and sanitized the same way file references in user content are: file URL
-    schemes and `force_download` are checked, and uploaded files are dropped unless `preserve_file_data`
+    schemes and `force_download` are checked, and uploaded files are dropped unless `allow_uploaded_files`
     is set.
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
@@ -357,7 +359,7 @@ def _sanitize_tool_return_content(
             return False, content
         return True, _sanitize_file_url(content, allowed_file_url_force_download, reset_force_download_values)
     if isinstance(content, UploadedFile):
-        if not preserve_file_data:
+        if not allow_uploaded_files:
             dropped_uploaded_file_providers.add(content.provider_name)
             return False, content
         return True, content
@@ -371,7 +373,7 @@ def _sanitize_tool_return_content(
                 value,
                 allowed_file_url_schemes,
                 allowed_file_url_force_download,
-                preserve_file_data,
+                allow_uploaded_files,
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
@@ -387,7 +389,7 @@ def _sanitize_tool_return_content(
                 item,
                 allowed_file_url_schemes,
                 allowed_file_url_force_download,
-                preserve_file_data,
+                allow_uploaded_files,
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
@@ -403,7 +405,7 @@ def _sanitize_response_parts(
     *,
     allowed_file_url_schemes: set[str],
     allowed_file_url_force_download: set[ForceDownloadMode],
-    preserve_file_data: bool,
+    allow_uploaded_files: bool,
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
@@ -413,7 +415,7 @@ def _sanitize_response_parts(
     Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on
     [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return parts, and drops
     [`UploadedFile`][pydantic_ai.messages.UploadedFile]s nested in tool return parts unless
-    `preserve_file_data` is set. Unresolved (dangling) tool calls are stripped separately, from
+    `allow_uploaded_files` is set. Unresolved (dangling) tool calls are stripped separately, from
     the surviving tail, by `sanitize_message_history`.
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
@@ -430,7 +432,7 @@ def _sanitize_response_parts(
                 part.content,
                 allowed_file_url_schemes,
                 allowed_file_url_force_download,
-                preserve_file_data,
+                allow_uploaded_files,
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,

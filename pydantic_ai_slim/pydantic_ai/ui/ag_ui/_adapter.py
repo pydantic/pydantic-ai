@@ -223,17 +223,20 @@ def _user_content_to_input(
 class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, OutputDataT]):
     """UI adapter for the Agent-User Interaction (AG-UI) protocol.
 
-    [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] (inherited from
-    `UIAdapter`, default `False`) gates two behaviors. On the way in, client-submitted
-    [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped during
-    `sanitize_messages` unless it is `True`, since the server resolves them with its own
-    credentials; only set it when the frontend is trusted. On the way out and back in, when
-    `True`, agent-generated files and uploaded files are stored as
-    [activity messages](https://docs.ag-ui.com/concepts/messages) during `dump_messages`
-    and restored during `load_messages`, enabling full round-trip fidelity. When `False`,
-    they are dropped. If your AG-UI frontend uses activities, be aware that
-    `pydantic_ai_*` activity types are reserved for internal round-trip use and should be
-    ignored by frontend activity handlers.
+    Two independent settings control file handling:
+
+    - [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] (inherited from
+      `UIAdapter`, default `False`) is the inbound security gate: client-submitted
+      [`UploadedFile`][pydantic_ai.messages.UploadedFile] parts are dropped during
+      `sanitize_messages` unless it is `True`, since the server resolves them with its own
+      credentials. Only set it when the frontend is trusted.
+    - [`preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data] (default
+      `False`) is the AG-UI-specific representation opt-in: `FilePart` and `UploadedFile`
+      round-trip through reserved `pydantic_ai_*`
+      [activity messages](https://docs.ag-ui.com/concepts/messages) on `dump_messages`/`load_messages`.
+      The protocol has no native slot for them, so a frontend only round-trips them if it echoes
+      the activity messages back; frontend activity handlers should ignore `pydantic_ai_*` types.
+      (Multimodal tool-return files ride inline in `ToolMessage.content` and are unaffected by this flag.)
     """
 
     _: KW_ONLY
@@ -257,6 +260,24 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     of this setting.
     """
 
+    preserve_file_data: bool = False
+    """Whether to round-trip `FilePart` and `UploadedFile` through reserved `pydantic_ai_*`
+    [activity messages](https://docs.ag-ui.com/concepts/messages).
+
+    Defaults to `False`. AG-UI has no native representation for agent-generated files
+    ([`FilePart`][pydantic_ai.messages.FilePart]) or uploaded-file references
+    ([`UploadedFile`][pydantic_ai.messages.UploadedFile]), so when this is `True` they are
+    serialized as sidecar activity messages on `dump_messages` and reconstructed on
+    `load_messages`. A frontend only completes the round-trip if it echoes these activity
+    messages back on the next request.
+
+    This is a representation setting, not a security one: honoring a reconstructed inbound
+    `UploadedFile` still requires
+    [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files], which the shared
+    `sanitize_messages` step enforces regardless of this flag. Multimodal tool-return files are
+    unaffected — they ride inline in `ToolMessage.content`.
+    """
+
     @classmethod
     def build_run_input(cls, body: bytes) -> RunAgentInput:
         """Build an AG-UI run input object from the request body."""
@@ -277,6 +298,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
+        allow_uploaded_files: bool = False,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -288,6 +310,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
+            allow_uploaded_files=allow_uploaded_files,
             **kwargs,
         )
 

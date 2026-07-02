@@ -18,7 +18,7 @@ from datetime import datetime
 from types import TracebackType
 
 from pydantic_ai.usage import RequestUsage
-from pydantic_graph._utils import get_event_loop as _get_event_loop
+from pydantic_graph._utils import get_event_loop as _get_event_loop, run_until_complete as _run_until_complete
 
 from . import agent, messages, models, settings
 from .models import StreamedResponse, instrumented as instrumented_models
@@ -153,7 +153,7 @@ def model_request_sync(
     Returns:
         The model response and token usage associated with the request.
     """
-    return _get_event_loop().run_until_complete(
+    return _run_until_complete(
         model_request(
             model,
             list(messages),

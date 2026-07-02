@@ -210,7 +210,7 @@ def test_sanitize_message_history_drops_non_http_file_url_schemes():
 
 
 def test_sanitize_message_history_drops_uploaded_files_by_default():
-    """Client-submitted `UploadedFile`s are dropped unless `preserve_file_data=True`.
+    """Client-submitted `UploadedFile`s are dropped unless `allow_uploaded_files=True`.
 
     Like a non-HTTP file URL, an uploaded file references an object the provider fetches with the
     server-side credentials, so it should only be accepted from trusted clients.
@@ -236,7 +236,7 @@ def test_sanitize_message_history_drops_uploaded_files_by_default():
     assert isinstance(part, UserPromptPart)
     assert part.content == snapshot(['summarize'])
 
-    kept = sanitize_message_history(messages, preserve_file_data=True)
+    kept = sanitize_message_history(messages, allow_uploaded_files=True)
     request = kept[0]
     assert isinstance(request, ModelRequest)
     part = request.parts[0]

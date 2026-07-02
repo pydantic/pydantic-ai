@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import re
 from datetime import timezone
 from typing import Annotated, Any, Literal
 
@@ -89,7 +90,7 @@ def test_custom_output_text():
     result = agent.run_sync('x', model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     agent = Agent(output_type=tuple[str, str])
-    with pytest.raises(AssertionError, match='Plain response not allowed, but `custom_output_text` is set.'):
+    with pytest.raises(AssertionError, match=re.escape('Plain response not allowed, but `custom_output_text` is set.')):
         agent.run_sync('x', model=TestModel(custom_output_text='custom'))
 
 

@@ -726,7 +726,9 @@ async def test_agent_name_collision(allow_model_requests: None, dbos: DBOS):
 async def test_agent_without_name():
     with pytest.raises(
         UserError,
-        match="An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps.",
+        match=re.escape(
+            "An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps."
+        ),
     ):
         DBOSAgent(Agent())
 
@@ -734,7 +736,9 @@ async def test_agent_without_name():
 async def test_agent_without_model():
     with pytest.raises(
         UserError,
-        match='An agent needs to have a `model` in order to be used with DBOS, it cannot be set at agent run time.',
+        match=re.escape(
+            'An agent needs to have a `model` in order to be used with DBOS, it cannot be set at agent run time.'
+        ),
     ):
         DBOSAgent(Agent(name='test_agent'))
 
