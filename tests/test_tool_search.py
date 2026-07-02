@@ -1339,7 +1339,7 @@ async def test_run_context_seeds_discovered_tool_names_from_history_before_first
         ModelRequest(
             parts=[
                 ToolSearchReturnPart(
-                    content={'discovered_tools': [{'name': 'calculate_mortgage', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'calculate_mortgage'}]},
                 ),
             ]
         )
@@ -2259,7 +2259,7 @@ async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loa
         ModelRequest(
             parts=[
                 ToolSearchReturnPart(
-                    content={'discovered_tools': [{'name': 'get_weather', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'get_weather'}]},
                     tool_call_id='loc_1',
                 )
             ]
