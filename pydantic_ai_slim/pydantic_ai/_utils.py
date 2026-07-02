@@ -410,11 +410,11 @@ def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
         # Close the underlying async iterator so its `async with`/`finally` blocks (which close
         # model streams and HTTP connections) run even when the consumer breaks out early or is
         # interrupted (Ctrl-C closing this generator with `GeneratorExit`), not just when the
-        # stream is exhausted.
-        aclose: Callable[[], Awaitable[None]] | None = getattr(async_iter, 'aclose', None)
-        if aclose is not None:  # pragma: no branch
+        # stream is exhausted. The `stream_*` methods always return async generators at runtime even
+        # though they're typed as `AsyncIterator`, so this narrows to the closable case.
+        if isinstance(async_iter, AsyncGenerator):  # pragma: no branch
             with suppress(BaseException):
-                run_until_complete(aclose())
+                run_until_complete(async_iter.aclose())
 
 
 def now_utc() -> datetime:
