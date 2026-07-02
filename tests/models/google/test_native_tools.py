@@ -1,12 +1,16 @@
-"""Tests for Google native tools serialization in `_content_model_response`.
+"""Tests for Google native tool part handling.
 
-Covers the message-history echo path that round-trips `NativeToolCallPart` /
-`NativeToolReturnPart` between the API and the application:
+Two related areas:
 
-- pre-Gemini-3 models drop server-side native parts (the API would reject them);
-- `pyd_ai_`-synthesized `tool_call_id`s are dropped on every model;
-- `CodeExecutionTool` uses `executable_code` / `code_execution_result` parts and is
-  preserved regardless of the tool-combination capability.
+- The message-history echo path (`_content_model_response`) that round-trips
+  `NativeToolCallPart` / `NativeToolReturnPart` between the API and the application:
+    - pre-Gemini-3 models drop server-side native parts (the API would reject them);
+    - `pyd_ai_`-synthesized `tool_call_id`s are dropped on every model;
+    - `CodeExecutionTool` uses `executable_code` / `code_execution_result` parts and is
+      preserved regardless of the tool-combination capability.
+- Response assembly (`_process_response_from_parts`) and streaming
+  (`GeminiStreamedResponse`) filling an empty Gemini 3+ `file_search` `tool_response`
+  from `grounding_metadata`, including the streaming cross-chunk deferral.
 """
 
 from __future__ import annotations as _annotations
