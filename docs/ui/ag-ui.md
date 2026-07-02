@@ -381,6 +381,9 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 AG-UI has no native representation for agent-generated files ([`FilePart`][pydantic_ai.messages.FilePart]) or [`UploadedFile`][pydantic_ai.messages.UploadedFile] references, so they are omitted from `dump_messages` output by default. Set [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data] to `True` to round-trip them through reserved `pydantic_ai_*` [activity messages](https://docs.ag-ui.com/concepts/messages), which a frontend completes by echoing those activity messages back on the next request. This is a representation opt-in, not a security one: an `UploadedFile` reconstructed from a round-tripped activity message is still subject to the inbound [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] gate before it reaches the agent.
 
+!!! warning "Behavior change"
+    `preserve_file_data` used to gate honoring inbound client-submitted `UploadedFile` references. It is now representation-only. If your app set `AGUIAdapter(preserve_file_data=True)` to accept inbound uploaded files, you must now also set [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]`=True`, since the two concerns are now separate flags.
+
 ### System prompts and instructions
 
 Pydantic AI supports two ways to provide guidance to the model: [`system_prompt`](../agent.md#system-prompts) (stored in the message history as [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s) and [`instructions`](../agent.md#instructions) (injected fresh on every request, never persisted). When you control the server side, `instructions` is the recommended default.

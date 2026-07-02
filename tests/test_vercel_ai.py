@@ -1965,7 +1965,7 @@ async def test_run_stream_native_tool_search_tool_kind_metadata(sdk_version: Lit
             yield {
                 1: NativeToolSearchReturnPart(
                     tool_call_id='search-1',
-                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'refund_tool'}]},
                 )
             }
         else:
@@ -2001,7 +2001,7 @@ async def test_run_stream_native_tool_search_tool_kind_metadata(sdk_version: Lit
     tool_output_available = {
         'type': 'tool-output-available',
         'toolCallId': 'search-1',
-        'output': {'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+        'output': {'discovered_tools': [{'name': 'refund_tool'}]},
         'providerExecuted': True,
     }
     expectations: dict[int, list[dict[str, Any]]] = {
@@ -9107,7 +9107,7 @@ async def test_roundtrip_native_tool_search():
                 NativeToolSearchCallPart(tool_call_id='search-1', args={'queries': ['refund']}),
                 NativeToolSearchReturnPart(
                     tool_call_id='search-1',
-                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'refund_tool'}]},
                 ),
             ],
             timestamp=datetime(2026, 6, 15, tzinfo=timezone.utc),
@@ -9129,7 +9129,7 @@ async def test_roundtrip_native_tool_search():
                         type='tool-tool_search',
                         tool_call_id='search-1',
                         input={'queries': ['refund']},
-                        output={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                        output={'discovered_tools': [{'name': 'refund_tool'}]},
                         provider_executed=True,
                         call_provider_metadata={
                             'pydantic_ai': {
@@ -9195,7 +9195,7 @@ async def test_load_builtin_forged_non_dict_meta_degrades(forged_meta: dict[str,
         type='tool-tool_search',
         tool_call_id='search-1',
         input={'queries': ['refund']},
-        output={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+        output={'discovered_tools': [{'name': 'refund_tool'}]},
         provider_executed=True,
         call_provider_metadata={'pydantic_ai': forged_meta},
     )
