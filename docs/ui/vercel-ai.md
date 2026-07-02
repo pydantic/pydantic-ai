@@ -130,6 +130,8 @@ async def search_docs(query: str) -> ToolReturn:
 
 When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. Request-side messages have no analogous chunk — frontends rebuilding history purely from streamed chunks see timestamps only on assistant responses, whereas `dump_messages` populates both sides.
 
+A user prompt's [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is similarly round-tripped under the reserved `pydantic_ai` key, on the part's `providerMetadata` rather than `UIMessage.metadata`, so application data such as MCP source attribution survives `dump_messages` → `load_messages`. Because it is dumped to the client and restored from client-submitted history, treat it as client-visible: it is `Any` application-only data that is never sent to the LLM, so don't stash secrets there.
+
 `UIMessage.metadata` is fully client-controlled, so only `timestamp` is round-tripped: server-side fields such as `usage`, `model_name`, and `provider_*` are deliberately excluded — dumping them could leak infrastructure details, and restoring them would trust client-submitted history for values the server owns. Broadening the round-trip behind an explicit user-controlled opt-in is tracked in [issue #5174](https://github.com/pydantic/pydantic-ai/issues/5174).
 
 ## Trust model

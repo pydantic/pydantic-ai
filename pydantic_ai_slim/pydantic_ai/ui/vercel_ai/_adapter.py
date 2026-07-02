@@ -279,6 +279,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
+                        # Restoring client-supplied `text_content_metadata` is intentional (like the
+                        # `vendor_metadata` branch below, #5571/#5772): `TextContent.metadata` is `Any`
+                        # application-only data that is not sent to the LLM.
                         if 'text_content_metadata' in provider_meta:
                             user_prompt_content.append(
                                 TextContent(content=part.text, metadata=provider_meta['text_content_metadata'])
