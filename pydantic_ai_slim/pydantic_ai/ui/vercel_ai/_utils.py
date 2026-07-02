@@ -67,14 +67,10 @@ class _PydanticAIMessageMetadata(BaseModel):
 def tool_return_output(part: BaseToolReturnPart) -> Any:
     """Serialize a tool return's full content for `ToolOutputAvailablePart.output`.
 
-    Vercel's `output` field is typed `Any` and carries structured content, so the full return —
-    file data (`BinaryContent`, `ImageUrl`, etc.) included — is always dumped inline; it's rehydrated
-    on load via `ToolReturnContent`'s discriminator (`_validate_tool_output`). No gating: tool-return
-    files always round-trip, matching the AG-UI adapter's inline `ToolMessage.content`.
-
-    The streaming path (`_tool_return_with_files`) still replaces files with text placeholders, because
-    event-stream formats can't carry multimodal tool output (#3826). That dump-vs-stream difference is
-    intentional, not a gap to fix.
+    Vercel's `output` field is `Any`, so the full return — file data included — is always dumped inline
+    and rehydrated on load via `ToolReturnContent`'s discriminator (`_validate_tool_output`). No gating.
+    (The streaming path `_tool_return_with_files` replaces files with text placeholders instead, since
+    event streams can't carry multimodal tool output (#3826).)
     """
     return tool_return_ta.dump_python(part.content, mode='json')
 

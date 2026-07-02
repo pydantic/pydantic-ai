@@ -179,22 +179,16 @@ def _new_message_id() -> str:
 def _dump_tool_return_content(content: Any) -> str:
     """Serialize a tool-return `content` value into a `ToolMessage.content` string.
 
-    The inverse of [`_rehydrate_tool_return_content`][pydantic_ai.ui.ag_ui._adapter._rehydrate_tool_return_content],
-    kept deliberately symmetric with it so a `ToolReturnPart` round-trips faithfully. `.content` is the
-    source of truth (`.files` is derived from it), so serializing the full content — multimodal files
-    included — and validating it back reconstructs the part.
+    Inverse of [`_rehydrate_tool_return_content`][pydantic_ai.ui.ag_ui._adapter._rehydrate_tool_return_content],
+    kept symmetric with it so a `ToolReturnPart` round-trips faithfully. `.content` is the source of truth
+    (`.files` is derived from it), so dumping the full content — multimodal files included — and validating
+    it back reconstructs the part.
 
-    - A plain string is emitted verbatim, NOT JSON-wrapped, so the loader's `json.loads` either fails
-      (non-JSON text) or yields a scalar and hands the original string straight back. This keeps a
-      plain-text return a plain string on the wire, matching pre-multimodal behavior.
-    - A mapping or sequence — structured returns and anything carrying `BinaryContent`/`ImageUrl`/...
-      files at any depth — is dumped in full through `tool_return_content_ta`, so nested multimodal
-      items become base64/URL dicts. The loader runs the same adapter's `validate_python` to restore
-      the subclasses. AG-UI's `ToolMessage.content` is a plain `str`, but it already carries JSON for
-      structured returns, so files ride inline verbatim through any frontend — strictly better than a
-      custom sidecar that only round-trips if the frontend echoes it back.
-    - A scalar (`int`/`bool`/`float`) is JSON-dumped too; like `model_response_str`, it reloads as its
-      string form because AG-UI content is text-only (see `_rehydrate_tool_return_content`).
+    - A plain string is emitted verbatim, not JSON-wrapped, so the loader hands the original string back.
+    - A mapping or sequence — structured returns and anything carrying files at any depth — is dumped
+      through `tool_return_content_ta`, so nested `BinaryContent`/`ImageUrl`/... become base64/URL dicts
+      that the loader restores to their subclasses.
+    - A scalar is JSON-dumped too, but reloads as its string form because AG-UI content is text-only.
     """
     if isinstance(content, str):
         return content
@@ -206,23 +200,17 @@ def _dump_tool_return_content(content: Any) -> str:
 def _rehydrate_tool_return_content(content: Any) -> Any:
     """Rehydrate a `ToolMessage.content` value into `ToolReturnContent`, restoring multimodal subclasses.
 
-    The inverse of [`_dump_tool_return_content`][pydantic_ai.ui.ag_ui._adapter._dump_tool_return_content].
-    `ToolMessage.content` is a string on the wire; for structured and file-bearing returns it's our own
-    JSON dump. Parsing it back through `tool_return_content_ta` runs the lifted discriminator so multimodal
-    items nested in a mapping or list (`BinaryContent`, `ImageUrl`, `UploadedFile`, ...) come back as their
-    subclasses instead of plain dicts, mirroring the Vercel adapter's `_validate_tool_output`. Image
-    `BinaryContent` is narrowed to `BinaryImage`.
-
-    A non-JSON string (a plain-text return) is left untouched. No JS-binary coercion (unlike Vercel): AG-UI
-    content is always our own base64 dump, never a frontend `Uint8Array`/`Buffer` shape.
+    Inverse of [`_dump_tool_return_content`][pydantic_ai.ui.ag_ui._adapter._dump_tool_return_content].
+    Content is a string on the wire; for structured and file-bearing returns it's our own JSON dump, parsed
+    back through `tool_return_content_ta` so multimodal items nested in a mapping or list (`BinaryContent`,
+    `ImageUrl`, `UploadedFile`, ...) come back as their subclasses. Image `BinaryContent` is narrowed to
+    `BinaryImage`.
 
     Only a parsed mapping or sequence is run through the discriminator, since nested multimodal items can
-    only live inside those. A parsed JSON scalar (`'123'`, `'true'`, `'null'`) is returned as the original
-    string: AG-UI's `ToolMessage.content` is text-only, so a scalar return is indistinguishable from a
-    string return on the wire, and rehydrating it would silently change `'123'` into `123` on reload.
-
-    A client that submits an already-structured (non-string) `content` — e.g. a builtin provider result
-    dict — is validated through the discriminator directly, so nested multimodal items are still restored.
+    only live inside those. A non-JSON string (plain-text return) and a parsed JSON scalar (`'123'`,
+    `'true'`) are returned as the original string: content is text-only, so a scalar is indistinguishable
+    from a string on the wire and rehydrating it would silently turn `'123'` into `123`. An
+    already-structured (non-string) `content` is validated directly.
     """
     if isinstance(content, str):
         try:
@@ -527,10 +515,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if tool_name is None:  # pragma: no cover
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
-                    # Tool-return files ride inline in `ToolMessage.content` (never a sidecar), so always
-                    # rehydrate: the discriminator runs here (not in a later `ModelMessagesTypeAdapter`
-                    # pass) so multimodal items and structured JSON at any depth come back as their real
-                    # types, mirroring the Vercel adapter. A plain-text/scalar return is left as a string.
+                    # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
+                    # multimodal content comes back as real types; see `_rehydrate_tool_return_content`.
                     content = _rehydrate_tool_return_content(tool_msg.content)
 
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
@@ -719,9 +705,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
                 flush_user_content()
-                # Tool-return files ride inline in `ToolMessage.content` (always, no flag): the content
-                # is JSON already for structured returns, so serializing files into it round-trips
-                # verbatim through any frontend, unlike a sidecar the frontend would have to echo back.
+                # Tool-return files ride inline in `ToolMessage.content` (see `_dump_tool_return_content`).
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
@@ -766,7 +750,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         result: list[Message] = []
         text_content: list[str] = []
         tool_calls_list: list[ToolCall] = []
-        tool_messages: list[Message] = []
+        tool_messages: list[ToolMessage] = []
 
         version = parse_ag_ui_version(ag_ui_version)
         # `ReasoningMessage` is a REASONING_* type (0.1.13+); the `tool_kind` carrier
@@ -829,8 +813,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
                 )
                 if builtin_return := builtin_returns.get(part.tool_call_id):
-                    # Built-in tool-return files also ride inline in `ToolMessage.content` (see the
-                    # non-native `ToolReturnPart` dump above).
+                    # Built-in tool-return files also ride inline in `ToolMessage.content` (see above).
                     tool_messages.append(
                         ToolMessage(
                             id=_new_message_id(),
