@@ -32,7 +32,7 @@ from rich.progress import Progress
 from typing_extensions import Self, TypeVar
 
 from pydantic_ai._spec import build_registry, build_schema_types, load_from_registry
-from pydantic_evals._utils import get_event_loop
+from pydantic_evals._utils import run_until_complete
 
 from . import _task_run
 from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
@@ -324,6 +324,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         if repeat < 1:
             raise ValueError(f'repeat must be >= 1, got {repeat}')
+        if max_concurrency is not None and max_concurrency < 1:
+            raise ValueError(f'max_concurrency must be >= 1, got {max_concurrency}')
 
         task_name = task_name or get_unwrapped_function_name(task)
         name = name or task_name
@@ -455,7 +457,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         Returns:
             A report containing the results of the evaluation.
         """
-        return get_event_loop().run_until_complete(
+        return run_until_complete(
             self.evaluate(
                 task,
                 name=name,
@@ -772,8 +774,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             if not schema_path.is_absolute():
                 schema_ref = str(schema_path)
                 schema_path = path.parent / schema_path
-            elif schema_path.is_relative_to(path):  # pragma: no cover
-                schema_ref = str(_get_relative_path_reference(schema_path, path))
+            elif schema_path.is_relative_to(path.parent):
+                schema_ref = str(_get_relative_path_reference(schema_path, path.parent))
             else:  # pragma: no cover
                 schema_ref = str(schema_path)
             self._save_schema(schema_path, custom_evaluator_types, custom_report_evaluator_types)
@@ -911,7 +913,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             return nxt(self)
 
 
-def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:  # pragma: no cover
+def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') -> Path:
     """Get a relative path reference from source to target.
 
     Recursively resolve a relative path to target from source, adding '..' as needed.
@@ -933,11 +935,11 @@ def _get_relative_path_reference(target: Path, source: Path, _prefix: str = '') 
     # This is useful for creating a relative path reference from a source file to a target file.
     # For example, if source is '/a/b/c.py' and target is '/a/d/e.py', the relative path reference
     # would be '../../d/e.py'.
-    if not target.is_absolute():
-        target = target.resolve()
+    if not target.is_absolute():  # pragma: no branch
+        target = target.resolve()  # pragma: no cover
     try:
         return Path(f'{_prefix}{Path(target).relative_to(source)}')
-    except ValueError:
+    except ValueError:  # pragma: no cover
         return _get_relative_path_reference(target, source.parent, _prefix=f'{_prefix}../')
 
 

@@ -483,7 +483,9 @@ async def test_cache_point_as_first_content_raises_error(allow_model_requests: N
 
     with pytest.raises(
         UserError,
-        match='CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.',
+        match=re.escape(
+            'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.'
+        ),
     ):
         await agent.run([CachePoint(), 'This should fail'])
 
@@ -2915,7 +2917,7 @@ async def test_uploaded_file_wrong_provider(allow_model_requests: None) -> None:
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with AnthropicModel"):
+    with pytest.raises(UserError, match=r"provider_name='openai'.*cannot be used with AnthropicModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='openai')])
 
 
@@ -2929,7 +2931,7 @@ async def test_uploaded_file_unsupported_media_type(allow_model_requests: None) 
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match='Unsupported media type.*audio/mpeg'):
+    with pytest.raises(UserError, match=r'Unsupported media type.*audio/mpeg'):
         await agent.run(
             [
                 'Analyze this file',
@@ -10120,7 +10122,7 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
     )
     agent = Agent(anthropic_model, capabilities=[NativeTool(MemoryTool())])
 
-    with pytest.raises(UserError, match="Native `MemoryTool` requires a 'memory' tool to be defined."):
+    with pytest.raises(UserError, match=re.escape("Native `MemoryTool` requires a 'memory' tool to be defined.")):
         await agent.run('Where do I live?')
 
     class FakeMemoryTool(BetaAbstractMemoryTool):
@@ -10304,7 +10306,7 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
             parts=[
                 ToolSearchReturnPart(
                     content={
-                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
                         'message': 'Found 1 tool',
                     },
                     tool_call_id='search-1',
@@ -10386,7 +10388,7 @@ async def test_anthropic_count_tokens_with_tool_search_replay(
             parts=[
                 ToolSearchReturnPart(
                     content={
-                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
                         'message': 'Found 1 tool',
                     },
                     tool_call_id='search-1',

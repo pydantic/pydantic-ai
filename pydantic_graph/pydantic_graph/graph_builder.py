@@ -307,9 +307,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             inferred_name = infer_obj_name(self, depth=2)
             if inferred_name is not None:  # pragma: no branch
                 self.name = inferred_name
-        return _utils.get_event_loop().run_until_complete(
-            self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False)
-        )
+        return _utils.run_until_complete(self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False))
 
     @asynccontextmanager
     async def iter(

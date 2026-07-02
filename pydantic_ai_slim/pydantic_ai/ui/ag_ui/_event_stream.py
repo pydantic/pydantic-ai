@@ -42,6 +42,7 @@ from ._utils import (
     INTERRUPTS_VERSION,
     REASONING_VERSION,
     parse_ag_ui_version,
+    tool_kind_encrypted_value,
 )
 
 try:
@@ -134,9 +135,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
-        # The `outcome` field on `RunFinishedEvent` only exists in ag-ui-protocol >= 0.1.19,
-        # and `ConfiguredBaseModel` forbids extra fields. So we branch instead of passing
-        # `outcome=None` on the old path.
+        # `RunFinishedEvent.outcome` only exists in ag-ui-protocol >= 0.1.19. `ConfiguredBaseModel`
+        # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
+        # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
+        # to omit it entirely.
         if HAS_INTERRUPTS:
             yield RunFinishedEvent(
                 thread_id=self.run_input.thread_id,
@@ -251,6 +253,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield ToolCallStartEvent(
             tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=parent_message_id
         )
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(part.tool_kind)):
+            # Clients echo this back as `ToolCall.encrypted_value`, so `tool_kind` survives
+            # streaming-built histories. The event is 0.1.13+, hence the gated import.
+            from ag_ui.core import ReasoningEncryptedValueEvent
+
+            yield ReasoningEncryptedValueEvent(
+                subtype='tool-call', entity_id=tool_call_id, encrypted_value=encrypted_value
+            )
         if part.args:
             yield ToolCallArgsEvent(tool_call_id=tool_call_id, delta=part.args_as_json_str())
 

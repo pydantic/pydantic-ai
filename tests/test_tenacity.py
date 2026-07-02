@@ -626,9 +626,9 @@ class TestIntegration:
         request = httpx.Request('GET', 'https://example.com')
 
         # Time the request to ensure retry-after wait was respected
-        start_time = asyncio.get_event_loop().time()
+        start_time = asyncio.get_running_loop().time()
         result = await transport.handle_async_request(request)
-        end_time = asyncio.get_event_loop().time()
+        end_time = asyncio.get_running_loop().time()
 
         assert result is mock_response_success
         assert mock_transport.handle_async_request.call_count == 2
