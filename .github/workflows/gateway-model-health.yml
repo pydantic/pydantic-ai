@@ -24,25 +24,25 @@ jobs:
       CI: true
       PYDANTIC_AI_GATEWAY_API_KEY: ${{ secrets.PYDANTIC_AI_GATEWAY_API_KEY }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: "3.12"
           enable-cache: true
           cache-suffix: gateway-model-health
 
       - name: Install dependencies
-        run: uv sync --all-extras --no-extra outlines-vllm-offline
+        run: uv sync --all-extras
 
       - name: Run gateway model catalog checks
         run: uv run pytest tests/providers/test_gateway_catalog.py -q --run-gateway-live
 
       - name: Notify Slack on failure
         if: failure() && !cancelled()
-        uses: slackapi/slack-github-action@af78098f536edbc4de71162a307590698245be95 # v3.0.1
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
         with:
           errors: true
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}

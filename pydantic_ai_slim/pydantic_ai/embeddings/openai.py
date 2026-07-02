@@ -8,8 +8,8 @@ from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
 from . import OpenAIEmbeddingsCompatibleProvider
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 try:
@@ -97,9 +97,12 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self._provider = provider
-        self._client = provider.client
 
         super().__init__(settings=settings)
+
+    @property
+    def _client(self) -> AsyncOpenAI:
+        return self._provider.client
 
     @property
     def base_url(self) -> str:

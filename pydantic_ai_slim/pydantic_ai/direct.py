@@ -400,20 +400,15 @@ class StreamedResponseSync:
         if self._thread and self._thread.is_alive():
             self._thread.join()
 
-    # TODO (v2): Drop in favor of `response` property
-    def get(self) -> messages.ModelResponse:
-        """Build a ModelResponse from the data received from the stream so far."""
-        return self._ensure_stream_ready().get()
-
     @property
     def response(self) -> messages.ModelResponse:
         """Get the current state of the response."""
-        return self.get()
+        return self._ensure_stream_ready().get()
 
-    # TODO (v2): Make this a property
+    @property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
-        return self._ensure_stream_ready().usage()
+        return self._ensure_stream_ready().usage
 
     @property
     def model_name(self) -> str:

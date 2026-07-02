@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
-from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -30,6 +30,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -64,7 +65,7 @@ def test_tool_plain_with_ctx():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool_plain
-        async def invalid_tool(ctx: RunContext[None]) -> str:  # pragma: no cover
+        async def invalid_tool(ctx: RunContext) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -101,7 +102,7 @@ def test_tool_ctx_second():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool  # pyright: ignore[reportArgumentType]
-        def invalid_tool(x: int, ctx: RunContext[None]) -> str:  # pragma: no cover
+        def invalid_tool(x: int, ctx: RunContext) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -165,9 +166,12 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -204,9 +208,12 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -251,9 +258,12 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -261,7 +271,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
 def test_google_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:  # pragma: no cover
+    def my_tool(x: int) -> str:
         """A function that does something.
 
         Args:
@@ -273,6 +283,7 @@ def test_google_style_with_returns():
         return str(x)
 
     agent.tool_plain(my_tool)
+    assert my_tool(1) == '1'  # exercise the tool body so it doesn't need a no-cover pragma
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
@@ -298,9 +309,12 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -343,9 +357,12 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -394,9 +411,12 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -433,9 +453,12 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -463,9 +486,12 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -511,9 +537,12 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -552,9 +581,12 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -602,9 +634,12 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -620,14 +655,14 @@ def test_init_tool_plain():
         call_args.append(x)
         return x + 1
 
-    agent = Agent('test', tools=[Tool(plain_tool)], retries=7)
+    agent = Agent('test', tools=[Tool(plain_tool)], retries={'tools': 7, 'output': 7})
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
     assert agent._function_toolset.tools['plain_tool'].max_retries == 7
 
-    agent_infer = Agent('test', tools=[plain_tool], retries=7)
+    agent_infer = Agent('test', tools=[plain_tool], retries={'tools': 7, 'output': 7})
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
@@ -641,7 +676,9 @@ def ctx_tool(ctx: RunContext[int], x: int) -> int:
 
 # pyright: reportPrivateUsage=false
 def test_init_tool_ctx():
-    agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
+    agent = Agent(
+        'test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries={'tools': 7, 'output': 7}
+    )
     result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
     assert agent._function_toolset.tools['ctx_tool'].takes_ctx is True
@@ -664,7 +701,7 @@ def test_repeat_tool_by_rename():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def change_tool_name(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -688,7 +725,7 @@ def test_repeat_tool():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def change_tool_name(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -992,9 +1029,12 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -1042,7 +1082,7 @@ def test_json_schema_required_parameters():
     agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], a: int, b: int = 1) -> int:
+    def my_tool(ctx: RunContext, a: int, b: int = 1) -> int:
         raise NotImplementedError
 
     @agent.tool_plain
@@ -1069,9 +1109,12 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
             {
                 'description': None,
@@ -1089,9 +1132,12 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
         ]
     )
@@ -1119,7 +1165,7 @@ def test_call_tool_without_unrequired_parameters():
         return None
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], a: int, b: int = 2) -> int:
+    def my_tool(ctx: RunContext, a: int, b: int = 2) -> int:
         return a + b
 
     @agent.tool_plain
@@ -1182,9 +1228,12 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
             {
                 'description': None,
@@ -1201,9 +1250,12 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
-                'prefer_builtin': None,
+                'unless_native': None,
+                'with_native': None,
+                'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
         ]
     )
@@ -1243,24 +1295,27 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
-            'prefer_builtin': None,
+            'unless_native': None,
+            'with_native': None,
+            'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
 
 def test_dynamic_tools_agent_wide():
-    async def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
-            return None
+            return []
         elif ctx.deps == 21:
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool
     def foobar(ctx: RunContext[int], x: int, y: str) -> str:
@@ -1283,12 +1338,12 @@ def test_dynamic_tools_agent_wide():
 
 
 def test_sync_prepare_tools_agent_wide():
-    def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         if ctx.deps == 42:
             return []
         return tool_defs
 
-    agent = Agent('test', deps_type=int, prepare_tools=prepare_tool_defs)
+    agent = Agent('test', deps_type=int, capabilities=[PrepareTools(prepare_tool_defs)])
 
     @agent.tool_plain
     def foobar(x: int) -> str:
@@ -1318,7 +1373,7 @@ def test_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1347,7 +1402,7 @@ def test_function_tool_from_schema_with_ctx():
     assert pydantic_tool.takes_ctx is True
     assert pydantic_tool.function_schema.takes_ctx is True
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0, deps_type=str)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0}, deps_type=str)
     result = agent.run_sync('foobar', deps='Hello, ')
     assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is True
@@ -1369,7 +1424,7 @@ def test_function_tool_inconsistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
     with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
         agent.run_sync('foobar')
 
@@ -1394,7 +1449,7 @@ def test_async_function_tool_consistent_with_schema():
     }
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
-    agent = Agent('test', tools=[pydantic_tool], retries=0)
+    agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
@@ -1410,15 +1465,15 @@ def test_tool_retries():
     call_max_retries: list[int] = []
     call_last_attempt: list[bool] = []
 
-    async def prepare_tool_defs(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal prepare_tools_retries
         retry = ctx.retries.get('infinite_retry_tool', 0)
         prepare_tools_retries.append(retry)
         return tool_defs
 
-    agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
+    agent = Agent(TestModel(), retries={'tools': 3, 'output': 3}, capabilities=[PrepareTools(prepare_tool_defs)])
 
-    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
         prepare_retries.append(ctx.retry)
         prepare_max_retries.append(ctx.max_retries)
@@ -1426,7 +1481,7 @@ def test_tool_retries():
         return tool_def
 
     @agent.tool(retries=5, prepare=prepare_tool_def)
-    def infinite_retry_tool(ctx: RunContext[None]) -> int:
+    def infinite_retry_tool(ctx: RunContext) -> int:
         nonlocal call_retries
         call_retries.append(ctx.retry)
         call_max_retries.append(ctx.max_retries)
@@ -1478,7 +1533,7 @@ def test_tool_raises_approval_required():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -1504,6 +1559,7 @@ def test_tool_raises_approval_required():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
@@ -1511,6 +1567,7 @@ def test_tool_raises_approval_required():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1523,6 +1580,7 @@ def test_tool_raises_approval_required():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -1530,6 +1588,7 @@ def test_tool_raises_approval_required():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1565,7 +1624,7 @@ def test_approval_required_with_user_prompt():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -1626,7 +1685,7 @@ def test_approval_required_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
@@ -1691,7 +1750,7 @@ def test_approval_required_without_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired  # No metadata
         return x * 42
@@ -1730,17 +1789,17 @@ def test_mixed_deferred_tools_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def tool_a(ctx: RunContext[None], x: int) -> int:
+    def tool_a(ctx: RunContext, x: int) -> int:
         raise CallDeferred(metadata={'type': 'external', 'priority': 'high'})
 
     @agent.tool
-    def tool_b(ctx: RunContext[None], y: int) -> int:
+    def tool_b(ctx: RunContext, y: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(metadata={'reason': 'Needs approval', 'level': 'manager'})
         return y * 10
 
     @agent.tool
-    def tool_c(ctx: RunContext[None], z: int) -> int:
+    def tool_c(ctx: RunContext, z: int) -> int:
         raise CallDeferred  # No metadata
 
     result = agent.run_sync('Hello')
@@ -1897,6 +1956,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -1912,6 +1972,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1952,6 +2013,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -1992,6 +2054,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2007,6 +2070,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2047,6 +2111,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2076,6 +2141,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2083,6 +2149,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2117,6 +2184,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2124,6 +2192,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2139,6 +2208,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2154,6 +2224,7 @@ def test_parallel_tool_return_with_deferred():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2231,7 +2302,7 @@ def test_deferred_tool_call_approved_fails():
 
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
-    async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=defer)
@@ -2318,7 +2389,7 @@ async def test_approval_required_toolset():
                 ]
             )
 
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset()
 
     @toolset.tool_plain
     def foo(x: int) -> int:
@@ -2345,6 +2416,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2356,6 +2428,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2368,6 +2441,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2400,6 +2474,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -2411,6 +2486,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2423,6 +2499,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2442,6 +2519,7 @@ async def test_approval_required_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
@@ -2449,6 +2527,7 @@ async def test_approval_required_toolset():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2516,7 +2595,7 @@ def test_tool_metadata():
     """Test that metadata is properly set on tools."""
     metadata = {'category': 'test', 'version': '1.0'}
 
-    def simple_tool(ctx: RunContext[None], x: int) -> int:
+    def simple_tool(ctx: RunContext, x: int) -> int:
         return x * 2  # pragma: no cover
 
     tool = Tool(simple_tool, metadata=metadata)
@@ -2527,7 +2606,7 @@ def test_tool_metadata():
     agent = Agent('test')
 
     @agent.tool(metadata={'source': 'agent'})
-    def agent_tool(ctx: RunContext[None], y: int) -> int:
+    def agent_tool(ctx: RunContext, y: int) -> int:
         return y + 1  # pragma: no cover
 
     agent_tool_def = agent._function_toolset.tools['agent_tool']
@@ -2552,14 +2631,14 @@ def test_tool_metadata():
     assert toolset_plain_tool_def.metadata == {'foo': 'bar'}
 
     @toolset.tool(metadata={'toolset': 'function'})
-    def toolset_tool(ctx: RunContext[None], a: str) -> str:
+    def toolset_tool(ctx: RunContext, a: str) -> str:
         return a.upper()  # pragma: no cover
 
     toolset_tool_def = toolset.tools['toolset_tool']
     assert toolset_tool_def.metadata == {'foo': 'bar', 'toolset': 'function'}
 
     # Test with FunctionToolset.add_function
-    def standalone_func(ctx: RunContext[None], b: float) -> float:
+    def standalone_func(ctx: RunContext, b: float) -> float:
         return b / 2  # pragma: no cover
 
     toolset.add_function(standalone_func, metadata={'method': 'add_function'})
@@ -2569,10 +2648,10 @@ def test_tool_metadata():
 
 def test_retry_tool_until_last_attempt():
     model = TestModel()
-    agent = Agent(model, retries=2)
+    agent = Agent(model, retries={'tools': 2, 'output': 2})
 
     @agent.tool
-    def always_fail(ctx: RunContext[None]) -> str:
+    def always_fail(ctx: RunContext) -> str:
         if ctx.last_attempt:
             return 'I guess you never learn'
         else:
@@ -2591,13 +2670,16 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2610,13 +2692,16 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=62, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2629,13 +2714,16 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=72, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2648,13 +2736,16 @@ def test_retry_tool_until_last_attempt():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
                 usage=RequestUsage(input_tokens=77, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -2763,7 +2854,7 @@ async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
     import asyncio
 
-    agent = Agent(TestModel(), retries=2)
+    agent = Agent(TestModel(), retries={'tools': 2, 'output': 2})
 
     call_count = 0
 
@@ -2857,7 +2948,7 @@ async def test_tool_timeout_exceeds_retry_limit():
         # Always try to call the slow tool
         return ModelResponse(parts=[ToolCallPart(tool_name='always_slow_tool', args={}, tool_call_id='call-1')])
 
-    agent = Agent(FunctionModel(model_logic), retries=1)  # Only 1 retry allowed
+    agent = Agent(FunctionModel(model_logic), retries={'tools': 1, 'output': 1})  # Only 1 retry allowed
 
     @agent.tool_plain(timeout=0.05)
     async def always_slow_tool() -> str:
@@ -2963,7 +3054,10 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
         is_called.set()
 
         try:
-            await asyncio.sleep(1.0)
+            # Block until cancelled instead of sleeping a fixed duration: a sleep that races the
+            # `wait_for` timeouts below is flaky under CI load — if the loop is starved past the
+            # sleep, the tool returns normally and `is_cancelled` is never set.
+            await asyncio.Event().wait()
 
         except asyncio.CancelledError:
             is_cancelled.set()
@@ -2974,13 +3068,14 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
             await agent.run('call tool')
 
         else:
-            async for _ in agent.run_stream_events('call tool'):
-                pass
+            async with agent.run_stream_events('call tool') as event_stream:
+                async for _ in event_stream:
+                    pass
 
     task = asyncio.create_task(run_agent())
-    await asyncio.wait_for(is_called.wait(), timeout=1.0)
+    await asyncio.wait_for(is_called.wait(), timeout=10)
     task.cancel()
-    await asyncio.wait_for(is_cancelled.wait(), timeout=1.0)
+    await asyncio.wait_for(is_cancelled.wait(), timeout=10)
 
 
 def test_tool_approved_with_metadata():
@@ -3004,7 +3099,7 @@ def test_tool_approved_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
@@ -3059,7 +3154,7 @@ def test_tool_approved_with_metadata_and_override_args():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired()
         # Capture both the metadata and the argument
@@ -3112,7 +3207,7 @@ def test_tool_approved_without_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired()
         # Capture the tool_call_metadata from context
@@ -3142,7 +3237,7 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     agent = Agent(TestModel())
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         # Capture the tool_call_metadata from context
         received_metadata.append(ctx.tool_call_metadata)
         return x * 42
@@ -3181,6 +3276,7 @@ def test_args_validator_success():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3191,7 +3287,9 @@ def test_args_validator_success():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3204,13 +3302,16 @@ def test_args_validator_success():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3259,6 +3360,7 @@ async def test_args_validator_async():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3269,7 +3371,9 @@ async def test_args_validator_async():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3282,13 +3386,16 @@ async def test_args_validator_async():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3346,6 +3453,7 @@ def test_args_validator_tool_direct():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3356,7 +3464,9 @@ def test_args_validator_tool_direct():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3369,13 +3479,16 @@ def test_args_validator_tool_direct():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3411,6 +3524,7 @@ def test_args_validator_toolset():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3421,7 +3535,9 @@ def test_args_validator_toolset():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3434,13 +3550,16 @@ def test_args_validator_toolset():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3473,6 +3592,7 @@ def test_args_validator_tool_plain():
                 parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3483,7 +3603,9 @@ def test_args_validator_tool_plain():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3496,13 +3618,16 @@ def test_args_validator_tool_plain():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3728,6 +3853,169 @@ def test_args_validator_not_double_called_for_approved_tools():
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
 
 
+def test_args_validator_single_base_model_arg():
+    """`args_validator` works when a tool has a single BaseModel parameter.
+
+    The tool's JSON schema is the BaseModel's fields directly (unwrapped), but the validated
+    args dict remains keyed by parameter name so `args_validator_func(ctx, **args)` unpacks correctly.
+    """
+
+    class MyArgs(BaseModel):
+        x: int
+        y: int
+
+    validator_calls: list[MyArgs] = []
+
+    def my_validator(ctx: RunContext[int], argument: MyArgs) -> None:
+        validator_calls.append(argument)
+
+    agent = Agent(TestModel(), deps_type=int)
+
+    @agent.tool(args_validator=my_validator)
+    def add_numbers(ctx: RunContext[int], argument: MyArgs) -> int:
+        return argument.x + argument.y
+
+    agent.run_sync('call add_numbers', deps=42)
+    assert len(validator_calls) == 1
+    assert isinstance(validator_calls[0], MyArgs)
+
+
+def test_single_base_model_arg_validator_accepts_wrapped_input():
+    """The single-BaseModel-arg validator also accepts already-wrapped `{name: value}` input.
+
+    This shape arises when previously-validated args are serialized out (e.g. through Temporal's
+    activity boundary) and then re-validated with the same schema.
+    """
+
+    class Payload(BaseModel):
+        city: str
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    raw = validator.validate_python({'city': 'Mexico City'})
+    wrapped = validator.validate_python({'argument': {'city': 'Mexico City'}})
+    assert raw == wrapped == {'argument': Payload(city='Mexico City')}
+
+
+def test_single_base_model_arg_validator_keeps_same_named_model_field():
+    """When the model has a field named like the parameter, unwrapped input is validated as-is.
+
+    `{argument: {...}}` here is genuine unwrapped input setting the `argument` field, not a wrapper
+    envelope, so it must not be unwrapped a second time.
+    """
+
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'count': 1}}) == {'argument': Payload(argument={'count': 1})}
+
+
+def test_single_base_model_arg_validator_unwraps_round_tripped_same_named_field():
+    """A model with a field named like the parameter still round-trips the already-wrapped shape.
+
+    When previously-validated args (`{argument: Payload(...)}`) are serialized out and re-validated
+    (e.g. across a Temporal activity boundary), the validator sees `{argument: {argument: ...}}`. The
+    unwrapped interpretation fails validation, so it falls back to unwrapping the envelope — keeping
+    validation idempotent even when the parameter name collides with a field name.
+    """
+
+    class Payload(BaseModel):
+        argument: dict[str, int]
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.argument)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    assert validator.validate_python({'argument': {'argument': {'count': 1}}}) == {
+        'argument': Payload(argument={'count': 1})
+    }
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_field_alias():
+    """Unwrapped input validates when the model's only field uses the parameter name as its alias.
+
+    `argument` is not a field *name*, but it is the field's validation alias, so it's a key the model
+    accepts and the input must be validated as-is rather than unwrapped as an envelope. This includes
+    the case where the field has a default and a dict value, where unwrapping would silently drop it.
+    """
+
+    class Inner(BaseModel):
+        x: int = 0
+
+    class Payload(BaseModel):
+        data: Inner = Field(alias='argument', default_factory=Inner)
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return str(argument.data.x)
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    expected = Payload.model_validate({'argument': {'x': 5}})
+    assert validator.validate_python({'argument': {'x': 5}}) == {'argument': expected}
+
+
+def test_single_base_model_arg_validator_accepts_parameter_named_alias_choice():
+    """A parameter name matching one of a field's `AliasChoices` is also recognized as a model key."""
+
+    class Payload(BaseModel):
+        city: str = Field(validation_alias=AliasChoices('argument', 'town'))
+
+    def my_tool(argument: Payload) -> str:  # pragma: no cover
+        return argument.city
+
+    tool = Tool(my_tool)
+    validator = tool.function_schema.validator
+
+    expected = Payload.model_validate({'argument': 'Mexico City'})
+    assert validator.validate_python({'argument': 'Mexico City'}) == {'argument': expected}
+
+
+def test_single_base_model_arg_tool_call_accepts_wrapped_input_with_defaults():
+    class Payload(BaseModel):
+        name: str = 'default_name'
+        value: int = 0
+
+    calls = 0
+    received: list[Payload] = []
+
+    async def model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'argument': {'name': 'actual_name', 'value': 42}},
+                        tool_call_id='call-1',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    def my_tool(argument: Payload) -> str:
+        received.append(argument)
+        return 'ok'
+
+    result = Agent(FunctionModel(model), tools=[my_tool]).run_sync('go')
+
+    assert result.output == 'done'
+    assert received == [Payload(name='actual_name', value=42)]
+
+
 def test_tool_ctx_agent():
     """ctx.agent gives tools access to the running agent's properties."""
     agent = Agent('test', name='my_agent', output_type=int)
@@ -3735,7 +4023,7 @@ def test_tool_ctx_agent():
     tool_output_types: list[Any] = []
 
     @agent.tool
-    def get_agent_info(ctx: RunContext[None]) -> str:
+    def get_agent_info(ctx: RunContext) -> str:
         assert ctx.agent is not None
         tool_agent_names.append(ctx.agent.name)
         tool_output_types.append(ctx.agent.output_type)
@@ -3751,13 +4039,16 @@ def test_tool_ctx_agent():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_agent_info', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3770,13 +4061,16 @@ def test_tool_ctx_agent():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'response': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3789,6 +4083,7 @@ def test_tool_ctx_agent():
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3800,7 +4095,7 @@ def test_tool_ctx_agent_in_output_validator():
     validator_agent_names: list[str | None] = []
 
     @agent.output_validator
-    def check_agent(ctx: RunContext[None], output: str) -> str:
+    def check_agent(ctx: RunContext, output: str) -> str:
         assert ctx.agent is not None
         validator_agent_names.append(ctx.agent.name)
         return output
@@ -3813,13 +4108,16 @@ def test_tool_ctx_agent_in_output_validator():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )

@@ -1,4 +1,4 @@
-# Built-in Evaluators
+# Native Evaluators
 
 Pydantic Evals provides several built-in evaluators for common evaluation tasks.
 
@@ -411,7 +411,7 @@ dataset = Dataset(
 
 ---
 
-## Built-in Report Evaluators
+## Native Report Evaluators
 
 In addition to the case-level evaluators above, Pydantic Evals provides report evaluators that
 analyze entire experiment results. These are passed via the `report_evaluators` parameter on `Dataset`.

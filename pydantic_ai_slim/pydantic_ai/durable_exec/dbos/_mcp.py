@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from pydantic_ai.mcp import ToolResult
 
 
-class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
+class DBOSMCPToolsetBase(WrapperToolset[AgentDepsT], ABC):
     """A wrapper for MCP toolset that integrates with DBOS, turning call_tool and get_tools to DBOS steps."""
 
     def __init__(
@@ -42,7 +42,7 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
             ctx: RunContext[AgentDepsT],
         ) -> dict[str, ToolDefinition]:
             # Need to return a serializable dict, so we cannot return ToolsetTool directly.
-            tools = await super(DBOSMCPToolset, self).get_tools(ctx)
+            tools = await super(DBOSMCPToolsetBase, self).get_tools(ctx)
             # ToolsetTool is not serializable as it holds a SchemaValidator (which is also the same for every MCP tool so unnecessary to pass along the wire every time),
             # so we just return the ToolDefinitions and wrap them in ToolsetTool outside of the activity.
             return {name: tool.tool_def for name, tool in tools.items()}
@@ -58,7 +58,7 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
             ctx: RunContext[AgentDepsT],
         ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
             async with self.wrapped:
-                return await super(DBOSMCPToolset, self).get_instructions(ctx)
+                return await super(DBOSMCPToolsetBase, self).get_instructions(ctx)
 
         self._dbos_wrapped_get_instructions_step = wrapped_get_instructions_step
 
@@ -73,12 +73,18 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
             ctx: RunContext[AgentDepsT],
             tool: ToolsetTool[AgentDepsT],
         ) -> ToolResult:
-            return await super(DBOSMCPToolset, self).call_tool(name, tool_args, ctx, tool)
+            return await super(DBOSMCPToolsetBase, self).call_tool(name, tool_args, ctx, tool)
 
         self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
 
     @abstractmethod
     def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def _cache_tools(self) -> bool:
+        """Whether the wrapped MCP server/toolset has tool-definition caching enabled."""
         raise NotImplementedError
 
     @property
@@ -100,7 +106,17 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
         return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        # The cache lives on the run (`ctx._mcp_tool_defs_cache`), recreated per run and reconstructed
+        # identically on recovery, so whether the get_tools step is invoked depends only on the
+        # workflow's own progress. Caching on the process-shared instance instead would make that
+        # depend on what earlier runs warmed in the worker, shifting recorded step order on recovery.
+        cache_key = self.id or ''
+        if self._cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
+            return {name: self.tool_for_tool_def(tool_def) for name, tool_def in cached.items()}
+
         tool_defs = await self._dbos_wrapped_get_tools_step(ctx)
+        if self._cache_tools:
+            ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
     async def get_instructions(
@@ -111,21 +127,13 @@ class DBOSMCPToolset(WrapperToolset[AgentDepsT], ABC):
         if result is not None:
             return result
         # If instructions are enabled but the server isn't initialized locally, fetch via step.
-        _mcp_types: tuple[type, ...] = ()
         try:
-            from pydantic_ai.mcp import MCPServer
-
-            _mcp_types += (MCPServer,)
+            from pydantic_ai.mcp import MCPToolset
         except ImportError:
             pass
-        try:
-            from pydantic_ai.toolsets.fastmcp import FastMCPToolset
-
-            _mcp_types += (FastMCPToolset,)
-        except ImportError:
-            pass
-        if _mcp_types and isinstance(self.wrapped, _mcp_types) and self.wrapped.include_instructions:  # type: ignore[union-attr]
-            return await self._dbos_wrapped_get_instructions_step(ctx)
+        else:
+            if isinstance(self.wrapped, MCPToolset) and self.wrapped.include_instructions:
+                return await self._dbos_wrapped_get_instructions_step(ctx)
         return None
 
     async def call_tool(
