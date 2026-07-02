@@ -54,7 +54,7 @@ Then running `clai` will start an interactive session where you can chat with th
 | `-a`, `--agent` | Custom agent in `module:variable` format |
 | `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
 | `--no-stream` | Disable streaming from the model |
-| `--mcp-config` | Path to [MCP servers configuration file](mcp/index.md) (JSON, same format as Claude Desktop) |
+| `--mcp-config` | Path to [MCP servers configuration file](mcp/client.md#loading-mcp-toolsets-from-configuration) (JSON, using the same `mcpServers` shape as Claude Desktop, Cursor, and the MCP specification) |
 | `-l`, `--list-models` | List all available models and exit |
 | `--version` | Show version and exit |
 
@@ -70,7 +70,7 @@ clai --model anthropic:claude-sonnet-4-6
 
 ### MCP Servers
 
-You can connect to [MCP servers](mcp/index.md) using the `--mcp-config` flag with a JSON configuration file (same format as [Claude Desktop](https://modelcontextprotocol.io/quickstart/user)):
+You can connect to [MCP servers](mcp/client.md#loading-mcp-toolsets-from-configuration) using the `--mcp-config` flag with a JSON configuration file that uses the same `mcpServers` shape as Claude Desktop, Cursor, and the MCP specification:
 
 ```bash
 clai --mcp-config mcp_servers.json

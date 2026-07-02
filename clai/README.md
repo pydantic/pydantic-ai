@@ -77,7 +77,7 @@ options:
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
   --mcp-config MCP_CONFIG
-                        Path to MCP servers configuration file (JSON, same format as Claude Desktop).
+                        Path to MCP servers configuration file (JSON, using the same mcpServers shape as Claude Desktop, Cursor, and the MCP specification).
 ```
 
 For more information on how to use it, see the [CLI documentation](https://ai.pydantic.dev/cli/).
