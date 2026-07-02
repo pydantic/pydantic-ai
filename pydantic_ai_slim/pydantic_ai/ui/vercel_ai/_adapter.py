@@ -285,6 +285,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         # already does, #5571/#5772): it carries only the requester's own request params and is
                         # dict-validated by the constructors below.
                         vendor_metadata = provider_meta.get('vendor_metadata')
+                        force_download = provider_meta.get('force_download', False)
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError:
@@ -304,19 +305,31 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 match media_type_prefix:
                                     case 'image':
                                         file = ImageUrl(
-                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                            url=part.url,
+                                            media_type=part.media_type,
+                                            force_download=force_download,
+                                            vendor_metadata=vendor_metadata,
                                         )
                                     case 'video':
                                         file = VideoUrl(
-                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                            url=part.url,
+                                            media_type=part.media_type,
+                                            force_download=force_download,
+                                            vendor_metadata=vendor_metadata,
                                         )
                                     case 'audio':
                                         file = AudioUrl(
-                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                            url=part.url,
+                                            media_type=part.media_type,
+                                            force_download=force_download,
+                                            vendor_metadata=vendor_metadata,
                                         )
                                     case _:
                                         file = DocumentUrl(
-                                            url=part.url, media_type=part.media_type, vendor_metadata=vendor_metadata
+                                            url=part.url,
+                                            media_type=part.media_type,
+                                            force_download=force_download,
+                                            vendor_metadata=vendor_metadata,
                                         )
                         else:
                             # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
@@ -993,8 +1006,11 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                         url=item.url,
                         media_type=item.media_type,
                         # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
-                        # Google `video_metadata`); see `FileUrl.vendor_metadata`.
-                        provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                        # Google `video_metadata`) and non-default `force_download`; see `FileUrl`.
+                        provider_metadata=dump_provider_metadata(
+                            force_download=item.force_download or None,
+                            vendor_metadata=item.vendor_metadata,
+                        ),
                     )
                 )
             elif isinstance(item, UploadedFile):

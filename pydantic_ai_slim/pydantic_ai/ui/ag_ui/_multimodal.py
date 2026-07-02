@@ -19,7 +19,7 @@ from ag_ui.core import (
 )
 
 from ..._utils import is_str_dict
-from ...messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
+from ...messages import AudioUrl, BinaryContent, DocumentUrl, ForceDownloadMode, ImageUrl, VideoUrl
 
 _URL_TYPE_MAP: dict[type, type] = {
     ImageUrl: ImageInputContent,
@@ -32,12 +32,18 @@ _URL_TYPE_MAP: dict[type, type] = {
 # `metadata` field, mirroring the `vendor_metadata` key the `UploadedFile` round-trip already
 # uses, so we only ever read back our own value and ignore unrelated client metadata.
 _VENDOR_METADATA_KEY = 'vendor_metadata'
+_FORCE_DOWNLOAD_KEY = 'force_download'
 
 
 def _dump_vendor_metadata(
     item: ImageUrl | AudioUrl | VideoUrl | DocumentUrl | BinaryContent,
 ) -> dict[str, object] | None:
-    return {_VENDOR_METADATA_KEY: item.vendor_metadata} if item.vendor_metadata is not None else None
+    metadata: dict[str, object] = {}
+    if item.vendor_metadata is not None:
+        metadata[_VENDOR_METADATA_KEY] = item.vendor_metadata
+    if isinstance(item, (ImageUrl, AudioUrl, VideoUrl, DocumentUrl)) and item.force_download is not False:
+        metadata[_FORCE_DOWNLOAD_KEY] = item.force_download
+    return metadata or None
 
 
 def media_url_to_multimodal(
@@ -74,17 +80,39 @@ def multimodal_input_to_content(
     # below, matching the Vercel adapter.
     metadata = part.metadata
     vendor_metadata: dict[str, Any] | None = None
+    force_download: ForceDownloadMode = False
     if is_str_dict(metadata):
         vendor_metadata = metadata.get(_VENDOR_METADATA_KEY)
+        force_download = metadata.get(_FORCE_DOWNLOAD_KEY, False)
     if isinstance(source, InputContentUrlSource):
         media_type = source.mime_type or None
         if isinstance(part, ImageInputContent):
-            return ImageUrl(url=source.value, media_type=media_type, vendor_metadata=vendor_metadata)
+            return ImageUrl(
+                url=source.value,
+                media_type=media_type,
+                force_download=force_download,
+                vendor_metadata=vendor_metadata,
+            )
         elif isinstance(part, AudioInputContent):
-            return AudioUrl(url=source.value, media_type=media_type, vendor_metadata=vendor_metadata)
+            return AudioUrl(
+                url=source.value,
+                media_type=media_type,
+                force_download=force_download,
+                vendor_metadata=vendor_metadata,
+            )
         elif isinstance(part, VideoInputContent):
-            return VideoUrl(url=source.value, media_type=media_type, vendor_metadata=vendor_metadata)
+            return VideoUrl(
+                url=source.value,
+                media_type=media_type,
+                force_download=force_download,
+                vendor_metadata=vendor_metadata,
+            )
         else:
-            return DocumentUrl(url=source.value, media_type=media_type, vendor_metadata=vendor_metadata)
+            return DocumentUrl(
+                url=source.value,
+                media_type=media_type,
+                force_download=force_download,
+                vendor_metadata=vendor_metadata,
+            )
     else:
         return BinaryContent(data=b64decode(source.value), media_type=source.mime_type, vendor_metadata=vendor_metadata)
