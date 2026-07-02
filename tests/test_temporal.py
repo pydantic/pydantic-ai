@@ -1789,6 +1789,37 @@ async def test_model_construction_in_workflow_passes_sandbox(
     assert result == expected_model_class
 
 
+# Regression test for the `genai_prices`/`httpx2` passthrough entries in `_workflow_runner`.
+# `ModelResponse.cost()` lazily imports genai-prices on first call; inside a workflow that trips the
+# sandbox unless those modules are passed through (see #6215).
+@workflow.defn
+class CalculateCostInWorkflow:
+    @workflow.run
+    async def run(self) -> float:
+        response = ModelResponse(
+            parts=[TextPart('ok')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+            model_name='claude-sonnet-4-5',
+            provider_name='anthropic',
+        )
+        return float(response.cost().total_price)
+
+
+async def test_response_cost_in_workflow_passes_sandbox(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CalculateCostInWorkflow],
+        workflow_failure_exception_types=[Exception],
+    ):
+        result = await client.execute_workflow(
+            CalculateCostInWorkflow.run,
+            id='calculate_cost_in_workflow',
+            task_queue=TASK_QUEUE,
+        )
+    assert result > 0
+
+
 async def test_temporal_agent():
     assert isinstance(complex_temporal_agent.model, TemporalModel)
     assert complex_temporal_agent.model.wrapped == complex_agent.model
