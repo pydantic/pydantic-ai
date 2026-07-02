@@ -176,9 +176,10 @@ def _ctx(
     tree: SpanTree | SpanTreeRecordingError,
     metrics: dict[str, int | float] | None = None,
 ) -> EvaluatorContext[Any, Any, Any]:
+    inputs: dict[str, Any] = {}  # pyright infers a bare `{}` argument as dict[Unknown, Unknown]
     return EvaluatorContext(
         name='test',
-        inputs={},
+        inputs=inputs,
         metadata=None,
         expected_output=None,
         output=None,
