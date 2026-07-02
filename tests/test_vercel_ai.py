@@ -4979,6 +4979,37 @@ async def test_adapter_dump_load_roundtrip_without_timestamps():
     assert reloaded_messages == original_messages
 
 
+async def test_adapter_dump_load_roundtrip_text_content_metadata():
+    """`TextContent.metadata` (e.g. MCP source attribution) survives the dump/load round-trip (#5679)."""
+    original_messages: list[ModelRequest | ModelResponse] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Hello',
+                        TextContent(content='World', metadata={'source': 'mcp', 'part_id': 'abc123'}),
+                    ]
+                ),
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(original_messages)
+    text_parts = [part for msg in ui_messages for part in msg.parts if isinstance(part, TextUIPart)]
+    assert text_parts[0].provider_metadata is None
+    assert text_parts[1].provider_metadata == {'pydantic_ai': {'metadata': {'source': 'mcp', 'part_id': 'abc123'}}}
+
+    reloaded_messages = VercelAIAdapter.load_messages(ui_messages)
+    _sync_timestamps(original_messages, reloaded_messages)
+    assert reloaded_messages == original_messages
+
+    # A `TextContent` without metadata carries nothing to restore, so it flattens to plain text
+    flattened = VercelAIAdapter.load_messages(
+        VercelAIAdapter.dump_messages([ModelRequest(parts=[UserPromptPart(content=[TextContent(content='Bare')])])])
+    )
+    assert flattened[0].parts[0].content == 'Bare'
+
+
 async def test_adapter_dump_load_roundtrip_with_message_metadata():
     """`timestamp` and application `metadata` survive the dump/load round-trip; server fields don't.
 
@@ -6067,7 +6098,12 @@ async def test_convert_user_prompt_part_text_content():
     part = UserPromptPart(content=['Just some text', TextContent(content='More text', metadata={'key': 'value'})])
     ui_parts = _convert_user_prompt_part(part)
     assert ui_parts == snapshot(
-        [TextUIPart(text='Just some text', state='done'), TextUIPart(text='More text', state='done')]
+        [
+            TextUIPart(text='Just some text', state='done'),
+            TextUIPart(
+                text='More text', state='done', provider_metadata={'pydantic_ai': {'metadata': {'key': 'value'}}}
+            ),
+        ]
     )
 
 

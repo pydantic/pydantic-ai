@@ -278,7 +278,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 user_prompt_content: str | list[UserContent] = []
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
-                        user_prompt_content.append(part.text)
+                        # Restoring client-supplied `TextContent.metadata` is intentional, like
+                        # `vendor_metadata` below (#5571/#5772): it carries only data the requester
+                        # attached to their own prompt, and `TextContent.metadata` is typed `Any`.
+                        metadata = load_provider_metadata(part.provider_metadata).get('metadata')
+                        if metadata is not None:
+                            user_prompt_content.append(TextContent(content=part.text, metadata=metadata))
+                        else:
+                            user_prompt_content.append(part.text)
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
@@ -976,7 +983,15 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
             elif isinstance(item, TextContent):
-                ui_parts.append(TextUIPart(text=item.content, state='done'))
+                ui_parts.append(
+                    TextUIPart(
+                        text=item.content,
+                        state='done',
+                        # Round-trip `TextContent.metadata` (e.g. MCP source attribution);
+                        # see `TextContent.metadata` and #5679.
+                        provider_metadata=dump_provider_metadata(metadata=item.metadata),
+                    )
+                )
             elif isinstance(item, BinaryContent):
                 ui_parts.append(
                     FileUIPart(
