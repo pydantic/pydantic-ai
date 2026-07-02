@@ -5074,19 +5074,23 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
 
     agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
+    # `sleep(0)` yields to the event loop while each context is open, so an eager-start regression would
+    # get a chance to schedule its background task and set `producer_started` before we assert it didn't.
     async with agent.run_stream_events(''):
-        pass
+        await asyncio.sleep(0)
 
     empty_context = agent.run_stream_events('')
     await empty_context.__aexit__(None, None, None)
 
     context = agent.run_stream_events('')
     await context.__aenter__()
+    await asyncio.sleep(0)
     await context.__aexit__(None, None, None)
     await context.__aexit__(None, None, None)
 
     reentered_context = agent.run_stream_events('')
     await reentered_context.__aenter__()
+    await asyncio.sleep(0)
     with pytest.raises(RuntimeError, match='cannot be entered more than once'):
         await reentered_context.__aenter__()
     await reentered_context.__aexit__(None, None, None)
@@ -5101,8 +5105,9 @@ async def test_run_stream_events_first_iteration_starts_background_task():
     agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
     async with agent.run_stream_events('') as events:
-        await anext(events)
-        await asyncio.wait_for(producer_started.wait(), timeout=1.0)
+        # Time out the first iteration itself so a lazy-start regression fails fast instead of hanging here.
+        await asyncio.wait_for(anext(events), timeout=1.0)
+        assert producer_started.is_set()
 
 
 async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
