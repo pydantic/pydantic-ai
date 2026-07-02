@@ -49,6 +49,7 @@ from pydantic_ai import (
     capture_run_messages,
     models,
 )
+from pydantic_ai import _utils
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
 from pydantic_ai.agent import AgentRun
@@ -289,6 +290,52 @@ def test_streamed_text_sync_response():
             tool_calls=1,
         )
     )
+
+
+async def test_run_stream_sync_rejects_running_event_loop():
+    """`run_stream_sync` drives its own event loop, so it must refuse to run inside an existing one."""
+    agent = Agent(TestModel())
+    with pytest.raises(RuntimeError, match='Cannot use `run_stream_sync` from within an async context'):
+        agent.run_stream_sync('Hello')
+
+
+def test_run_stream_sync_rejects_disabled_threads():
+    """When threads are disabled (e.g. emscripten or Temporal), the dedicated-thread portal can't be used."""
+    agent = Agent(TestModel())
+    with _utils.disable_threads():
+        with pytest.raises(RuntimeError, match='runs the stream on a dedicated event-loop thread'):
+            agent.run_stream_sync('Hello')
+
+
+def test_run_stream_sync_tears_down_on_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch):
+    """A Ctrl-C while blocked on the portal cancels the run instead of leaking tasks/sockets (#5975)."""
+    agent = Agent(TestModel())
+    result = agent.run_stream_sync('Hello')
+    assert result._finalizer.alive  # pyright: ignore[reportPrivateUsage]
+
+    # Simulate the interrupt landing in the calling thread while it's blocked on the portal: the first
+    # `portal.call` (the `get_output` below) raises, later ones (the teardown) behave normally.
+    portal = result._portal  # pyright: ignore[reportPrivateUsage]
+    original_call = portal.call
+    calls = 0
+
+    def interrupt_first_call(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise KeyboardInterrupt
+        return original_call(*args, **kwargs)
+
+    monkeypatch.setattr(portal, 'call', interrupt_first_call)
+
+    with pytest.raises(KeyboardInterrupt):
+        result.get_output()
+
+    # The run was torn down as part of handling the interrupt: the finalizer is disarmed and the portal
+    # thread is stopped, so no pending tasks or sockets are left running until GC.
+    assert not result._finalizer.alive  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError):  # the portal has stopped, so it rejects further calls
+        original_call(asyncio.sleep, 0)
 
 
 async def test_streamed_structured_response():

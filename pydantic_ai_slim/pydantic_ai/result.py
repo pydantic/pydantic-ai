@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import AbstractAsyncContextManager, AbstractContextManager, aclosing, asynccontextmanager, suppress
@@ -14,7 +15,7 @@ import anyio.streams.memory
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
 from pydantic import ValidationError
-from typing_extensions import Self, TypeVar
+from typing_extensions import Self, TypeVar, TypeVarTuple, Unpack
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
@@ -50,6 +51,7 @@ __all__ = (
 
 
 T = TypeVar('T')
+_PosArgsT = TypeVarTuple('_PosArgsT')
 """An invariant TypeVar."""
 
 
@@ -781,6 +783,21 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     _streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]
 
     def __init__(self, run_stream_cm: AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]) -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                'Cannot use `run_stream_sync` from within an async context or a running event loop; '
+                'use `run_stream` instead.'
+            )
+        if _utils._disable_threads.get():  # pyright: ignore[reportPrivateUsage]
+            raise RuntimeError(
+                '`run_stream_sync` runs the stream on a dedicated event-loop thread, which is unavailable '
+                'in this environment (e.g. emscripten or a Temporal workflow); use `run_stream` instead.'
+            )
+
         captured: list[otel_context.Context] = []
         portal_cm = start_blocking_portal()
         portal = portal_cm.__enter__()
@@ -809,11 +826,29 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        self._shutdown((exc_type, exc_val, exc_tb))
+
+    def _shutdown(
+        self, exc_info: tuple[type[BaseException] | None, BaseException | None, TracebackType | None]
+    ) -> None:
         # `detach()` disarms the finalizer (returning true iff it was still live), guarding against a
-        # double shutdown from an explicit `with` block plus a later GC. Propagate the block's exception
-        # into the `run_stream()` context manager so it can tear the stream down correctly.
+        # double shutdown from an explicit `with` block, a Ctrl-C teardown, and a later GC. Propagate the
+        # exception into the `run_stream()` context manager so it can tear the stream down correctly.
         if self._finalizer.detach() is not None:
-            _shutdown_portal(self._portal_cm, self._stream_cm, (exc_type, exc_val, exc_tb))
+            _shutdown_portal(self._portal_cm, self._stream_cm, exc_info)
+
+    def _call(self, func: Callable[[Unpack[_PosArgsT]], Awaitable[T]], *args: Unpack[_PosArgsT]) -> T:
+        """Run `func` in the portal, tearing the run down if the caller is interrupted while it blocks.
+
+        Without this, a `KeyboardInterrupt` (Ctrl-C) or `SystemExit` landing while we're blocked on the
+        portal would unwind the caller while leaving the agent graph's pending tasks and open sockets
+        running on the portal thread until garbage collection. See #5975.
+        """
+        try:
+            return self._portal.call(func, *args)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            self._shutdown((type(exc), exc, exc.__traceback__))
+            raise
 
     async def _run_with_otel_context(self, func: Callable[[], Awaitable[T]]) -> T:
         """Run `func` in a portal task with the run span's OTel context attached (see `_capture_otel_context`)."""
@@ -856,7 +891,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         try:
             while True:
                 try:
-                    yield self._portal.call(receive_stream.receive)
+                    yield self._call(receive_stream.receive)
                 except anyio.EndOfStream:
                     break
             # Stream exhausted normally: surface any error raised inside the pump task.
@@ -981,7 +1016,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
-        return self._portal.call(self._run_with_otel_context, self._streamed_run_result.get_output)
+        return self._call(self._run_with_otel_context, self._streamed_run_result.get_output)
 
     @property
     def response(self) -> _messages.ModelResponse:
@@ -1019,7 +1054,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
-        return self._portal.call(
+        return self._call(
             self._run_with_otel_context,
             lambda: self._streamed_run_result.validate_response_output(message, allow_partial=allow_partial),
         )
