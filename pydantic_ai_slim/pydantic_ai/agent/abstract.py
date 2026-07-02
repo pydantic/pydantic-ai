@@ -940,8 +940,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
 
-        This is a convenience method that wraps [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] with `loop.run_until_complete(...)`.
+        This is a convenience method that wraps [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream],
+        running all of the agent's async work on a dedicated event loop thread.
         You therefore can't use this method inside async code or if there's an active event loop.
+
+        The returned [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] is a synchronous
+        context manager and should be used with a `with` block so the stream and event loop thread are
+        cleaned up when you're done.
 
         This method builds an internal agent graph (using system prompts, tools and output schemas) and then
         runs the graph until the model produces output matching the `output_type`, for example text or structured data.
@@ -960,9 +965,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         agent = Agent('openai:gpt-5.2')
 
         def main():
-            response = agent.run_stream_sync('What is the capital of the UK?')
-            print(response.get_output())
-            #> The capital of the UK is London.
+            with agent.run_stream_sync('What is the capital of the UK?') as response:
+                print(response.get_output())
+                #> The capital of the UK is London.
         ```
 
         Args:
@@ -1000,8 +1005,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        async def _consume_stream():
-            async with self.run_stream(
+        return result.StreamedRunResultSync(
+            self.run_stream(
                 user_prompt,
                 output_type=output_type,
                 message_history=message_history,
@@ -1014,16 +1019,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 usage=usage,
                 metadata=metadata,
                 retries=retries,
-                infer_name=infer_name,
+                infer_name=False,
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 spec=spec,
-            ) as stream_result:
-                yield stream_result
-
-        async_result = _utils.run_until_complete(anext(_consume_stream()))
-        return result.StreamedRunResultSync(async_result)
+            )
+        )
 
     @overload
     def run_stream_events(

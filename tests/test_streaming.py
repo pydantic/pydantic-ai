@@ -3294,8 +3294,13 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
         new_message_index=0,
         run_result=run_result,
     )
-    sync_result = StreamedRunResultSync(streamed)
-    assert sync_result.metadata == {'sync': 'metadata'}
+
+    @asynccontextmanager
+    async def run_stream_cm() -> AsyncIterator[StreamedRunResult[None, str]]:
+        yield streamed
+
+    with StreamedRunResultSync(run_stream_cm()) as sync_result:
+        assert sync_result.metadata == {'sync': 'metadata'}
 
 
 async def test_iter_stream_response():

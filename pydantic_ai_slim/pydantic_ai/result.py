@@ -1,15 +1,20 @@
 from __future__ import annotations as _annotations
 
+import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
-from contextlib import aclosing
+from contextlib import AbstractAsyncContextManager, AbstractContextManager, aclosing, asynccontextmanager, suppress
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 import anyio
+import anyio.streams.memory
+from anyio.from_thread import BlockingPortal, start_blocking_portal
+from opentelemetry import context as otel_context
 from pydantic import ValidationError
-from typing_extensions import TypeVar
+from typing_extensions import Self, TypeVar
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
@@ -720,14 +725,150 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         return False  # pragma: no cover -- only reachable via wrap_run short-circuit (no stream)
 
 
-@dataclass(init=False)
+@asynccontextmanager
+async def _capture_otel_context(
+    cm: AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]],
+    captured: list[otel_context.Context],
+) -> AsyncGenerator[StreamedRunResult[AgentDepsT, OutputDataT]]:
+    """Enter `cm` and capture the OTel context that's active at its yield point.
+
+    `cm` (the `run_stream()` context manager) opens the agent run span in the task it's entered in.
+    We capture that task's OTel context here so that async operations we later run in *other* portal
+    tasks (streaming, `get_output`, ...) can re-attach it, keeping their child spans parented under
+    the run span and the run span's attributes complete.
+    """
+    async with cm as streamed_run_result:
+        captured.append(otel_context.get_current())
+        yield streamed_run_result
+
+
+def _shutdown_portal(
+    portal_cm: AbstractContextManager[BlockingPortal],
+    stream_cm: AbstractContextManager[StreamedRunResult[Any, Any]],
+    exc_info: tuple[type[BaseException] | None, BaseException | None, TracebackType | None],
+) -> None:
+    """Exit the (portal-held) `run_stream()` context manager, then stop the portal thread."""
+    try:
+        stream_cm.__exit__(*exc_info)
+    finally:
+        portal_cm.__exit__(None, None, None)
+
+
 class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
-    """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods."""
+    """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods.
+
+    All of the run's async work happens in a single dedicated event loop thread (an
+    [`anyio` blocking portal][anyio.from_thread.BlockingPortal]), so cancel scopes entered and exited
+    by the agent graph never straddle tasks, and OpenTelemetry spans stay correctly nested.
+
+    This is a synchronous context manager; the underlying stream and event loop are cleaned up on exit:
+
+    ```python
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5')
+
+    def main():
+        with agent.run_stream_sync('What is the capital of the UK?') as response:
+            print(response.get_output())
+            #> The capital of the UK is London.
+    ```
+
+    Using it without a `with` block also works for backwards compatibility; cleanup then happens when
+    the object is garbage collected.
+    """
 
     _streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]
 
-    def __init__(self, streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]) -> None:
+    def __init__(self, run_stream_cm: AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]) -> None:
+        captured: list[otel_context.Context] = []
+        portal_cm = start_blocking_portal()
+        portal = portal_cm.__enter__()
+        try:
+            stream_cm = portal.wrap_async_context_manager(_capture_otel_context(run_stream_cm, captured))
+            streamed_run_result = stream_cm.__enter__()
+        except BaseException as exc:
+            portal_cm.__exit__(type(exc), exc, exc.__traceback__)
+            raise
+
+        self._portal = portal
+        self._portal_cm = portal_cm
+        self._stream_cm = stream_cm
         self._streamed_run_result = streamed_run_result
+        # The run span's OTel context, captured in the portal task that holds the `run_stream()` CM open.
+        self._otel_context = captured[0]
+        # Clean up if the caller never uses the `with` block: exit the stream and stop the portal at GC.
+        self._finalizer = weakref.finalize(self, _shutdown_portal, portal_cm, stream_cm, (None, None, None))
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        # `detach()` disarms the finalizer (returning true iff it was still live), guarding against a
+        # double shutdown from an explicit `with` block plus a later GC. Propagate the block's exception
+        # into the `run_stream()` context manager so it can tear the stream down correctly.
+        if self._finalizer.detach() is not None:
+            _shutdown_portal(self._portal_cm, self._stream_cm, (exc_type, exc_val, exc_tb))
+
+    async def _run_with_otel_context(self, func: Callable[[], Awaitable[T]]) -> T:
+        """Run `func` in a portal task with the run span's OTel context attached (see `_capture_otel_context`)."""
+        token = otel_context.attach(self._otel_context)
+        try:
+            return await func()
+        finally:
+            otel_context.detach(token)
+
+    async def _pump_to_stream(
+        self, make_aiter: Callable[[], AsyncIterator[T]], send_stream: anyio.streams.memory.MemoryObjectSendStream[T]
+    ) -> None:
+        """Drive `make_aiter()` to completion in a single portal task, forwarding items to `send_stream`.
+
+        Running the whole `async for` in one task keeps the source iterator's cancel scopes (e.g.
+        `group_by_temporal`'s) from being entered and exited in different tasks.
+        """
+        token = otel_context.attach(self._otel_context)
+        try:
+            async with send_stream:
+                aiter = make_aiter()
+                try:
+                    async for item in aiter:
+                        try:
+                            await send_stream.send(item)
+                        except anyio.BrokenResourceError:
+                            # The consumer stopped iterating early and closed the receive end.
+                            return
+                finally:
+                    aclose: Callable[[], Awaitable[None]] | None = getattr(aiter, 'aclose', None)
+                    if aclose is not None:  # pragma: no branch
+                        await aclose()
+        finally:
+            otel_context.detach(token)
+
+    def _stream_sync(self, make_aiter: Callable[[], AsyncIterator[T]]) -> Iterator[T]:
+        send_stream, receive_stream = anyio.create_memory_object_stream[T](max_buffer_size=0)
+        future = self._portal.start_task_soon(self._pump_to_stream, make_aiter, send_stream)
+        try:
+            while True:
+                try:
+                    yield self._portal.call(receive_stream.receive)
+                except anyio.EndOfStream:
+                    break
+            # Stream exhausted normally: surface any error raised inside the pump task.
+            future.result()
+        finally:
+            # Unblock the pump (in case of early exit), then wait for it to finish its own cleanup
+            # (closing the source iterator). Suppress errors raised purely during that teardown
+            # (including the portal already being shut down), matching the async iterator's `aclose`
+            # behavior.
+            with suppress(BaseException):
+                self._portal.call(receive_stream.aclose)
+            with suppress(BaseException):
+                future.result()
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of messages.
@@ -802,7 +943,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the response data.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_output(debounce_by=debounce_by))
+        return self._stream_sync(lambda: self._streamed_run_result.stream_output(debounce_by=debounce_by))
 
     def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
         """Stream the text result as an iterable.
@@ -819,7 +960,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_text(delta=delta, debounce_by=debounce_by))
+        return self._stream_sync(lambda: self._streamed_run_result.stream_text(delta=delta, debounce_by=debounce_by))
 
     def stream_response(self, *, debounce_by: float | None = 0.1) -> Iterator[_messages.ModelResponse]:
         """Stream the response as an iterable of `ModelResponse` snapshots.
@@ -835,11 +976,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of `ModelResponse` snapshots.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_response(debounce_by=debounce_by))
+        return self._stream_sync(lambda: self._streamed_run_result.stream_response(debounce_by=debounce_by))
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
-        return _utils.run_until_complete(self._streamed_run_result.get_output())
+        return self._portal.call(self._run_with_otel_context, self._streamed_run_result.get_output)
 
     @property
     def response(self) -> _messages.ModelResponse:
@@ -877,8 +1018,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
-        return _utils.run_until_complete(
-            self._streamed_run_result.validate_response_output(message, allow_partial=allow_partial)
+        return self._portal.call(
+            self._run_with_otel_context,
+            lambda: self._streamed_run_result.validate_response_output(message, allow_partial=allow_partial),
         )
 
     @property
