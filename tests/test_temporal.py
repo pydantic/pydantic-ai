@@ -1592,6 +1592,84 @@ async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
         assert output == snapshot('INSTRUCTIONS_FOR_STEP_2')
 
 
+# --- DynamicToolset instructions replay determinism (issue #5282) ---
+# The per-run instructions cache lives on a `for_run` copy of the wrapper rather than on the
+# process-shared, module-level instance. A history recorded on one worker must replay on a
+# freshly-constructed (cold) one, proving the `for_run` override reconstructs identically and
+# introduces no `TMPRL1100` nondeterminism.
+
+# A holder lets the replay step swap in a freshly-constructed (cold-process) instance.
+dynamic_instructions_replay_holder: dict[str, TemporalAgent[object, str]] = {}
+
+
+def _make_dynamic_instructions_replay_agent() -> TemporalAgent[object, str]:
+    agent = Agent(FunctionModel(_echo_instructions_after_tool_call), name='dynamic_instructions_replay_agent')
+
+    @agent.toolset(id='replay_instruction_toolset')
+    def _replay_toolset(ctx: RunContext[object]) -> AbstractToolset[object]:
+        toolset = FunctionToolset[object](
+            instructions=f'INSTRUCTIONS_FOR_STEP_{ctx.run_step}', id='step-instruction-toolset'
+        )
+
+        @toolset.tool_plain
+        def noop() -> str:
+            return 'noop'
+
+        return toolset
+
+    return TemporalAgent(agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+dynamic_instructions_replay_holder['agent'] = _make_dynamic_instructions_replay_agent()
+
+
+@workflow.defn
+class DynamicInstructionsReplayWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await dynamic_instructions_replay_holder['agent'].run(prompt)
+        return result.output
+
+
+async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_requests: None, client: Client):
+    """The per-run `for_run` instructions cache must be replay-deterministic (issue #5282).
+
+    Instructions resolved by `get_tools` are held on a per-run `for_run` copy of the wrapper, not
+    on the module-level instance. This records a two-step workflow (instructions differ per step)
+    and replays its history on a freshly-constructed cold instance — the worker-restart scenario —
+    asserting no nondeterminism, so the `for_run` copy is reconstructed identically on replay.
+    """
+    warm = _make_dynamic_instructions_replay_agent()
+    dynamic_instructions_replay_holder['agent'] = warm
+
+    # Unsandboxed so the module-level instance is shared across the run exactly as a long-running
+    # worker process shares it in production.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DynamicInstructionsReplayWorkflow],
+        activities=warm.temporal_activities,
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        wf_id = DynamicInstructionsReplayWorkflow.__name__
+        output = await client.execute_workflow(
+            DynamicInstructionsReplayWorkflow.run, args=['hello'], id=wf_id, task_queue=TASK_QUEUE
+        )
+        assert output == snapshot('INSTRUCTIONS_FOR_STEP_2')
+        history = await client.get_workflow_handle(wf_id).fetch_history()
+
+    # Warm-recorded history replayed on a freshly-constructed cold instance (worker-restart trigger).
+    dynamic_instructions_replay_holder['agent'] = _make_dynamic_instructions_replay_agent()
+    try:
+        await Replayer(
+            workflows=[DynamicInstructionsReplayWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+            data_converter=pydantic_data_converter,
+        ).replay_workflow(history)
+    finally:
+        dynamic_instructions_replay_holder['agent'] = warm
+
+
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset returning an MCPToolset works with Temporal workflows.
 # Uses an HTTP-based MCP server rather than subprocess-based since the subprocess transports
