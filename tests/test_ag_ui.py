@@ -123,7 +123,6 @@ with try_import() as imports_successful:
     from pydantic_ai.ui.ag_ui._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
         detect_ag_ui_version,
-        multi_modal_content_ta,
         parse_ag_ui_version,
     )
 
@@ -4013,139 +4012,37 @@ def test_dump_load_roundtrip_uploaded_file_preserved() -> None:
 
 
 @pytest.mark.parametrize(
-    ('case_id', 'expected_activities'),
+    'case_id',
     [
-        pytest.param(
-            'single-image',
-            snapshot(
-                [
-                    {
-                        'id': IsStr(),
-                        'role': 'activity',
-                        'activity_type': 'pydantic_ai_tool_return_file',
-                        'content': {
-                            'tool_call_id': 'tc-1',
-                            'files': [
-                                {
-                                    'kind': 'binary',
-                                    'data': IsStr(),
-                                    'media_type': 'image/jpeg',
-                                    'identifier': IsStr(),
-                                    'vendor_metadata': None,
-                                }
-                            ],
-                        },
-                    }
-                ]
-            ),
-            id='single-image',
-        ),
-        pytest.param(
-            'text-then-audio',
-            snapshot(
-                [
-                    {
-                        'id': IsStr(),
-                        'role': 'activity',
-                        'activity_type': 'pydantic_ai_tool_return_file',
-                        'content': {
-                            'tool_call_id': 'tc-1',
-                            'files': [
-                                {
-                                    'kind': 'binary',
-                                    'data': IsStr(),
-                                    'media_type': 'audio/mpeg',
-                                    'identifier': IsStr(),
-                                    'vendor_metadata': None,
-                                }
-                            ],
-                        },
-                    }
-                ]
-            ),
-            id='text-then-audio',
-        ),
-        pytest.param(
-            'image-and-video',
-            snapshot(
-                [
-                    {
-                        'id': IsStr(),
-                        'role': 'activity',
-                        'activity_type': 'pydantic_ai_tool_return_file',
-                        'content': {
-                            'tool_call_id': 'tc-1',
-                            'files': [
-                                {
-                                    'kind': 'binary',
-                                    'data': IsStr(),
-                                    'media_type': 'image/jpeg',
-                                    'identifier': IsStr(),
-                                    'vendor_metadata': None,
-                                },
-                                {
-                                    'kind': 'binary',
-                                    'data': IsStr(),
-                                    'media_type': 'video/mp4',
-                                    'identifier': IsStr(),
-                                    'vendor_metadata': None,
-                                },
-                            ],
-                        },
-                    }
-                ]
-            ),
-            id='image-and-video',
-        ),
-        pytest.param(
-            'document-url',
-            snapshot(
-                [
-                    {
-                        'id': IsStr(),
-                        'role': 'activity',
-                        'activity_type': 'pydantic_ai_tool_return_file',
-                        'content': {
-                            'tool_call_id': 'tc-1',
-                            'files': [
-                                {
-                                    'kind': 'document-url',
-                                    'url': 'https://example.com/doc.pdf',
-                                    'force_download': False,
-                                    'vendor_metadata': None,
-                                    'media_type': 'application/pdf',
-                                    'identifier': 'e3337d',
-                                }
-                            ],
-                        },
-                    }
-                ]
-            ),
-            id='document-url',
-        ),
-        pytest.param(
-            'dict-with-nested-image',
-            # A file nested in a mapping isn't reachable by `BaseToolReturnPart.files`, so it stays inline
-            # in the JSON content (no sidecar) and is rehydrated on load via `tool_return_content_ta`.
-            snapshot([]),
-            id='dict-with-nested-image',
-        ),
+        'plain-string',
+        'structured-dict',
+        'structured-list',
+        'single-image',
+        'text-then-audio',
+        'image-and-video',
+        'document-url',
+        'dict-with-nested-image',
     ],
 )
 def test_dump_load_roundtrip_tool_return_multimodal(
     case_id: str,
-    expected_activities: list[Any],
     tiny_image: BinaryImage,
     tiny_audio: BinaryContent,
     tiny_video: BinaryContent,
 ) -> None:
-    """Test multimodal `ToolReturnPart.content` round-trips via the sidecar `ActivityMessage`.
+    """Multimodal and structured `ToolReturnPart.content` ride inline in `ToolMessage.content` and round-trip with no flag.
 
-    `ag_ui.core.ToolMessage.content` is `str` only as of `ag-ui-protocol` 0.1.18, so multimodal
-    items round-trip as a separate `ActivityMessage` paired by `tool_call_id`. Tracking issue
-    for native multimodal agent output: https://github.com/ag-ui-protocol/ag-ui/issues/2029.
+    `ag_ui.core.ToolMessage.content` is a plain `str`, but it already carries JSON for structured returns,
+    so the full content — files serialized as base64/URL dicts included — is written inline and rehydrated
+    on load via the `ToolReturnContent` discriminator. No sidecar `ActivityMessage` and no `preserve_file_data`
+    flag are involved: inline content round-trips verbatim through any frontend, whereas a custom sidecar
+    only round-trips if the frontend echoes it back. A file nested in a mapping (unreachable by
+    `BaseToolReturnPart.files`) round-trips too.
     """
     contents: dict[str, Any] = {
+        'plain-string': 'just some text',
+        'structured-dict': {'temperature': 21, 'unit': 'C'},
+        'structured-list': [1, 2, 3],
         'single-image': tiny_image,
         'text-then-audio': ['the audio narration says...', tiny_audio],
         'image-and-video': [tiny_image, tiny_video],
@@ -4160,11 +4057,14 @@ def test_dump_load_roundtrip_tool_return_multimodal(
         ModelResponse(parts=[TextPart(content='Done')]),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
-    activities = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
-    assert [m.model_dump() for m in activities] == expected_activities
+    # No flag: tool-return files always ride inline in the tool message, never a sidecar.
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == []
+    tool_msgs = [m for m in ag_ui_msgs if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    assert isinstance(tool_msgs[0].content, str)
 
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     tool_returns = [
         p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
     ]
@@ -4175,7 +4075,7 @@ def test_dump_load_roundtrip_tool_return_multimodal(
 
 @pytest.mark.parametrize('content', ['123', 'true', 'null'])
 def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
-    """A string return that happens to be a valid JSON *scalar* must not change type on the `preserve_file_data=True` round-trip.
+    """A string return that happens to be a valid JSON *scalar* must not change type on the round-trip.
 
     `ToolMessage.content` is text-only on the AG-UI wire, so a string return is dumped verbatim. Re-parsing it
     through the discriminator would turn `'123'` into `123`, `'true'` into `True`, etc. The rehydrator only runs the
@@ -4187,8 +4087,8 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
         ModelResponse(parts=[ToolCallPart(tool_name='get_value', tool_call_id='tc-1', args='{}')]),
         ModelRequest(parts=[ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content)]),
     ]
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     tool_returns = [
         p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
     ]
@@ -4197,29 +4097,8 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     )
 
 
-def test_tool_return_multimodal_dropped_by_default(tiny_image: BinaryImage) -> None:
-    """Test that multimodal `ToolReturnPart.content` is silently dropped when `preserve_file_data=False`."""
-    original: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Call tool')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='get_image', tool_call_id='tc-1', args='{}')]),
-        ModelRequest(parts=[ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content=tiny_image)]),
-    ]
-
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=False)
-    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == snapshot([])
-
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=False)
-    tool_returns = [
-        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
-    ]
-    # Content collapses to the empty text fallback (`model_response_str()` excludes files).
-    assert tool_returns == snapshot(
-        [ToolReturnPart(tool_name='get_image', tool_call_id='tc-1', content='', timestamp=IsDatetime())]
-    )
-
-
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
-    """Test multimodal `NativeToolReturnPart.content` round-trips via the sidecar `ActivityMessage`."""
+    """Multimodal `NativeToolReturnPart.content` rides inline in `ToolMessage.content` and round-trips with no flag."""
     original: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Search')]),
         ModelResponse(
@@ -4240,31 +4119,10 @@ def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryIm
         ),
     ]
 
-    ag_ui_msgs = AGUIAdapter.dump_messages(original, preserve_file_data=True)
-    activities = [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)]
-    assert [m.model_dump() for m in activities] == snapshot(
-        [
-            {
-                'id': IsStr(),
-                'role': 'activity',
-                'activity_type': 'pydantic_ai_tool_return_file',
-                'content': {
-                    'tool_call_id': IsStr(),
-                    'files': [
-                        {
-                            'kind': 'binary',
-                            'data': IsStr(),
-                            'media_type': 'image/jpeg',
-                            'identifier': IsStr(),
-                            'vendor_metadata': None,
-                        }
-                    ],
-                },
-            }
-        ]
-    )
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    assert [m for m in ag_ui_msgs if isinstance(m, ActivityMessage)] == []
 
-    reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
     returns = [
         p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
     ]
@@ -4281,8 +4139,8 @@ def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryIm
     )
 
 
-def test_load_messages_builtin_tool_return_json_list_content_merges_with_files(tiny_image: BinaryImage) -> None:
-    """Builtin tool whose `ToolMessage.content` JSON-decodes into a list merges with sidecar files."""
+def test_load_messages_builtin_tool_return_json_content_rehydrates() -> None:
+    """A builtin tool's JSON `ToolMessage.content` rehydrates to structured content (inline, no sidecar)."""
     prefixed_id = 'pyd_ai_builtin|anthropic|call_1'
     raw = [
         AssistantMessage(
@@ -4295,22 +4153,14 @@ def test_load_messages_builtin_tool_return_json_list_content_merges_with_files(t
                 ),
             ],
         ),
-        ActivityMessage(
-            id='msg-2',
-            activity_type='pydantic_ai_tool_return_file',
-            content={
-                'tool_call_id': prefixed_id,
-                'files': [multi_modal_content_ta.dump_python(tiny_image, mode='json')],
-            },
-        ),
         ToolMessage(
-            id='msg-3',
+            id='msg-2',
             content='[{"a": 1}, {"b": 2}]',
             tool_call_id=prefixed_id,
         ),
     ]
 
-    reloaded = AGUIAdapter.load_messages(raw, preserve_file_data=True)
+    reloaded = AGUIAdapter.load_messages(raw)
     returns = [
         p for m in reloaded if isinstance(m, ModelResponse) for p in m.parts if isinstance(p, NativeToolReturnPart)
     ]
@@ -4319,25 +4169,12 @@ def test_load_messages_builtin_tool_return_json_list_content_merges_with_files(t
             NativeToolReturnPart(
                 tool_name='web_search',
                 tool_call_id='call_1',
-                content=[{'a': 1}, {'b': 2}, tiny_image],
+                content=[{'a': 1}, {'b': 2}],
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
             )
         ]
     )
-
-
-def test_load_messages_sidecar_with_empty_tool_call_id_raises() -> None:
-    """Sidecar `ActivityMessage` for `pydantic_ai_tool_return_file` requires a non-empty `tool_call_id`."""
-    raw = [
-        ActivityMessage(
-            id='msg-1',
-            activity_type='pydantic_ai_tool_return_file',
-            content={'tool_call_id': '', 'files': []},
-        ),
-    ]
-    with pytest.raises(ValueError, match='must have a non-empty tool_call_id'):
-        AGUIAdapter.load_messages(raw, preserve_file_data=True)
 
 
 @pytest.mark.parametrize(
