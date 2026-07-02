@@ -263,15 +263,15 @@ async def test_judge_input_output_expected_mock(mocker: MockerFixture, image_con
 <Input>
 Hello
 </Input>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Output>
 Hello world
 </Output>
 <Rubric>
 Output contains input
-</Rubric>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>\
+</Rubric>\
 """,
         )
     )
@@ -289,15 +289,15 @@ Hello
                 '<Input>',
                 image_content,
                 '</Input>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
                 '<Output>',
                 'Hello world',
                 '</Output>',
                 '<Rubric>',
                 'Output contains input',
                 '</Rubric>',
-                '<ExpectedOutput>',
-                'Hello',
-                '</ExpectedOutput>',
             ],
         )
     )
@@ -333,15 +333,15 @@ async def test_judge_input_output_expected_with_model_settings_mock(
 <Input>
 Hello settings
 </Input>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Output>
 Hello world with settings
 </Output>
 <Rubric>
 Output contains input with settings
-</Rubric>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>\
+</Rubric>\
 """,
         )
     )
@@ -369,15 +369,15 @@ Hello
                 '<Input>',
                 image_content,
                 '</Input>',
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
                 '<Output>',
                 'Hello world with settings',
                 '</Output>',
                 '<Rubric>',
                 'Output contains input with settings',
                 '</Rubric>',
-                '<ExpectedOutput>',
-                'Hello',
-                '</ExpectedOutput>',
             ],
         )
     )
@@ -406,15 +406,15 @@ Hello
 <Input>
 123
 </Input>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Output>
 Hello world with settings
 </Output>
 <Rubric>
 Output contains input with settings
-</Rubric>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>\
+</Rubric>\
 """,
         )
     )
@@ -440,15 +440,15 @@ Hello
 <Input>
 123
 </Input>
+<ExpectedOutput>
+Hello
+</ExpectedOutput>
 <Output>
 Hello world with settings
 </Output>
 <Rubric>
 Output contains input with settings
-</Rubric>
-<ExpectedOutput>
-Hello
-</ExpectedOutput>\
+</Rubric>\
 """,
         )
     )
@@ -522,15 +522,15 @@ async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixt
     assert call_args == snapshot(
         (
             [
+                '<ExpectedOutput>',
+                'Hello',
+                '</ExpectedOutput>',
                 '<Output>',
                 image_content,
                 '</Output>',
                 '<Rubric>',
                 'Output contains input with settings',
                 '</Rubric>',
-                '<ExpectedOutput>',
-                'Hello',
-                '</ExpectedOutput>',
             ],
         )
     )

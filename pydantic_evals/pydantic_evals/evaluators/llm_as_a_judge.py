@@ -255,11 +255,11 @@ def _build_prompt(
     if inputs is not None:
         sections.extend(_make_section(inputs, 'Input'))
 
-    sections.extend(_make_section(output, 'Output'))
-    sections.extend(_make_section(rubric, 'Rubric'))
-
     if expected_output is not None:
         sections.extend(_make_section(expected_output, 'ExpectedOutput'))
+
+    sections.extend(_make_section(output, 'Output'))
+    sections.extend(_make_section(rubric, 'Rubric'))
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections)  # type: ignore[arg-type]
     return sections
