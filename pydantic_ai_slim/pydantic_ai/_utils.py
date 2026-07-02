@@ -399,24 +399,6 @@ def sync_anext(iterator: Iterator[T]) -> T:
         raise StopAsyncIteration() from e
 
 
-def sync_async_iterator(async_iter: AsyncIterator[T]) -> Iterator[T]:
-    try:
-        while True:
-            try:
-                yield run_until_complete(anext(async_iter))
-            except StopAsyncIteration:
-                break
-    finally:
-        # Close the underlying async iterator so its `async with`/`finally` blocks (which close
-        # model streams and HTTP connections) run even when the consumer breaks out early or is
-        # interrupted (Ctrl-C closing this generator with `GeneratorExit`), not just when the
-        # stream is exhausted.
-        aclose: Callable[[], Awaitable[None]] | None = getattr(async_iter, 'aclose', None)
-        if aclose is not None:  # pragma: no branch
-            with suppress(BaseException):
-                run_until_complete(aclose())
-
-
 def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
