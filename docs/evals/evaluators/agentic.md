@@ -253,24 +253,30 @@ dataset = Dataset(
 )
 ```
 
-### Task completion with `LLMJudge` that uses the tool-call trajectory
+### Task completion judged with the tool-call trajectory
 
-For tasks where deterministic checks aren't enough, you can layer an
-[`LLMJudge`][pydantic_evals.evaluators.LLMJudge] on top of any of these
-evaluators. A common pattern is to include a summary of the tool-call
-trajectory in the judge's rubric context by writing a small custom evaluator
-that surfaces the trajectory into `ctx.attributes`:
+For tasks where deterministic checks aren't enough, you can have an LLM judge
+the task outcome together with the tool-call trajectory.
+[`LLMJudge`][pydantic_evals.evaluators.LLMJudge] only sees the case inputs,
+output, and expected output — not other evaluators' results or the span tree —
+so to give the judge visibility into *how* the agent got there, write a small
+custom evaluator that extracts the trajectory from the span tree and passes it
+to [`judge_input_output`][pydantic_evals.evaluators.llm_as_a_judge.judge_input_output]
+directly:
 
 ```python
 from dataclasses import dataclass
 
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
+from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
+from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
 
 
 @dataclass
-class RecordTrajectory(Evaluator):
-    def evaluate(self, ctx: EvaluatorContext) -> bool:
+class TrajectoryJudge(Evaluator):
+    rubric: str
+
+    async def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
         # Read span attributes to build a plain-text trajectory summary.
         tool_names = [
             node.attributes['gen_ai.tool.name']
@@ -278,30 +284,32 @@ class RecordTrajectory(Evaluator):
             if 'gen_ai.tool.name' in node.attributes
             and not str(node.attributes.get('logfire.msg', '')).startswith('running output function:')
         ]
-        ctx.attributes['tool_trajectory'] = ', '.join(str(n) for n in tool_names) or '(none)'
-        return True
+        trajectory = ', '.join(str(n) for n in tool_names) or '(none)'
+        grading_output = await judge_input_output(
+            {'query': ctx.inputs, 'tool_trajectory': trajectory},
+            ctx.output,
+            self.rubric,
+        )
+        return EvaluationReason(value=grading_output.pass_, reason=grading_output.reason)
 
 
 dataset = Dataset(
     name='task_completion',
     cases=[Case(inputs='Resolve ticket 42')],
     evaluators=[
-        RecordTrajectory(),
-        LLMJudge(
+        TrajectoryJudge(
             rubric=(
-                'The agent completed the task correctly. Consider whether the '
-                'tool trajectory (available in attributes as `tool_trajectory`) '
-                'is reasonable for the given input.'
+                'The agent completed the task correctly, and the tool trajectory '
+                'included in the input is reasonable for the given query.'
             ),
-            include_input=True,
         ),
     ],
 )
 ```
 
-This pattern keeps `LLMJudge` deterministic where possible, and leaves the
-qualitative, open-ended judgement to the LLM without requiring access to the
-raw span tree from the rubric.
+This pattern keeps the deterministic checks above cheap and reproducible, and
+reserves the qualitative, open-ended judgement for the LLM — with the
+trajectory explicitly included in what the judge sees.
 
 ## Next steps
 
