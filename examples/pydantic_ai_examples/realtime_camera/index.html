@@ -367,7 +367,7 @@
       const board = $('board'), boardFrame = $('boardFrame'), boardSubtitle = $('boardSubtitle');
       let lastHtml = '';
       function showDrawingLoading(request) {
-        boardSubtitle.textContent = request ? '“' + request + '”' : 'from your sketch';
+        boardSubtitle.textContent = request ? '"' + request + '"' : 'from your sketch';
         boardFrame.srcdoc = ''; board.hidden = false; board.classList.add('loading');
       }
       function showDrawing(html) {
