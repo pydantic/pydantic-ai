@@ -237,7 +237,11 @@ def _merge_url_path(base_url: str, path: str) -> str:
         base_url: The base URL to merge.
         path: The path to merge.
     """
-    return base_url.rstrip('/') + '/' + path.lstrip('/')
+    base_url = base_url.rstrip('/')
+    path = path.strip('/')
+    if base_url.endswith(f'/{path}'):
+        return base_url + '/'
+    return base_url + '/' + path
 
 
 # Wire-value remaps for the PAIG URL route. Keyed by canonical class-lookup names

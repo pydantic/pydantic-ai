@@ -55,6 +55,12 @@ def test_init_with_base_url(
     assert provider.client.api_key == 'foobar'
 
 
+@pytest.mark.parametrize('base_url', ['https://example.com/openai', 'https://example.com/openai/'])
+def test_init_with_base_url_already_including_route(base_url: str):
+    provider = gateway_provider('openai', base_url=base_url, api_key='foobar')
+    assert provider.base_url == 'https://example.com/openai/'
+
+
 def test_init_gateway_without_api_key_raises_error(env: TestEnv):
     env.remove('PYDANTIC_AI_GATEWAY_API_KEY')
     with pytest.raises(
