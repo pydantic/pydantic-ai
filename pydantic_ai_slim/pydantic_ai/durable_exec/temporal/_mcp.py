@@ -110,6 +110,12 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
         raise NotImplementedError
 
     @property
+    @abstractmethod
+    def _cache_tools(self) -> bool:
+        """Whether the wrapped MCP server/toolset has tool-definition caching enabled."""
+        raise NotImplementedError
+
+    @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.get_instructions_activity, self.get_tools_activity, self.call_tool_activity]
 
@@ -142,6 +148,14 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_tools(ctx)
 
+        # The cache lives on the run (`ctx._mcp_tool_defs_cache`), recreated per run and reconstructed
+        # identically on replay, so the choice to schedule the activity depends only on the workflow's
+        # own history. Caching on the process-shared instance instead would make that choice depend on
+        # what earlier runs warmed in the worker, breaking replay determinism (TMPRL1100).
+        cache_key = self.id or ''
+        if self._cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
+            return {name: self.tool_for_tool_def(tool_def) for name, tool_def in cached.items()}
+
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         activity_config: ActivityConfig = {'summary': f'get tools: {self.id}', **self.activity_config}
         tool_defs = await workflow.execute_activity(
@@ -152,6 +166,8 @@ class TemporalMCPToolsetBase(TemporalWrapperToolset[AgentDepsT], ABC):
             ],
             **activity_config,
         )
+        if self._cache_tools:
+            ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
         return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
     async def call_tool(

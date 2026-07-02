@@ -14,7 +14,7 @@ from pydantic_ai import (
     ToolDenied,
 )
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('openai:gpt-5.2', name='approval_agent', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool_plain(requires_approval=True)
@@ -46,7 +46,7 @@ Raise `ModelRetry` from inside the tool when the model should correct and try ag
 ```python
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-agent = Agent('openai:gpt-5.2', deps_type=dict[str, int])
+agent = Agent('openai:gpt-5.2', name='retry_agent', deps_type=dict[str, int])
 
 
 @agent.tool(retries=2)
@@ -66,7 +66,7 @@ Use `args_validator=` when arguments are structurally valid but still need busin
 ```python
 from pydantic_ai import Agent, DeferredToolRequests, ModelRetry, RunContext
 
-agent = Agent('openai:gpt-5.2', deps_type=int, output_type=[str, DeferredToolRequests])
+agent = Agent('openai:gpt-5.2', name='validation_agent', deps_type=int, output_type=[str, DeferredToolRequests])
 
 
 def validate_sum_limit(ctx: RunContext[int], x: int, y: int) -> None:
@@ -93,7 +93,7 @@ Example with `ToolReturn`:
 ```python
 from pydantic_ai import Agent, BinaryContent, ToolReturn
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.2', name='tool_return_agent')
 
 
 @agent.tool_plain
@@ -134,7 +134,7 @@ Use tool-level deferred loading when the agent has many tools and the model shou
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.2', name='tool_search_agent')
 
 
 @agent.tool_plain(defer_loading=True)

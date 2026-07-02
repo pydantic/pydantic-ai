@@ -1419,16 +1419,33 @@ def test_vercel_xai_grok():
 
 
 # =============================================================================
-# Heroku — minimal, just sets OpenAI transformer
+# Heroku — routes model names through family profiles (issue #6022)
 # =============================================================================
 
 
 def test_heroku_returns_openai_transformer():
-    """Heroku doesn't vary by model name — always returns OpenAI transformer."""
+    """Heroku routes the model name through its family profile (here: Anthropic),
+    merged onto the OpenAI-compatible base so thinking isn't dropped (#6022)."""
     from pydantic_ai.providers.heroku import HerokuProvider
 
-    profile = HerokuProvider.model_profile('claude-sonnet-4-6')  # name is ignored
-    assert _normalize(profile) == snapshot({'json_schema_transformer': OpenAIJsonSchemaTransformer})
+    profile = HerokuProvider.model_profile('claude-sonnet-4-6')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_supports_forced_tool_choice': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+        }
+    )
 
 
 # =============================================================================
