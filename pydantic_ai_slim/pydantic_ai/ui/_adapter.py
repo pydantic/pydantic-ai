@@ -22,6 +22,7 @@ from pydantic import BaseModel, ValidationError
 from typing_extensions import Self, TypeVar, assert_never
 
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, _instructions
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
@@ -82,6 +83,25 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 FileUrlT = TypeVar('FileUrlT', bound=FileUrl)
 """TypeVar for a [`FileUrl`][pydantic_ai.messages.FileUrl] subclass, used to preserve the concrete
 subclass (`ImageUrl`, `DocumentUrl`, etc.) when sanitizing a file URL."""
+
+
+def resolve_allow_uploaded_files(allow_uploaded_files: bool, preserve_file_data: bool | None) -> bool:
+    """Map the deprecated `preserve_file_data` argument onto `allow_uploaded_files`.
+
+    Returns `allow_uploaded_files` unchanged when `preserve_file_data` is omitted (`None`).
+    When `preserve_file_data` is passed, emits a [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]
+    and returns its value. Used by adapters that exposed the old `preserve_file_data` argument for
+    honoring client-submitted uploaded files (now `allow_uploaded_files`).
+    """
+    if preserve_file_data is None:
+        return allow_uploaded_files
+    warnings.warn(
+        '`preserve_file_data` is deprecated; use `allow_uploaded_files` to honor client-submitted '
+        'uploaded file references.',
+        PydanticAIDeprecationWarning,
+        stacklevel=3,
+    )
+    return preserve_file_data
 
 
 @runtime_checkable
@@ -210,8 +230,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     `frozenset({True})` or `frozenset({True, 'allow-local'})`.
     """
 
-    preserve_file_data: bool = False
-    """Whether to keep [`UploadedFile`][pydantic_ai.messages.UploadedFile] items from
+    allow_uploaded_files: bool = False
+    """Whether to honor [`UploadedFile`][pydantic_ai.messages.UploadedFile] references from
     client-submitted messages.
 
     Defaults to `False`. By default, `UploadedFile` items in client-submitted messages are
@@ -225,10 +245,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     arbitrary file references can read anything that identity can reach. Uploaded files should
     therefore only be accepted from trusted frontends.
 
-    Set to `True` to keep client-submitted uploaded files after auditing your frontend. Some
-    adapters (e.g. AG-UI) additionally use this flag to round-trip agent-generated files and
-    uploaded files through their protocol-specific message representation; see the adapter for
-    details.
+    Set to `True` to honor client-submitted uploaded files after auditing your frontend.
+
+    This is a purely inbound, security-oriented setting. It does not affect what the adapter
+    sends *to* the client: file content the agent produces is always serialized on the way out.
     """
 
     @classmethod
@@ -240,7 +260,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-        preserve_file_data: bool = False,
+        allow_uploaded_files: bool = False,
         **kwargs: Any,
     ) -> Self:
         """Create an adapter from a request.
@@ -255,7 +275,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
-            preserve_file_data=preserve_file_data,
+            allow_uploaded_files=allow_uploaded_files,
             **kwargs,
         )
 
@@ -348,7 +368,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
           from untrusted client input. This applies to file URLs in user content and
           to those nested in tool return parts.
         - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless
-          [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is `True`.
+          [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] is `True`.
           Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model
           provider fetches using the server-side IAM role, so it should only be accepted
           from trusted frontends. This applies both to uploaded files in user content and
@@ -444,10 +464,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if dropped_uploaded_file_providers:
             warnings.warn(
                 f'Client-submitted uploaded file(s) for provider(s) {sorted(dropped_uploaded_file_providers)!r} '
-                f'were dropped because `preserve_file_data` is `False` (the default). Like a non-HTTP file URL, '
+                f'were dropped because `allow_uploaded_files` is `False` (the default). Like a non-HTTP file URL, '
                 f'an uploaded file references an object the model provider fetches using the server-side IAM role '
                 f'or service account, so it should only be accepted from trusted frontends. To keep uploaded files '
-                f'from the client, set `preserve_file_data=True` on the adapter, or pass them on `message_history` '
+                f'from the client, set `allow_uploaded_files=True` on the adapter, or pass them on `message_history` '
                 f'directly to `Agent.run` instead.',
                 UserWarning,
                 stacklevel=2,
@@ -525,7 +545,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         aren't `False` and aren't in
         [`allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download]
         on kept items to `False`. Drops uploaded files unless
-        [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is set.
+        [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] is set.
 
         `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
         updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
@@ -539,7 +559,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     disallowed_schemes.add(scheme)
                     continue
                 item = self._sanitize_file_url(item, reset_force_download_values)
-            elif isinstance(item, UploadedFile) and not self.preserve_file_data:
+            elif isinstance(item, UploadedFile) and not self.allow_uploaded_files:
                 dropped_uploaded_file_providers.add(item.provider_name)
                 continue
             filtered.append(item)
@@ -572,7 +592,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         so any `FileUrl` or `UploadedFile` it contains — including those introduced by multimodal tool
         returns — is walked and sanitized the same way file references in user content are: file URL
         schemes and `force_download` are checked, and uploaded files are dropped unless
-        [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is set.
+        [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] is set.
 
         `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
         updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
@@ -585,7 +605,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 return False, content
             return True, self._sanitize_file_url(content, reset_force_download_values)
         if isinstance(content, UploadedFile):
-            if not self.preserve_file_data:
+            if not self.allow_uploaded_files:
                 dropped_uploaded_file_providers.add(content.provider_name)
                 return False, content
             return True, content
@@ -627,7 +647,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on `FileUrl`s
         nested in tool return parts, and drops `UploadedFile`s nested in tool return parts unless
-        [`preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data] is set.
+        [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] is set.
         When `dangling_names` is not `None` (i.e. this is the trailing response), also drops tool
         calls that aren't resolved by `deferred_tool_results`, appending their names to it.
         """
@@ -868,7 +888,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-        preserve_file_data: bool = False,
+        allow_uploaded_files: bool = False,
         **kwargs: Any,
     ) -> Response:
         """Handle a protocol-specific HTTP request by running the agent and returning a streaming response of protocol-specific events.
@@ -905,8 +925,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             allowed_file_url_force_download: Additional `FileUrl.force_download` values allowed on file URL parts from
                 the client (beyond `False`, which is always allowed). See
                 [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].
-            preserve_file_data: Whether to keep `UploadedFile` items from client-submitted messages. See
-                [`UIAdapter.preserve_file_data`][pydantic_ai.ui.UIAdapter.preserve_file_data].
+            allow_uploaded_files: Whether to honor `UploadedFile` references from client-submitted messages. See
+                [`UIAdapter.allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files].
             **kwargs: Additional keyword arguments forwarded to [`from_request`][pydantic_ai.ui.UIAdapter.from_request].
 
         Returns:
@@ -930,7 +950,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     manage_system_prompt=manage_system_prompt,
                     allowed_file_url_schemes=allowed_file_url_schemes,
                     allowed_file_url_force_download=allowed_file_url_force_download,
-                    preserve_file_data=preserve_file_data,
+                    allow_uploaded_files=allow_uploaded_files,
                     **kwargs,
                 ),
             )

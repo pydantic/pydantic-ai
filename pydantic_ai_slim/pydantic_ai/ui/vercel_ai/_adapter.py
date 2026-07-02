@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, InitVar, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -48,6 +48,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
+from .._adapter import resolve_allow_uploaded_files
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     apply_message_metadata,
@@ -138,6 +139,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
 
+    preserve_file_data: InitVar[bool | None] = None
+    """Deprecated alias for [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]."""
+
+    def __post_init__(self, preserve_file_data: bool | None) -> None:
+        self.allow_uploaded_files = resolve_allow_uploaded_files(self.allow_uploaded_files, preserve_file_data)
+
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
         """Build a Vercel AI run input object from the request body."""
@@ -154,10 +161,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-        preserve_file_data: bool = False,
+        allow_uploaded_files: bool = False,
+        preserve_file_data: bool | None = None,
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
-        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters."""
+        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters.
+
+        `preserve_file_data` is a deprecated alias for `allow_uploaded_files`.
+        """
+        allow_uploaded_files = resolve_allow_uploaded_files(allow_uploaded_files, preserve_file_data)
         return await super().from_request(
             request,
             agent=agent,
@@ -166,7 +178,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
-            preserve_file_data=preserve_file_data,
+            allow_uploaded_files=allow_uploaded_files,
             **kwargs,
         )
 
@@ -196,10 +208,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-        preserve_file_data: bool = False,
+        allow_uploaded_files: bool = False,
+        preserve_file_data: bool | None = None,
         **kwargs: Any,
     ) -> Response:
-        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
+        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters.
+
+        `preserve_file_data` is a deprecated alias for `allow_uploaded_files`.
+        """
+        allow_uploaded_files = resolve_allow_uploaded_files(allow_uploaded_files, preserve_file_data)
         return await super().dispatch_request(
             request,
             agent=agent,
@@ -223,7 +240,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
-            preserve_file_data=preserve_file_data,
+            allow_uploaded_files=allow_uploaded_files,
             **kwargs,
         )
 
