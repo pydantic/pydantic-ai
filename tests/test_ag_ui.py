@@ -1716,7 +1716,7 @@ def test_dump_load_roundtrip_native_tool_search() -> None:
                 NativeToolSearchCallPart(tool_call_id='search-1', args='{"queries": ["refund"]}'),
                 NativeToolSearchReturnPart(
                     tool_call_id='search-1',
-                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'refund_tool'}]},
                 ),
             ]
         ),
@@ -1952,7 +1952,7 @@ async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
             yield {
                 1: NativeToolSearchReturnPart(
                     tool_call_id='search-1',
-                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'refund_tool'}]},
                     provider_name='function',
                 )
             }
@@ -1989,7 +1989,7 @@ async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
             'timestamp': IsInt(),
             'messageId': IsStr(),
             'toolCallId': builtin_id,
-            'content': '{"discovered_tools":[{"name":"refund_tool","description":null}]}',
+            'content': '{"discovered_tools":[{"name":"refund_tool"}]}',
             'role': 'tool',
         },
     ]
