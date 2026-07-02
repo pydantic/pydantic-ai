@@ -4732,6 +4732,95 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
         await _cleanup_file_search_store(store, client)
 
 
+def _assert_file_search_source_url(messages: list[ModelMessage], source_url: str) -> None:
+    """Assert exactly one file_search return carries the document's `custom_metadata` `source_url` (#6207).
+
+    On Gemini 3+ the explicit `tool_response` is empty and the contexts (with `custom_metadata`) live only in
+    `grounding_metadata`; without the fix `content` is `None` and this fails.
+    """
+    returns = [
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolReturnPart) and part.tool_name == 'file_search'
+    ]
+    assert len(returns) == 1
+    contexts = cast('list[dict[str, Any]]', returns[0].content)
+    assert contexts, 'file_search grounding contexts were dropped'
+    assert any(
+        {'key': 'source_url', 'string_value': source_url} in (context.get('custom_metadata') or [])
+        for context in contexts
+    )
+
+
+async def _upload_paris_doc(client: Any, store_name: str, source_url: str) -> None:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write('Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.')
+        test_file_path = f.name
+    try:
+        with open(test_file_path, 'rb') as f:
+            await client.aio.file_search_stores.upload_to_file_search_store(
+                file_search_store_name=store_name,
+                file=f,
+                config={
+                    'mime_type': 'text/plain',
+                    'custom_metadata': [{'key': 'source_url', 'string_value': source_url}],
+                },
+            )
+    finally:
+        os.unlink(test_file_path)
+
+
+@pytest.mark.vcr()
+async def test_google_model_file_search_grounding_gemini_3(allow_model_requests: None, google_provider: GoogleProvider):
+    """On Gemini 3+ file_search returns an explicit but empty `tool_response`; the retrieved contexts (with
+    `custom_metadata` such as `source_url`) must be recovered from `grounding_metadata` rather than dropped."""
+    client = google_provider.client
+    source_url = 'https://example.com/paris'
+    store = None
+    try:
+        store = await client.aio.file_search_stores.create(config={'display_name': 'test-file-search-grounding'})
+        assert store.name is not None
+        await _upload_paris_doc(client, store.name, source_url)
+
+        agent = Agent(
+            GoogleModel('gemini-3-flash-preview', provider=google_provider),
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[store.name]))],
+        )
+        result = await agent.run('What is the capital of France?')
+
+        _assert_file_search_source_url(result.all_messages(), source_url)
+    finally:
+        await _cleanup_file_search_store(store, client)
+
+
+@pytest.mark.vcr()
+async def test_google_model_file_search_grounding_gemini_3_stream(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    """Streaming counterpart of #6207: the grounding arrives several chunks after the empty file_search
+    `tool_response`, so the contexts must still reach the final `NativeToolReturnPart`."""
+    client = google_provider.client
+    source_url = 'https://example.com/paris'
+    store = None
+    try:
+        store = await client.aio.file_search_stores.create(config={'display_name': 'test-file-search-grounding-stream'})
+        assert store.name is not None
+        await _upload_paris_doc(client, store.name, source_url)
+
+        agent = Agent(
+            GoogleModel('gemini-3-flash-preview', provider=google_provider),
+            capabilities=[NativeTool(FileSearchTool(file_store_ids=[store.name]))],
+        )
+        async with agent.run_stream('What is the capital of France?') as result:
+            await result.get_output()
+
+        _assert_file_search_source_url(result.all_messages(), source_url)
+    finally:
+        await _cleanup_file_search_store(store, client)
+
+
 async def test_cache_point_filtering():
     """Test that CachePoint is filtered out in Google internal method."""
     from pydantic_ai import CachePoint
