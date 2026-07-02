@@ -1284,7 +1284,7 @@ def test_include_tool_args_span_attributes(
         assert result.output == snapshot('{"add_numbers":84}')
     except UnexpectedModelBehavior:
         if not tool_error:
-            raise  # pragma: no cover
+            raise
 
     summary = get_logfire_summary()
 
