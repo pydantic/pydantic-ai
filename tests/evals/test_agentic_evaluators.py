@@ -27,7 +27,7 @@ with try_import() as imports_successful:
         ToolCorrectness,
         TrajectoryMatch,
     )
-    from pydantic_evals.otel._errors import SpanTreeRecordingError
+    from pydantic_evals.otel import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanNode, SpanStatus, SpanTree
 
 
@@ -269,6 +269,13 @@ def test_failed_attempts_included_when_requested():
     assert result.value is False
     assert result.reason is not None
     assert "unexpected tools: 'search' (x1)" in result.reason
+    # The trajectory likewise contains both attempts.
+    trajectory_result = TrajectoryMatch(
+        expected_trajectory=['search', 'search'],
+        order='exact',
+        include_failed=True,
+    ).evaluate(_ctx(tree=tree))
+    assert trajectory_result.value == 1.0
     # The first occurrence is now the failed attempt.
     args_result = ArgumentCorrectness(
         tool_name='search',
@@ -794,17 +801,19 @@ def test_argument_correctness_occurrence_integer_index():
     assert evaluator.evaluate(_ctx(tree=tree)).value is True
 
 
-def test_argument_correctness_occurrence_out_of_range():
+@pytest.mark.parametrize('occurrence', [5, -1])
+def test_argument_correctness_occurrence_out_of_range(occurrence: int):
     tree = _build_tree([_v3_tool_span(name='search', span_id=1, args='{"q": "a"}', start_offset=0.0)])
     evaluator = ArgumentCorrectness(
         tool_name='search',
         expected_arguments={'q': 'a'},
-        occurrence=5,
+        occurrence=occurrence,
     )
     result = evaluator.evaluate(_ctx(tree=tree))
     assert result.value is False
     assert result.reason is not None
-    assert 'out of range' in result.reason
+    assert f'occurrence={occurrence!r} does not select any of them' in result.reason
+    assert 'negative ints are not supported' in result.reason
 
 
 @pytest.mark.parametrize('span_builder', [_v2_tool_span, _v3_tool_span])

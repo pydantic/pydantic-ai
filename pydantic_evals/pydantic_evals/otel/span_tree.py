@@ -22,7 +22,7 @@ SpanStatus = Literal['unset', 'ok', 'error']
 """The status of a span, mirroring `opentelemetry.trace.StatusCode`."""
 
 
-__all__ = 'SpanNode', 'SpanTree', 'SpanQuery', 'SpanStatus'
+__all__ = 'SpanNode', 'SpanQuery', 'SpanStatus', 'SpanTree'
 
 
 class SpanQuery(TypedDict, total=False):

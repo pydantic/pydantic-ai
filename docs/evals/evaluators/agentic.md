@@ -270,6 +270,7 @@ from dataclasses import dataclass
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 from pydantic_evals.evaluators.llm_as_a_judge import judge_input_output
+from pydantic_evals.otel import SpanTreeRecordingError
 
 
 @dataclass
@@ -277,10 +278,16 @@ class TrajectoryJudge(Evaluator):
     rubric: str
 
     async def evaluate(self, ctx: EvaluatorContext) -> EvaluationReason:
+        try:
+            span_tree = ctx.span_tree
+        except SpanTreeRecordingError:
+            # Degrade gracefully, like the built-in evaluators on this page.
+            return EvaluationReason(value=False, reason='No span tree available.')
+
         # Read span attributes to build a plain-text trajectory summary.
         tool_names = [
             node.attributes['gen_ai.tool.name']
-            for node in ctx.span_tree
+            for node in span_tree
             if 'gen_ai.tool.name' in node.attributes
             and not str(node.attributes.get('logfire.msg', '')).startswith('running output function:')
         ]

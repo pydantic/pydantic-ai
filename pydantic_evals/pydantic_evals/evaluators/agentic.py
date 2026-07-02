@@ -439,7 +439,8 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
                 value=False,
                 reason=(
                     f'Tool {self.tool_name!r} was called {len(matches)} time(s); '
-                    f'occurrence={self.occurrence!r} is out of range.'
+                    f'occurrence={self.occurrence!r} does not select any of them '
+                    f"(must be 'first', 'last', or a 0-based index; negative ints are not supported)."
                 ),
             )
 
