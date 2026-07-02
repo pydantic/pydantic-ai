@@ -28,6 +28,8 @@ Provider-adaptive capabilities to reach for first:
 - `ImageGeneration`
 - `MCP`
 
+For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFilterError` whenever a model response has `finish_reason='content_filter'`, including responses with partial text.
+
 Use capabilities when the user wants behavior that should survive model/provider changes.
 
 ## Enable Thinking Across Providers

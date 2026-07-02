@@ -32,6 +32,7 @@ from .abstract import (
 )
 from .capability import Capability
 from .combined import CombinedCapability
+from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
@@ -66,6 +67,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        RaiseContentFilterError,
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
@@ -111,6 +113,7 @@ __all__ = [
     'WrapOutputProcessHandler',
     'NativeTool',
     'NativeOrLocalTool',
+    'RaiseContentFilterError',
     'Capability',
     'CAPABILITY_TYPES',
     'ImageGeneration',

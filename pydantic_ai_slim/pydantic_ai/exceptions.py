@@ -230,7 +230,7 @@ class UnexpectedModelBehavior(AgentRunError):
 
 
 class ContentFilterError(UnexpectedModelBehavior):
-    """Raised when content filtering is triggered by the model provider resulting in an empty response."""
+    """Raised when content filtering is triggered by the model provider."""
 
 
 class ModelAPIError(AgentRunError):
