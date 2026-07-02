@@ -1869,7 +1869,7 @@ async def test_uploaded_file_wrong_provider_chat(allow_model_requests: None) -> 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIChatModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
@@ -1889,7 +1889,7 @@ async def test_uploaded_file_wrong_provider_responses(allow_model_requests: None
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with OpenAIResponsesModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-xyz789', provider_name='anthropic')])
 
 
