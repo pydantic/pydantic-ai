@@ -10306,7 +10306,7 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
             parts=[
                 ToolSearchReturnPart(
                     content={
-                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
                         'message': 'Found 1 tool',
                     },
                     tool_call_id='search-1',
@@ -10388,7 +10388,7 @@ async def test_anthropic_count_tokens_with_tool_search_replay(
             parts=[
                 ToolSearchReturnPart(
                     content={
-                        'discovered_tools': [{'name': 'get_exchange_rate', 'description': ''}],
+                        'discovered_tools': [{'name': 'get_exchange_rate'}],
                         'message': 'Found 1 tool',
                     },
                     tool_call_id='search-1',

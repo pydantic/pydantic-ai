@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import AgentDepsT
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.messages import (
     BinaryImage,
@@ -68,6 +69,7 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
 from pydantic_ai.ui import NativeEvent, UIAdapter, UIEventStream
+from pydantic_ai.ui._adapter import resolve_allow_uploaded_files
 
 pytestmark = [
     pytest.mark.anyio,
@@ -997,7 +999,7 @@ def _make_dummy_adapter(
     *,
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
     allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-    preserve_file_data: bool = False,
+    allow_uploaded_files: bool = False,
 ) -> DummyUIAdapter[None, str]:
     agent = Agent(model=TestModel())
     return DummyUIAdapter(
@@ -1005,7 +1007,7 @@ def _make_dummy_adapter(
         run_input=DummyUIRunInput(messages=messages),
         allowed_file_url_schemes=allowed_file_url_schemes,
         allowed_file_url_force_download=allowed_file_url_force_download,
-        preserve_file_data=preserve_file_data,
+        allow_uploaded_files=allow_uploaded_files,
     )
 
 
@@ -1326,7 +1328,7 @@ def test_sanitize_messages_strips_disallowed_schemes_in_tool_return_parts():
 
 
 def test_sanitize_messages_drops_uploaded_files_by_default():
-    """Client-submitted `UploadedFile`s are dropped with a warning when `preserve_file_data` is off.
+    """Client-submitted `UploadedFile`s are dropped with a warning when `allow_uploaded_files` is off.
 
     An `UploadedFile`'s `file_id` is a provider-side reference (e.g. an `s3://`/`gs://` URI) fetched
     by the model provider using the server-side identity, so — like a non-HTTP `FileUrl` — it is only
@@ -1361,8 +1363,8 @@ def test_sanitize_messages_drops_uploaded_files_by_default():
     assert user_part.content == snapshot(['Look at this:', ImageUrl(url='https://example.com/ok.png')])
 
 
-def test_sanitize_messages_keeps_uploaded_files_when_preserve_file_data():
-    """`UploadedFile`s pass through unchanged when `preserve_file_data=True` (trusted frontend opt-in)."""
+def test_sanitize_messages_keeps_uploaded_files_when_allow_uploaded_files():
+    """`UploadedFile`s pass through unchanged when `allow_uploaded_files=True` (trusted frontend opt-in)."""
     uploaded_file = UploadedFile(
         file_id='gs://my-bucket/object.pdf',
         provider_name='google-cloud',
@@ -1370,7 +1372,7 @@ def test_sanitize_messages_keeps_uploaded_files_when_preserve_file_data():
     )
     adapter = _make_dummy_adapter(
         [ModelRequest(parts=[UserPromptPart(content=['Look at this:', uploaded_file])])],
-        preserve_file_data=True,
+        allow_uploaded_files=True,
     )
 
     with warnings.catch_warnings():
@@ -1381,6 +1383,25 @@ def test_sanitize_messages_keeps_uploaded_files_when_preserve_file_data():
     user_part = sanitized[0].parts[0]
     assert isinstance(user_part, UserPromptPart)
     assert user_part.content == snapshot(['Look at this:', uploaded_file])
+
+
+def test_resolve_allow_uploaded_files_maps_deprecated_preserve_file_data():
+    """`resolve_allow_uploaded_files` maps the deprecated `preserve_file_data` arg onto `allow_uploaded_files`.
+
+    Adapters that exposed `preserve_file_data` for honoring client-submitted uploaded files now accept
+    `allow_uploaded_files`; passing the old name emits `PydanticAIDeprecationWarning` and maps through.
+    """
+    # Omitting `preserve_file_data` (the default) is a no-op passthrough, no warning.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert resolve_allow_uploaded_files(False, None) is False
+        assert resolve_allow_uploaded_files(True, None) is True
+
+    # Passing the deprecated alias warns and takes precedence.
+    with pytest.warns(PydanticAIDeprecationWarning, match='preserve_file_data'):
+        assert resolve_allow_uploaded_files(False, True) is True
+    with pytest.warns(PydanticAIDeprecationWarning, match='preserve_file_data'):
+        assert resolve_allow_uploaded_files(False, False) is False
 
 
 def test_sanitize_messages_drops_uploaded_files_in_tool_return_parts():
@@ -1430,8 +1451,8 @@ def test_sanitize_messages_drops_uploaded_files_in_tool_return_parts():
     assert native_return.content is None
 
 
-def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_preserve_file_data():
-    """`UploadedFile`s nested in tool return parts pass through unchanged when `preserve_file_data=True`."""
+def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_allow_uploaded_files():
+    """`UploadedFile`s nested in tool return parts pass through unchanged when `allow_uploaded_files=True`."""
     uploaded_file = UploadedFile(file_id='s3://bucket/secret.pdf', provider_name='bedrock')
     adapter = _make_dummy_adapter(
         [
@@ -1445,7 +1466,7 @@ def test_sanitize_messages_keeps_uploaded_files_in_tool_return_parts_when_preser
                 ]
             )
         ],
-        preserve_file_data=True,
+        allow_uploaded_files=True,
     )
 
     with warnings.catch_warnings():
