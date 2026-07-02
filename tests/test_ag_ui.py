@@ -3337,6 +3337,39 @@ async def test_builtin_tool_return_non_string_content_passthrough() -> None:
     assert return_part.content == {'type': 'web_fetch_result', 'url': 'https://example.com'}
 
 
+async def test_builtin_tool_return_non_string_scalar_content_passthrough() -> None:
+    """A non-string, non-mapping/sequence `content` (a scalar) passes through untouched.
+
+    Only mappings/sequences can nest multimodal items, so the discriminator is skipped for a scalar and
+    the value is returned as-is rather than coerced.
+    """
+    tool_msg = ToolMessage.model_construct(
+        id='msg_2',
+        content=42,
+        tool_call_id='pyd_ai_builtin|anthropic|srvtoolu_scalar',
+    )
+    messages: list[Message] = [
+        AssistantMessage(
+            id='msg_1',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|anthropic|srvtoolu_scalar',
+                    function=FunctionCall(name='web_fetch', arguments='{"url": "https://example.com"}'),
+                ),
+            ],
+        ),
+        tool_msg,
+    ]
+
+    result = AGUIAdapter.load_messages(messages)
+    response = result[0]
+    assert isinstance(response, ModelResponse)
+
+    return_part = response.parts[1]
+    assert isinstance(return_part, NativeToolReturnPart)
+    assert return_part.content == 42
+
+
 async def test_user_message_empty_content_list_skipped() -> None:
     """A UserMessage with an empty content list produces no UserPromptPart."""
     messages: list[Message] = [
@@ -4070,6 +4103,29 @@ def test_dump_load_roundtrip_tool_return_multimodal(
     ]
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
+def test_dump_tool_return_none_content_becomes_empty_string() -> None:
+    """A `None` tool-return content dumps to an empty string, since AG-UI `ToolMessage.content` is text-only.
+
+    On reload the empty string is not valid JSON, so it stays `''` rather than round-tripping back to `None`.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='noop', tool_call_id='tc-1', args='{}')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='noop', tool_call_id='tc-1', content=None)]),
+    ]
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    tool_msgs = [m for m in ag_ui_msgs if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0].content == ''
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [ToolReturnPart(tool_name='noop', tool_call_id='tc-1', content='', timestamp=IsDatetime())]
     )
 
 
