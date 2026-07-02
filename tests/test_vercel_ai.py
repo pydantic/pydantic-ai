@@ -4380,6 +4380,58 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
     )
 
 
+@pytest.mark.parametrize(
+    'chunks',
+    [
+        [DataChunk(type='data-sources', id='s1', data={'query': 'pydantic-ai'})],
+        [SourceUrlChunk(source_id='src_1', url='https://example.com', title='Example')],
+        [
+            SourceDocumentChunk(
+                source_id='doc_1',
+                media_type='application/pdf',
+                title='Doc',
+                filename='doc.pdf',
+                provider_metadata={'provider': {'id': 'doc-provider'}},
+            )
+        ],
+        [FileChunk(url='https://example.com/file.png', media_type='image/png')],
+    ],
+    ids=['data', 'source-url', 'source-document', 'file'],
+)
+async def test_adapter_dump_load_round_trips_tool_return_metadata_chunks(
+    chunks: list[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk],
+):
+    """Test loading preserves data-carrying chunks emitted from ToolReturnPart.metadata."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Send data')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='send_data', args={}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='send_data',
+                    content='Data sent',
+                    tool_call_id='call_1',
+                    metadata=chunks,
+                )
+            ]
+        ),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+
+    tool_returns = [
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].metadata == chunks
+    assert len(reloaded) == len(messages)
+
+
 async def test_stream_and_dump_messages_metadata_consistency():
     """Test that streaming and dump_messages produce consistent DataChunk/DataUIPart data."""
 

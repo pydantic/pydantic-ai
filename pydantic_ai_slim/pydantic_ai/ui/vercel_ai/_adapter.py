@@ -347,8 +347,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     builder.add(UserPromptPart(content=user_prompt_content))
 
             elif msg.role == 'assistant':
+                active_tool_return: ToolReturnPart | None = None
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
+                        active_tool_return = None
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         builder.add(
                             TextPart(
@@ -359,6 +361,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     elif isinstance(part, ReasoningUIPart):
+                        active_tool_return = None
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         builder.add(
                             ThinkingPart(
@@ -370,6 +373,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     elif isinstance(part, FileUIPart):
+                        if active_tool_return is not None:
+                            _append_metadata_chunk(
+                                active_tool_return, FileChunk(url=part.url, media_type=part.media_type)
+                            )
+                            continue
+
+                        active_tool_return = None
                         try:
                             file = BinaryContent.from_data_uri(part.url)
                         except ValueError as e:  # pragma: no cover
@@ -424,6 +434,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         tool_kind = parse_tool_kind(raw_tool_kind) if isinstance(raw_tool_kind, str) else None
 
                         if builtin_tool:
+                            active_tool_return = None
                             # For builtin tools, we need to create 2 parts (BuiltinToolCall & BuiltinToolReturn) for a single Vercel ToolOutput
                             # The call and return metadata are combined in the output part.
                             # So we extract and return them to the respective parts
@@ -509,45 +520,67 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
 
                             if part.state == 'output-available':
-                                builder.add(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=part.output,
-                                        tool_kind=tool_kind,
-                                    )
+                                active_tool_return = ToolReturnPart(
+                                    tool_name=tool_name,
+                                    tool_call_id=tool_call_id,
+                                    content=part.output,
+                                    tool_kind=tool_kind,
                                 )
+                                builder.add(active_tool_return)
                             # Error/denied returns deliberately carry no `tool_kind`: typed return
                             # subclasses only ever wrap successful, shape-valid content, and readers
                             # like `parse_loaded_capabilities` treat their presence as proof of success.
                             elif part.state == 'output-error':
-                                builder.add(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=part.error_text,
-                                        outcome='failed',
-                                    )
+                                active_tool_return = ToolReturnPart(
+                                    tool_name=tool_name,
+                                    tool_call_id=tool_call_id,
+                                    content=part.error_text,
+                                    outcome='failed',
                                 )
+                                builder.add(active_tool_return)
                             elif part.state == 'output-denied':
-                                builder.add(
-                                    ToolReturnPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        content=_denial_reason(part),
-                                        outcome='denied',
-                                    )
+                                active_tool_return = ToolReturnPart(
+                                    tool_name=tool_name,
+                                    tool_call_id=tool_call_id,
+                                    content=_denial_reason(part),
+                                    outcome='denied',
                                 )
-                    elif isinstance(part, DataUIPart):  # pragma: no cover
+                                builder.add(active_tool_return)
+                            else:
+                                active_tool_return = None
+                    elif isinstance(part, DataUIPart):
                         # Contains custom data that shouldn't be sent to the model
-                        pass
-                    elif isinstance(part, SourceUrlUIPart):  # pragma: no cover
+                        if active_tool_return is not None:
+                            _append_metadata_chunk(
+                                active_tool_return, DataChunk(type=part.type, id=part.id, data=part.data)
+                            )
+                    elif isinstance(part, SourceUrlUIPart):
                         # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
-                        pass
-                    elif isinstance(part, SourceDocumentUIPart):  # pragma: no cover
+                        if active_tool_return is not None:
+                            _append_metadata_chunk(
+                                active_tool_return,
+                                SourceUrlChunk(
+                                    source_id=part.source_id,
+                                    url=part.url,
+                                    title=part.title,
+                                    provider_metadata=part.provider_metadata,
+                                ),
+                            )
+                    elif isinstance(part, SourceDocumentUIPart):
                         # TODO: Once we support citations: https://github.com/pydantic/pydantic-ai/issues/3126
-                        pass
+                        if active_tool_return is not None:
+                            _append_metadata_chunk(
+                                active_tool_return,
+                                SourceDocumentChunk(
+                                    source_id=part.source_id,
+                                    media_type=part.media_type,
+                                    title=part.title,
+                                    filename=part.filename,
+                                    provider_metadata=part.provider_metadata,
+                                ),
+                            )
                     elif isinstance(part, StepStartUIPart):  # pragma: no cover
+                        active_tool_return = None
                         # Nothing to do here
                         pass
                     else:
@@ -1022,6 +1055,19 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _append_metadata_chunk(
+    tool_return: ToolReturnPart, chunk: DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
+) -> None:
+    """Append a persisted Vercel data chunk to a loaded tool return."""
+    metadata = tool_return.metadata
+    if metadata is None:
+        tool_return.metadata = [chunk]
+    elif isinstance(metadata, list):
+        cast(list[Any], metadata).append(chunk)
+    else:
+        tool_return.metadata = [metadata, chunk]
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:
