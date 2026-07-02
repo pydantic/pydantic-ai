@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import functools
 import sys
 from collections.abc import Callable
@@ -21,12 +22,53 @@ with try_import() as imports_successful:
     from pydantic_evals._utils import (
         UNSET,
         Unset,
+        get_event_loop,
         get_unwrapped_function_name,
         is_set,
+        run_until_complete,
         task_group_gather,
     )
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
+
+def test_run_until_complete_cleans_up_own_task_on_interrupt():
+    """A `KeyboardInterrupt` during `run_until_complete` must cancel only its own task and drive its
+    cleanup, leaving no pending task and not touching other tasks on the caller-owned loop.
+
+    Simulated by patching the loop because a real interrupt mid-`run_until_complete` while the
+    coroutine is suspended can't be triggered reliably through the public API.
+    """
+    cleaned: list[str] = []
+
+    async def coro() -> None:
+        try:
+            await asyncio.Event().wait()  # suspends forever
+        finally:
+            cleaned.append('cleaned')
+
+    loop = get_event_loop()
+    tasks_before = asyncio.all_tasks(loop)
+    real_run_until_complete = loop.run_until_complete
+    calls = 0
+
+    def interrupt_once(future: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Let our task start and suspend, then simulate Ctrl-C reaching the caller.
+            loop.call_soon(loop.stop)
+            loop.run_forever()
+            raise KeyboardInterrupt
+        return real_run_until_complete(future)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, 'run_until_complete', interrupt_once)
+        with pytest.raises(KeyboardInterrupt):
+            run_until_complete(coro())
+
+    assert cleaned == ['cleaned']  # our coroutine's cleanup ran
+    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
 
 
 def test_unset():

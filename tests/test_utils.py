@@ -239,33 +239,43 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
         loop.run_until_complete(bystander_task)
 
 
-def test_sync_async_iterator_closes_source_on_early_break():
-    """Breaking out of the sync stream early must close the underlying async iterator so its
-    `async with`/`finally` blocks (which close model streams and connections) run, not only when
-    the stream is exhausted."""
-    closed: list[str] = []
+def test_sync_async_iterator_closes_source():
+    """`sync_async_iterator` must close the underlying async iterator so its `async with`/`finally`
+    blocks (which close model streams and connections) run both when the stream is exhausted and when
+    the consumer breaks out early, rather than leaking until garbage collection."""
+    # Full exhaustion closes the source.
+    exhausted_closed: list[str] = []
 
-    async def agen() -> AsyncIterator[int]:
+    async def finite() -> AsyncIterator[int]:
+        try:
+            for i in range(3):
+                yield i
+        finally:
+            exhausted_closed.append('closed')
+
+    assert list(utils_module.sync_async_iterator(finite())) == [0, 1, 2]
+    assert exhausted_closed == ['closed']
+
+    # Breaking out early (before exhaustion) closes the source too.
+    broken_closed: list[str] = []
+
+    async def infinite() -> AsyncIterator[int]:
         try:
             i = 0
             while True:
                 yield i
                 i += 1
         finally:
-            closed.append('closed')
+            broken_closed.append('closed')
 
-    iterator = utils_module.sync_async_iterator(agen())
-    collected: list[int] = []
-    for value in iterator:
-        collected.append(value)
-        if value == 2:
-            break
+    iterator = utils_module.sync_async_iterator(infinite())
+    collected = [next(iterator), next(iterator), next(iterator)]
     # Tearing down the consumer's frame sends `GeneratorExit` into the sync iterator; do it explicitly
     # here so the test is deterministic instead of relying on garbage collection.
     cast('Generator[int, None, None]', iterator).close()
 
     assert collected == [0, 1, 2]
-    assert closed == ['closed']
+    assert broken_closed == ['closed']
 
 
 def test_package_versions(capsys: pytest.CaptureFixture[str]):
