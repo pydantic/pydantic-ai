@@ -134,7 +134,7 @@ When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` 
 
 ## Trust model
 
-Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview.
+Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview. In particular, [`UploadedFile`][pydantic_ai.messages.UploadedFile] references parsed from a client's `providerMetadata` are dropped unless you opt in with [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files], since the server resolves them with its own credentials.
 
 ## Tool Approval
 

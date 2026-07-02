@@ -17,6 +17,7 @@ from pydantic_ai._deferred_capabilities import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
@@ -5835,7 +5836,7 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
 
     `sanitize_messages` runs on the messages produced from client run input before they reach the agent,
     so a `file_id` supplied through `providerMetadata` is only honored when the adapter is configured with
-    `preserve_file_data=True` (a trusted frontend).
+    `allow_uploaded_files=True` (a trusted frontend).
     """
     ui_messages = [
         UIMessage(
@@ -5871,7 +5872,7 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
     assert sanitized_part.content == snapshot(['Quote the document exactly.'])
 
     # With the trusted-frontend opt-in, the `UploadedFile` is preserved.
-    preserve_adapter = VercelAIAdapter(agent=agent, run_input=run_input, preserve_file_data=True)
+    preserve_adapter = VercelAIAdapter(agent=agent, run_input=run_input, allow_uploaded_files=True)
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         preserved = preserve_adapter.sanitize_messages(preserve_adapter.messages)
@@ -5881,9 +5882,9 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
-@pytest.mark.parametrize('preserve_file_data', [True, False])
-async def test_from_request_threads_preserve_file_data(preserve_file_data: bool):
-    """`preserve_file_data` passed to the public `from_request` entry point reaches the sanitizer.
+@pytest.mark.parametrize('allow_uploaded_files', [True, False])
+async def test_from_request_threads_allow_uploaded_files(allow_uploaded_files: bool):
+    """`allow_uploaded_files` passed to the public `from_request` entry point reaches the sanitizer.
 
     Guards the forwarding through `from_request` (not just setting the dataclass field after
     construction): when `True`, the client `UploadedFile` parsed from `providerMetadata` survives
@@ -5923,10 +5924,12 @@ async def test_from_request_threads_preserve_file_data(preserve_file_data: bool)
         receive=receive,
     )
 
-    adapter = await VercelAIAdapter.from_request(starlette_request, agent=agent, preserve_file_data=preserve_file_data)
-    assert adapter.preserve_file_data is preserve_file_data
+    adapter = await VercelAIAdapter.from_request(
+        starlette_request, agent=agent, allow_uploaded_files=allow_uploaded_files
+    )
+    assert adapter.allow_uploaded_files is allow_uploaded_files
 
-    if preserve_file_data:
+    if allow_uploaded_files:
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             sanitized = adapter.sanitize_messages(adapter.messages)
@@ -5939,6 +5942,24 @@ async def test_from_request_threads_preserve_file_data(preserve_file_data: bool)
         sanitized_part = sanitized[0].parts[0]
         assert isinstance(sanitized_part, UserPromptPart)
         assert sanitized_part.content == snapshot(['Quote the document exactly.'])
+
+
+async def test_from_request_preserve_file_data_deprecated_alias():
+    """The deprecated `preserve_file_data` argument to `from_request` maps onto `allow_uploaded_files`."""
+    run_input = SubmitMessage(trigger='submit-message', id='req_1', messages=[])
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='preserve_file_data'):
+        adapter = await VercelAIAdapter.from_request(starlette_request, agent=agent, preserve_file_data=True)
+    assert adapter.allow_uploaded_files is True
 
 
 async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
