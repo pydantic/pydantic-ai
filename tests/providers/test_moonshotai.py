@@ -67,3 +67,33 @@ def test_moonshotai_model_profile():
     assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
     assert model.profile.get('openai_supports_tool_choice_required', True) is False
     assert model.profile.get('supports_json_object_output', False) is True
+
+
+def test_moonshotai_model_profile_thinking():
+    """`supports_thinking` must be set for Kimi reasoning models so unified `thinking` reaches them.
+
+    Unit test (not VCR): recording against the MoonshotAI API needs live credentials, and the
+    cassette matchers aren't always sensitive to the request body, so a VCR test could match an
+    existing recording and stay green even if the request stopped carrying thinking parameters.
+    Asserting the profile flag directly pins the model-name -> capability mapping against drift,
+    mirroring `test_zai_provider_model_profile`.
+    """
+    provider = MoonshotAIProvider(api_key='api-key')
+
+    # Kimi reasoning models: `thinking` must be forwarded, so `supports_thinking` is True.
+    for reasoning_model in ('kimi-thinking-preview', 'kimi-k2-thinking'):
+        profile = provider.model_profile(reasoning_model)
+        assert profile is not None
+        assert profile.get('supports_thinking') is True
+        # The provider wires up the response-shape fields regardless of the model.
+        assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
+        assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
+
+    # Instruct/base models are not reasoning models: `supports_thinking` stays False so thinking
+    # parameters are not sent (guards against enabling thinking on non-reasoning Kimi models).
+    for non_reasoning_model in ('moonshot-v1-8k', 'kimi-k2-0711-preview', 'kimi-latest'):
+        profile = provider.model_profile(non_reasoning_model)
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is False
+        # The provider still advertises the response-shape fields even on non-thinking models.
+        assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
