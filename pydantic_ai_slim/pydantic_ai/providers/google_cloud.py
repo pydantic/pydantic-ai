@@ -11,7 +11,7 @@ try:
     from google.genai.types import HttpRetryOptions
 
     from pydantic_ai.providers.google import BaseGoogleProvider, GoogleCloudLocation
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google Cloud provider, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'

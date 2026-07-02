@@ -17,7 +17,7 @@ try:
     from openai import AsyncOpenAI, Omit, omit
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings
-except ImportError as _import_error:  # pragma: no cover
+except ModuleNotFoundError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Z.AI model, '
         'you can use the `zai` optional group — `pip install "pydantic-ai-slim[zai]"`'

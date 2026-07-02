@@ -25,7 +25,7 @@ try:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
     )
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install the `anthropic` package to use the Anthropic provider, '
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'

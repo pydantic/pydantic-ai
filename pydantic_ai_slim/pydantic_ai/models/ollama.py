@@ -14,7 +14,7 @@ try:
     from openai import AsyncOpenAI
 
     from .openai import OpenAIChatModel
-except ImportError as _import_error:
+except ModuleNotFoundError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Ollama model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
