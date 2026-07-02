@@ -139,11 +139,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
 
-    preserve_file_data: InitVar[bool | None] = None
+    preserve_file_data: InitVar[bool | None] = None  # TODO(v3): remove preserve_file_data
     """Deprecated alias for [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]."""
 
     def __post_init__(self, preserve_file_data: bool | None) -> None:
-        self.allow_uploaded_files = resolve_allow_uploaded_files(self.allow_uploaded_files, preserve_file_data)
+        # `stacklevel=4` points the warning at the user's `VercelAIAdapter(...)` call:
+        # user → generated `__init__` → `__post_init__` → helper → `warn`.
+        self.allow_uploaded_files = resolve_allow_uploaded_files(
+            self.allow_uploaded_files, preserve_file_data, stacklevel=4
+        )
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:

@@ -85,13 +85,23 @@ FileUrlT = TypeVar('FileUrlT', bound=FileUrl)
 subclass (`ImageUrl`, `DocumentUrl`, etc.) when sanitizing a file URL."""
 
 
-def resolve_allow_uploaded_files(allow_uploaded_files: bool, preserve_file_data: bool | None) -> bool:
+def resolve_allow_uploaded_files(
+    allow_uploaded_files: bool,
+    preserve_file_data: bool | None,  # TODO(v3): remove preserve_file_data
+    *,
+    stacklevel: int = 3,
+) -> bool:
     """Map the deprecated `preserve_file_data` argument onto `allow_uploaded_files`.
 
     Returns `allow_uploaded_files` unchanged when `preserve_file_data` is omitted (`None`).
-    When `preserve_file_data` is passed, emits a [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]
+    When `preserve_file_data` is passed, emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]
     and returns its value. Used by adapters that exposed the old `preserve_file_data` argument for
     honoring client-submitted uploaded files (now `allow_uploaded_files`).
+
+    `stacklevel` selects the frame the warning points at. The default `3` is right for the
+    `from_request`/`dispatch_request` classmethod paths (user → method → helper → `warn`). The
+    constructor path (`__post_init__`) has an extra generated-`__init__` frame in between
+    (user → `__init__` → `__post_init__` → helper → `warn`), so it passes `stacklevel=4`.
     """
     if preserve_file_data is None:
         return allow_uploaded_files
@@ -99,7 +109,7 @@ def resolve_allow_uploaded_files(allow_uploaded_files: bool, preserve_file_data:
         '`preserve_file_data` is deprecated; use `allow_uploaded_files` to honor client-submitted '
         'uploaded file references.',
         PydanticAIDeprecationWarning,
-        stacklevel=3,
+        stacklevel=stacklevel,
     )
     return preserve_file_data
 
