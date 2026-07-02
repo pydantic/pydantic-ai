@@ -34,7 +34,7 @@ def test_init_of_openai_without_api_key_raises_error(env: TestEnv):
     env.remove('OPENAI_API_KEY')
     with pytest.raises(
         OpenAIError,
-        match='^The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable$',
+        match=r'^The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable$',
     ):
         OpenAIProvider()
 
