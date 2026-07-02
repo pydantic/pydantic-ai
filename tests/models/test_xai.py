@@ -932,8 +932,10 @@ async def test_tool_choice_multiple_tools_filters(allow_model_requests: None) ->
 async def test_xai_web_search_user_location(allow_model_requests: None) -> None:
     """`WebSearchTool.user_location` should be forwarded to xAI's `web_search` location fields.
 
-    Not a VCR test: the xAI SDK talks gRPC (unrecordable by VCR), and the behavior under
-    test is the outgoing tool payload — the cassette matcher wouldn't catch a dropped field.
+    This pins the outgoing tool payload directly. The proto-cassette replay client
+    (see `test_xai_web_search_user_location_recorded`) ignores the request it's handed,
+    so a regression that dropped `user_location` would still replay green — only this
+    payload assertion catches it.
     """
     response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock([response])
@@ -973,6 +975,94 @@ async def test_xai_web_search_user_location(allow_model_requests: None) -> None:
                     'enable_image_search': False,
                 }
             }
+        ]
+    )
+
+
+async def test_xai_web_search_user_location_recorded(allow_model_requests: None, xai_provider: XaiProvider) -> None:
+    """Live-recorded proof that xAI accepts `WebSearchTool.user_location` fields.
+
+    Recorded against the real xAI API (proto cassette); the committed cassette's request
+    payload shows the `user_location` fields xAI accepted without error. The mapping itself
+    is pinned by `test_xai_web_search_user_location` — the replay client ignores the request.
+    """
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    user_location={
+                        'city': 'San Francisco',
+                        'country': 'US',
+                        'region': 'California',
+                        'timezone': 'America/Los_Angeles',
+                    }
+                )
+            )
+        ],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,
+            xai_include_web_search_output=True,
+        ),
+    )
+
+    result = await agent.run('Search the web for one popular tourist attraction near me and name it.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Search the web for one popular tourist attraction near me and name it.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The question is: "Search the web for one popular tourist attraction near me and name it."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'popular tourist attractions San Francisco', 'num_results': '5'},
+                        tool_call_id=IsStr(),
+                        provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
+                    ),
+                    ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=None,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
+                    TextPart(
+                        content='**Golden Gate Bridge** is one of the most popular tourist attractions near you in San Francisco.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2747,
+                    cache_read_tokens=1280,
+                    output_tokens=23,
+                    details={'reasoning_tokens': 237, 'server_side_tools_web_search': 1},
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
         ]
     )
 
