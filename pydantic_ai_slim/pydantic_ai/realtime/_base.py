@@ -11,12 +11,14 @@ exchanged over a realtime session.
 
 from __future__ import annotations as _annotations
 
+import asyncio
+import random
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 
-from typing_extensions import TypeAliasType
+from typing_extensions import Protocol, TypeAliasType
 
 from ..native_tools import AbstractNativeTool
 from ..settings import ModelSettings
@@ -360,3 +362,27 @@ class RealtimeModel(ABC):
     def model_name(self) -> str:
         """The model name, e.g. `gpt-realtime`."""
         raise NotImplementedError
+
+
+class BackoffPolicy(Protocol):
+    """The backoff knobs shared by provider `ReconnectPolicy` types."""
+
+    max_attempts: int
+    base_delay: float
+    max_delay: float
+    jitter: bool
+
+
+async def reconnect_with_backoff(policy: BackoffPolicy, attempt: Callable[[], Awaitable[bool]]) -> bool:
+    """Retry `attempt` with exponential backoff (and optional jitter) until it succeeds or attempts run out.
+
+    `attempt` performs one provider-specific re-dial and returns whether it succeeded.
+    """
+    for i in range(policy.max_attempts):
+        delay = min(policy.max_delay, policy.base_delay * (2**i))
+        if policy.jitter:
+            delay *= 0.5 + random.random() * 0.5
+        await asyncio.sleep(delay)
+        if await attempt():
+            return True
+    return False

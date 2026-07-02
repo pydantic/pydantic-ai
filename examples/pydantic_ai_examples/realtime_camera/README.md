@@ -58,6 +58,33 @@ model/region doesn't support grounding.
 > callable. See the [realtime guide](https://ai.pydantic.dev/realtime/#built-in-tools-web-search) for
 > how to use `WebFetch` (including its local fallback) on its own.
 
+### Redraw a sketch
+
+Hold a **hand-drawn diagram** up to the camera — a system design, flow chart, wireframe — and ask
+the assistant to *"clean this up"* or *"redraw it properly"*. It calls the `redraw_diagram` tool,
+which is a regular [`@agent.tool`][pydantic_ai.Agent.tool] that the
+[`realtime_session`][pydantic_ai.Agent.realtime_session] executes automatically. The tool hands the
+current camera frame to a **separate vision agent** — a plain [`Agent`][pydantic_ai.Agent] running
+Opus via OpenRouter — that returns a clean, self-contained HTML version of the drawing. The browser
+renders it in an overlay and can export it to PNG client-side.
+
+It runs as a [background tool][pydantic_ai.Agent.realtime_session] (it takes a moment), so the voice
+conversation keeps flowing while the diagram is drawn, then the model announces it when it appears.
+
+The frames streamed to Gemini are small and low-detail to keep the live session cheap, so for the
+redraw the server asks the browser for a one-off **high-resolution snapshot** (the camera is opened at
+up to 1920×1080 and captured at ~1600 px wide) that goes only to the drawing agent — enough detail to
+read hand-written labels without paying for high-res frames on every turn.
+
+```bash
+export OPENROUTER_API_KEY=...                       # required for the drawing agent
+export CAMERA_DRAW_MODEL=anthropic/claude-opus-4.5  # optional: any vision model on OpenRouter
+export CAMERA_DRAW=false                            # optional: turn the feature off
+```
+
+> Because Gemini Live can't combine function calling with Google Search grounding in one session,
+> enabling the drawing tool turns [web search](#web-search) off.
+
 ### Using a work Google Cloud account (Vertex AI)
 
 If your organization disallows Gemini API keys, use **Vertex AI** with Application Default

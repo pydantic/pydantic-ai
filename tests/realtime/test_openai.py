@@ -430,6 +430,23 @@ async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.Monke
 
 
 @pytest.mark.anyio
+async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A malformed frame (invalid JSON, then a bad base64 audio payload) surfaces as a recoverable
+    # SessionError and the session keeps streaming rather than tearing down.
+    bad_json = 'not json'
+    bad_audio = json.dumps({'type': 'response.output_audio.delta', 'delta': 'not-base64!!'})
+    good = json.dumps({'type': 'response.output_audio.delta', 'delta': base64.b64encode(b'\x09').decode('ascii')})
+    ws = FakeWebSocket([_created(), _updated(), bad_json, bad_audio, good])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime', api_key='k')
+    async with model.connect(instructions='x') as conn:
+        events = [e async for e in conn]
+    assert [type(e).__name__ for e in events] == ['SessionError', 'SessionError', 'AudioDelta']
+    assert all(isinstance(e, SessionError) and e.recoverable for e in events[:2])
+    assert events[-1] == AudioDelta(data=b'\x09')
+
+
+@pytest.mark.anyio
 async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
@@ -596,6 +613,54 @@ async def test_reconnects_on_drop_and_resumes() -> None:
     )
     events = [e async for e in conn]
     assert events == [Reconnected(), Transcript(text='hi', is_final=True)]
+
+
+class _DropAfterHandshake(FakeWebSocket):
+    """Completes the handshake (via `recv`), then drops when iterated."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        raise rt_openai.websockets.ConnectionClosed(None, None)
+        yield  # pragma: no cover  (makes this an async generator)
+
+
+class _RecordingConnect:
+    """Stand-in for `websockets.connect` that hands out sockets in order and records closes."""
+
+    def __init__(self, sockets: list[FakeWebSocket]) -> None:
+        self._sockets = iter(sockets)
+        self.closed: list[FakeWebSocket] = []
+
+    def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+        ws = next(self._sockets)
+        recorder = self
+
+        class _CM:
+            async def __aenter__(self) -> FakeWebSocket:
+                return ws
+
+            async def __aexit__(self, *exc: object) -> bool:
+                recorder.closed.append(ws)
+                return False
+
+        return _CM()
+
+
+@pytest.mark.anyio
+async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A reconnect through `connect()`'s own dial must close the dropped connection before opening the
+    # next, and teardown closes the current one — so sockets don't accumulate across drops.
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
+    dropped = _DropAfterHandshake([_created(), _updated()])
+    good = FakeWebSocket([_created(), _updated(), transcript])
+    connect = _RecordingConnect([dropped, good])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+
+    model = OpenAIRealtimeModel('gpt-realtime', api_key='k', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
+    async with model.connect(instructions='x') as conn:
+        events = [e async for e in conn]
+
+    assert events == [Reconnected(), Transcript(text='hi', is_final=True)]
+    assert connect.closed == [dropped, good]
 
 
 @pytest.mark.anyio

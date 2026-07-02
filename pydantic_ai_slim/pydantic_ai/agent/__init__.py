@@ -83,6 +83,7 @@ from ..tools import (
     SystemPromptFunc,
     Tool,
     ToolDefinition,
+    ToolDenied,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -2642,9 +2643,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         specific to the request-response graph — `output_type`, `message_history`, `conversation_id`
         (as history), `retries`, `event_stream_handler`, `deferred_tool_results` — do not apply;
         structured output should be delegated to a normal [`Agent`][pydantic_ai.Agent] (see the
-        realtime docs). Of the `capabilities` lifecycle, only the **tool** hooks (`prepare_tools` and
-        `before`/`after`/`wrap`/`on_error` `tool_execute`) run, since the session executes tools but
-        has no model-request/graph/output stages.
+        realtime docs). Of the `capabilities` lifecycle, only the **tool** hooks (`prepare_tools`,
+        `before`/`after`/`wrap` `tool_validate`, and `before`/`after`/`wrap`/`on_error` `tool_execute`)
+        run, since the session validates and executes tools but has no model-request/graph/output
+        stages.
 
         Example:
         ```python {test="skip"}
@@ -2698,6 +2700,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage if usage is not None else _usage.RunUsage(),
             model_settings=model_settings,
             conversation_id=conversation_id,
+            max_retries=self._max_tool_retries,
         )
 
         # Capabilities: the agent's root + any per-call ones. Only the tool-lifecycle hooks run in a
@@ -2729,39 +2732,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolset = self._get_toolset(output_toolset=None, additional_toolsets=toolsets, run_capability=run_capability)
         toolset = await toolset.for_run(run_context)
         async with toolset:
-            toolset = await toolset.for_run_step(run_context)
-            tools_map = await toolset.get_tools(run_context)
-            tool_defs = [t.tool_def for t in tools_map.values()]
+            # A dedicated usage for tool execution keeps the session the single authority for
+            # `session.usage.tool_calls` (counted as `ToolCall`s stream in); token usage still lands
+            # on the session via provider `Usage` events.
+            tool_context = dataclasses.replace(run_context, usage=_usage.RunUsage())
+            tool_manager = await ToolManager[AgentDepsT](
+                toolset, root_capability=run_capability, default_max_retries=self._max_tool_retries
+            ).for_run_step(tool_context)
+            tool_defs = tool_manager.tool_defs
 
-            # Evaluate literal + dynamic instructions once, against the run context.
+            # Evaluate literal + dynamic instructions once, then fold in toolset-contributed
+            # instructions, mirroring the run/iter graph.
             literal, instruction_functions = self._get_instructions(additional_instructions=instructions)
             instruction_parts = [literal, *[await fn.run(run_context) for fn in instruction_functions]]
+            instruction_parts.extend(
+                part.content
+                for part in _instructions.normalize_toolset_instructions(
+                    await tool_manager.toolset.get_instructions(run_context)
+                )
+            )
             resolved_instructions = '\n'.join(part for part in instruction_parts if part).strip()
 
             async def tool_runner(name: str, args: dict[str, Any], call_id: str) -> str:
-                tool = tools_map.get(name)
-                if tool is None:
-                    return f'Error: unknown tool {name!r}'
-                ctx = dataclasses.replace(run_context, tool_name=name, tool_call_id=call_id)
+                # Route through `ToolManager` so realtime tool calls get the same argument
+                # validation, `args_validator`, capability hooks, and retry/control-flow handling
+                # as `run`/`iter`.
                 call = _messages.ToolCallPart(tool_name=name, args=args, tool_call_id=call_id)
-                tool_def = tool.tool_def
-
-                async def execute(call_args: dict[str, Any]) -> Any:
-                    return await toolset.call_tool(name, call_args, ctx, tool)
-
-                # Mirror the graph's execute-stage hook order: before -> wrap (or on-error) -> after.
-                hook_args = await run_capability.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
                 try:
-                    result = await run_capability.wrap_tool_execute(
-                        ctx, call=call, tool_def=tool_def, args=hook_args, handler=execute
-                    )
-                except Exception as e:
-                    result = await run_capability.on_tool_execute_error(
-                        ctx, call=call, tool_def=tool_def, args=hook_args, error=e
-                    )
-                result = await run_capability.after_tool_execute(
-                    ctx, call=call, tool_def=tool_def, args=hook_args, result=result
-                )
+                    result = await tool_manager.handle_call(call)
+                except exceptions.ToolRetryError as e:
+                    return e.tool_retry.model_response()
+                if isinstance(result, ToolDenied):
+                    return result.message
+                if isinstance(result, _messages.ToolReturn):
+                    return str(result.return_value)
                 return str(result)
 
             async with model.connect(

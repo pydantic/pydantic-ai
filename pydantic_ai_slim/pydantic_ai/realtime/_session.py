@@ -218,26 +218,32 @@ class RealtimeSession:
         span_name = f'realtime {self._model_name}' if self._model_name else 'realtime'
         with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
             # The conversation transcript, captured turn-by-turn so it lands on the span as messages.
-            messages: list[dict[str, Any]] = []
+            # User input and model output are kept separate to match the GenAI semantic conventions.
+            input_messages: list[dict[str, Any]] = []
+            output_messages: list[dict[str, Any]] = []
             try:
                 async for event in self._stream():
                     if settings.include_content and (message := _transcript_message(event)) is not None:
-                        messages.append(message)
+                        bucket = output_messages if message['role'] == 'assistant' else input_messages
+                        bucket.append(message)
                     yield event
             finally:
-                self._finalize_span(settings, span, attributes, messages)
+                self._finalize_span(settings, span, attributes, input_messages, output_messages)
 
     def _finalize_span(
         self,
         settings: InstrumentationSettings,
         span: Span,
         base_attributes: dict[str, Any],
-        messages: list[dict[str, Any]],
+        input_messages: list[dict[str, Any]],
+        output_messages: list[dict[str, Any]],
     ) -> None:
         """Attach cumulative usage and the conversation transcript to the session span."""
         span.set_attributes(self.usage.opentelemetry_attributes())
-        if messages:
-            span.set_attribute('gen_ai.input.messages', json.dumps(messages))
+        if input_messages:
+            span.set_attribute('gen_ai.input.messages', json.dumps(input_messages))
+        if output_messages:
+            span.set_attribute('gen_ai.output.messages', json.dumps(output_messages))
         for token_type in ('input', 'output'):
             tokens: int = getattr(self.usage, f'{token_type}_tokens')
             if tokens:

@@ -1804,6 +1804,15 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
             )
 
 
+async def test_temporal_agent_realtime_session_in_workflow():
+    # A realtime session opens a long-lived, non-deterministic connection, so it can't run inside a
+    # workflow; the guard trips before the model is ever connected.
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            async with simple_temporal_agent.realtime_session(model=cast('Any', object())):
+                pass  # pragma: no cover
+
+
 async def simple_event_stream_handler(
     ctx: RunContext,
     stream: AsyncIterable[AgentStreamEvent],

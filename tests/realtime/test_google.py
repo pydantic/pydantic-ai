@@ -261,6 +261,32 @@ async def test_send_tool_result_echoes_name() -> None:
     assert response.response == {'output': 'Sunny'}
 
 
+async def test_parallel_id_less_calls_do_not_collide() -> None:
+    # Gemini may emit multiple function calls without ids; each must get a distinct internal id so
+    # results echo the right name back (Gemini gets `id=None`, which is what it sent).
+    session = _RecordingSession()
+    conn = _conn(session)
+    events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[
+                    genai_types.FunctionCall(name='get_weather', args={}),
+                    genai_types.FunctionCall(name='get_time', args={}),
+                ]
+            )
+        )
+    )
+    call_ids = [e.tool_call_id for e in events if isinstance(e, ToolCall)]
+    assert len(set(call_ids)) == 2  # distinct internal ids, no collision
+
+    await conn.send(ToolResult(tool_call_id=call_ids[0], output='Sunny'))
+    await conn.send(ToolResult(tool_call_id=call_ids[1], output='Noon'))
+    assert [(r.id, r.name, r.response) for r in session.tool_responses] == [
+        (None, 'get_weather', {'output': 'Sunny'}),
+        (None, 'get_time', {'output': 'Noon'}),
+    ]
+
+
 async def test_send_unsupported_raises() -> None:
     session = _RecordingSession()
     with pytest.raises(NotImplementedError, match='object'):

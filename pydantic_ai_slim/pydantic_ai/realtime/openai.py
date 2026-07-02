@@ -14,10 +14,9 @@ import asyncio
 import base64
 import json
 import os
-import random
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -61,6 +60,7 @@ from ._base import (
     TruncateOutput,
     TurnComplete,
     Usage,
+    reconnect_with_backoff,
 )
 
 DEFAULT_REALTIME_URL = 'wss://api.openai.com/v1/realtime'
@@ -364,34 +364,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 async for raw in self._ws:
                     if not isinstance(raw, str):
                         continue
-                    data: dict[str, Any] = json.loads(raw)
-                    event_type = data.get('type')
-                    if event_type == 'response.created':
-                        self._response_active = True
-                    elif event_type in _AUDIO_DELTA_TYPES:
-                        # Track the speaking item so a later `TruncateOutput` can name it.
-                        item_id = data.get('item_id')
-                        if isinstance(item_id, str):
-                            self._current_item_id = item_id
-                            content_index = data.get('content_index')
-                            self._current_content_index = content_index if isinstance(content_index, int) else 0
-                    elif event_type == 'response.done':
-                        self._response_active = False
-                        self._current_item_id = None
-                        # Emit usage for every response (including intermediate function-call-only ones)
-                        # so the session accounts for all tokens, then defer a pending response if needed.
-                        usage = _map_usage(_obj(data.get('response')))
-                        if usage is not None:
-                            yield Usage(usage=usage)
-                        if self._pending_response:
-                            self._pending_response = False
-                            # A cancelled response means the user barged in: a new turn is starting, so
-                            # don't replay the deferred response over it.
-                            if _obj(data.get('response')).get('status') != 'cancelled':
-                                self._response_active = True
-                                await self._send_event({'type': 'response.create'})
-                    event = map_event(data)
-                    if event is not None:
+                    try:
+                        events = await self._decode_frame(raw)
+                    except ValueError as e:
+                        # A malformed frame (bad JSON or audio payload) shouldn't tear down the whole
+                        # session; surface it as a recoverable error and keep reading.
+                        yield SessionError(message=f'Failed to parse OpenAI realtime event: {e}', recoverable=True)
+                        continue
+                    for event in events:
                         yield event
                 return  # the upstream iterator ended without dropping
             except websockets.ConnectionClosed as e:
@@ -408,24 +388,57 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 )
                 return
 
+    async def _decode_frame(self, raw: str) -> list[RealtimeEvent]:
+        """Parse one text frame into events, updating tracked response state.
+
+        Raises `ValueError` (incl. `json.JSONDecodeError` / `binascii.Error`) on a malformed payload.
+        """
+        data: dict[str, Any] = json.loads(raw)
+        event_type = data.get('type')
+        events: list[RealtimeEvent] = []
+        if event_type == 'response.created':
+            self._response_active = True
+        elif event_type in _AUDIO_DELTA_TYPES:
+            # Track the speaking item so a later `TruncateOutput` can name it.
+            item_id = data.get('item_id')
+            if isinstance(item_id, str):
+                self._current_item_id = item_id
+                content_index = data.get('content_index')
+                self._current_content_index = content_index if isinstance(content_index, int) else 0
+        elif event_type == 'response.done':
+            self._response_active = False
+            self._current_item_id = None
+            # Emit usage for every response (including intermediate function-call-only ones)
+            # so the session accounts for all tokens, then defer a pending response if needed.
+            usage = _map_usage(_obj(data.get('response')))
+            if usage is not None:
+                events.append(Usage(usage=usage))
+            if self._pending_response:
+                self._pending_response = False
+                # A cancelled response means the user barged in: a new turn is starting, so
+                # don't replay the deferred response over it.
+                if _obj(data.get('response')).get('status') != 'cancelled':
+                    self._response_active = True
+                    await self._send_event({'type': 'response.create'})
+        if (event := map_event(data)) is not None:
+            events.append(event)
+        return events
+
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff; return whether a new connection was established."""
         assert self._reconnect is not None and self._dial is not None
-        policy = self._reconnect
-        for attempt in range(policy.max_attempts):
-            delay = min(policy.max_delay, policy.base_delay * (2**attempt))
-            if policy.jitter:
-                delay *= 0.5 + random.random() * 0.5
-            await asyncio.sleep(delay)
-            try:
-                self._ws = await self._dial()
-            except Exception:
-                continue
-            self._response_active = False
-            self._pending_response = False
-            self._current_item_id = None
-            return True
-        return False
+        return await reconnect_with_backoff(self._reconnect, self._attempt_reconnect)
+
+    async def _attempt_reconnect(self) -> bool:
+        assert self._dial is not None
+        try:
+            self._ws = await self._dial()
+        except Exception:
+            return False
+        self._response_active = False
+        self._pending_response = False
+        self._current_item_id = None
+        return True
 
 
 @dataclass
@@ -619,19 +632,30 @@ class OpenAIRealtimeModel(RealtimeModel):
         headers = {'Authorization': f'Bearer {api_key}'}
         session_config = self._session_config(instructions, tools, model_settings)
 
-        # `dial` opens and configures a fresh connection; the exit stack closes every connection it
-        # opens (the initial one plus any opened while reconnecting) when `connect()` exits.
-        async with AsyncExitStack() as stack:
+        # `dial` opens and configures a fresh connection. A reconnect closes the previous connection
+        # (including one left half-open by a failed handshake) before opening the next, so sockets
+        # don't accumulate; teardown closes whatever is current.
+        cm: AbstractAsyncContextManager[ClientConnection] | None = None
 
-            async def dial() -> ClientConnection:
-                ws = await stack.enter_async_context(websockets.connect(url, additional_headers=headers))
-                await _expect_event(ws, 'session.created', timeout=self.handshake_timeout)
-                await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
-                await _expect_event(ws, 'session.updated', timeout=self.handshake_timeout)
-                return ws
+        async def dial() -> ClientConnection:
+            nonlocal cm
+            if cm is not None:
+                previous, cm = cm, None
+                await previous.__aexit__(None, None, None)
+            opening = websockets.connect(url, additional_headers=headers)
+            ws = await opening.__aenter__()
+            cm = opening
+            await _expect_event(ws, 'session.created', timeout=self.handshake_timeout)
+            await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
+            await _expect_event(ws, 'session.updated', timeout=self.handshake_timeout)
+            return ws
 
+        try:
             ws = await dial()
             yield OpenAIRealtimeConnection(ws, dial=dial, reconnect=self.reconnect)
+        finally:
+            if cm is not None:
+                await cm.__aexit__(None, None, None)
 
 
 async def _expect_event(ws: ClientConnection, expected_type: str, *, timeout: float) -> dict[str, Any]:

@@ -7,10 +7,11 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Literal
-from unittest.mock import MagicMock
+from typing import Any, Literal, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
+from prefect.context import FlowRunContext
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -767,6 +768,14 @@ async def test_run_stream_events_in_flow(allow_model_requests: None) -> None:
         ),
     ):
         await run_stream_events_workflow()
+
+
+async def test_realtime_session_in_flow() -> None:
+    """Realtime sessions open a long-lived, non-deterministic connection, so they can't run in a flow."""
+    with patch.object(FlowRunContext, 'get', return_value=object()):
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            async with simple_prefect_agent.realtime_session(model=cast('Any', object())):
+                pass  # pragma: no cover
 
 
 async def test_iter_in_flow(allow_model_requests: None) -> None:

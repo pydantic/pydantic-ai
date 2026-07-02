@@ -36,6 +36,14 @@ Vertex's `v1beta1` API yet, so it's not the default.
 Web search (the `WebSearch` capability — Grounding with Google Search) is **on by default** so the
 assistant can answer with current facts and cite its sources as chips in the UI; set
 `CAMERA_WEB_SEARCH=false` to disable (or if your model/region doesn't support grounding).
+
+**Redraw a sketch.** Show the camera a hand-drawn diagram (a system design, flow chart, wireframe)
+and ask the assistant to clean it up: it calls the `redraw_diagram` tool, which hands the current
+camera frame to a separate vision agent (Opus via OpenRouter by default) that recreates the sketch
+as a clean, self-contained HTML diagram. The browser renders it in an overlay and can export it to
+PNG client-side. Set `CAMERA_DRAW=false` to disable, `CAMERA_DRAW_MODEL` to pick the drawing model
+(needs `OPENROUTER_API_KEY`). Because Gemini Live can't combine function calling with Google Search
+grounding in one session, enabling the drawing tool turns web search off.
 """
 
 from __future__ import annotations
@@ -43,7 +51,10 @@ from __future__ import annotations
 import base64
 import json
 import os
-from collections.abc import AsyncGenerator, Mapping
+import re
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, cast
 
@@ -52,7 +63,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.realtime import (
     AudioDelta,
@@ -92,11 +103,22 @@ TURN_COVERAGE = cast(
 )
 PROACTIVE = os.environ.get('CAMERA_PROACTIVE', '').lower() in ('1', 'true', 'yes')
 AFFECTIVE = os.environ.get('CAMERA_AFFECTIVE', '').lower() in ('1', 'true', 'yes')
+# Sketch-to-diagram: a `redraw_diagram` tool hands the current camera frame to a separate vision
+# agent that recreates the drawing as clean HTML. On by default; needs `OPENROUTER_API_KEY` (the
+# drawing model is Opus via OpenRouter unless `CAMERA_DRAW_MODEL` overrides it).
+DRAW = os.environ.get('CAMERA_DRAW', 'true').lower() in ('1', 'true', 'yes')
+DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'anthropic/claude-opus-4.5')
 # Grounding with Google Search (a native tool) — on by default; `gemini-live-2.5-flash-native-audio`
 # supports it. Set `CAMERA_WEB_SEARCH=false` to disable, or if your model/region doesn't support it.
 # (We don't also add `WebFetch` here: Gemini 2.5 / native-audio can't combine Google Search grounding
 # with function calling in one session, so a fetch tool alongside grounding wouldn't be callable.)
-WEB_SEARCH = os.environ.get('CAMERA_WEB_SEARCH', 'true').lower() in ('1', 'true', 'yes')
+# That same limitation means the `redraw_diagram` tool and grounding are mutually exclusive, so the
+# drawing tool forces web search off.
+WEB_SEARCH = not DRAW and os.environ.get('CAMERA_WEB_SEARCH', 'true').lower() in (
+    '1',
+    'true',
+    'yes',
+)
 WATCH_PROMPT = os.environ.get(
     'CAMERA_WATCH_PROMPT',
     "Look at the current camera view. In a few words, say what's changed since you last spoke; "
@@ -113,15 +135,106 @@ INSTRUCTIONS = (
         if WEB_SEARCH
         else ''
     )
+    + (
+        ' You can redraw a hand-drawn sketch the user shows you — a diagram, system design, flow '
+        'chart, or wireframe — into a clean version with the `redraw_diagram` tool. Do NOT call it '
+        'the moment you see a drawing. First make sure you understand what they actually want: if '
+        "they haven't said, ask one short question — keep it faithful but tidier, turn it into a "
+        'flowchart, restructure it, add or label something? Only once their intent is clear, pass it '
+        "to the tool as the `instructions`. It takes a moment, so say you're on it, then briefly "
+        'describe what you drew once it appears.'
+        if DRAW
+        else ''
+    )
 )
 
-# `WebSearch()` flows in as Gemini's native Grounding with Google Search, the same way it would for a
-# normal `agent.run()`. When the model grounds an answer, the session emits a `Sources` event that the
-# browser renders as citation chips.
+
+@dataclass
+class CameraDeps:
+    """Per-connection hooks the `redraw_diagram` tool needs.
+
+    `capture_frame` asks the browser for a fresh high-resolution still (so the drawing agent can read
+    fine detail like hand-written labels — the frames streamed to Gemini are deliberately small and
+    low-detail to keep the live session cheap), and `emit` pushes a JSON message back to that browser.
+    """
+
+    capture_frame: Callable[[], Awaitable[bytes | None]]
+    emit: Callable[[dict[str, object]], Awaitable[None]]
+
+
 agent = Agent(
-    instructions=INSTRUCTIONS, capabilities=[WebSearch()] if WEB_SEARCH else []
+    instructions=INSTRUCTIONS,
+    deps_type=CameraDeps,
+    capabilities=[WebSearch()] if WEB_SEARCH else [],
 )
 app = FastAPI()
+
+DRAW_INSTRUCTIONS = (
+    'You turn a photo of a hand-drawn sketch — a diagram, system design, flow chart, or wireframe — '
+    'into a clean, modern, self-contained HTML page that recreates and tidies up the drawing. '
+    'Faithfully preserve the boxes, labels, arrows, and connections the user drew, fixing obvious '
+    'wobbles and typos, and lay everything out neatly with clear typography, generous spacing, and '
+    'restrained color on a light background. '
+    'Design it to fit comfortably on a phone screen in portrait: prefer a vertical flow over very '
+    'wide horizontal layouts, let content wrap, and use relative widths so nothing is cut off. '
+    'Respond with a SINGLE complete HTML document and nothing else: inline all CSS in a `<style>` '
+    'tag, use no external resources (no images, web fonts, or scripts), and no markdown fences.'
+)
+DRAW_PROMPT = (
+    'Recreate and clean up the diagram in this photo as a self-contained HTML page. '
+    'What the user asked for: {instructions}'
+)
+_FENCE_RE = re.compile(r'^```[a-zA-Z]*\n(.*)\n```$', re.DOTALL)
+
+
+@lru_cache(maxsize=1)
+def _draw_agent() -> Agent[None, str]:
+    """Build the vision agent that redraws sketches.
+
+    Built lazily so the example runs without an OpenRouter key unless the drawing tool is used.
+    """
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    return Agent(OpenRouterModel(DRAW_MODEL), instructions=DRAW_INSTRUCTIONS)
+
+
+def _extract_html(text: str) -> str:
+    """Strip a ```html ... ``` fence if the model wrapped its output in one."""
+    text = text.strip()
+    match = _FENCE_RE.match(text)
+    return (match.group(1) if match else text).strip()
+
+
+if DRAW:
+
+    @agent.tool
+    async def redraw_diagram(ctx: RunContext[CameraDeps], instructions: str) -> str:
+        """Redraw a sketch the user is showing the camera as a clean diagram on their screen.
+
+        Use this for a hand-drawn diagram, system design, flow chart, or wireframe when the user asks
+        to clean it up, redraw, digitize, or "make a proper version" of what they're holding up.
+
+        Args:
+            ctx: The context.
+            instructions: What the user wants, in their words (e.g. "clean up this microservices
+                diagram and label the queues").
+        """
+        frame = await ctx.deps.capture_frame()
+        if frame is None:
+            return "I can't see the camera yet — ask them to hold the drawing up to it."
+        await ctx.deps.emit({'type': 'drawing_started', 'request': instructions})
+        try:
+            result = await _draw_agent().run(
+                [
+                    DRAW_PROMPT.format(instructions=instructions),
+                    BinaryContent(data=frame, media_type='image/jpeg'),
+                ]
+            )
+        except Exception as exc:
+            await ctx.deps.emit({'type': 'drawing_error'})
+            return f'The redraw failed: {exc}'
+        await ctx.deps.emit({'type': 'drawing', 'html': _extract_html(result.output)})
+        return 'Done — the cleaned-up diagram is on their screen now. Briefly tell them what you drew.'
 
 
 def _truthy(value: str | None) -> bool:
@@ -197,15 +310,60 @@ def _json_message(event: RealtimeSessionEvent) -> dict[str, object] | None:
     return None
 
 
-async def _dispatch_text(session: RealtimeSession, text: str) -> None:
-    """Route a JSON text frame: a camera frame (`image`), a typed turn (`text`), or a watch `nudge`."""
+class _FrameStore:
+    """Keeps the latest streamed frame and coordinates on-demand high-res snapshots for redrawing.
+
+    Frames streamed to Gemini are small and low-detail (cheap context). `redraw_diagram` instead asks
+    the browser for one sharp snapshot via `capture` and waits briefly for the `frame_hd` reply, so
+    the drawing agent can read fine detail like hand-written labels — falling back to the last
+    streamed frame if no snapshot arrives.
+    """
+
+    def __init__(self) -> None:
+        self._streamed: bytes | None = None
+        self._hd: bytes | None = None
+        self._ready: anyio.Event | None = None
+
+    def store_streamed(self, frame: bytes) -> None:
+        self._streamed = frame
+
+    def store_hd(self, frame: bytes) -> None:
+        self._hd = frame
+        if self._ready is not None:
+            self._ready.set()
+
+    async def capture(
+        self, emit: Callable[[dict[str, object]], Awaitable[None]]
+    ) -> bytes | None:
+        self._hd, self._ready = None, anyio.Event()
+        await emit({'type': 'capture'})
+        with anyio.move_on_after(4):
+            await self._ready.wait()
+        self._ready = None
+        return self._hd or self._streamed
+
+
+async def _dispatch_text(
+    session: RealtimeSession,
+    text: str,
+    store_frame: Callable[[bytes], None],
+    store_hd: Callable[[bytes], None],
+) -> None:
+    """Route a JSON text frame from the browser.
+
+    Handles a streamed camera frame (`image`), an on-demand high-res snapshot (`frame_hd`), a typed
+    turn (`text`), or a watch `nudge`.
+    """
     try:
         data = json.loads(text)
         if data.get('type') == 'image':
-            await session.send_image(
-                base64.b64decode(data['data']),
-                mime_type=data.get('mime') or 'image/jpeg',
-            )
+            frame = base64.b64decode(data['data'])
+            store_frame(frame)  # low-res fallback if a high-res capture isn't available
+            await session.send_image(frame, mime_type=data.get('mime') or 'image/jpeg')
+        elif data.get('type') == 'frame_hd':
+            # High-res still requested for `redraw_diagram` — keep it for the tool but don't forward
+            # it to Gemini (the live session only needs the cheap streamed frames for context).
+            store_hd(base64.b64decode(data['data']))
         elif data.get('type') == 'text':
             await session.send_text(data['text'])
         elif data.get('type') == 'nudge':
@@ -219,8 +377,22 @@ async def _dispatch_text(session: RealtimeSession, text: str) -> None:
 async def ws(socket: WebSocket) -> None:
     await socket.accept()
 
+    # A lock serializes WebSocket sends, since a background tool's `emit` can race the event pump.
+    send_lock = anyio.Lock()
+
+    async def emit(message: dict[str, object]) -> None:
+        async with send_lock:
+            await socket.send_json(message)
+
+    frames = _FrameStore()
+    deps = CameraDeps(capture_frame=lambda: frames.capture(emit), emit=emit)
+
     model = _build_model(socket.query_params)
-    async with agent.realtime_session(model=model) as session:
+    async with agent.realtime_session(
+        model=model,
+        deps=deps,
+        background_tools={'redraw_diagram'} if DRAW else None,
+    ) as session:
         async with anyio.create_task_group() as tg:
 
             async def pump_events() -> None:
@@ -230,10 +402,11 @@ async def ws(socket: WebSocket) -> None:
                 try:
                     async for event in events:
                         if isinstance(event, AudioDelta):
-                            await socket.send_bytes(event.data)
+                            async with send_lock:
+                                await socket.send_bytes(event.data)
                             continue
                         if (message := _json_message(event)) is not None:
-                            await socket.send_json(message)
+                            await emit(message)
                 except Exception:
                     tg.cancel_scope.cancel()
                 finally:
@@ -249,7 +422,9 @@ async def ws(socket: WebSocket) -> None:
                         if (chunk := message.get('bytes')) is not None:
                             await session.send_audio(chunk)  # raw PCM16 mic audio
                         elif (text := message.get('text')) is not None:
-                            await _dispatch_text(session, text)
+                            await _dispatch_text(
+                                session, text, frames.store_streamed, frames.store_hd
+                            )
                     tg.cancel_scope.cancel()
                 except WebSocketDisconnect:
                     tg.cancel_scope.cancel()

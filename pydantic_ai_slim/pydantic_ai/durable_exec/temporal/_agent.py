@@ -31,6 +31,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -46,6 +47,7 @@ from ._toolset import TemporalWrapperToolset, temporalize_toolset
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
+    from pydantic_ai.realtime import RealtimeModel, RealtimeSession
 
 
 @dataclass
@@ -1089,6 +1091,42 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             spec=spec,
         ) as run:
             yield run
+
+    @asynccontextmanager
+    async def realtime_session(
+        self,
+        model: RealtimeModel,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        background_tools: set[str] | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        if workflow.in_workflow():
+            raise UserError(
+                '`agent.realtime_session()` cannot be used inside a Temporal workflow, as it runs a '
+                'long-lived, non-deterministic connection. Use it outside a workflow instead.'
+            )
+        async with super().realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            background_tools=background_tools,
+        ) as session:
+            yield session
 
     @contextmanager
     def override(

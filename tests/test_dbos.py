@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -892,6 +893,15 @@ async def test_dbos_agent_run_stream_events_in_workflow(allow_model_requests: No
         ),
     ):
         await run_stream_events_workflow()
+
+
+async def test_dbos_agent_realtime_session_in_workflow():
+    # A realtime session opens a long-lived, non-deterministic connection, so it can't run inside a
+    # workflow; the guard trips before the model is ever connected.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'):
+        with pytest.raises(UserError, match='cannot be used inside a DBOS workflow'):
+            async with simple_dbos_agent.realtime_session(model=cast('Any', object())):
+                pass  # pragma: no cover
 
 
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):

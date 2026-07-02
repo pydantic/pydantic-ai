@@ -151,6 +151,41 @@
         font-size: 13px; color: #fff; }
       .sheet .ck input { width: 16px; height: 16px; accent-color: var(--g2); }
       .sheet-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+      .board { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+        padding: max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom)); color: var(--ink);
+        background: radial-gradient(120% 80% at 50% 0%, rgba(155, 107, 255, 0.16), transparent 60%), rgba(5, 6, 10, 0.74);
+        -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); animation: fade 0.25s ease; }
+      .board[hidden] { display: none; }
+      @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+      .board-card { display: flex; flex-direction: column; width: 100%; max-width: 920px; height: min(860px, 100%);
+        border-radius: 24px; border: 1.5px solid transparent; overflow: hidden;
+        background: linear-gradient(#0c0d14, #0c0d14) padding-box,
+          linear-gradient(135deg, var(--g1), var(--g2) 55%, var(--g3)) border-box;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); animation: pop 0.32s cubic-bezier(0.2, 0.9, 0.3, 1); }
+      @keyframes pop { from { opacity: 0; transform: scale(0.96) translateY(12px); } to { opacity: 1; transform: none; } }
+      .board-head { display: flex; align-items: center; gap: 11px; padding: 13px 14px 13px 16px;
+        border-bottom: 1px solid var(--line); }
+      .board-title { display: flex; flex-direction: column; line-height: 1.25; }
+      .board-title b { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+      .board-title small { font-size: 11px; color: var(--dim); font-weight: 500; }
+      .board-save { display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 15px; border: 0;
+        border-radius: 999px; font: inherit; font-size: 13px; font-weight: 600; color: #fff; cursor: pointer;
+        background: linear-gradient(135deg, var(--g1), var(--g2) 60%, var(--g3)); box-shadow: 0 8px 22px rgba(124, 107, 255, 0.4);
+        transition: transform 0.12s, filter 0.2s; }
+      .board-save:hover { transform: translateY(-1px); filter: brightness(1.06); }
+      .board-save svg { width: 16px; height: 16px; }
+      .board-body { position: relative; flex: 1; min-height: 0; margin: 14px; border-radius: 14px; overflow: hidden;
+        background: #fff; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06); }
+      .board-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+      .board-loading { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center;
+        justify-content: center; gap: 16px; background: #0c0d14; color: var(--dim); font-size: 13px; font-weight: 500; }
+      .board.loading .board-loading { display: flex; }
+      .board-spin { width: 46px; height: 46px; border-radius: 50%;
+        background: conic-gradient(from 0deg, var(--g1), var(--g2), var(--g3), var(--g4), var(--g1));
+        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 0);
+        mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 0);
+        animation: spin 0.9s linear infinite; }
     </style>
   </head>
   <body>
@@ -174,7 +209,7 @@
         <div class="caption" id="caption"></div>
         <div class="userline" id="userline"></div>
         <div class="sources" id="sources" hidden></div>
-        <div class="idle-hint">Tap <b>Start</b>, then talk and point your camera at things to ask about them. Use <b>Watch</b> to let it watch and call out changes on its own.</div>
+        <div class="idle-hint">Tap <b>Start</b>, then talk and point your camera at things to ask about them. Show it a hand-drawn sketch and ask it to <b>redraw</b> it as a clean diagram. Use <b>Watch</b> to let it watch and call out changes on its own.</div>
       </div>
 
       <footer class="hud dock">
@@ -218,13 +253,35 @@
         </div>
         <div class="sheet-foot"><button class="cta" id="apply">Apply &amp; restart</button></div>
       </div>
+
+      <div class="board" id="board" hidden>
+        <div class="board-card">
+          <div class="board-head">
+            <span class="logo"></span>
+            <div class="board-title"><b>Redrawn diagram</b><small id="boardSubtitle">from your sketch</small></div>
+            <span class="spacer"></span>
+            <button class="board-save" id="boardSave" title="Save as PNG">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              PNG
+            </button>
+            <button class="ico sm" id="boardClose" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+          <div class="board-body">
+            <iframe id="boardFrame" class="board-frame" sandbox="allow-same-origin" title="Redrawn diagram"></iframe>
+            <div class="board-loading"><div class="board-spin"></div><div>Redrawing your diagram…</div></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script>
       const INPUT_RATE = 16000; // Gemini Live expects 16kHz PCM input
       const OUTPUT_RATE = 24000; // and produces 24kHz output
       const FRAME_MS = 1000; // ~1 camera frame per second
-      const FRAME_W = 512; // downscale frames to keep bandwidth/cost low
+      const FRAME_W = 512; // downscale streamed frames to keep bandwidth/cost low
+      const HD_W = 1600; // on-demand snapshot width for redrawing — big enough to read handwriting
       const WATCH_MS = 2500; // in Watch mode, nudge the model this often to report changes
 
       const $ = (id) => document.getElementById(id);
@@ -305,6 +362,48 @@
         clearTimeout(srcTimer); srcTimer = setTimeout(() => sourcesEl.classList.remove('show'), 15000);
       }
 
+      // Redrawn-diagram board: the server sends self-contained HTML, we render it in a sandboxed
+      // iframe and let the user export it to PNG client-side (no extra dependencies).
+      const board = $('board'), boardFrame = $('boardFrame'), boardSubtitle = $('boardSubtitle');
+      let lastHtml = '';
+      function showDrawingLoading(request) {
+        boardSubtitle.textContent = request ? '“' + request + '”' : 'from your sketch';
+        boardFrame.srcdoc = ''; board.hidden = false; board.classList.add('loading');
+      }
+      function showDrawing(html) {
+        lastHtml = html; board.hidden = false; board.classList.remove('loading'); boardFrame.srcdoc = html;
+      }
+      $('boardClose').onclick = () => {
+        board.hidden = true; board.classList.remove('loading'); boardFrame.srcdoc = ''; lastHtml = '';
+      };
+      function downloadBlob(blob, name) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      // Rasterize the rendered HTML via an SVG <foreignObject>; fall back to saving the raw HTML if
+      // the browser taints the canvas (e.g. it embedded a cross-origin resource we didn't expect).
+      async function saveDrawingPng() {
+        if (!lastHtml) return;
+        try {
+          const doc = boardFrame.contentDocument;
+          const w = boardFrame.clientWidth, h = boardFrame.clientHeight, scale = 2;
+          const xml = new XMLSerializer().serializeToString(doc.documentElement);
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject x="0" y="0" width="100%" height="100%">${xml}</foreignObject></svg>`;
+          const img = new Image();
+          await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
+          const canvas = document.createElement('canvas');
+          canvas.width = w * scale; canvas.height = h * scale;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
+          canvas.toBlob((blob) => blob ? downloadBlob(blob, 'diagram.png') : downloadBlob(new Blob([lastHtml], { type: 'text/html' }), 'diagram.html'));
+        } catch (e) {
+          downloadBlob(new Blob([lastHtml], { type: 'text/html' }), 'diagram.html');
+        }
+      }
+      $('boardSave').onclick = saveDrawingPng;
+
       let playCtx = null, playHead = 0, scheduled = [], outAnalyser = null;
       function ensurePlayback() {
         if (!playCtx) {
@@ -374,6 +473,10 @@
           else if (m.type === 'user') { showUser(m.text); }
           else if (m.type === 'assistant') { showCaption(m.text); }
           else if (m.type === 'sources') { showSources(m.sources); }
+          else if (m.type === 'capture') { captureHd(); }
+          else if (m.type === 'drawing_started') { showDrawingLoading(m.request); }
+          else if (m.type === 'drawing') { showDrawing(m.html); }
+          else if (m.type === 'drawing_error') { board.hidden = true; board.classList.remove('loading'); showCaption('Sorry, I could not redraw that.'); }
           else if (m.type === 'turn_complete') { if (running && app.dataset.state === 'thinking') setState('listening'); }
         };
       }
@@ -393,7 +496,9 @@
         ensurePlayback();
         mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-          video: { facingMode: { ideal: 'environment' } },
+          // Ask for a high-resolution source so the on-demand snapshot for redrawing is sharp; the
+          // streamed frames are still downscaled to FRAME_W to keep the live session cheap.
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
         });
         video.srcObject = mediaStream;
         app.dataset.cam = 'on';
@@ -434,6 +539,22 @@
             reader.readAsDataURL(blob);
           }, 'image/jpeg', 0.6);
         }, FRAME_MS);
+      }
+
+      // Grab a one-off high-resolution snapshot for the redraw tool (requested by the server). Sent as
+      // `frame_hd` so the backend keeps it for the drawing agent but doesn't forward it to Gemini.
+      function captureHd() {
+        if (!sock || sock.readyState !== 1 || !video.videoWidth) return;
+        const scale = Math.min(1, HD_W / video.videoWidth);
+        const c = document.createElement('canvas');
+        c.width = Math.round(video.videoWidth * scale); c.height = Math.round(video.videoHeight * scale);
+        c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+        c.toBlob((blob) => {
+          if (!blob) return;
+          const reader = new FileReader();
+          reader.onload = () => send({ type: 'frame_hd', data: String(reader.result).split(',')[1], mime: 'image/jpeg' });
+          reader.readAsDataURL(blob);
+        }, 'image/jpeg', 0.92);
       }
 
       function stop() {

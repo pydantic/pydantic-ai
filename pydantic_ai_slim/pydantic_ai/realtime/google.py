@@ -15,9 +15,7 @@ Application Default Credentials when `vertexai=True` (useful where org policy di
 
 from __future__ import annotations as _annotations
 
-import asyncio
 import json
-import random
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
@@ -57,6 +55,7 @@ from ._base import (
     TurnComplete,
     Usage,
     WebSource,
+    reconnect_with_backoff,
 )
 
 INPUT_SAMPLE_RATE = 16000
@@ -441,8 +440,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
     ) -> None:
         self._session = session
-        # call id -> tool name, so a `ToolResult` can echo the name Gemini requires.
-        self._tool_names: dict[str, str] = {}
+        # internal call id -> (tool name, Gemini call id), so a `ToolResult` can echo the name and id
+        # Gemini requires. Calls Gemini sends without an id get a unique internal id so parallel
+        # id-less calls don't collide.
+        self._tool_calls: dict[str, tuple[str, str | None]] = {}
+        self._call_index = 0
         # `dial` re-establishes a configured session from the latest resumption handle; with a
         # `reconnect` policy it recovers a dropped connection.
         self._dial = dial
@@ -472,10 +474,11 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 video=genai_types.Blob(data=content.data, mime_type=content.mime_type)
             )
         elif isinstance(content, ToolResult):
+            name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))
             await self._session.send_tool_response(
                 function_responses=genai_types.FunctionResponse(
-                    id=content.tool_call_id,
-                    name=self._tool_names.get(content.tool_call_id),
+                    id=gemini_id,
+                    name=name,
                     response={'output': content.output},
                 )
             )
@@ -507,18 +510,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff, resuming from the latest handle; return whether it worked."""
         assert self._dial is not None and self._reconnect is not None
-        policy = self._reconnect
-        for attempt in range(policy.max_attempts):
-            delay = min(policy.max_delay, policy.base_delay * (2**attempt))
-            if policy.jitter:
-                delay *= 0.5 + random.random() * 0.5
-            await asyncio.sleep(delay)
-            try:
-                self._session = await self._dial(self._resumption_handle)
-            except Exception:
-                continue
-            return True
-        return False
+        return await reconnect_with_backoff(self._reconnect, self._attempt_reconnect)
+
+    async def _attempt_reconnect(self) -> bool:
+        assert self._dial is not None
+        try:
+            self._session = await self._dial(self._resumption_handle)
+        except Exception:
+            return False
+        return True
 
     def _map_message(self, message: genai_types.LiveServerMessage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
@@ -550,11 +550,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 events.append(TurnComplete(interrupted=False))
         if message.tool_call is not None:
             for call in message.tool_call.function_calls or []:
-                call_id = call.id or ''
-                self._tool_names[call_id] = call.name or ''
-                events.append(
-                    ToolCall(tool_call_id=call_id, tool_name=call.name or '', args=json.dumps(call.args or {}))
-                )
+                name = call.name or ''
+                # Gemini usually assigns an id, but fall back to a unique internal one so parallel
+                # id-less calls don't collide on the same key.
+                call_id = call.id or f'__call_{self._call_index}'
+                self._call_index += 1
+                self._tool_calls[call_id] = (name, call.id)
+                events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=json.dumps(call.args or {})))
         if message.usage_metadata is not None:
             events.append(Usage(usage=_map_usage(message.usage_metadata)))
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.

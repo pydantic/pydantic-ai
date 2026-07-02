@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, WebFetch
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
@@ -534,7 +534,7 @@ async def test_agent_realtime_session_unknown_tool() -> None:
         events = [e async for e in session]
     completed = events[1]
     assert isinstance(completed, ToolCallCompleted)
-    assert 'unknown tool' in completed.result
+    assert 'Unknown tool name' in completed.result
     assert 'nonexistent' in completed.result
 
 
@@ -552,6 +552,71 @@ async def test_agent_realtime_session_tool_exception() -> None:
     completed = events[1]
     assert isinstance(completed, ToolCallCompleted)
     assert 'Error' in completed.result and 'nope' in completed.result
+
+
+async def test_agent_realtime_session_validates_and_coerces_args() -> None:
+    # Args are validated by the tool schema before the function runs, so a JSON string is coerced
+    # to the annotated `int` rather than reaching the function as a raw `str`.
+    agent: Agent[None, str] = Agent()
+    seen: int | None = None
+
+    @agent.tool_plain
+    def double(x: int) -> str:
+        nonlocal seen
+        seen = x
+        return str(x * 2)
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "21"}'), TurnComplete()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model) as session:
+        events = [e async for e in session]
+
+    assert seen == 21
+    completed = [e for e in events if isinstance(e, ToolCallCompleted)]
+    assert completed[0].result == '42'
+
+
+async def test_agent_realtime_session_invalid_args_return_retry_message() -> None:
+    # Schema validation failures surface to the model as a retry message rather than a raw exception.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def double(x: int) -> str:  # pragma: no cover — never reached; validation fails first
+        return str(x * 2)
+
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='double', args='{"x": "not a number"}'), TurnComplete()]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model) as session:
+        events = [e async for e in session]
+
+    completed = [e for e in events if isinstance(e, ToolCallCompleted)]
+    assert 'validation error' in completed[0].result
+
+
+async def test_agent_realtime_session_runs_args_validator() -> None:
+    # A custom `args_validator` (e.g. an authorization check) runs before the tool body, matching
+    # `run`/`iter`; rejecting via `ModelRetry` surfaces as a retry message.
+    agent: Agent[None, str] = Agent()
+
+    def guard(ctx: RunContext[Any], city: str) -> None:
+        if city == 'forbidden':
+            raise ModelRetry('not allowed')
+
+    @agent.tool_plain(args_validator=guard)
+    def weather(city: str) -> str:  # pragma: no cover — never reached; the validator rejects first
+        return f'sunny in {city}'
+
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='weather', args='{"city": "forbidden"}'), TurnComplete()]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime_session(model=model) as session:
+        events = [e async for e in session]
+
+    completed = [e for e in events if isinstance(e, ToolCallCompleted)]
+    assert 'not allowed' in completed[0].result
 
 
 async def test_agent_realtime_session_resolves_per_run_toolsets() -> None:

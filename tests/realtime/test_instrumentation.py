@@ -102,9 +102,10 @@ async def test_session_captures_transcript_messages() -> None:
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'realtime gpt-realtime')
     assert sess.attributes is not None
-    messages = json.loads(str(sess.attributes['gen_ai.input.messages']))
-    assert messages == [
+    assert json.loads(str(sess.attributes['gen_ai.input.messages'])) == [
         {'role': 'user', 'parts': [{'type': 'text', 'content': 'hello there'}]},
+    ]
+    assert json.loads(str(sess.attributes['gen_ai.output.messages'])) == [
         {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'hi, how can I help?'}]},
     ]
 
