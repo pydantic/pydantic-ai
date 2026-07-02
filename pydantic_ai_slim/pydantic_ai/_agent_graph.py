@@ -677,8 +677,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
-                    await stream_done.wait()
-            req_ctx.time_to_first_chunk = sr.time_to_first_chunk(request_start)
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        # Stamp TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        req_ctx.time_to_first_chunk = sr.time_to_first_chunk(request_start)
             response = sr.get()
             _handler_response = response
             return response
