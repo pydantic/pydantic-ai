@@ -1416,6 +1416,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_call_part)
                     elif part.tool_response:
                         tool_response_part = _map_tool_response(part.tool_response, self.provider_name)
+                        _fill_empty_file_search_return_content(tool_response_part, candidate.grounding_metadata)
                         tool_response_part.provider_details = provider_details
                         yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=tool_response_part)
                     elif part.executable_code is not None:
@@ -1786,6 +1787,8 @@ def _process_response_from_parts(
     for part in parts:
         item, code_execution_tool_call_id = _process_part(part, code_execution_tool_call_id, provider_name)
         if item is not None:
+            if isinstance(item, NativeToolReturnPart):
+                _fill_empty_file_search_return_content(item, grounding_metadata)
             items.append(item)
 
     return ModelResponse(
@@ -1936,6 +1939,18 @@ def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> Nativ
         tool_call_id=tool_response.id or _utils.generate_tool_call_id(),
         content=tool_response.response,
     )
+
+
+def _fill_empty_file_search_return_content(
+    item: NativeToolReturnPart, grounding_metadata: GroundingMetadata | None
+) -> None:
+    if item.tool_name != FileSearchTool.kind or item.content is not None:
+        return
+
+    grounding_chunks = grounding_metadata.grounding_chunks if grounding_metadata else None
+    retrieved_contexts = _extract_file_search_retrieved_contexts(grounding_chunks)
+    if retrieved_contexts:
+        item.content = retrieved_contexts
 
 
 def _map_grounding_metadata(

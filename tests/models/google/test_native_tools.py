@@ -29,11 +29,13 @@ from pydantic_ai.native_tools import (
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import ToolType
+    from google.genai.types import GroundingMetadata, Part, ToolType
 
     from pydantic_ai.models.google import (
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
+        _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.usage import RequestUsage
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
@@ -157,6 +159,54 @@ def test_content_model_response_drops_pyd_ai_synthesized_native_tool_ids():
     assert _content_model_response(response, frozenset({'google-gla'}), supports_tool_combination=True) == snapshot(
         {'role': 'model', 'parts': [{'text': 'hello'}]}
     )
+
+
+def test_file_search_tool_response_uses_grounding_metadata_when_response_is_empty():
+    """Gemini may return explicit file-search tool parts while keeping contexts in grounding metadata."""
+    response = _process_response_from_parts(
+        parts=[
+            Part.model_validate({'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}}),
+            Part.model_validate({'tool_response': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH'}}),
+            Part.model_validate({'text': 'Paris is the capital of France.'}),
+        ],
+        grounding_metadata=GroundingMetadata.model_validate(
+            {
+                'grounding_chunks': [
+                    {
+                        'retrieved_context': {
+                            'text': 'Paris is the capital of France.',
+                            'file_search_store': 'fileSearchStores/test-store',
+                        },
+                    },
+                ],
+            }
+        ),
+        model_name='gemini-3.5-flash',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        provider_response_id='response-id',
+    )
+
+    file_search_call, file_search_return, text = response.parts
+
+    assert file_search_call == NativeToolCallPart(
+        tool_name='file_search',
+        args={},
+        tool_call_id='file_search_call',
+        provider_name='google-gla',
+    )
+    assert isinstance(file_search_return, NativeToolReturnPart)
+    assert file_search_return.tool_name == 'file_search'
+    assert file_search_return.tool_call_id == 'file_search_call'
+    assert file_search_return.provider_name == 'google-gla'
+    assert file_search_return.content == [
+        {
+            'text': 'Paris is the capital of France.',
+            'file_search_store': 'fileSearchStores/test-store',
+        }
+    ]
+    assert text == TextPart(content='Paris is the capital of France.')
 
 
 @pytest.mark.parametrize('supports_tool_combination', [False, True])
