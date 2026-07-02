@@ -549,10 +549,14 @@ async def test_g_eval_evaluator(mocker: MockerFixture):
     assert mock_judge_g_eval.call_args.kwargs['inputs'] is None
 
 
-def test_g_eval_validates_score_range_at_construction():
-    """An invalid `score_range` fails at construction (and thus at dataset load), not at evaluation time."""
+def test_g_eval_validates_arguments_at_construction():
+    """Invalid `score_range`/`evaluation_steps` fail at construction (and thus at dataset load), not at evaluation time."""
     with pytest.raises(ValueError, match='`score_range` must satisfy min < max'):
         GEval(criteria='c', evaluation_steps=['s'], score_range=(5, 1))
+
+    # An empty steps list would produce a prompt with no chain-of-thought section, defeating the method.
+    with pytest.raises(ValueError, match='`evaluation_steps` must contain at least one step'):
+        GEval(criteria='c', evaluation_steps=[])
 
 
 def test_g_eval_evaluation_name():

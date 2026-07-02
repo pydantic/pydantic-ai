@@ -569,6 +569,11 @@ async def test_judge_g_eval_validates_score_range():
         await judge_g_eval('out', 'c', ['s'], score_range=(5, 5))
 
 
+async def test_judge_g_eval_requires_evaluation_steps():
+    with pytest.raises(ValueError, match='`evaluation_steps` must contain at least one step'):
+        await judge_g_eval('out', 'c', [])
+
+
 async def test_judge_g_eval_rejects_out_of_range_score(mocker: MockerFixture):
     """A judge response outside `score_range` raises instead of recording a misleading value."""
     mock_result = mocker.MagicMock()

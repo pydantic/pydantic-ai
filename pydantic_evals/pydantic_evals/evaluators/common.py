@@ -313,6 +313,8 @@ class GEval(Evaluator[object, object, object]):
     def __post_init__(self):
         if self.score_range[0] >= self.score_range[1]:
             raise ValueError(f'`score_range` must satisfy min < max, got {self.score_range!r}')
+        if not self.evaluation_steps:
+            raise ValueError('`evaluation_steps` must contain at least one step')
 
     async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
         from .llm_as_a_judge import judge_g_eval

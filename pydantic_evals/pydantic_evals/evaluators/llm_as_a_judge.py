@@ -328,10 +328,13 @@ async def judge_g_eval(
         the judge's reasoning and integer score.
 
     Raises:
-        ValueError: If `score_range` is invalid, or if the judge returns a score outside it.
+        ValueError: If `score_range` is invalid, `evaluation_steps` is empty, or the judge
+            returns a score outside the range.
     """
     if score_range[0] >= score_range[1]:
         raise ValueError(f'`score_range` must satisfy min < max, got {score_range!r}')
+    if not evaluation_steps:
+        raise ValueError('`evaluation_steps` must contain at least one step')
 
     numbered_steps = '\n'.join(f'{i}. {step}' for i, step in enumerate(evaluation_steps, start=1))
     rubric = '\n'.join(
