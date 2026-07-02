@@ -1,7 +1,7 @@
 name: PR Guard
 
 on:
-  # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed to close duplicate PRs and manage issues; no fork code is checked out
+  # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed to close duplicate/unlinked PRs and manage issues; no fork code is checked out
   pull_request_target:
     types: [opened, ready_for_review, edited]
 
@@ -54,6 +54,43 @@ jobs:
           fi
           PR_CREATED_EPOCH=$(date -u -d "$GITHUB_EVENT_PULL_REQUEST_CREATED_AT" +%s)
 
+          # Helper: close a contributor PR that doesn't link to any existing issue.
+          # Only external contributors reach this point (maintainers/collaborators
+          # bypass above). Exemptions:
+          #   - bot authors (pydanty, dependabot, etc.) — they never file issues first
+          #   - docs-only changes — small doc fixes are welcome without an issue
+          close_for_missing_issue() {
+            case "$PR_AUTHOR" in
+              *"[bot]")
+                echo "Author ${PR_AUTHOR} is a bot; not closing for missing issue link."
+                return 0
+                ;;
+            esac
+
+            CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate --jq '.[].filename') || CHANGED_FILES=""
+            if [ -n "$CHANGED_FILES" ]; then
+              DOCS_ONLY="true"
+              while IFS= read -r CHANGED_FILE; do
+                case "$CHANGED_FILE" in
+                  docs/*|*.md|mkdocs.yml) ;;
+                  *) DOCS_ONLY="false"; break ;;
+                esac
+              done <<< "$CHANGED_FILES"
+              if [ "$DOCS_ONLY" = "true" ]; then
+                echo "PR only touches documentation; not closing for missing issue link."
+                return 0
+              fi
+            fi
+
+            echo "Closing PR #${PR_NUMBER} — no linked issue."
+            COMMENT=$(printf '%s\n\n%s\n\n%s' \
+              "Thanks for the contribution! To make sure changes are discussed before code is written, we ask that every PR references an existing issue with a closing keyword (e.g. \`Fixes #1234\`) in its description, so this PR has been closed automatically." \
+              "If there's no issue for this yet, please open one first (e.g. a bug report with a reproducible example), wait for a maintainer to confirm it, then update this PR's description to reference it and reopen the PR." \
+              "Documentation-only fixes are exempt and don't need an issue.")
+            gh pr close "$PR_NUMBER" --repo "$REPO"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT" || true
+          }
+
           # Parse closing keywords from PR body
           # GitHub recognizes: close, closes, closed, fix, fixes, fixed, resolve, resolves, resolved
           # Case-insensitive, with optional leading - or *
@@ -61,6 +98,7 @@ jobs:
 
           if [ -z "$ISSUE_NUMBERS" ]; then
             echo "No closing keywords found in PR body."
+            close_for_missing_issue
             exit 0
           fi
 
@@ -202,6 +240,14 @@ jobs:
               echo "Issue #${ISSUE_NUM} is assigned to someone else. Leaving assignment as-is for maintainers to review."
             fi
           done
+
+          # If none of the referenced numbers resolved to an actual issue (open or
+          # closed), the PR is effectively unlinked — same policy as no keywords at all.
+          if [ "$FOUND_OPEN_ISSUE" = "false" ] && [ "$FOUND_CLOSED_ISSUE" = "false" ]; then
+            echo "No referenced numbers resolved to actual issues."
+            close_for_missing_issue
+            exit 0
+          fi
 
           # If we found closed issues but no open ones, close the PR (pydanty PRs are exempt).
           if [ "$IS_PYDANTY_PR" != "true" ] && [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
