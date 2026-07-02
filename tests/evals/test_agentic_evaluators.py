@@ -801,8 +801,8 @@ def test_argument_correctness_occurrence_integer_index():
     assert evaluator.evaluate(_ctx(tree=tree)).value is True
 
 
-@pytest.mark.parametrize('occurrence', [5, -1])
-def test_argument_correctness_occurrence_out_of_range(occurrence: int):
+@pytest.mark.parametrize('occurrence', [5, -1, 'middle', None, 1.5])
+def test_argument_correctness_occurrence_out_of_range(occurrence: Any):
     tree = _build_tree([_v3_tool_span(name='search', span_id=1, args='{"q": "a"}', start_offset=0.0)])
     evaluator = ArgumentCorrectness(
         tool_name='search',

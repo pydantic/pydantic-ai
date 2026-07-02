@@ -479,6 +479,8 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
             return matches[0]
         if self.occurrence == 'last':
             return matches[-1]
+        if not isinstance(self.occurrence, int):  # runtime guard: plain dataclasses don't validate the annotation
+            return None
         index = self.occurrence
         if 0 <= index < len(matches):
             return matches[index]
