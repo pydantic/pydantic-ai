@@ -285,7 +285,9 @@ def test_parse_model_id(model_id: str, expected: tuple[str | None, str]):
         pytest.param('nebius:model-without-slash', False, id='provider-unknown-model'),
         pytest.param('google:gemini-2.0-flash', False, id='google-shorthand'),
         pytest.param('openrouter:model-without-slash', True, id='openrouter-no-slash'),
-        pytest.param('together:model-without-slash', True, id='together-no-slash'),
+        # Together (OpenAI-compatible) returns the OpenAI default profile for a slashless name
+        # rather than crashing — like `nebius` above — so it's not `DEFAULT_PROFILE`.
+        pytest.param('together:model-without-slash', False, id='together-no-slash'),
     ],
 )
 def test_infer_model_profile(model_id: str, is_default: bool):

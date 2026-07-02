@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -134,7 +135,7 @@ class TestMCPToolsetConstruction:
 
     def test_pre_built_client_with_handler_kwargs_raises(self):
         client = Client('https://example.com/mcp')
-        with pytest.raises(ValueError, match='pre-built `fastmcp.Client`'):
+        with pytest.raises(ValueError, match=re.escape('pre-built `fastmcp.Client`')):
             MCPToolset(client, headers={'X-Key': 'foo'})
 
     def test_pre_built_client_with_overridden_init_timeout_raises(self):
@@ -153,7 +154,7 @@ class TestMCPToolsetConstruction:
         assert toolset.client is client
 
     def test_sampling_model_and_handler_conflict(self):
-        with pytest.raises(ValueError, match='sampling_model.*sampling_handler'):
+        with pytest.raises(ValueError, match=r'sampling_model.*sampling_handler'):
             MCPToolset(
                 'https://example.com/mcp',
                 sampling_model=models.infer_model('test'),

@@ -9,8 +9,8 @@ Use agent delegation when one agent should call another and return the result.
 ```python
 from pydantic_ai import Agent, RunContext
 
-parent = Agent('openai:gpt-5.2')
-researcher = Agent('openai:gpt-5.2', output_type=str)
+parent = Agent('openai:gpt-5.2', name='parent_agent')
+researcher = Agent('openai:gpt-5.2', name='researcher_agent', output_type=str)
 
 
 @parent.tool
