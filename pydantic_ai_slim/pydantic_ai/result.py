@@ -843,9 +843,10 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                             # The consumer stopped iterating early and closed the receive end.
                             return
                 finally:
-                    aclose: Callable[[], Awaitable[None]] | None = getattr(aiter, 'aclose', None)
-                    if aclose is not None:  # pragma: no branch
-                        await aclose()
+                    # The `stream_*` methods always return async generators at runtime even though
+                    # they're typed as `AsyncIterator`, so this narrows to the closable case.
+                    if isinstance(aiter, AsyncGenerator):  # pragma: no branch
+                        await aiter.aclose()
         finally:
             otel_context.detach(token)
 
