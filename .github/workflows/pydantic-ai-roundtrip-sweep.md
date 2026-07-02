@@ -17,6 +17,10 @@ tools:
 safe-outputs:
   footer: false
   activation-comments: false
+  # Engine/model failures are tracked as ERROR spans in Logfire (service_name
+  # `gh-aw.pydantic-ai-roundtrip-sweep`) via the otel-logfire import + the shim's
+  # `instrument_pydantic_ai`, so we don't also file an auto-generated failure issue.
+  report-failure-as-issue: false
   noop:
   create-issue:
     max: 1

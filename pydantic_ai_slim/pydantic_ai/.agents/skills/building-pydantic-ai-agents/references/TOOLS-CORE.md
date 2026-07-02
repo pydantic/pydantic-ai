@@ -11,7 +11,7 @@ import random
 
 from pydantic_ai import Agent, RunContext
 
-agent = Agent('google:gemini-3-flash-preview', deps_type=str)
+agent = Agent('google:gemini-3-flash-preview', name='dice_tools_agent', deps_type=str)
 
 
 @agent.tool_plain
@@ -66,6 +66,7 @@ from pydantic_ai.capabilities import MCP
 
 agent = Agent(
     'openai:gpt-5.2',
+    name='mcp_agent',
     capabilities=[
         MCP('https://mcp.example.com/api'),               # Streamable HTTP, local-only by default
         MCP('https://mcp.example.com/other', native=True),  # opt into native with local fallback
@@ -83,6 +84,7 @@ from pydantic_ai.capabilities import MCP
 
 agent = Agent(
     'openai:gpt-5.2',
+    name='mcp_stdio_agent',
     capabilities=[MCP(local=StdioTransport(command='python', args=['mcp_server.py']))],
 )
 ```
@@ -99,6 +101,7 @@ from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
 agent = Agent(
     'openai:gpt-5.2',
+    name='duckduckgo_search_agent',
     tools=[duckduckgo_search_tool()],
     instructions='Search DuckDuckGo for the given query and return the results.',
 )
