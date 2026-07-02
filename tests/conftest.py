@@ -74,7 +74,6 @@ pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 if TYPE_CHECKING:
-    from typing import TypeVar
 
     from pluggy import Result
     from vcr.cassette import Cassette
