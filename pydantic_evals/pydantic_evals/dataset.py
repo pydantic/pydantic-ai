@@ -324,6 +324,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         """
         if repeat < 1:
             raise ValueError(f'repeat must be >= 1, got {repeat}')
+        if max_concurrency is not None and max_concurrency < 1:
+            raise ValueError(f'max_concurrency must be >= 1, got {max_concurrency}')
 
         task_name = task_name or get_unwrapped_function_name(task)
         name = name or task_name
