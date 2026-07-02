@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import re
+import warnings
 from typing import Any, Final
 
 from typing_extensions import Required, TypedDict
 
-from ...messages import ThinkingPart
+from ..._utils import is_str_dict
+from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind
+
+ENCRYPTED_VALUE_VERSION = (0, 1, 11)
+"""AG-UI version that added the `encrypted_value` field to `ToolCall` and `ToolMessage`.
+
+Gates the field-based `tool_kind` round-trip in `dump_messages`/`load_messages`. The streaming
+carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated on
+`REASONING_VERSION` (0.1.13) — see `tool_kind_encrypted_value`.
+"""
 
 REASONING_VERSION = (0, 1, 13)
 """AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
@@ -51,6 +62,7 @@ class FileActivityContent(TypedDict, total=False):
     id: str
     provider_name: str
     provider_details: dict[str, Any]
+    vendor_metadata: dict[str, Any]
 
 
 class UploadedFileActivityContent(TypedDict, total=False):
@@ -60,7 +72,7 @@ class UploadedFileActivityContent(TypedDict, total=False):
     provider_name: Required[str]
     media_type: str
     identifier: str
-    vendor_metadata: Any
+    vendor_metadata: dict[str, Any]
 
 
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')
@@ -111,3 +123,94 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
     if part.provider_details is not None:
         encrypted['provider_details'] = part.provider_details
     return encrypted
+
+
+_ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
+"""Top-level key our payload is nested under inside an AG-UI `encrypted_value` blob, so a genuine
+provider blob in the same slot is never mistaken for our data."""
+
+
+def tool_kind_encrypted_value(tool_kind: ToolPartKind | None) -> str | None:
+    """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
+
+    AG-UI has no generic per-tool metadata field, so we carry the `tool_kind` discriminator in
+    `encrypted_value` — the protocol's opaque, client-echoed state-continuity slot. Our payload is
+    nested under a `pydantic_ai` key so a genuine provider blob in the same slot (e.g. Google's
+    encrypted thinking on a tool call) is never read as our data. The claim is untrusted coming back
+    in: `parse_encrypted_tool_kind` returns it only when the key is present, and it degrades to a
+    plain part if it doesn't validate.
+    """
+    if tool_kind is None:
+        return None
+    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: {'tool_kind': tool_kind}})
+
+
+class _EncryptedValueKwargs(TypedDict, total=False):
+    """`encrypted_value` kwarg for a `ToolCall`/`ToolMessage`, absent when there's nothing to carry."""
+
+    encrypted_value: str
+
+
+def tool_kind_encrypted_value_kwargs(tool_kind: ToolPartKind | None, *, supported: bool) -> _EncryptedValueKwargs:
+    """`ToolCall`/`ToolMessage` kwargs carrying `tool_kind` as an `encrypted_value`, or empty to omit it.
+
+    Empty when the target version predates the `encrypted_value` field (`supported=False`) or the part
+    has no `tool_kind`, so — like the streaming carrier — the field is only ever set when there's a
+    claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
+    """
+    value = tool_kind_encrypted_value(tool_kind) if supported else None
+    return {'encrypted_value': value} if value is not None else {}
+
+
+def warn_tool_kind_not_persisted(ag_ui_version: str) -> None:
+    """Warn that typed tool parts' `tool_kind` will be lost when dumping below `ENCRYPTED_VALUE_VERSION`.
+
+    The `encrypted_value` carrier only exists from 0.1.11, so on older versions features like lazy
+    capabilities and tool search silently forget their state across a round-trip; upgrading the client
+    fixes it.
+    """
+    warnings.warn(
+        f'ag-ui-protocol {ag_ui_version} predates the `encrypted_value` field (added in 0.1.11), so '
+        'the `tool_kind` of typed tool parts (e.g. lazy capabilities, tool search) cannot be carried '
+        'across a dump/load round-trip and those parts will reload as their base classes. Upgrade the '
+        'client to ag-ui-protocol >= 0.1.11 to preserve it.',
+        UserWarning,
+        stacklevel=3,
+    )
+
+
+def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
+    """Read a `tool_kind` claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
+
+    Client-supplied and untrusted: anything that isn't a JSON object carrying
+    `{'pydantic_ai': {'tool_kind': <known ToolPartKind>}}` reads as `None`, so a genuine provider
+    encrypted blob (no `pydantic_ai` key) or a forged claim degrades to a plain part.
+    """
+    if not encrypted_value:
+        return None
+    try:
+        data = json.loads(encrypted_value)
+    except json.JSONDecodeError:
+        return None
+    if not is_str_dict(data):
+        return None
+    namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
+    if not is_str_dict(namespaced):
+        return None
+    tool_kind = namespaced.get('tool_kind')
+    return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
+
+
+def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:
+    """Split a builtin tool-call id into its `(provider_name, original_id)`.
+
+    Inverse of the `'|'.join([prefix, provider_name, original_id])` encoding. Returns
+    `None` when `tool_call_id` is not a well-formed builtin id, so a malformed
+    client-supplied id degrades to the plain tool-call path instead of raising on unpack.
+    """
+    if not tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
+        return None
+    parts = tool_call_id.split('|', 2)
+    if len(parts) != 3:
+        return None
+    return parts[1], parts[2]
