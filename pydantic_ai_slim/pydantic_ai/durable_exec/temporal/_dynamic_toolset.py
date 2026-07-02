@@ -74,8 +74,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        # Instructions resolved by `get_tools`, read by `get_instructions`. Lives on the per-run copy
-        # produced by `for_run` (see below), so it needs no run-id keying and is freed with the run.
+        # Set by `get_tools`, read by `get_instructions`; lives on the per-run `for_run` copy (no run-id key).
         self._run_instructions: str | InstructionPart | Sequence[str | InstructionPart] | None = None
 
         async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> _GetToolsResult:
@@ -136,12 +135,9 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().for_run(ctx)
 
-        # Return a fresh per-run copy so `_run_instructions` (populated by `get_tools`, read by
-        # `get_instructions`) is isolated per workflow run rather than shared on the process-wide,
-        # module-level toolset instance. The copy shares the worker-registered activity callables
-        # (shallow copy), so `execute_activity` still resolves them by name. Unlike the base
-        # `return self` — which is about wrapped-toolset *lifecycle* (managed per-activity) — this
-        # is only about per-run *state isolation*, exactly what `for_run` is documented for.
+        # Per-run copy isolates `_run_instructions` from the process-shared, module-level instance.
+        # Shallow, so the copy shares the worker-registered activities (`execute_activity` resolves by
+        # name). The base `return self` is about wrapped-toolset lifecycle; this is only state isolation.
         run_copy = copy.copy(self)
         run_copy._run_instructions = None
         return run_copy
@@ -152,8 +148,7 @@ class TemporalDynamicToolset(TemporalWrapperToolset[AgentDepsT]):
         if not workflow.in_workflow():  # pragma: no cover
             return await super().get_instructions(ctx)
 
-        # Populated by `get_tools`, which the framework calls (via `ToolManager.for_run_step`) before
-        # `get_instructions` in each request step, so it reflects the current step by the time we read it.
+        # Set by `get_tools`, which the framework runs (via `for_run_step`) earlier in each step.
         return self._run_instructions
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
