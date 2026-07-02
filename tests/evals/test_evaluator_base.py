@@ -203,6 +203,53 @@ async def test_evaluation_name():
     assert evaluator.get_default_evaluation_name() == 'SimpleEvaluator'
 
 
+def test_evaluation_name_method_override():
+    """Overriding `get_default_evaluation_name` customizes the name in reports."""
+
+    @dataclass
+    class CustomName(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+        def get_default_evaluation_name(self) -> str:
+            return 'overridden'
+
+    assert CustomName().get_default_evaluation_name() == 'overridden'
+
+
+def test_evaluator_version_default_is_none():
+    """The base `get_evaluator_version` returns None when no version is declared."""
+
+    @dataclass
+    class Unversioned(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+    assert Unversioned().get_evaluator_version() is None
+
+
+def test_evaluator_version_method_override():
+    """Overriding `get_evaluator_version` exposes the version to dispatch."""
+
+    @dataclass
+    class VersionedViaMethod(Evaluator[Any, Any, Any]):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            raise NotImplementedError
+
+        def get_evaluator_version(self) -> str | None:
+            return 'v3'
+
+    assert VersionedViaMethod().get_evaluator_version() == 'v3'
+
+
+def test_builtin_evaluators_evaluation_name_field():
+    """Built-in evaluators expose `evaluation_name` as a constructor-set dataclass field."""
+    from pydantic_evals.evaluators.common import Equals
+
+    assert Equals(value=42, evaluation_name='int_match').get_default_evaluation_name() == 'int_match'
+    assert Equals(value=42).get_default_evaluation_name() == 'Equals'
+
+
 async def test_evaluator_serialization():
     """Test evaluator serialization."""
 
@@ -283,6 +330,7 @@ async def test_run_evaluator():
                 'reason': None,
                 'source': {'arguments': None, 'name': 'SimpleEvaluator'},
                 'value': True,
+                'evaluator_version': None,
             }
         ]
     )
@@ -297,6 +345,7 @@ async def test_run_evaluator():
                 'reason': 'Failed',
                 'source': {'arguments': {'reason': 'Failed', 'value': False}, 'name': 'SimpleEvaluator'},
                 'value': False,
+                'evaluator_version': None,
             }
         ]
     )
@@ -306,8 +355,20 @@ async def test_run_evaluator():
     results = await run_evaluator(evaluator, ctx)
     assert adapter.dump_python(results) == snapshot(
         [
-            {'name': 'test1', 'reason': None, 'source': {'arguments': None, 'name': 'MultiEvaluator'}, 'value': True},
-            {'name': 'test2', 'reason': None, 'source': {'arguments': None, 'name': 'MultiEvaluator'}, 'value': False},
+            {
+                'name': 'test1',
+                'reason': None,
+                'source': {'arguments': None, 'name': 'MultiEvaluator'},
+                'value': True,
+                'evaluator_version': None,
+            },
+            {
+                'name': 'test2',
+                'reason': None,
+                'source': {'arguments': None, 'name': 'MultiEvaluator'},
+                'value': False,
+                'evaluator_version': None,
+            },
         ]
     )
 
@@ -321,6 +382,7 @@ async def test_run_evaluator():
                 'reason': None,
                 'source': {'arguments': None, 'name': 'AsyncEvaluator'},
                 'value': True,
+                'evaluator_version': None,
             }
         ]
     )

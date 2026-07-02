@@ -3,8 +3,10 @@ import os
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai import BinaryContent, DocumentUrl
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -16,7 +18,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncAzureOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.azure import AzureProvider
@@ -64,6 +66,20 @@ def test_azure_provider_with_azure_openai_client():
     assert isinstance(provider.client, AsyncAzureOpenAI)
 
 
+def test_azure_provider_with_http_client():
+    import httpx
+
+    http_client = httpx.AsyncClient()
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='1234567890',
+        api_version='2024-12-01-preview',
+        http_client=http_client,
+    )
+    assert isinstance(provider.client, AsyncAzureOpenAI)
+    assert provider._own_http_client is None  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_azure_provider_call(allow_model_requests: None):
     api_key = os.getenv('AZURE_OPENAI_API_KEY', '1234567890')
     api_version = os.getenv('AZURE_OPENAI_API_VERSION', '2024-12-01-preview')
@@ -98,44 +114,123 @@ def test_azure_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('Llama-4-Scout-17B-16E')
     meta_model_profile_mock.assert_called_with('llama-4-scout-17b-16e')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     meta_profile = provider.model_profile('Meta-Llama-3.1-405B-Instruct')
     meta_model_profile_mock.assert_called_with('llama-3.1-405b-instruct')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('DeepSeek-R1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistral-medium-2505')
     mistral_model_profile_mock.assert_called_with('mistral-medium-2505')
     assert mistral_profile is not None
-    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistralai-Mixtral-8x22B-Instruct-v0-1')
     mistral_model_profile_mock.assert_called_with('mixtral-8x22b-instruct-v0-1')
     assert mistral_profile is not None
-    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     cohere_profile = provider.model_profile('cohere-command-a')
     cohere_model_profile_mock.assert_called_with('command-a')
     assert cohere_profile is not None
-    assert cohere_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert cohere_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     grok_profile = provider.model_profile('grok-3')
     grok_model_profile_mock.assert_called_with('grok-3')
     assert grok_profile is not None
-    assert grok_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     openai_profile = provider.model_profile('o4-mini')
     openai_model_profile_mock.assert_called_with('o4-mini')
     assert openai_profile is not None
-    assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert openai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown-model')
     openai_model_profile_mock.assert_called_with('unknown-model')
     assert unknown_profile is not None
-    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+
+async def test_azure_document_input_not_supported(allow_model_requests: None):
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+    )
+    model = OpenAIChatModel(model_name='gpt-4o', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(
+        UserError,
+        match="Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
+    ):
+        await agent.run(
+            [
+                'Summarize this document',
+                BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf'),
+            ]
+        )
+
+
+async def test_azure_document_url_input_not_supported(allow_model_requests: None):
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+    )
+    model = OpenAIChatModel(model_name='gpt-4o', provider=provider)
+    agent = Agent(model)
+
+    with pytest.raises(
+        UserError,
+        match="Azure's Chat Completions API does not support document input.*OpenAIResponsesModel",
+    ):
+        await agent.run(['Summarize this document', DocumentUrl(url='https://example.com/test.pdf')])
+
+
+def test_azure_provider_foundry_serverless_endpoint():
+    provider = AzureProvider(
+        azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+        api_key='test-key-123',
+    )
+    assert provider.name == 'azure'
+    # Serverless model endpoints reject the `api-version` query parameter, so we
+    # must use plain AsyncOpenAI rather than AsyncAzureOpenAI.
+    assert type(provider.client) is AsyncOpenAI
+    assert provider.base_url == 'https://gpt-oss-120b.eastus2.models.ai.azure.com/v1/'
+
+
+def test_azure_provider_v1_endpoint_rejects_api_version():
+    with pytest.raises(UserError, match='`api_version` must not be set'):
+        AzureProvider(
+            azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+            api_version='2024-12-01-preview',
+            api_key='test-key-123',
+        )
+
+
+def test_azure_provider_openai_v1_ga_endpoint():
+    # https://learn.microsoft.com/en-us/azure/ai-foundry/openai/api-version-lifecycle
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/openai/v1/',
+        api_key='test-key-123',
+    )
+    assert type(provider.client) is AsyncOpenAI
+    assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
+
+
+def test_azure_provider_foundry_serverless_with_openai_model():
+    model = OpenAIChatModel(
+        model_name='gpt-oss-120b',
+        provider=AzureProvider(
+            azure_endpoint='https://gpt-oss-120b.eastus2.models.ai.azure.com',
+            api_key='test-key-123',
+        ),
+    )
+    assert type(model.client) is AsyncOpenAI

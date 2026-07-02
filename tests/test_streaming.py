@@ -1,9 +1,13 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import datetime
+import gc
 import json
 import re
-from collections.abc import AsyncIterable, AsyncIterator
+import sys
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
@@ -26,7 +30,10 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
+    ModelRequestContext,
     ModelResponse,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -44,13 +51,15 @@ from pydantic_ai import (
 )
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
-from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.agent import AgentRun
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
+from pydantic_ai.models.wrapper import CompletedStreamedResponse
 from pydantic_ai.output import PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
@@ -86,6 +95,7 @@ async def test_streamed_text_response():
                     parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -94,6 +104,7 @@ async def test_streamed_text_response():
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -103,10 +114,11 @@ async def test_streamed_text_response():
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=2,
                 input_tokens=103,
@@ -117,13 +129,14 @@ async def test_streamed_text_response():
         response = await result.get_output()
         assert response == snapshot('{"ret_a":"a-apple"}')
         assert result.is_complete
-        assert result.timestamp() == IsNow(tz=timezone.utc)
+        assert result.timestamp == IsNow(tz=timezone.utc)
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -132,6 +145,7 @@ async def test_streamed_text_response():
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -141,6 +155,7 @@ async def test_streamed_text_response():
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -149,10 +164,11 @@ async def test_streamed_text_response():
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
-        assert result.usage() == snapshot(
+        assert result.usage == snapshot(
             RunUsage(
                 requests=2,
                 input_tokens=103,
@@ -182,6 +198,7 @@ def test_streamed_text_sync_response():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -190,6 +207,7 @@ def test_streamed_text_sync_response():
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -199,11 +217,12 @@ def test_streamed_text_sync_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
     assert result.new_messages() == result.all_messages()
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=2,
             input_tokens=103,
@@ -214,7 +233,7 @@ def test_streamed_text_sync_response():
     response = result.get_output()
     assert response == snapshot('{"ret_a":"a-apple"}')
     assert result.is_complete
-    assert result.timestamp() == IsNow(tz=timezone.utc)
+    assert result.timestamp == IsNow(tz=timezone.utc)
     assert result.response == snapshot(
         ModelResponse(
             parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -230,6 +249,7 @@ def test_streamed_text_sync_response():
                 parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
@@ -238,6 +258,7 @@ def test_streamed_text_sync_response():
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -247,6 +268,7 @@ def test_streamed_text_sync_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
@@ -255,10 +277,11 @@ def test_streamed_text_sync_response():
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
-    assert result.usage() == snapshot(
+    assert result.usage == snapshot(
         RunUsage(
             requests=2,
             input_tokens=103,
@@ -310,8 +333,10 @@ async def test_structured_response_iter():
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
-        async for structured_response, last in result.stream_responses(debounce_by=None):
-            response_data = await result.validate_response_output(structured_response, allow_partial=not last)
+        async for structured_response in result.stream_response(debounce_by=None):
+            response_data = await result.validate_response_output(
+                structured_response, allow_partial=structured_response.state == 'incomplete'
+            )
             chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -381,7 +406,7 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_response(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
@@ -389,6 +414,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
@@ -396,6 +422,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
@@ -403,6 +430,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
@@ -410,6 +438,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
@@ -417,6 +446,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -424,6 +454,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -431,6 +462,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    state='incomplete',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -438,7 +470,9 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
+                    state='complete',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -503,7 +537,7 @@ def test_streamed_text_stream_sync():
     )
 
     result = agent.run_stream_sync('Hello')
-    assert [c for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
+    assert [c for c in result.stream_response(debounce_by=None)] == snapshot(
         [
             ModelResponse(
                 parts=[TextPart(content='The ')],
@@ -511,6 +545,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat ')],
@@ -518,6 +553,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat ')],
@@ -525,6 +561,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on ')],
@@ -532,6 +569,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the ')],
@@ -539,6 +577,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -546,6 +585,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -553,6 +593,7 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                state='incomplete',
             ),
             ModelResponse(
                 parts=[TextPart(content='The cat sat on the mat.')],
@@ -560,7 +601,9 @@ def test_streamed_text_stream_sync():
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
+                state='complete',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -578,11 +621,38 @@ async def test_plain_response():
 
     agent = Agent(FunctionModel(stream_function=text_stream), output_type=tuple[str, str])
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
         async with agent.run_stream(''):
             pass
 
     assert call_index == 2
+
+
+async def test_stream_output_type_union_data_before_kind():
+    """A valid union envelope streamed with `data` before `kind` must not crash mid-stream.
+
+    While `kind` is still a partial trailing string (e.g. `'App'`), envelope validation must
+    fail (so the chunk is skipped) rather than reach the union processor's `kind` lookup.
+    Streaming manifestation of https://github.com/pydantic/pydantic-ai/issues/5844.
+    """
+
+    class Apple(BaseModel):
+        color: str
+
+    class Banana(BaseModel):
+        length: float
+
+    async def text_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        # `data` first, so that `kind` is the trailing partial string while streaming.
+        for char in '{"result": {"data": {"color": "red"}, "kind": "Apple"}}':
+            yield char
+
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=PromptedOutput([Apple, Banana]))
+
+    async with agent.run_stream('What fruit is it?') as result:
+        async for _ in result.stream_output(debounce_by=None):
+            pass
+        assert await result.get_output() == snapshot(Apple(color='red'))
 
 
 async def test_call_tool():
@@ -626,6 +696,7 @@ async def test_call_tool():
                     parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
@@ -633,6 +704,7 @@ async def test_call_tool():
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -645,6 +717,7 @@ async def test_call_tool():
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -655,6 +728,7 @@ async def test_call_tool():
                     parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
@@ -662,6 +736,7 @@ async def test_call_tool():
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -674,6 +749,7 @@ async def test_call_tool():
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -687,6 +763,7 @@ async def test_call_tool():
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -699,6 +776,7 @@ async def test_call_tool():
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -731,6 +809,7 @@ async def test_empty_response():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[],
@@ -738,11 +817,13 @@ async def test_empty_response():
                 model_name='function::stream_structured_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
@@ -750,9 +831,41 @@ async def test_empty_response():
                 model_name='function::stream_structured_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
+
+
+async def test_run_stream_allows_none_output_empty_response():
+    """`run_stream()` with `output_type=str | None` should return `None` on an empty model response."""
+
+    async def empty_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {}
+
+    agent = Agent(FunctionModel(stream_function=empty_stream), output_type=str | None)
+
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() is None
+        assert result.is_complete
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(input_tokens=50),
+                    model_name='function::empty_stream',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
 
 
 async def test_call_tool_wrong_name():
@@ -762,7 +875,7 @@ async def test_call_tool_wrong_name():
     agent = Agent(
         FunctionModel(stream_function=stream_structured_function),
         output_type=tuple[str, int],
-        retries=0,
+        retries={'tools': 0, 'output': 0},
     )
 
     @agent.tool_plain
@@ -770,7 +883,7 @@ async def test_call_tool_wrong_name():
         return x
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(0\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 0"):
             async with agent.run_stream('hello'):
                 pass
 
@@ -780,6 +893,7 @@ async def test_call_tool_wrong_name():
                 parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
@@ -787,6 +901,7 @@ async def test_call_tool_wrong_name():
                 model_name='function::stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -841,7 +956,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(stream_function=sf))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -872,7 +987,7 @@ class TestPartialOutput:
         agent = Agent(FunctionModel(stream_function=sf), output_type=Foo)
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: Foo) -> Foo:
+        def validate_output(ctx: RunContext, output: Foo) -> Foo:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -892,7 +1007,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with text output."""
         call_log: list[tuple[str, bool]] = []
 
-        def process_output(ctx: RunContext[None], text: str) -> str:
+        def process_output(ctx: RunContext, text: str) -> str:
             call_log.append((text, ctx.partial_output))
             return text.upper()
 
@@ -920,7 +1035,7 @@ class TestPartialOutput:
         """Test that output functions receive correct value for `partial_output` with structured output."""
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -952,7 +1067,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -975,7 +1090,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1006,7 +1121,7 @@ class TestPartialOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1054,7 +1169,7 @@ class TestStreamingCachedOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1091,7 +1206,7 @@ class TestStreamingCachedOutput:
         agent = Agent(FunctionModel(stream_function=sf))
 
         @agent.output_validator
-        def validate_output(ctx: RunContext[None], output: str) -> str:
+        def validate_output(ctx: RunContext, output: str) -> str:
             call_log.append((output, ctx.partial_output))
             return output
 
@@ -1118,7 +1233,7 @@ class TestStreamingCachedOutput:
         """
         call_log: list[tuple[Foo, bool]] = []
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             call_log.append((foo, ctx.partial_output))
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
@@ -1142,7 +1257,7 @@ class TestStreamingCachedOutput:
         a deep copy, so mutations to one don't affect subsequent retrievals.
         """
 
-        def process_foo(ctx: RunContext[None], foo: Foo) -> Foo:
+        def process_foo(ctx: RunContext, foo: Foo) -> Foo:
             return Foo(a=foo.a * 2, b=foo.b.upper())
 
         async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
@@ -1177,7 +1292,7 @@ class TestMultipleToolCalls:
 
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCalls` as well
 
     async def test_early_strategy_stops_after_first_final_result(self):
         """Test that 'early' strategy stops processing regular tools after first final result."""
@@ -1204,7 +1319,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -1226,6 +1341,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test early strategy', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1238,6 +1354,7 @@ class TestMultipleToolCalls:
                     model_name='function::sf',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1268,6 +1385,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1317,6 +1435,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test early output tools', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1327,6 +1446,7 @@ class TestMultipleToolCalls:
                     model_name='function::stream_function',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1345,6 +1465,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1371,6 +1492,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1381,6 +1503,7 @@ class TestMultipleToolCalls:
                     model_name='function::sf',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1399,6 +1522,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1429,7 +1553,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -1456,6 +1580,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1489,6 +1614,7 @@ class TestMultipleToolCalls:
                     model_name='function::sf',
                     timestamp=IsNow(tz=datetime.timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1510,8 +1636,8 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
                         ),
-                        RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
+                        ToolReturnPart(
+                            content='Tool not executed - a final result was already processed.',
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.timezone.utc),
@@ -1525,6 +1651,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1597,6 +1724,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1616,6 +1744,7 @@ class TestMultipleToolCalls:
                     model_name='function::sf',
                     timestamp=IsNow(tz=datetime.timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1634,6 +1763,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1684,6 +1814,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1698,6 +1829,7 @@ class TestMultipleToolCalls:
                     model_name='function::sf',
                     timestamp=IsNow(tz=datetime.timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1710,6 +1842,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1745,6 +1878,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1759,6 +1893,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.timezone.utc),
                     provider_name='test',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1771,6 +1906,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1785,6 +1921,7 @@ class TestMultipleToolCalls:
                     timestamp=IsNow(tz=datetime.timezone.utc),
                     provider_name='test',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1797,6 +1934,352 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_graceful_strategy_executes_function_tools_but_skips_output_tools(self):
+        """Test that 'graceful' strategy executes function tools but skips remaining output tools."""
+        tool_called: list[str] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
+            yield {2: DeltaToolCall('regular_tool', '{"x": 42}')}
+            yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        async with agent.run_stream('test graceful strategy') as result:
+            response = await result.get_output()
+            assert response.value == snapshot('first')
+            messages = result.all_messages()
+
+        # Verify all function tools were called
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got tool returns in the correct order
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test graceful strategy', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='regular_tool', args='{"x": 42}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=10),
+                    model_name='function::sf',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=42,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_graceful_strategy_does_not_call_additional_output_tools(self):
+        """Test that 'graceful' strategy does not execute additional output tool functions."""
+        output_tools_called: list[str] = []
+
+        def process_first(output: OutputType) -> OutputType:
+            """Process first output."""
+            output_tools_called.append('first')
+            return output
+
+        def process_second(output: OutputType) -> OutputType:  # pragma: no cover
+            """Process second output."""
+            output_tools_called.append('second')
+            return output
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('first_output', '{"value": "first"}')}
+            yield {2: DeltaToolCall('second_output', '{"value": "second"}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(process_first, name='first_output'),
+                ToolOutput(process_second, name='second_output'),
+            ],
+            end_strategy='graceful',
+        )
+
+        async with agent.run_stream('test graceful output tools') as result:
+            response = await result.get_output()
+
+        # Verify the result came from the first output tool
+        assert isinstance(response, OutputType)
+        assert response.value == 'first'
+
+        # Verify only the first output tool was called
+        assert output_tools_called == ['first']
+
+        # Verify we got tool returns in the correct order
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test graceful output tools', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='first_output', args='{"value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='second_output', args='{"value": "second"}', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=8),
+                    model_name='function::stream_function',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='first_output',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='second_output',
+                            content='Output tool not used - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_graceful_strategy_uses_first_final_result(self):
+        """Test that 'graceful' strategy uses the first final result and ignores subsequent ones."""
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
+            yield {2: DeltaToolCall('final_result', '{"value": "second"}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='graceful')
+
+        async with agent.run_stream('test multiple final results') as result:
+            response = await result.get_output()
+            assert response.value == snapshot('first')
+            messages = result.all_messages()
+
+        # Verify we got appropriate tool returns
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=8),
+                    model_name='function::sf',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Output tool not used - a final result was already processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+    async def test_graceful_strategy_with_final_result_in_middle(self):
+        """Test that 'graceful' strategy executes function tools but skips output and deferred tools."""
+        tool_called: list[str] = []
+
+        async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            assert info.output_tools is not None
+            yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
+            yield {2: DeltaToolCall('final_result', '{"value": "final"}')}
+            yield {3: DeltaToolCall('another_tool', '{"y": 2}')}
+            yield {4: DeltaToolCall('unknown_tool', '{"value": "???"}')}
+            yield {5: DeltaToolCall('deferred_tool', '{"x": 5}')}
+
+        agent = Agent(FunctionModel(stream_function=sf), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:
+            """A regular tool that should be called."""
+            tool_called.append('regular_tool')
+            return x
+
+        @agent.tool_plain
+        def another_tool(y: int) -> int:
+            """Another tool that should be called."""
+            tool_called.append('another_tool')
+            return y
+
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            tool_called.append('deferred_tool')
+            return x + 1
+
+        async with agent.run_stream('test graceful strategy with final result in middle') as result:
+            response = await result.get_output()
+            assert response.value == snapshot('final')
+            messages = result.all_messages()
+
+        # Verify function tools were called but deferred tools were not
+        assert sorted(tool_called) == sorted(['regular_tool', 'another_tool'])
+
+        # Verify we got appropriate tool returns
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='test graceful strategy with final result in middle',
+                            timestamp=IsNow(tz=timezone.utc),
+                        )
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='regular_tool',
+                            args='{"x": 1}',
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "final"}',
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='another_tool',
+                            args='{"y": 2}',
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='unknown_tool',
+                            args='{"value": "???"}',
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolCallPart(
+                            tool_name='deferred_tool',
+                            args='{"x": 5}',
+                            tool_call_id=IsStr(),
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=50, output_tokens=17),
+                    model_name='function::sf',
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content=1,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content=2,
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
+                            tool_name='unknown_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1828,7 +2311,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -1853,6 +2336,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test exhaustive strategy', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1867,32 +2351,36 @@ class TestMultipleToolCalls:
                     model_name='function::sf',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
-                        ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            timestamp=IsNow(tz=timezone.utc),
+                            tool_call_id=IsStr(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='another_tool',
+                            content=2,
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         ToolReturnPart(
-                            tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                            tool_name='final_result',
+                            content='Output tool processed, but its value will not be the final result of the agent run.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
@@ -1906,6 +2394,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -1946,7 +2435,7 @@ class TestMultipleToolCalls:
         assert response.value == 'first'
 
         # Verify both output tools were called
-        assert output_tools_called == ['first', 'second']
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got tool returns in the correct order
         assert result.all_messages() == snapshot(
@@ -1955,6 +2444,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test exhaustive output tools', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -1965,6 +2455,7 @@ class TestMultipleToolCalls:
                     model_name='function::stream_function',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1976,13 +2467,14 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
-                            content='Final result processed.',
+                            content='Output tool processed, but its value will not be the final result of the agent run.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -2024,7 +2516,7 @@ class TestMultipleToolCalls:
         assert response.value == snapshot('valid')
 
         # Verify both output tools were called
-        assert output_tools_called == snapshot(['first', 'second'])
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -2032,6 +2524,7 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[UserPromptPart(content='test invalid first valid second', timestamp=IsNow(tz=timezone.utc))],
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -2041,6 +2534,7 @@ class TestMultipleToolCalls:
                     model_name='function:stream_function:',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2058,6 +2552,7 @@ class TestMultipleToolCalls:
                         ),
                     ],
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -2088,7 +2583,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=0,  # No retries - model must succeed first try
+            retries={'output': 0},  # No retries - model must succeed first try
         )
 
         async with agent.run_stream('test valid first invalid second') as result:
@@ -2099,7 +2594,7 @@ class TestMultipleToolCalls:
         assert response.value == snapshot('valid')
 
         # Verify both output tools were called
-        assert output_tools_called == snapshot(['first', 'second'])
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -2108,6 +2603,7 @@ class TestMultipleToolCalls:
                     parts=[UserPromptPart(content='test valid first invalid second', timestamp=IsNow(tz=timezone.utc))],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -2118,6 +2614,7 @@ class TestMultipleToolCalls:
                     model_name='function::stream_function',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2136,6 +2633,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -2166,7 +2664,7 @@ class TestMultipleToolCalls:
                 ToolOutput(process_second, name='second_output'),
             ],
             end_strategy='exhaustive',
-            output_retries=1,  # Allow 1 retry so ToolRetryError is raised
+            retries={'output': 1},  # Allow 1 retry so ToolRetryError is raised
         )
 
         async with agent.run_stream('test exhaustive with tool retry') as result:
@@ -2177,7 +2675,7 @@ class TestMultipleToolCalls:
         assert response.value == 'valid'
 
         # Verify both output tools were called
-        assert output_tools_called == ['first', 'second']
+        assert sorted(output_tools_called) == ['first', 'second']
 
         # Verify we got appropriate messages
         assert result.all_messages() == snapshot(
@@ -2190,6 +2688,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -2200,6 +2699,7 @@ class TestMultipleToolCalls:
                     model_name='function::stream_function',
                     timestamp=IsNow(tz=datetime.timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2218,6 +2718,7 @@ class TestMultipleToolCalls:
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -2243,7 +2744,7 @@ class TestMultipleToolCalls:
             end_strategy='exhaustive',
         )
 
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum retries \\(1\\) for output validation'):
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries \\(1\\)'):
             async with agent.run_stream('test') as result:
                 await result.get_output()
 
@@ -2271,6 +2772,7 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[UserPromptPart(content='test multiple final results', timestamp=IsNow(tz=timezone.utc))],
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[
@@ -2281,6 +2783,7 @@ class TestMultipleToolCalls:
                     model_name='function::stream_function',
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2305,13 +2808,310 @@ class TestMultipleToolCalls:
                         ),
                     ],
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
 
+    async def test_sequential_tool_is_a_per_tool_barrier(self):
+        """A `sequential=True` tool runs alone; other tools parallelize around it (streaming path)."""
+        active = 0
+        barrier_ran_alone = True
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='parallel_a')}
+                yield {1: DeltaToolCall(name='parallel_b')}
+                yield {2: DeltaToolCall(name='barrier')}
+                yield {3: DeltaToolCall(name='parallel_c')}
+            else:
+                yield 'done'
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        async def track() -> str:
+            nonlocal active
+            active += 1
+            await asyncio.sleep(0.02)
+            active -= 1
+            return 'ok'
+
+        @agent.tool_plain
+        async def parallel_a() -> str:
+            return await track()
+
+        @agent.tool_plain
+        async def parallel_b() -> str:
+            return await track()
+
+        @agent.tool_plain(sequential=True)
+        async def barrier() -> str:
+            nonlocal barrier_ran_alone
+            if active != 0:
+                barrier_ran_alone = False  # pragma: no cover
+            await asyncio.sleep(0.02)
+            return 'barrier'
+
+        @agent.tool_plain
+        async def parallel_c() -> str:
+            return await track()
+
+        async with agent.run_stream('test') as result:
+            await result.get_output()
+
+        assert barrier_ran_alone
+
+    async def test_outer_cancellation_cancels_pending_tools(self):
+        """Outer cancellation during streamed tool execution cancels still-pending tool tasks."""
+        first_done = asyncio.Event()
+        pending_started = asyncio.Event()
+        pending_cancelled = asyncio.Event()
+
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='fast_tool')}
+                yield {1: DeltaToolCall(name='slow_tool')}
+            else:
+                yield 'done'  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=stream_function))
+
+        @agent.tool_plain
+        async def fast_tool() -> str:
+            first_done.set()
+            return 'done'
+
+        @agent.tool_plain
+        async def slow_tool() -> str:
+            pending_started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                pending_cancelled.set()
+                raise
+            return 'done'  # pragma: no cover
+
+        async def run() -> None:
+            async with agent.run_stream('test') as result:
+                await result.get_output()  # pragma: no cover
+
+        task = asyncio.create_task(run())
+        await asyncio.wait_for(first_done.wait(), timeout=1)
+        await asyncio.wait_for(pending_started.wait(), timeout=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert pending_cancelled.is_set()
+
+    async def test_graceful_runs_function_tools_before_output(self):
+        """Streaming commits the output as it streams, but `graceful` still runs the function tools
+        the model emitted alongside it (their side effects happen)."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall(name='tool_b')}
+            yield {2: DeltaToolCall('final_result', '{"value": "done"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            called.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            called.append('tool_b')
+            return 'b'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'done'
+        assert sorted(called) == ['tool_a', 'tool_b']
+
+    async def test_graceful_interleaved_outputs_and_function_tools(self):
+        """Graceful streaming with outputs and function tools interleaved: the first streamed output
+        wins, later outputs are skipped, and the function tools still run."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall('first_output', '{"value": "a"}')}
+            yield {2: DeltaToolCall(name='tool_b')}
+            yield {3: DeltaToolCall('second_output', '{"value": "b"}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='graceful',
+        )
+
+        @agent.tool_plain
+        def tool_a() -> str:
+            called.append('tool_a')
+            return 'a'
+
+        @agent.tool_plain
+        def tool_b() -> str:
+            called.append('tool_b')
+            return 'b'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'a'
+        assert sorted(called) == ['tool_a', 'tool_b']
+
+    async def test_exhaustive_tool_output_sequential_barrier(self):
+        """`ToolOutput(sequential=True)` under streaming: the output is committed as it streams, so
+        (unlike the non-streaming path) it isn't held behind the function tool; the function tool
+        still runs."""
+        events: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall(name='tool_a')}
+            yield {1: DeltaToolCall('do_output', '{"value": "done"}')}
+
+        def do_output(output: OutputType) -> OutputType:
+            events.append('output')
+            return output
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=ToolOutput(do_output, name='do_output', sequential=True),
+            end_strategy='exhaustive',
+        )
+
+        @agent.tool_plain
+        async def tool_a() -> str:
+            await asyncio.sleep(0.02)
+            events.append('tool_a')
+            return 'a'
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'done'
+        assert 'tool_a' in events
+
+    async def test_early_output_failure_raises_when_streaming(self):
+        """The non-streaming `early` fallback (run function tools when every output fails) has no
+        streaming equivalent: a streamed output that fails validation raises, since `run_stream()`
+        can't retry outputs."""
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall('regular_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('bad_output', '{"value": "x"}')}
+
+        def bad_output(output: OutputType) -> OutputType:
+            if output.value == 'x':
+                raise ModelRetry('bad')
+            return output  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=ToolOutput(bad_output, name='bad_output'),
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            return x
+
+        with pytest.raises(UnexpectedModelBehavior, match='retries are not supported in `run_stream\\(\\)`'):
+            async with agent.run_stream('test') as result:
+                await result.get_output()
+
+    async def test_early_multiple_outputs_and_function_tools(self):
+        """Early streaming with several output tools: the first streamed output wins, later outputs
+        are skipped, and function tools are stubbed (not run) once an output succeeds."""
+        called: list[str] = []
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            assert info.output_tools is not None
+            yield {0: DeltaToolCall('first_output', '{"value": "a"}')}
+            yield {1: DeltaToolCall('second_output', '{"value": "b"}')}
+            yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            output_type=[
+                ToolOutput(OutputType, name='first_output'),
+                ToolOutput(OutputType, name='second_output'),
+            ],
+            end_strategy='early',
+        )
+
+        @agent.tool_plain
+        def regular_tool(x: int) -> int:  # pragma: no cover
+            called.append('regular_tool')
+            return x
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'a'
+        assert called == []
+
+    async def test_graceful_function_tool_retry_does_not_suppress_committed_output(self):
+        """Retry-wins doesn't apply when streaming: the output is committed as it streams, so a
+        function tool's `ModelRetry` in the same response can't revoke it (`graceful`)."""
+        rounds = 0
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            yield {0: DeltaToolCall('flaky_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('final_result', '{"value": "committed"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='graceful')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            raise ModelRetry('not yet')
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        # The streamed output is committed and not suppressed, so the run ends in a single round.
+        assert output.value == 'committed'
+        assert rounds == 1
+
+    async def test_exhaustive_function_tool_retry_does_not_suppress_committed_output(self):
+        """Retry-wins is also exempt under `exhaustive` streaming: the committed output stands."""
+        rounds = 0
+
+        async def stream_function(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal rounds
+            assert info.output_tools is not None
+            rounds += 1
+            yield {0: DeltaToolCall('flaky_tool', '{"x": 1}')}
+            yield {1: DeltaToolCall('final_result', '{"value": "committed"}')}
+
+        agent = Agent(FunctionModel(stream_function=stream_function), output_type=OutputType, end_strategy='exhaustive')
+
+        @agent.tool_plain
+        def flaky_tool(x: int) -> int:
+            raise ModelRetry('not yet')
+
+        async with agent.run_stream('test') as result:
+            output = await result.get_output()
+        assert output.value == 'committed'
+        assert rounds == 1
+
     # NOTE: When changing tests in this class:
     # 1. Follow the existing order
-    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCallsStreaming` as well
+    # 2. Update tests in `tests/test_agent.py::TestMultipleToolCalls` as well
+    # The retry-wins tests (a function-tool `ModelRetry` suppressing an output result) have no
+    # streaming counterpart: under `run_stream` the streamed output is committed as soon as it's
+    # detected, so retry-wins doesn't apply (see `docs/output.md`).
 
 
 async def test_custom_output_type_default_str() -> None:
@@ -2368,7 +3168,7 @@ async def test_iter_stream_output():
                 async with node.stream(run.ctx) as stream:
                     async for chunk in stream.stream_output(debounce_by=None):
                         messages.append(chunk)
-                stream_usage = deepcopy(stream.usage())
+                stream_usage = deepcopy(stream.usage)
     assert stream is not None
     assert stream.response == snapshot(
         ModelResponse(
@@ -2380,7 +3180,7 @@ async def test_iter_stream_output():
         )
     )
     assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
-    assert run.usage() == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
+    assert run.usage == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
 
     assert messages == snapshot(
         [
@@ -2443,6 +3243,7 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
         text_processor=TextOutputProcessor(),
         allows_deferred_tools=False,
         allows_image=False,
+        allows_none=False,
     )
     stream = AgentStream(
         _raw_stream_response=stream_response,
@@ -2452,6 +3253,7 @@ def test_agent_stream_metadata_falls_back_to_run_context() -> None:
         _run_ctx=run_ctx,
         _usage_limits=None,
         _tool_manager=ToolManager(toolset=MagicMock()),
+        _root_capability=CombinedCapability([]),
     )
 
     assert stream.metadata == {'source': 'run-context'}
@@ -2496,7 +3298,7 @@ def test_streamed_run_result_sync_exposes_metadata() -> None:
     assert sync_result.metadata == {'sync': 'metadata'}
 
 
-async def test_iter_stream_responses():
+async def test_iter_stream_response():
     m = TestModel(custom_output_text='The cat sat on the mat.')
 
     agent = Agent(m)
@@ -2514,28 +3316,39 @@ async def test_iter_stream_responses():
         async for node in run:
             if agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
-                    async for chunk in stream.stream_responses(debounce_by=None):
+                    async for chunk in stream.stream_response(debounce_by=None):
                         messages.append(chunk)
 
+    incomplete_texts = [
+        '',
+        '',
+        'The ',
+        'The cat ',
+        'The cat sat ',
+        'The cat sat on ',
+        'The cat sat on the ',
+        'The cat sat on the mat.',
+        'The cat sat on the mat.',
+    ]
     assert messages == [
+        *(
+            ModelResponse(
+                parts=[TextPart(content=text)],
+                usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                state='incomplete',
+            )
+            for text in incomplete_texts
+        ),
         ModelResponse(
-            parts=[TextPart(content=text)],
+            parts=[TextPart(content='The cat sat on the mat.')],
             usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             provider_name='test',
-        )
-        for text in [
-            '',
-            '',
-            'The ',
-            'The cat ',
-            'The cat sat ',
-            'The cat sat on ',
-            'The cat sat on the ',
-            'The cat sat on the mat.',
-            'The cat sat on the mat.',
-        ]
+        ),
     ]
 
     # Note: as you can see above, the output validator is not applied to the streamed responses, just the final result:
@@ -2547,7 +3360,7 @@ async def test_stream_iter_structured_validator() -> None:
     class NotOutputType(BaseModel):
         not_value: str
 
-    agent = Agent[None, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
+    agent = Agent[object, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
 
     @agent.output_validator
     def output_validator(data: OutputType | NotOutputType) -> OutputType | NotOutputType:
@@ -2599,11 +3412,35 @@ async def test_unknown_tool_call_events():
         [
             FunctionToolCallEvent(
                 part=ToolCallPart(
+                    tool_name='unknown_tool',
+                    args={'arg': 'value'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=False,
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
                     tool_name='known_tool',
                     args={'x': 5},
                     tool_call_id=IsStr(),
                 ),
                 args_valid=True,
+            ),
+            FunctionToolResultEvent(
+                part=RetryPromptPart(
+                    content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
+                    tool_name='unknown_tool',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ),
+            FunctionToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='known_tool',
+                    content=10,
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -2613,28 +3450,54 @@ async def test_unknown_tool_call_events():
                 ),
                 args_valid=False,
             ),
-            FunctionToolResultEvent(
-                result=RetryPromptPart(
-                    content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
-                    tool_name='unknown_tool',
+        ]
+    )
+
+
+async def test_output_tool_success_events():
+    """Test that a successful output tool call emits `OutputToolCallEvent` and `OutputToolResultEvent`."""
+
+    def call_final_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart('final_result', {'value': 'hello'})])
+
+    agent = Agent(FunctionModel(call_final_result), output_type=OutputType)
+
+    events: list[Any] = []
+    async with agent.iter('test') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as event_stream:
+                    async for event in event_stream:
+                        events.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == snapshot(OutputType(value='hello'))
+
+    assert events == snapshot(
+        [
+            OutputToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'value': 'hello'},
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
                 ),
+                args_valid=True,
             ),
-            FunctionToolResultEvent(
-                result=ToolReturnPart(
-                    tool_name='known_tool',
-                    content=10,
+            OutputToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
-                ),
+                )
             ),
         ]
     )
 
 
-async def test_output_tool_validation_failure_events():
-    """Test that output tools that fail validation emit events during streaming."""
+async def test_output_tool_events():
+    """Test that output tools emit events during streaming for both validation failure and success."""
 
     def call_final_result_with_bad_data(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         """Mock function that calls final_result tool with invalid data."""
@@ -2658,7 +3521,7 @@ async def test_output_tool_validation_failure_events():
 
     assert events == snapshot(
         [
-            FunctionToolCallEvent(
+            OutputToolCallEvent(
                 part=ToolCallPart(
                     tool_name='final_result',
                     args={'bad_value': 'invalid'},
@@ -2666,8 +3529,8 @@ async def test_output_tool_validation_failure_events():
                 ),
                 args_valid=False,
             ),
-            FunctionToolResultEvent(
-                result=RetryPromptPart(
+            OutputToolResultEvent(
+                part=RetryPromptPart(
                     content=[
                         ErrorDetails(
                             type='missing',
@@ -2681,10 +3544,104 @@ async def test_output_tool_validation_failure_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
-            # Note: No FunctionToolCallEvent for the successful output tool call
-            # Output tools only emit FunctionToolCallEvent on validation/execution failure
+            OutputToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='final_result',
+                    args={'value': 'valid'},
+                    tool_call_id=IsStr(),
+                ),
+                args_valid=True,
+            ),
+            OutputToolResultEvent(
+                part=ToolReturnPart(
+                    tool_name='final_result',
+                    content='Final result processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
         ]
     )
+
+
+def _tool_call_and_return_ids_from_messages(messages: list[ModelMessage]) -> tuple[set[str], set[str]]:
+    call_ids: set[str] = set()
+    return_ids: set[str] = set()
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolCallPart):
+                call_ids.add(part.tool_call_id)
+            elif isinstance(part, ToolReturnPart):
+                return_ids.add(part.tool_call_id)
+    return call_ids, return_ids
+
+
+async def test_output_tool_event_history_has_no_dangling_call():
+    """Regression test for #2640: event-reconstructed history should not have a dangling output tool call.
+
+    Every `OutputToolCallEvent` seen on the event stream should have a matching
+    `OutputToolResultEvent`, and the tool_call_ids should match those in `all_messages()`.
+    """
+
+    def call_final_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart('final_result', {'value': 'hello'})])
+
+    agent = Agent(FunctionModel(call_final_result), output_type=OutputType)
+
+    events: list[Any] = []
+    async with agent.iter('test') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as handle_stream:
+                    async for event in handle_stream:
+                        events.append(event)
+
+    call_ids_from_events = {e.part.tool_call_id for e in events if isinstance(e, OutputToolCallEvent)}
+    return_ids_from_events = {e.part.tool_call_id for e in events if isinstance(e, OutputToolResultEvent)}
+
+    # No dangling calls: every call seen on the event stream has a matching result.
+    assert call_ids_from_events == return_ids_from_events
+    assert None not in call_ids_from_events
+
+    # And the event-stream view matches `all_messages()`.
+    assert agent_run.result is not None
+    call_ids_from_messages, return_ids_from_messages = _tool_call_and_return_ids_from_messages(
+        agent_run.result.all_messages()
+    )
+    assert call_ids_from_events == call_ids_from_messages
+    assert return_ids_from_events == return_ids_from_messages
+
+
+async def test_output_function_model_retry_in_stream():
+    """`ModelRetry` from a `ToolOutput` function during `run_stream()` must surface as
+    `UnexpectedModelBehavior` (caused by `ModelRetry`), not propagate as `ToolRetryError`.
+
+    Regression test for an earlier version of `ToolManager.execute_output_tool_call` that
+    unconditionally wrapped `ModelRetry` from the output function as `ToolRetryError`,
+    which `result.validate_response_output` doesn't catch in the streaming path.
+    """
+
+    async def stream_final_result(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {0: DeltaToolCall(name='final_result', json_args='{"value": "anything"}')}
+
+    def reject(value: str) -> str:
+        raise ModelRetry('please try again')
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_final_result),
+        output_type=ToolOutput(reject, name='final_result'),
+        retries={'output': 0},
+    )
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        async with agent.run_stream('test') as result:
+            await result.get_output()
+
+    # The cause must be ModelRetry, not ToolRetryError — `validate_response_output`
+    # only catches `(ValidationError, ModelRetry)` in the streaming path.
+    assert isinstance(exc_info.value.__cause__, ModelRetry)
 
 
 async def test_stream_structured_output():
@@ -2781,7 +3738,7 @@ def test_function_tool_event_tool_call_id_properties():
 
     # Prepare a ToolReturnPart with a fixed ID
     return_part = ToolReturnPart(tool_name='sample_tool', content='ok', tool_call_id='return_id_456')
-    result_event = FunctionToolResultEvent(result=return_part)
+    result_event = FunctionToolResultEvent(part=return_part)
 
     # The event should expose the same `tool_call_id` as the result part
     assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'
@@ -2797,13 +3754,14 @@ async def test_tool_raises_call_deferred():
     async with agent.run_stream('Hello') as result:
         assert not result.is_complete
         assert isinstance(result.run_id, str)
+        assert isinstance(result.conversation_id, str)
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])]
         )
         assert await result.get_output() == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+        responses = [c async for c in result.stream_response(debounce_by=None)]
         assert responses == snapshot(
             [
                 ModelResponse(
@@ -2813,14 +3771,15 @@ async def test_tool_raises_call_deferred():
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 )
             ]
         )
         assert await result.validate_response_output(responses[0]) == snapshot(
             DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
         )
-        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
-        assert result.timestamp() == IsNow(tz=timezone.utc)
+        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
+        assert result.timestamp == IsNow(tz=timezone.utc)
         assert result.is_complete
 
 
@@ -2834,7 +3793,7 @@ async def test_tool_raises_approval_required():
     agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -2865,6 +3824,7 @@ async def test_tool_raises_approval_required():
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='my_tool')],
@@ -2872,6 +3832,7 @@ async def test_tool_raises_approval_required():
                     model_name='function::llm',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -2884,6 +3845,7 @@ async def test_tool_raises_approval_required():
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='Done!')],
@@ -2891,6 +3853,7 @@ async def test_tool_raises_approval_required():
                     model_name='function::llm',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ]
         )
@@ -2901,7 +3864,7 @@ async def test_tool_raises_approval_required():
 async def test_deferred_tool_iter():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
-    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    async def prepare_tool(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition:
         return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=prepare_tool)
@@ -3057,7 +4020,7 @@ async def test_run_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3077,7 +4040,7 @@ async def test_run_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
@@ -3093,6 +4056,36 @@ async def test_run_event_stream_handler():
     )
 
 
+async def test_event_stream_handler_propagates_tool_error():
+    """When a tool raises during streaming with event_stream_handler and the error
+    is suppressed by the handler, the _stream_error re-raise path in run() should
+    propagate the original error — not an internal AssertionError about _next_node."""
+
+    m = TestModel()
+    test_agent = Agent(m)
+
+    @test_agent.tool_plain
+    async def failing_tool(x: str) -> str:
+        raise RuntimeError('tool execution failed')
+
+    events: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
+        # Suppress the error to simulate UIEventStream.transform_stream behavior,
+        # which catches exceptions and doesn't re-raise them.
+        try:
+            async for event in stream:
+                events.append(event)
+        except RuntimeError:
+            pass
+
+    with pytest.raises(RuntimeError, match='tool execution failed'):
+        await test_agent.run('Hello', event_stream_handler=handler)
+
+    # Events up to the tool call should still have been emitted
+    assert any(isinstance(e, FunctionToolCallEvent) for e in events)
+
+
 def test_run_sync_event_stream_handler():
     m = TestModel()
 
@@ -3105,7 +4098,7 @@ def test_run_sync_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3125,7 +4118,7 @@ def test_run_sync_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
@@ -3153,7 +4146,7 @@ async def test_run_stream_event_stream_handler():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3176,7 +4169,7 @@ async def test_run_stream_event_stream_handler():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
@@ -3187,6 +4180,98 @@ async def test_run_stream_event_stream_handler():
             FinalResultEvent(tool_name=None, tool_call_id=None),
         ]
     )
+
+
+async def test_run_event_stream_handler_does_not_need_to_consume_stream():
+    agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
+
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    result = await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert result.output == 'hello world this is a long answer'
+
+
+async def test_run_stream_event_stream_handler_does_not_need_to_consume_stream():
+    agent = Agent(TestModel(custom_output_text='hello world this is a long answer'))
+
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    async with agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
+        output = await result.get_output()
+
+    assert output == 'hello world this is a long answer'
+
+
+async def test_run_event_stream_handler_unconsumed_still_executes_tool_calls():
+    """A handler that ignores the stream must not stop the agent from acting on the model's reply.
+
+    The reply (including tool calls) is built by iterating the stream, so a handler that returns
+    without consuming it used to silently drop the tool call.
+    """
+    tool_calls: list[int] = []
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def record(x: int) -> str:
+        tool_calls.append(x)
+        return 'ok'
+
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    await agent.run('go', event_stream_handler=event_stream_handler)
+
+    assert tool_calls == [0]
+
+
+async def test_run_stream_event_stream_handler_unconsumed_still_executes_tool_calls():
+    """Same as the `agent.run()` case, but for `agent.run_stream()` (exercises the `CallToolsNode` path)."""
+    tool_calls: list[int] = []
+    agent = Agent(TestModel())
+
+    @agent.tool_plain
+    def record(x: int) -> str:
+        tool_calls.append(x)
+        return 'ok'
+
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+        return  # never reads the stream
+
+    async with agent.run_stream('go', event_stream_handler=event_stream_handler) as result:
+        await result.get_output()
+
+    assert tool_calls == [0]
+
+
+async def test_run_event_stream_handler_interrupted_does_not_drain():
+    """A handler interrupted before returning (cancellation/`break`) must not trigger the drain.
+
+    The drain only runs when the handler returns normally; re-running it on an interrupted handler
+    would consume a stream the caller asked to stop, reintroducing the cancellation hang from #5313.
+    The stream is unbounded, so a drain that ran after the interrupt would never terminate.
+    """
+    pulled = 0
+
+    async def counting_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        nonlocal pulled
+        while True:
+            pulled += 1
+            yield 'hello'
+
+    agent = Agent(FunctionModel(stream_function=counting_stream))
+
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+        raise asyncio.CancelledError  # interrupted before consuming the stream
+
+    with pytest.raises(asyncio.CancelledError):
+        await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    # Only the single lookahead the run makes before invoking the handler; the post-handler
+    # drain was skipped (otherwise this unbounded stream would have been pulled forever).
+    assert pulled == 1
 
 
 async def test_stream_tool_returning_user_content():
@@ -3201,7 +4286,7 @@ async def test_stream_tool_returning_user_content():
 
     events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -3221,7 +4306,7 @@ async def test_stream_tool_returning_user_content():
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='get_image',
                     content=ImageUrl(
                         url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
@@ -3264,7 +4349,8 @@ async def test_run_stream_events():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events = [event async for event in test_agent.run_stream_events('Hello')]
+    async with test_agent.run_stream_events('Hello') as event_stream:
+        events = [event async for event in event_stream]
     assert test_agent.name == 'test_agent'
 
     assert events == snapshot(
@@ -3281,7 +4367,7 @@ async def test_run_stream_events():
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='ret_a',
                     content='a-apple',
                     tool_call_id=IsStr(),
@@ -3312,8 +4398,10 @@ def test_structured_response_sync_validation():
 
     chunks: list[list[int]] = []
     result = agent.run_stream_sync('')
-    for structured_response, last in result.stream_responses(debounce_by=None):
-        response_data = result.validate_response_output(structured_response, allow_partial=not last)
+    for structured_response in result.stream_response(debounce_by=None):
+        response_data = result.validate_response_output(
+            structured_response, allow_partial=structured_response.state == 'incomplete'
+        )
         chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -3344,6 +4432,7 @@ async def test_get_output_after_stream_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
@@ -3358,6 +4447,7 @@ async def test_get_output_after_stream_output():
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -3370,6 +4460,7 @@ async def test_get_output_after_stream_output():
                 ],
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
         ]
     )
@@ -3403,8 +4494,7 @@ async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float |
     agent = Agent(FunctionModel(stream_function=sf))
 
     async with agent.run_stream('test') as result:
-        async for _text in result.stream_text(delta=delta, debounce_by=debounce_by):
-            break
+        await anext(result.stream_text(delta=delta, debounce_by=debounce_by))
 
     assert cleanup_called, 'stream function cleanup should have been called by aclosing propagation'
 
@@ -3430,8 +4520,9 @@ async def test_args_validator_failure_events():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -3448,7 +4539,7 @@ async def test_args_validator_failure_events():
                 args_valid=False,
             ),
             FunctionToolResultEvent(
-                result=RetryPromptPart(
+                part=RetryPromptPart(
                     content='Validation failed: x must be positive',
                     tool_name='add_numbers',
                     tool_call_id=IsStr(),
@@ -3468,7 +4559,7 @@ async def test_args_validator_failure_events():
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='add_numbers',
                     content=0,
                     tool_call_id=IsStr(),
@@ -3502,8 +4593,9 @@ async def test_args_validator_event_args_valid_field():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     assert events == snapshot(
         [
@@ -3526,7 +4618,7 @@ async def test_args_validator_event_args_valid_field():
                 args_valid=True,
             ),
             FunctionToolResultEvent(
-                result=ToolReturnPart(
+                part=ToolReturnPart(
                     tool_name='add_numbers',
                     content=0,
                     tool_call_id='pyd_ai_tool_call_id__add_numbers',
@@ -3556,8 +4648,9 @@ async def test_args_validator_event_args_valid_no_custom_validator():
         return x + y
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42):
-        events.append(event)
+    async with agent.run_stream_events('call add_numbers with x=1 and y=2', deps=42) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     tool_call_events: list[FunctionToolCallEvent] = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert len(tool_call_events) >= 1
@@ -3589,8 +4682,9 @@ async def test_schema_validation_failure_args_valid_false():
 
     events: list[Any] = []
     try:
-        async for event in agent.run_stream_events('call add_numbers', deps=42):  # pragma: no branch
-            events.append(event)
+        async with agent.run_stream_events('call add_numbers', deps=42) as event_stream:
+            async for event in event_stream:  # pragma: no branch
+                events.append(event)
     except UnexpectedModelBehavior:
         pass  # Expected when max retries exceeded
 
@@ -3636,19 +4730,20 @@ async def test_args_validator_run_stream_event_handler():
 async def test_event_ordering_call_before_result():
     """Test that FunctionToolCallEvent is emitted before FunctionToolResultEvent for each tool call."""
 
-    def my_validator(ctx: RunContext[None], x: int) -> None:
+    def my_validator(ctx: RunContext, x: int) -> None:
         pass
 
     agent = Agent(TestModel(call_tools=['my_tool']))
 
     @agent.tool(args_validator=my_validator)
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         """A tool."""
         return x * 2
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     call_ids_seen: set[str] = set()
     result_ids_seen: set[str] = set()
@@ -3659,7 +4754,7 @@ async def test_event_ordering_call_before_result():
                 f'FunctionToolResultEvent for {event.tool_call_id} appeared before FunctionToolCallEvent'
             )
         elif isinstance(event, FunctionToolResultEvent):
-            result_id = event.result.tool_call_id
+            result_id = event.part.tool_call_id
             result_ids_seen.add(result_id)
             assert result_id in call_ids_seen, (
                 f'FunctionToolResultEvent for {result_id} appeared without prior FunctionToolCallEvent'
@@ -3695,12 +4790,13 @@ async def test_args_valid_true_for_presupplied_tool_approved():
     # Second run with ToolApproved: collect events
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
         deps=42,
-    ):
-        events.append(event)
+    ) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     # The FunctionToolCallEvent for the pre-supplied result should have args_valid=True
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -3734,12 +4830,13 @@ async def test_args_valid_none_for_tool_denied():
     # Second run with ToolDenied
     messages = result.all_messages()
     events: list[Any] = []
-    async for event in agent.run_stream_events(
+    async with agent.run_stream_events(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolDenied('User denied this tool call')}),
         deps=42,
-    ):
-        events.append(event)
+    ) as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     # FunctionToolCallEvent should have args_valid=None (pre-supplied result, no upfront validation)
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
@@ -3747,15 +4844,15 @@ async def test_args_valid_none_for_tool_denied():
     assert tool_call_events[0].args_valid is None
 
     # FunctionToolResultEvent should contain the denial message
-    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent) and e.result.tool_name == 'my_tool']
+    result_events = [e for e in events if isinstance(e, FunctionToolResultEvent) and e.part.tool_name == 'my_tool']
     assert result_events
-    assert result_events[0].result.content == 'User denied this tool call'
+    assert result_events[0].part.content == 'User denied this tool call'
 
 
 async def test_deferred_tool_validation_event_in_stream():
     """Test that deferred (requires_approval) tools emit FunctionToolCallEvent with correct args_valid."""
 
-    def my_validator(ctx: RunContext[None], x: int) -> None:
+    def my_validator(ctx: RunContext, x: int) -> None:
         pass
 
     agent = Agent(
@@ -3764,14 +4861,380 @@ async def test_deferred_tool_validation_event_in_stream():
     )
 
     @agent.tool(args_validator=my_validator)
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         raise ApprovalRequired()
 
     events: list[Any] = []
-    async for event in agent.run_stream_events('test'):
-        events.append(event)
+    async with agent.run_stream_events('test') as event_stream:
+        async for event in event_stream:
+            events.append(event)
 
     tool_call_events = [e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_name == 'my_tool']
     assert tool_call_events
     # TestModel generates valid args (x=0 by default), so validation passes
     assert tool_call_events[0].args_valid is True
+
+
+# region: Stream cancellation tests
+
+
+async def test_run_stream_cancel():
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.cancelled
+        # Consume one chunk to start the stream
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        assert result.cancelled
+
+    # StreamedResponse.get() sets state='interrupted' when _cancelled is True
+    assert result.response.state == 'interrupted'
+
+
+async def test_run_stream_cancel_all_messages_includes_interrupted_response():
+    """After cancelling a stream, all_messages() should include the interrupted ModelResponse."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        # Consume one chunk to start the stream
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+
+    assert result.cancelled
+    assert result.response.state == 'interrupted'
+    # The interrupted ModelResponse must appear in all_messages()
+    msgs = result.all_messages()
+    assert msgs == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_run_stream_cancel_guard_suppresses_transport_error():
+    """When cancel() is called mid-stream and iteration continues, _stream_cancel_guard
+    suppresses the simulated transport error and the stream ends gracefully."""
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        chunks: list[str] = []
+        async for text in result.stream_text(delta=True, debounce_by=None):
+            chunks.append(text)
+            if not result.cancelled:  # pragma: no branch
+                await result.cancel()
+                # Don't break: let the loop call anext() again, which resumes
+                # the generator into the _cancelled check and exercises the
+                # _stream_cancel_guard suppression branch.
+
+    assert result.cancelled
+    assert result.response.state == 'interrupted'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='success ')],
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
+
+
+async def test_run_stream_cancel_after_complete():
+    agent = Agent(TestModel())
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.is_complete
+        await result.get_output()
+        assert result.is_complete
+        assert result.response.state == 'complete'
+        # A defensive cancel() after the stream is fully consumed records the
+        # flag but must not downgrade response.state to 'interrupted'.
+        await result.cancel()
+        assert result.cancelled
+        assert result.response.state == 'complete'
+
+
+async def test_completed_streamed_response_cancel_noop():
+    response = ModelResponse(parts=[TextPart(content='done')], model_name='test')
+    streamed_response = CompletedStreamedResponse(models.ModelRequestParameters(), response)
+
+    await streamed_response.cancel()
+    await streamed_response.cancel()
+
+    assert streamed_response.cancelled
+    assert streamed_response.response is response
+    assert response.state == 'complete'
+
+
+async def test_stream_response_state_incomplete_until_finished():
+    """`response.state` reads `'incomplete'` mid-stream and flips to `'complete'` once iteration ends."""
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.run_stream('Hello') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):
+            assert result.response.state == 'incomplete'
+        await result.get_output()
+
+    assert result.response.state == 'complete'
+
+
+async def test_stream_response_yields_incomplete_then_complete():
+    """`stream_response` yields `state='incomplete'` mid-stream; the trailing yield is `'complete'`."""
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.run_stream('Hello') as result:
+        states = [msg.state async for msg in result.stream_response(debounce_by=None)]
+
+    assert states[-1] == 'complete'
+    assert all(state == 'incomplete' for state in states[:-1])
+
+
+async def test_stream_response_state_incomplete_after_early_break():
+    """Breaking out of the stream early must not flip `state` to `'complete'`.
+
+    `aclose()` on the underlying async generator raises `GeneratorExit` at the
+    suspended `yield`, so `_finished` must stay `False` and the truncated
+    response must keep reporting `'incomplete'`.
+    """
+    agent = Agent(TestModel(custom_output_text='hello world'))
+
+    async with agent.iter('Hello') as run:
+        async for node in run:  # pragma: no branch
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:  # pragma: no branch
+                        break
+                    assert stream.response.state == 'incomplete'
+                return
+
+
+async def test_run_stream_events_break_cleanup():
+    agent = Agent(TestModel())
+
+    async with agent.run_stream_events('Hello') as events:
+        await anext(events)
+
+    # __aexit__ closes the iterator and drains the background task; no task leak, no error.
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason='suspended stream cleanup is not reliably finalized during task cancellation on Python < 3.12',
+)
+async def test_run_stream_events_unstarted_iterator_cleanup():
+    """Entering and exiting the CM without advancing the iterator must still drain the background task."""
+    producer_started = asyncio.Event()
+    producer_finalized = asyncio.Event()
+    readiness_wait_timeout = 10.0
+
+    class CleanupSignalTestModel(TestModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncGenerator[models.StreamedResponse]:
+            async with super().request_stream(
+                messages,
+                model_settings,
+                model_request_parameters,
+                run_context,
+            ) as stream:
+                try:
+                    producer_started.set()
+                    yield stream
+                finally:
+                    producer_finalized.set()
+
+    agent = Agent(CleanupSignalTestModel(custom_output_text='hello'))
+
+    async with agent.run_stream_events(''):
+        await asyncio.wait_for(producer_started.wait(), timeout=readiness_wait_timeout)
+
+    # `aclose()` on the unstarted iterator skips its cleanup branches, so the CM body itself must
+    # drain the background task; otherwise the producer's `finally` never runs.
+    await asyncio.wait_for(producer_finalized.wait(), timeout=readiness_wait_timeout)
+
+
+async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():
+    """Breaking on the documented final-result event must still retrieve background task errors."""
+    producer_finished = asyncio.Event()
+
+    async def stream_that_fails_after_final_result(
+        _messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield 'hello'
+        try:
+            raise RuntimeError('producer boom')
+        finally:
+            producer_finished.set()
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    handle_exception = MagicMock()
+
+    loop.set_exception_handler(handle_exception)
+    try:
+        agent = Agent(FunctionModel(stream_function=stream_that_fails_after_final_result))
+
+        async with agent.run_stream_events('') as events:
+            async for event in events:  # pragma: no branch
+                if isinstance(event, FinalResultEvent):
+                    # This mirrors the documented "stop once final result is known" pattern.
+                    # The producer task can still finish with an exception before the CM exits.
+                    await asyncio.wait_for(producer_finished.wait(), timeout=1.0)
+                    await asyncio.sleep(0)
+                    break
+
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+    handle_exception.assert_not_called()
+
+
+async def test_run_stream_events_external_task_cancellation():
+    """When the outer task is cancelled, the CancelledError handler forwards cancellation to the producer."""
+    never = asyncio.Event()
+
+    async def blocking_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+        await never.wait()  # block forever so the consumer is still awaiting when we cancel
+
+    agent = Agent(FunctionModel(stream_function=blocking_stream))
+
+    async def consume() -> None:
+        async with agent.run_stream_events('') as stream:
+            async for _ in stream:
+                pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0.05)  # let the task start and block on the stream
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
+    # Test for https://github.com/pydantic/pydantic-ai/issues/5132.
+    cleanup_finished = asyncio.Event()
+    first_event_seen = asyncio.Event()
+
+    class SlowCleanupTestModel(TestModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncGenerator[models.StreamedResponse]:
+            async with super().request_stream(
+                messages,
+                model_settings,
+                model_request_parameters,
+                run_context,
+            ) as stream:
+                try:
+                    yield stream
+                finally:
+                    await asyncio.sleep(0.2)
+                    cleanup_finished.set()
+
+    agent = Agent(SlowCleanupTestModel(custom_output_text='hello'))
+
+    async def consume() -> None:
+        async with agent.run_stream_events('Hello') as stream:
+            await anext(stream)
+            first_event_seen.set()
+            await asyncio.sleep(10)
+
+    task = asyncio.create_task(consume())
+    await first_event_seen.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
+
+
+async def test_stream_wrap_model_request_readiness_wait_cancels_wrapper_task_on_outer_cancellation():
+    """Outer cancellation while waiting for streaming model wrapper readiness should clean up the wrapper task.
+
+    Target boundary: `ModelRequestNode.stream()` creates `wrap_task` and `ready_waiter`, then waits for
+    `asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)`. If the outer task is
+    cancelled while parked on that wait, the wrapper task must be drained; otherwise the user's
+    `wrap_model_request` cleanup never runs.
+    """
+    cleanup_finished = asyncio.Event()
+    started = asyncio.Event()
+    never_finishes = asyncio.Future[ModelResponse]()
+
+    class WrapModelRequestCapability(AbstractCapability):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext,
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            try:
+                started.set()
+                # Suspend before calling handler() so we sit inside the readiness wait at
+                # `_agent_graph.py:asyncio.wait({ready_waiter, wrap_task}, ...)`.
+                return await never_finishes
+            finally:
+                # Without the drain on the readiness wait, this finally never runs.
+                cleanup_finished.set()
+
+    agent = Agent(TestModel(), capabilities=[WrapModelRequestCapability()])
+
+    async def consume() -> None:
+        async with agent.run_stream_events('Hello') as stream:
+            async for _ in stream:
+                pass
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert cleanup_finished.is_set()
+
+
+# endregion

@@ -9,20 +9,27 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+with try_import() as logfire_import_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'),
+    pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed'),
+    pytest.mark.anyio,
+]
 
 
-@pytest.fixture(autouse=True)
-def use_logfire(capfire: CaptureLogfire):
-    assert capfire
+if logfire_import_successful():
+
+    @pytest.fixture(autouse=True)
+    def use_logfire(capfire: CaptureLogfire):
+        assert capfire
 
 
 async def test_context_subtree_concurrent():
@@ -510,10 +517,12 @@ async def test_log_levels_and_exceptions():
     # Verify attributes reflect log levels and exceptions
     log_nodes = list(
         parent_span.find_descendants(
-            lambda node: 'Debug message' in str(node.attributes)
-            or 'Info message' in str(node.attributes)
-            or 'Warning message' in str(node.attributes)
-            or 'Error occurred' in str(node.attributes)
+            lambda node: (
+                'Debug message' in str(node.attributes)
+                or 'Info message' in str(node.attributes)
+                or 'Warning message' in str(node.attributes)
+                or 'Error occurred' in str(node.attributes)
+            )
         )
     )
     assert len(log_nodes) > 0, 'Should have log messages as spans'

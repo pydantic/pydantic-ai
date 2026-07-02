@@ -15,9 +15,6 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    import logfire
-    from logfire.testing import CaptureLogfire
-
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
         Contains,
@@ -29,11 +26,18 @@ with try_import() as imports_successful:
         MaxDuration,
         OutputConfig,
     )
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanQuery
 
+with try_import() as logfire_import_successful:
+    import logfire
+    from logfire.testing import CaptureLogfire
+
+    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
+
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
+needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
 
 if TYPE_CHECKING or imports_successful():
@@ -452,6 +456,7 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
     )
 
 
+@needs_logfire
 async def test_span_query_evaluator(capfire: CaptureLogfire):
     """Test HasMatchingSpan evaluator."""
     # Create a span tree with a known structure

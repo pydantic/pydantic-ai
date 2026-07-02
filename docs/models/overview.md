@@ -4,7 +4,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 
 * [OpenAI](openai.md)
 * [Anthropic](anthropic.md)
-* [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
+* [Gemini](google.md) (via two different APIs: Gemini API and Google Cloud, formerly known as Vertex AI)
 * [xAI](xai.md)
 * [Bedrock](bedrock.md)
 * [Cerebras](cerebras.md)
@@ -13,7 +13,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
 * [OpenRouter](openrouter.md)
-* [Outlines](outlines.md)
+* [Z.AI](zai.md)
 
 ## OpenAI-compatible Providers
 
@@ -66,6 +66,26 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
 When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-5.2` or `openrouter:google/gemini-3-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
 If you want to use a different provider or profile, you can instantiate a model class directly and pass in `provider` and/or `profile` arguments.
+
+## HTTP Client Lifecycle
+
+When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager ensures the HTTP client is closed cleanly on exit:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+async def main():
+    async with agent:
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect.
+
+If you provide your own `http_client`, you are responsible for closing it yourself.
 
 ## Custom Models
 
@@ -155,7 +175,7 @@ attributes showing the queue depth and configured limits. The `name` parameter o
 You can use [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to attempt multiple models
 in sequence until one succeeds. Pydantic AI can switch to the next model when the current model
 raises an exception (like a 4xx/5xx API error) **or** when the response content indicates a semantic
-failure (like a truncated response or a failed built-in tool call).
+failure (like a truncated response or a failed native tool call).
 
 By default, fallback triggers on [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (4xx/5xx API errors),
 so you don't need to configure anything for the most common use case.
@@ -172,9 +192,7 @@ exception handlers, and response handlers — all of which can be sync or async.
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
 
-<!-- TODO(Marcelo): Do not skip this test. For some reason it becomes a flaky test if we don't skip it. -->
-
-```python {title="fallback_model.py" test="skip"}
+```python {title="fallback_model.py"}
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
@@ -186,8 +204,8 @@ fallback_model = FallbackModel(openai_model, anthropic_model)
 
 agent = Agent(fallback_model)
 response = agent.run_sync('What is the capital of France?')
-print(response.data)
-#> Paris
+print(response.output)
+#> The capital of France is Paris.
 
 print(response.all_messages())
 """
@@ -197,17 +215,19 @@ print(response.all_messages())
             UserPromptPart(
                 content='What is the capital of France?',
                 timestamp=datetime.datetime(...),
-                part_kind='user-prompt',
             )
         ],
-        kind='request',
+        timestamp=datetime.datetime(...),
+        run_id='...',
+        conversation_id='...',
     ),
     ModelResponse(
-        parts=[TextPart(content='Paris', part_kind='text')],
+        parts=[TextPart(content='The capital of France is Paris.')],
+        usage=RequestUsage(input_tokens=56, output_tokens=7),
         model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
-        kind='response',
-        provider_response_id=None,
+        run_id='...',
+        conversation_id='...',
     ),
 ]
 """
@@ -315,7 +335,7 @@ passing a custom `fallback_on` argument to the `FallbackModel` constructor.
 
 ### Response-Based Fallback
 
-In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a built-in tool reporting failure.
+In addition to exception-based fallback, you can also trigger fallback based on the **content** of a model's response. This is useful when a model returns a successful HTTP response (no exception), but the response content indicates a semantic failure — for example, an unexpected finish reason or a native tool reporting failure.
 
 !!! note "Non-streaming only"
     Response-based fallback currently only works with non-streaming requests (`agent.run()` and `agent.run_sync()`).
@@ -370,11 +390,11 @@ print(result.output)
     catches by default), and empty responses are retried. A response handler is useful for custom
     checks beyond these built-in behaviors.
 
-#### Built-in Tool Failure Example
+#### Native Tool Failure Example
 
-A more complex use case is when using built-in tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.builtin_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
+A more complex use case is when using native tools like web search or URL fetching. For example, Google's [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] may return a successful response with a status indicating the URL fetch failed:
 
-```python {title="fallback_on_builtin_tool.py"}
+```python {title="fallback_on_native_tool.py"}
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -383,8 +403,8 @@ from pydantic_ai.models.google import GoogleModel
 
 
 def web_fetch_failed(response: ModelResponse) -> bool:
-    """Check if a web_fetch built-in tool failed to retrieve content."""
-    for call, result in response.builtin_tool_calls:
+    """Check if a web_fetch native tool failed to retrieve content."""
+    for call, result in response.native_tool_calls:
         if call.tool_name != 'web_fetch':
             continue
         if not isinstance(result.content, list):
@@ -423,11 +443,11 @@ Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelRespon
 
 You can combine exception types, exception handlers, and response handlers in a single list:
 
-```python {title="fallback_on_mixed.py" requires="fallback_on_builtin_tool.py"}
+```python {title="fallback_on_mixed.py" requires="fallback_on_native_tool.py"}
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.fallback import FallbackModel
 
-from fallback_on_builtin_tool import anthropic_model, google_model, web_fetch_failed
+from fallback_on_native_tool import anthropic_model, google_model, web_fetch_failed
 
 fallback_model = FallbackModel(
     google_model,

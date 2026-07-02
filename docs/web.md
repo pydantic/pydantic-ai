@@ -62,24 +62,25 @@ app = agent.to_web(
 )
 ```
 
-## Builtin Tool Support
+## Native Tool Support
 
-You can specify a list of [builtin tools](builtin-tools.md) that will be shown as options to the user, if the selected model supports them:
+Configure [native tools](native-tools.md) on the agent with `capabilities=[NativeTool(...)]` to expose them as options in the UI (shown only for models that support each tool):
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 
-agent = Agent('openai:gpt-5.2')
-
-app = agent.to_web(
-    models=['anthropic:claude-sonnet-4-6'],
-    builtin_tools=[CodeExecutionTool(), WebSearchTool()],
+agent = Agent(
+    'openai:gpt-5.2',
+    capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebSearchTool())],
 )
+
+app = agent.to_web(models=['anthropic:claude-sonnet-4-6'])
 ```
 
 !!! note "Memory Tool"
-    The `memory` builtin tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.builtin_tools.MemoryTool] directly on the agent at construction time.
+    The `memory` native tool is not supported via `to_web()` or `clai web`. If your agent needs memory, configure the [`MemoryTool`][pydantic_ai.native_tools.MemoryTool] directly on the agent at construction time.
 
 ## Extra Instructions
 
@@ -114,7 +115,7 @@ For offline usage, download the html file once while you have internet access:
 from pydantic_ai.ui import DEFAULT_HTML_URL
 
 print(DEFAULT_HTML_URL)  # Use this URL to download the UI HTML file
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.0.0/dist/index.html
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@1.2.0/dist/index.html
 ```
 
 You can then download the file using the URL printed above:

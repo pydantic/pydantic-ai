@@ -8,7 +8,8 @@ from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
@@ -54,13 +55,16 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
         # Also, MoonshotAI does not support strict tool definitions
         # https://platform.moonshot.ai/docs/guide/migrating-from-openai-to-kimi#about-tool_choice
         # "Please note that the current version of Kimi API does not support the tool_choice=required parameter."
-        return OpenAIModelProfile(
-            json_schema_transformer=OpenAIJsonSchemaTransformer,
-            openai_supports_tool_choice_required=False,
-            supports_json_object_output=True,
-            openai_chat_thinking_field='reasoning_content',
-            openai_chat_send_back_thinking_parts='field',
-        ).update(profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            OpenAIModelProfile(
+                openai_supports_tool_choice_required=False,
+                supports_json_object_output=True,
+                openai_chat_thinking_field='reasoning_content',
+                openai_chat_send_back_thinking_parts='field',
+            ),
+        )
 
     @overload
     def __init__(self) -> None: ...
@@ -93,5 +97,10 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='moonshotai')
+            http_client = create_async_http_client()
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_http_client
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
