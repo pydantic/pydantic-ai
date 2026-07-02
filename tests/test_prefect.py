@@ -35,8 +35,8 @@ from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 try:

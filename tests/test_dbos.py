@@ -74,8 +74,8 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from pydantic_ai import ExternalToolset, FunctionToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
 
@@ -997,7 +997,9 @@ async def test_dbos_agent_run_in_workflow_with_runtime_function_toolset(dbos: DB
     agent = Agent(FunctionModel(call_then_answer), name='runtime_function_toolset_agent')
     dbos_agent = DBOSAgent(agent)
 
-    result = await dbos_agent.run('Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')])
+    result = await dbos_agent.run(
+        'Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')]
+    )
     assert result.output == 'done'
     assert any(
         isinstance(part, ToolReturnPart) and part.content == 'tool-result'

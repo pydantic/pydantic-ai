@@ -264,15 +264,11 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         with self._dbos_overrides():
             return super().toolsets
 
-    def _reject_unsupported_runtime_toolsets(
-        self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None
-    ) -> None:
+    def _reject_unsupported_runtime_toolsets(self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None) -> None:
         # DBOS runs function tools inline, so `FunctionToolset` is allowed at runtime, but MCP servers need
         # their I/O wrapped in steps registered up front, and dynamic toolsets can't be introspected ahead
         # of time. Checked before entering the workflow, which serializes its arguments.
-        reject_unsupported_runtime_toolsets(
-            toolsets, unsupported_kinds=frozenset({'mcp', 'dynamic'}), engine='DBOS'
-        )
+        reject_unsupported_runtime_toolsets(toolsets, unsupported_kinds=frozenset({'mcp', 'dynamic'}), engine='DBOS')
 
     @contextmanager
     def _dbos_overrides(

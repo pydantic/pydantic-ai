@@ -2318,9 +2318,7 @@ class RuntimeExternalToolsetWorkflow:
         return await runtime_external_temporal_agent.run(prompt, toolsets=[runtime_external_toolset])
 
 
-async def test_temporal_agent_run_in_workflow_with_runtime_external_toolset(
-    allow_model_requests: None, client: Client
-):
+async def test_temporal_agent_run_in_workflow_with_runtime_external_toolset(allow_model_requests: None, client: Client):
     # Non-executing toolsets like `ExternalToolset` need no durable wrapping, so they can be added per-run.
     async with Worker(
         client,
