@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, InitVar, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -137,6 +137,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     """
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
+
+    preserve_file_data: InitVar[bool | None] = None
+    """Deprecated alias for [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]."""
+
+    def __post_init__(self, preserve_file_data: bool | None) -> None:
+        self.allow_uploaded_files = resolve_allow_uploaded_files(self.allow_uploaded_files, preserve_file_data)
 
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:

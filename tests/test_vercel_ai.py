@@ -5962,6 +5962,21 @@ async def test_from_request_preserve_file_data_deprecated_alias():
     assert adapter.allow_uploaded_files is True
 
 
+def test_constructor_preserve_file_data_deprecated_alias():
+    """The deprecated `preserve_file_data` argument to the constructor maps onto `allow_uploaded_files`."""
+    agent: Agent[None, str] = Agent(model=TestModel())
+    run_input = SubmitMessage(trigger='submit-message', id='req_1', messages=[])
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='preserve_file_data'):
+        adapter = VercelAIAdapter(agent=agent, run_input=run_input, preserve_file_data=True)
+    assert adapter.allow_uploaded_files is True
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert VercelAIAdapter(agent=agent, run_input=run_input, allow_uploaded_files=True).allow_uploaded_files is True
+        assert VercelAIAdapter(agent=agent, run_input=run_input).allow_uploaded_files is False
+
+
 async def test_convert_user_prompt_part_uploaded_file_with_vendor_metadata():
     """Test converting a user prompt with UploadedFile that has vendor_metadata and custom identifier."""
     from pydantic_ai.ui.vercel_ai._adapter import _convert_user_prompt_part  # pyright: ignore[reportPrivateUsage]
