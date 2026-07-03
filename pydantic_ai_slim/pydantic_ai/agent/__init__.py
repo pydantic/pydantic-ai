@@ -1240,86 +1240,85 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Determine root capability: override > agent default
         override_cap = self._override_root_capability.get()
         base_capability = override_cap.value if override_cap is not None else self._root_capability
+        if override_cap is not None:
+            # `override(spec=...)` replaces the agent's root capability, so its native tools form the
+            # base layer for this run and are never checked at construction. Validate them here,
+            # mirroring the construction-time check on the agent's own capabilities.
+            _validate_native_tool_ids(base_capability.get_native_tools(), source='override spec capabilities')
+
         # Merge spec and run-time capabilities additively with the base capability
         extra_capabilities: list[AbstractCapability[AgentDepsT]] = []
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
+        if extra_capabilities:
+            # Resolve the per-run capabilities up front and reuse the resolved instances. A
+            # `DynamicCapability` (from `capabilities=[fn]`) only contributes its native tools
+            # after `for_run`, so the override layer below and native-tool id validation must read
+            # from the resolved form. Resolving once here (rather than a second time inside the
+            # override branch) keeps capability factories invoked once per run: the resolved
+            # capabilities returned here are idempotent under the `effective_capability.for_run`
+            # below, except a factory returning `None`, which resolves back to its no-op wrapper —
+            # drop those so `for_run` doesn't invoke the factory a second time.
+            resolved_extras = await _utils.gather(*(cap.for_run(initial_ctx) for cap in extra_capabilities))
+            extra_capabilities = [
+                cap
+                for original, cap in zip(extra_capabilities, resolved_extras)
+                if not (cap is original and isinstance(cap, DynamicCapability))
+            ]
+        if extra_capabilities:
+            effective_capability = CombinedCapability([base_capability, *extra_capabilities])
+        else:
+            effective_capability = base_capability
 
-        # Resolve each capability's `for_run` exactly once. The base and the additive per-run
-        # capabilities are disjoint, so resolving them as separate layers (rather than through one
-        # combined `for_run`) keeps each layer's *resolved* native tools available for within-layer
-        # id validation and the `override(native_tools=...)` merge below, while honoring the
-        # `for_run` contract of one call per capability per run. A `DynamicCapability` (from
-        # `capabilities=[fn]`) only contributes its native tools after `for_run`, and a factory
-        # returning `None` resolves back to its no-op wrapper — drop those so they contribute
-        # nothing to the run.
-        resolved_base = await base_capability.for_run(initial_ctx)
-        resolved_extras = [
-            cap
-            for original, cap in zip(
-                extra_capabilities, await _utils.gather(*(cap.for_run(initial_ctx) for cap in extra_capabilities))
-            )
-            if not (cap is original and isinstance(cap, DynamicCapability))
-        ]
+        # Prepend Instrumentation capability (outermost) so its spans wrap everything,
+        # but only if the user hasn't already added one themselves. `CombinedCapability`
+        # auto-flattens its input so a nested `effective_capability` is splatted into
+        # the new outer container — leaves participate as siblings in the ordering pass.
+        if instrumentation_cap is not None and not has_capability_type([effective_capability], InstrumentationCap):
+            effective_capability = CombinedCapability([instrumentation_cap, effective_capability])
 
-        # Validate native tool ids within each capability layer. The request-building dedup is
-        # last-wins *across* layers so a run-level tool can override an agent-level default with the
-        # same id; *within* a layer, two conflicting tools sharing an id are ambiguous. The base
-        # layer is validated here (after resolution) rather than only at construction, so ids
-        # contributed by agent-level or `override(spec=...)` capability functions are covered too.
-        _validate_native_tool_ids(
-            resolved_base.get_native_tools(),
-            source='override spec capabilities' if override_cap is not None else 'agent capabilities',
-        )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            native_tool for cap in resolved_extras for native_tool in cap.get_native_tools()
-        ]
-        if extra_native_tools:
-            _validate_native_tool_ids(extra_native_tools, source='run capabilities')
-
-        # Compose the per-run capability from the already-resolved pieces (no second `for_run`).
-        # Prepend Instrumentation (outermost) so its spans wrap everything, unless the user already
-        # added one. `CombinedCapability` auto-flattens, so nested combines splat into siblings that
-        # participate as siblings in the ordering pass.
-        run_parts: list[AbstractCapability[AgentDepsT]] = [resolved_base, *resolved_extras]
-        if instrumentation_cap is not None and not has_capability_type(run_parts, InstrumentationCap):
-            run_parts = [instrumentation_cap, *run_parts]
-        run_capability = run_parts[0] if len(run_parts) == 1 else CombinedCapability(run_parts)
-
+        # Per-run capability: re-extract get_*() if for_run returns a different instance
+        run_capability = await effective_capability.for_run(initial_ctx)
         capabilities_dict = _build_run_capabilities(run_capability)
         # Inject the loader only if a deferred capability is present AND `for_run` didn't already
         # return one, mirroring the `has_capability_type` guard used for instrumentation above.
         # Without it, a `for_run` result that already carries a loader would get double-wrapped
         # (cf. #5047) — a second loader toolset then errors on the reserved `load_capability` name.
-        deferred_loader_added = False
         if any(
             capability.defer_loading is True for capability in capabilities_dict.values()
         ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
             run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
             capabilities_dict = _build_run_capabilities(run_capability)
-            deferred_loader_added = True
-
-        # Re-extract the capability contributions from the resolved run capability. When the base is
-        # the agent default resolved unchanged, with no per-run/override capabilities and no loader
-        # to fold in, reuse the values cached at construction instead.
         cap_toolsets: list[AgentToolset[AgentDepsT]] | None
-        if (
-            override_cap is None
-            and not resolved_extras
-            and resolved_base is self._root_capability
-            and not deferred_loader_added
-        ):
+
+        if run_capability is not effective_capability:
+            source_cap = run_capability
+        elif override_cap is not None or extra_capabilities:
+            source_cap = effective_capability
+        else:
+            source_cap = None
+
+        if source_cap is not None:
+            cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
+            cap_native_tools = list(source_cap.get_native_tools())
+            cap_model_settings = source_cap.get_model_settings()
+            cap_ts = source_cap.get_toolset()
+            cap_toolsets = [cap_ts] if cap_ts is not None else []
+        else:
             cap_instructions = None  # use init-time defaults
             cap_native_tools = self._cap_native_tools
             cap_model_settings = self._cap_model_settings
             cap_toolsets = None
-        else:
-            cap_instructions = _instructions.normalize_instructions(run_capability.get_instructions())
-            cap_native_tools = list(run_capability.get_native_tools())
-            cap_model_settings = run_capability.get_model_settings()
-            cap_ts = run_capability.get_toolset()
-            cap_toolsets = [cap_ts] if cap_ts is not None else []
+
+        # Native tools contributed per-run by `capabilities=[NativeTool(...)]` (and spec-resolved
+        # capabilities) form their own layer. Cross-layer last-wins against agent-level tools is
+        # intentional, but two conflicting tools sharing an id *within* this layer are ambiguous.
+        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = []
+        for cap in extra_capabilities:
+            extra_native_tools.extend(cap.get_native_tools())
+        if extra_native_tools:
+            _validate_native_tool_ids(extra_native_tools, source='run capabilities')
 
         # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
         # preserving any additional per-run capability-contributed native tools (e.g. from
