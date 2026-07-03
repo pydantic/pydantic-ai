@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from contextlib import ExitStack
@@ -346,10 +347,12 @@ async def run_chat(
 
     multiline = False
     messages: list[ModelMessage] = list(message_history) if message_history else []
+    session_usage = _usage.RunUsage()
+    session_turns = 0
 
     while True:
         try:
-            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit', '/cp'])
+            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/usage', '/exit', '/cp'])
             text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
         except (KeyboardInterrupt, EOFError):  # pragma: no cover
             return 0
@@ -359,14 +362,26 @@ async def run_chat(
 
         ident_prompt = text.lower().strip().replace(' ', '-')
         if ident_prompt.startswith('/'):
-            exit_value, multiline = handle_slash_command(ident_prompt, messages, multiline, console, code_theme)
+            exit_value, multiline = handle_slash_command(
+                ident_prompt, messages, multiline, console, code_theme, usage=session_usage, turns=session_turns
+            )
             if exit_value is not None:
                 return exit_value
         else:
             try:
                 messages = await ask_agent(
-                    agent, text, stream, console, code_theme, deps, messages, model_settings, usage_limits
+                    agent,
+                    text,
+                    stream,
+                    console,
+                    code_theme,
+                    deps,
+                    messages,
+                    model_settings,
+                    usage_limits,
+                    usage=session_usage,
                 )
+                session_turns += 1
             except anyio.get_cancelled_exc_class():  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
@@ -386,6 +401,8 @@ async def ask_agent(
     messages: Sequence[ModelMessage] | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
+    *,
+    usage: _usage.RunUsage | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
@@ -394,6 +411,8 @@ async def ask_agent(
             result = await agent.run(prompt, message_history=messages, deps=deps)
         content = str(result.output)
         console.print(Markdown(content, code_theme=code_theme))
+        if usage is not None:
+            usage.incr(result.usage)
         return result.all_messages()
 
     with status, ExitStack() as stack:
@@ -411,6 +430,8 @@ async def ask_agent(
                             live.update(Markdown(str(content), code_theme=code_theme))
 
         assert agent_run.result is not None
+        if usage is not None:
+            usage.incr(agent_run.result.usage)
         return agent_run.result.all_messages()
 
 
@@ -431,8 +452,45 @@ class CustomAutoSuggest(AutoSuggestFromHistory):
         return suggestion
 
 
+def format_usage(usage: _usage.RunUsage, turns: int, *, as_json: bool = False) -> str:
+    """Render cumulative session usage for the `/usage` slash command.
+
+    Args:
+        usage: The accumulated usage for the session.
+        turns: The number of turns (prompts answered by the agent) so far.
+        as_json: If set, render a single-line JSON object for scripting instead of the human-readable summary.
+    """
+    if as_json:
+        return json.dumps(
+            {
+                'turns': turns,
+                'input_tokens': usage.input_tokens,
+                'output_tokens': usage.output_tokens,
+                'total_tokens': usage.total_tokens,
+                'requests': usage.requests,
+                'tool_calls': usage.tool_calls,
+            }
+        )
+    return (
+        'clai usage (session total)\n\n'
+        f'Turns:      {turns:,}\n'
+        f'Tokens:     {usage.total_tokens:,}\n'
+        f'  Input:    {usage.input_tokens:,}\n'
+        f'  Output:   {usage.output_tokens:,}\n'
+        f'Requests:   {usage.requests:,}\n'
+        f'Tool calls: {usage.tool_calls:,}'
+    )
+
+
 def handle_slash_command(
-    ident_prompt: str, messages: list[ModelMessage], multiline: bool, console: Console, code_theme: str
+    ident_prompt: str,
+    messages: list[ModelMessage],
+    multiline: bool,
+    console: Console,
+    code_theme: str,
+    *,
+    usage: _usage.RunUsage | None = None,
+    turns: int = 0,
 ) -> tuple[int | None, bool]:
     if ident_prompt == '/markdown':
         try:
@@ -475,6 +533,15 @@ def handle_slash_command(
                 console.print('[dim]Copied last output to clipboard.[/dim]')
             else:
                 console.print('[dim]No text content to copy.[/dim]')
+    elif ident_prompt == '/usage' or ident_prompt.startswith('/usage-'):
+        # A flag is separated by a space, which is replaced with `-` upstream, so `/usage --json`
+        # arrives as `/usage---json`. Requiring the `/usage-` prefix keeps `/usagex` an unknown command.
+        option = ident_prompt[len('/usage') :].strip('-')
+        if option in ('', 'json'):
+            # `soft_wrap` keeps the JSON on a single line for piping; the text has no markup to render.
+            console.print(format_usage(usage or _usage.RunUsage(), turns, as_json=option == 'json'), soft_wrap=True)
+        else:
+            console.print(f'[red]Unknown `/usage` option[/red] [magenta]`{ident_prompt}`[/magenta]')
     else:
         console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline
