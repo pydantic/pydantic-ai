@@ -9,14 +9,13 @@ from typing import TYPE_CHECKING
 
 from genai_prices import calc_price
 
-from pydantic_ai.usage import RequestUsage, RunUsage
-
 from ._warnings import CostCalculationFailedWarning
 
 if TYPE_CHECKING:
     from genai_prices.types import PriceCalculation
 
     from .messages import ModelResponse
+    from .usage import RequestUsage, RunUsage
 
 
 def best_effort_price_calculation(response: ModelResponse) -> PriceCalculation | None:
@@ -54,6 +53,11 @@ def calculate_price_for_usage(
     provider_name: str | None = None,
     genai_request_timestamp: datetime | None = None,
 ) -> PriceCalculation:
+    """Calculate the price of a usage object with [genai-prices](https://github.com/pydantic/genai-prices).
+
+    Tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
+    Unlike `best_effort_price_calculation`, this propagates `genai-prices` lookup errors to the caller.
+    """
     assert model_name, 'Model name is required to calculate price'
 
     if provider_api_url:
@@ -73,6 +77,37 @@ def calculate_price_for_usage(
         provider_id=provider_name,
         genai_request_timestamp=genai_request_timestamp,
     )
+
+
+def best_effort_usage_cost(
+    usage: RequestUsage | RunUsage,
+    *,
+    model_name: str,
+    provider_api_url: str | None = None,
+    provider_name: str | None = None,
+) -> Decimal:
+    """Best-effort cost of a bare usage object (e.g. from `count_tokens`) in USD; a pricing failure never fails the run.
+
+    Mirrors the error handling of `best_effort_price_calculation`: `LookupError`/`ValueError` from `genai-prices`
+    (unknown provider/model, unpriceable usage) return `Decimal(0)`, and any unexpected error is surfaced as a
+    `CostCalculationFailedWarning` rather than raised.
+    """
+    try:
+        return calculate_price_for_usage(
+            usage,
+            model_name=model_name,
+            provider_api_url=provider_api_url,
+            provider_name=provider_name,
+        ).total_price
+    except (LookupError, ValueError):
+        return Decimal(0)
+    except Exception as e:
+        warnings.warn(
+            f'Failed to get cost from usage: {type(e).__name__}: {e}',
+            CostCalculationFailedWarning,
+            stacklevel=2,
+        )
+        return Decimal(0)
 
 
 def best_effort_cost(response: ModelResponse) -> Decimal:

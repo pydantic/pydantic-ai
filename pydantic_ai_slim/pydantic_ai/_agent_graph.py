@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_ai._cost import best_effort_cost, calculate_price_for_usage
+from pydantic_ai._cost import best_effort_cost, best_effort_usage_cost
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_execution import process_tool_calls
@@ -1024,13 +1024,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
             usage.incr(counted_usage)
-            # We cannot cost of output tokens though so this is a best-effort calculation
-            usage.cost = calculate_price_for_usage(
-                usage,
+            # Add the best-effort cost of this request's input tokens to the accumulated cost. Output tokens don't
+            # exist yet, so this is a lower bound: it only catches a request whose input alone exceeds the limit.
+            usage.cost += best_effort_usage_cost(
+                counted_usage,
                 model_name=model.model_name,
                 provider_api_url=model.base_url,
                 provider_name=model.system,
-            ).total_price
+            )
 
         ctx.deps.usage_limits.check_before_request(usage)
 

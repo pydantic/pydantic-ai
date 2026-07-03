@@ -10222,6 +10222,27 @@ async def test_anthropic_count_tokens_with_mock(allow_model_requests: None):
     assert 'messages' in count_tokens_kwargs
 
 
+async def test_anthropic_count_tokens_enforces_cost_limit(allow_model_requests: None):
+    """`cost_limit` is enforced before the request using the cost of the counted input tokens.
+
+    Uses the count_tokens mock so the pre-request cost accumulation in the agent graph runs against a model
+    genai-prices can actually price (unlike TestModel), without needing a recorded request.
+    """
+    c = completion_message(
+        [BetaTextBlock(text='hello world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    # count_tokens reports 10 input tokens, which price above this tiny limit, so the request is blocked up front.
+    with pytest.raises(UsageLimitExceeded, match=r'The next request would exceed the cost_limit of 0\.000001'):
+        await agent.run(
+            'hello',
+            usage_limits=UsageLimits(cost_limit=Decimal('0.000001'), count_tokens_before_request=True),
+        )
+
+
 async def test_anthropic_count_tokens_with_no_messages(allow_model_requests: None):
     """Test count_tokens when messages_ is None (no exception configured)."""
     mock_client = cast(AsyncAnthropic, MockAnthropic())

@@ -266,7 +266,7 @@ class UsageLimits:
     Each of the limits can be set to `None` to disable that limit.
     """
 
-    cost_limit: Decimal | None = Decimal(0)
+    cost_limit: Decimal | None = None
     """The maximum cost allowed in USD."""
     request_limit: int | None = 50
     """The maximum number of requests allowed to the model."""
@@ -322,6 +322,10 @@ class UsageLimits:
             raise UsageLimitExceeded(  # pragma: lax no cover
                 f'The next request would exceed the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})'
             )
+
+        cost = usage.cost
+        if self.cost_limit is not None and cost > self.cost_limit:
+            raise UsageLimitExceeded(f'The next request would exceed the cost_limit of {self.cost_limit} ({cost=})')
 
     def check_cost(self, usage: RunUsage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds the cost limit."""
