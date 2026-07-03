@@ -449,6 +449,27 @@ async def test_close_stream_after_completion_cancels_job() -> None:
     assert len(model.cancelled) == 1
 
 
+async def test_aclose_reraises_unexpected_runtime_error() -> None:
+    """`aclose()` swallows only the "async generator is already running" `RuntimeError`; any other propagates.
+
+    This is a unit test rather than a VCR test because the defensive re-raise branch can't be reached
+    through the public API: it fires only if the inner segment generator's own `aclose()` raises an
+    unrelated `RuntimeError`, which no real provider stream produces. We pin it by assigning a stub
+    iterator directly onto the instance — legitimate here since we're exercising exactly that branch.
+    """
+
+    class _BoomIterator:
+        async def aclose(self) -> None:
+            raise RuntimeError('boom')
+
+    model = _FakeModel([])
+    stream = _composite(model)
+    stream._segment_iterator = _BoomIterator()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await stream.aclose()
+
+
 async def test_exceeding_max_continuations_raises() -> None:
     """A model that stays suspended past `max_continuations` raises `UnexpectedModelBehavior`."""
     model = _FakeModel(
