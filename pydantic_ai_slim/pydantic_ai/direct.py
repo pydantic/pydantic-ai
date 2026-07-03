@@ -18,10 +18,9 @@ from datetime import datetime
 from types import TracebackType
 
 from pydantic_ai.usage import RequestUsage
-from pydantic_graph._utils import get_event_loop as _get_event_loop
+from pydantic_graph._utils import get_event_loop as _get_event_loop, run_until_complete as _run_until_complete
 
 from . import agent, messages, models, settings
-from ._deprecated_callable import deprecated_callable_property
 from .models import StreamedResponse, instrumented as instrumented_models
 
 __all__ = (
@@ -154,7 +153,7 @@ def model_request_sync(
     Returns:
         The model response and token usage associated with the request.
     """
-    return _get_event_loop().run_until_complete(
+    return _run_until_complete(
         model_request(
             model,
             list(messages),
@@ -401,19 +400,12 @@ class StreamedResponseSync:
         if self._thread and self._thread.is_alive():
             self._thread.join()
 
-    @deprecated_callable_property('`StreamedResponseSync.get` is deprecated; use the `response` property instead.')
-    def get(self) -> messages.ModelResponse:
-        """Build a ModelResponse from the data received from the stream so far."""
-        return self._ensure_stream_ready().get()
-
     @property
     def response(self) -> messages.ModelResponse:
         """Get the current state of the response."""
         return self._ensure_stream_ready().get()
 
-    @deprecated_callable_property(
-        '`StreamedResponseSync.usage` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
         return self._ensure_stream_ready().usage

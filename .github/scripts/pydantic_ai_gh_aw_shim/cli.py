@@ -88,10 +88,10 @@ from . import (
 from .shared import logger, reset_context_state
 
 # Type aliases for the public surface — the shim runs `None`-deps agents
-# throughout, so every `RunContext` is concretely `RunContext[None]`.
+# throughout, so every `RunContext` is concretely `RunContext[object]`.
 MessagePart: TypeAlias = ModelRequestPart | ModelResponsePart
-ToolPredicate: TypeAlias = Callable[[RunContext[None], ToolDefinition], bool | Awaitable[bool]]
-TaskCallable: TypeAlias = Callable[[RunContext[None], str, str], Awaitable[str]]
+ToolPredicate: TypeAlias = Callable[[RunContext[object], ToolDefinition], bool | Awaitable[bool]]
+TaskCallable: TypeAlias = Callable[[RunContext[object], str, str], Awaitable[str]]
 
 # Placeholder bearer token sent to the AWF api-proxy. The proxy strips this
 # header and injects the real `ANTHROPIC_API_KEY` on the outbound wire — so
@@ -136,11 +136,27 @@ COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
 INSTRUCTIONS = (
-    'You can call multiple tools in a single turn. When tool calls are '
-    "independent (no call needs another call's output), issue them together "
-    'in one turn so they run in parallel — this is faster and uses far fewer '
-    'model requests. Only chain tools sequentially when one genuinely needs a '
-    "previous tool's result."
+    '## Parallel tool calls\n\n'
+    'The model supports parallel tool calls. When multiple reads, searches, or '
+    "lookups are independent — meaning one doesn't need another's result — "
+    'issue them all in the same response. They execute concurrently. Only '
+    'chain sequentially when one call genuinely needs a previous result.\n\n'
+    '## File reading\n\n'
+    'Read files in large ranges (500+ lines per call). MAX_TOOL_OUTPUT is '
+    '50 000 chars so most Python source files fit in one or two reads. '
+    'Avoid reading 30–80 lines at a time.\n\n'
+    '## Search tools\n\n'
+    'Use the native Grep and Glob tools for codebase search. '
+    '`rg` and `uv` are also available as plain commands via Bash.\n\n'
+    '## Dev environment\n\n'
+    'The repo is checked out at $GITHUB_WORKSPACE. Dev dependencies are NOT '
+    'pre-installed — run `make install` once before using pytest, ruff, or '
+    'pyright. Prefer `uv run pytest <test_file>` over a bare `pytest` call; '
+    'uv handles the virtual env automatically.\n\n'
+    '## GitHub issue search\n\n'
+    '`gh issue list --search` returns HTTP 403 via the AWF firewall proxy. '
+    'Use the MCP tools instead: '
+    '`mcp__github__search_issues(query="repo:pydantic/pydantic-ai <keywords>")`.'
 )
 
 # The real task spec rides in `instructions=`; the user message is a trigger.
@@ -162,8 +178,8 @@ SUBAGENT_INSTRUCTIONS = (
 # ~100k tokens at 4 chars/token = half of a 200k window.
 COMPACTION_TRIGGER_CHARS = 400_000
 COMPACTION_KEEP_RECENT = 10
-TOOL_RESULT_HEAD_TAIL_CHARS = 800
-TOOL_RESULT_TRIM_THRESHOLD = 2_000
+TOOL_RESULT_HEAD_TAIL_CHARS = 4_000
+TOOL_RESULT_TRIM_THRESHOLD = 10_000
 COMPACTION_TRANSCRIPT_MAX_CHARS = 80_000
 
 COMPACTION_SUMMARY_INSTRUCTIONS = (
@@ -281,10 +297,19 @@ def _trim_tool_results(messages: list[ModelMessage]) -> list[ModelMessage]:
 
     if dedup_count or truncate_count:
         logger.info(
-            'compaction trim: deduped %d superseded read(s), truncated %d oversized result(s), saved %d chars',
+            'trim: deduped %d superseded read(s), truncated %d oversized result(s), saved %d chars',
             dedup_count,
             truncate_count,
             bytes_saved,
+        )
+        emit(
+            {
+                'type': 'system',
+                'subtype': 'compaction_trim',
+                'deduped_reads': dedup_count,
+                'truncated_results': truncate_count,
+                'chars_saved': bytes_saved,
+            }
         )
         return out
     return messages
@@ -305,7 +330,7 @@ def _is_synthetic_summary(message: ModelMessage) -> bool:
     )
 
 
-async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+async def _compact_history(ctx: RunContext[object], messages: list[ModelMessage]) -> list[ModelMessage]:
     """Cheap trim first; LLM-summarise the middle as fallback if still over budget."""
     if len(messages) <= COMPACTION_KEEP_RECENT:
         return messages
@@ -322,6 +347,16 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
         len(trimmed),
         len(middle),
         COMPACTION_KEEP_RECENT,
+    )
+    emit(
+        {
+            'type': 'system',
+            'subtype': 'compaction_summary_start',
+            'history_chars': size,
+            'history_messages': len(trimmed),
+            'middle_messages': len(middle),
+            'keep_recent': COMPACTION_KEEP_RECENT,
+        }
     )
     # Preserve any earlier-round synthetic at the head of the middle so a
     # fallback (`return [prior_synthetic, *tail]`) doesn't silently forget
@@ -342,8 +377,14 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
         )
         summary = str(r.output or '').strip() or '(empty summary)'
     except Exception as exc:
+        # Well-handled fallback: the run continues on the trimmed history, so the
+        # stack is kept available (`exc_info`) without escalating the log level.
+        # A bare `TimeoutError` stringifies to '' — fall back to the type name so
+        # the emitted `error` is never empty.
         ctx.usage.incr(sub_usage)
-        logger.warning('compaction summarisation failed (%r); falling back', exc)
+        detail = f'{type(exc).__name__}: {exc}' if str(exc) else type(exc).__name__
+        logger.warning('compaction summarisation failed (%s); falling back', detail, exc_info=True)
+        emit({'type': 'system', 'subtype': 'compaction_summary_failed', 'error': detail})
         return [prior_synthetic, *tail] if prior_synthetic else tail
     ctx.usage.incr(sub_usage)
     # If the summariser produces output larger than the middle it's replacing,
@@ -352,12 +393,31 @@ async def _compact_history(ctx: RunContext[None], messages: list[ModelMessage]) 
     middle_size = _history_size_chars(middle)
     if len(summary) >= middle_size:
         logger.info('compaction summary discarded (%d >= %d chars); falling back', len(summary), middle_size)
+        emit(
+            {
+                'type': 'system',
+                'subtype': 'compaction_summary_discarded',
+                'summary_chars': len(summary),
+                'middle_chars': middle_size,
+            }
+        )
         return [prior_synthetic, *tail] if prior_synthetic else tail
     logger.info(
         'compaction summary done: %d middle messages (%d chars) -> %d-char summary',
         len(middle),
         middle_size,
         len(summary),
+    )
+    emit(
+        {
+            'type': 'system',
+            'subtype': 'compaction_summary_done',
+            'middle_messages': len(middle),
+            'middle_chars': middle_size,
+            'summary_chars': len(summary),
+            'input_tokens': sub_usage.input_tokens,
+            'output_tokens': sub_usage.output_tokens,
+        }
     )
     synthetic = ModelRequest(parts=[UserPromptPart(content=f'{_SYNTHETIC_SUMMARY_TAG}\n{summary}')])
     return [synthetic, *tail]
@@ -485,17 +545,15 @@ def configure_logging() -> None:
 
 def configure_observability() -> None:
     """Wire pydantic-ai + httpx + mcp instrumentation to Logfire/OTLP if configured."""
-    if not (
-        os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT')
-        or os.environ.get('GH_AW_OTLP_ENDPOINTS')
-        or os.environ.get('LOGFIRE_TOKEN')
-    ):
+    write_token = os.environ.get('LOGFIRE_WRITE_TOKEN') or os.environ.get('LOGFIRE_TOKEN')
+    if not (os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT') or os.environ.get('GH_AW_OTLP_ENDPOINTS') or write_token):
         return
     try:
         logfire.configure(
             service_name=os.environ.get('OTEL_SERVICE_NAME', 'gh-aw'),
             send_to_logfire='if-token-present',
             console=False,
+            token=write_token or None,
         )
         logfire.instrument_pydantic_ai(include_content=True, include_binary_content=True)
         logfire.instrument_httpx(capture_all=True)
@@ -509,13 +567,13 @@ def _mcp_tool_allowed(server: str, allowed: frozenset[str]) -> ToolPredicate:
     """Allow-list predicate matching gh-aw's `mcp__<server>__<tool>` form (or `mcp__<server>` wildcard)."""
     server_wildcard = f'mcp__{server}' in allowed
 
-    def predicate(_ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         return server_wildcard or tool_def.name in allowed
 
     return predicate
 
 
-def _apply_claude_mcp_prefix(entry: AbstractToolset[None]) -> AbstractToolset[None]:
+def _apply_claude_mcp_prefix(entry: AbstractToolset[object]) -> AbstractToolset[object]:
     """Swap the default `<server>_<tool>` prefix for Claude Code's `mcp__<server>__<tool>` wire form.
 
     The trailing `_` combines with `PrefixedToolset`'s `_` separator to
@@ -526,7 +584,7 @@ def _apply_claude_mcp_prefix(entry: AbstractToolset[None]) -> AbstractToolset[No
     return dataclasses.replace(entry, prefix=f'mcp__{entry.prefix}_')
 
 
-def build_mcp_servers(args: Args) -> list[AbstractToolset[None]]:
+def build_mcp_servers(args: Args) -> list[AbstractToolset[object]]:
     """Load gh-aw's MCP config, re-prefix to Claude Code wire format, and apply the allow-list filter."""
     path = args.mcp_config or os.environ.get('GH_AW_MCP_CONFIG')
     if not path or not os.path.isfile(path):
@@ -534,17 +592,22 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[None]]:
         return []
     try:
         loaded = load_mcp_toolsets(path)
+    # `repr` is sufficient diagnostically here (a `ValidationError` already
+    # enumerates the bad fields, `FileNotFoundError` names the path), so no
+    # traceback — but returning `[]` drops the *entire* GitHub/safeoutputs tool
+    # surface, a drastic behaviour change, so log it at `error` to make a run
+    # that silently lost its tools obvious in the artifact.
     except FileNotFoundError as exc:
-        logger.warning('MCP config %r missing: %r — running without external tools', path, exc)
+        logger.error('MCP config %r missing (%r) — agent will run with NO external tools', path, exc)
         return []
     except (ValidationError, ValueError) as exc:
-        logger.warning('MCP config %r is malformed: %r — running without external tools', path, exc)
+        logger.error('MCP config %r is malformed (%r) — agent will run with NO external tools', path, exc)
         return []
 
-    servers: list[AbstractToolset[None]] = []
+    servers: list[AbstractToolset[object]] = []
     for entry in loaded:
         name = (entry.wrapped.id if isinstance(entry, PrefixedToolset) else entry.id) or '<unnamed>'
-        toolset = _apply_claude_mcp_prefix(cast('AbstractToolset[None]', entry))
+        toolset = _apply_claude_mcp_prefix(cast('AbstractToolset[object]', entry))
         if args.allowed_tools is not None:
             toolset = toolset.filtered(_mcp_tool_allowed(name, args.allowed_tools))
             logger.info('registered MCP server %r (allow-list filtered)', name)
@@ -558,7 +621,7 @@ def _claude_code_tool_predicate(allowed: frozenset[str] | None, permission_mode:
     """Allow-list + `plan`-mode filter for the Claude Code toolset."""
     plan = permission_mode == 'plan'
 
-    def predicate(_ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         name = tool_def.name
         if allowed is not None and name not in allowed:
             return False
@@ -574,7 +637,7 @@ def select_claude_code_toolset(
     permission_mode: str | None,
     *,
     task: TaskCallable | None,
-) -> AbstractToolset[None]:
+) -> AbstractToolset[object]:
     """Build the Claude Code toolset; `task=None` for sub-agents so they can't recurse."""
     return build_claude_code_toolset(task=task).filtered(_claude_code_tool_predicate(allowed, permission_mode))
 
@@ -632,7 +695,7 @@ def emit_result(
 MAX_LIVE_TOOL_RESULT_CHARS = 100
 
 
-async def _stream_events(_ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+async def _stream_events(_ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
     """Emit tool_use / tool_result stream-json as events fire."""
     async for event in events:
         if isinstance(event, ToolCallEvent):
@@ -704,7 +767,7 @@ def log_safe_outputs_state() -> None:
         logger.info('  safe-output: %s', ln[:300])
 
 
-async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
+async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     """Claude's `Task` tool: spawn a read-only sub-agent on `ctx.model`."""
     logger.info('Task spawn: %s', description[:120])
     # Fresh dedupe set per sub-agent — otherwise inheriting the parent's
@@ -728,8 +791,18 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
             sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=SUBAGENT_REQUEST_LIMIT), usage=sub_usage),
             timeout=SUBAGENT_TIMEOUT_SECS,
         )
-    except Exception as exc:
+    except asyncio.TimeoutError:
+        # A bare `TimeoutError` stringifies to '' — without an explicit message
+        # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
+        logger.error('sub-agent timed out after %.0f min: %s', SUBAGENT_TIMEOUT_SECS / 60, description[:120])
+        return f'error: sub-agent timed out after {SUBAGENT_TIMEOUT_SECS // 60}min'
+    except Exception as exc:
+        # The parent agent reacts to the returned string, but a sub-agent can hit
+        # the same nested `ExceptionGroup`/`McpError` as the main run — log the
+        # full stack so the failure isn't reduced to a one-line repr in the logs.
+        ctx.usage.incr(sub_usage)
+        logger.exception('sub-agent failed: %s', description[:120])
         return f'error: sub-agent failed: {exc}'
     ctx.usage.incr(sub_usage)
     logger.info('Task done: +%d sub-requests (run total now %d)', sub_usage.requests, ctx.usage.requests)
@@ -740,8 +813,8 @@ async def _run_with_timeout(
     prompt: str,
     model: Model,
     label: str,
-    claude_code_toolset: AbstractToolset[None],
-    mcp_servers: list[AbstractToolset[None]],
+    claude_code_toolset: AbstractToolset[object],
+    mcp_servers: list[AbstractToolset[object]],
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
@@ -765,13 +838,13 @@ async def run(
     prompt: str,
     model: Model,
     label: str,
-    claude_code_toolset: AbstractToolset[None],
-    mcp_servers: list[AbstractToolset[None]],
+    claude_code_toolset: AbstractToolset[object],
+    mcp_servers: list[AbstractToolset[object]],
     session_id: str,
 ) -> int:
     """Run one agent turn and emit Claude-shape stream-json. Always emits a `result` line."""
     reset_context_state()
-    agent: Agent[None, str] = Agent(
+    agent: Agent[object, str] = Agent(
         model,
         instructions=[INSTRUCTIONS, prompt],
         toolsets=[claude_code_toolset, *mcp_servers],
@@ -789,7 +862,14 @@ async def run(
         async with agent:
             result = await agent.run(RUN_TRIGGER, usage_limits=limits)
     except Exception as exc:
-        logger.warning('agent run failed: %r', exc)
+        # `%r` on an `ExceptionGroup` (e.g. the MCP `TaskGroup` failures seen in
+        # CI) discards every frame and every nested sub-exception's stack, which
+        # is what made the original incident so hard to root-cause. `exception()`
+        # renders the full traceback — and, on 3.11+, each group leaf's stack —
+        # to stderr, which gh-aw captures into the uploaded `agent-stdio.log`,
+        # so the run is self-explaining without a re-run. The `result` text
+        # stays a one-liner because gh-aw parses it.
+        logger.exception('agent run failed')
         emit_result(
             f'agent run failed: {exc}',
             usage=None,
@@ -841,9 +921,16 @@ def main() -> int:
         rc = asyncio.run(_run_with_timeout(prompt, model, label, claude_code_toolset, mcp_servers, session_id))
         logger.info('done in %.1fs rc=%d', time.time() - started, rc)
         return rc
-    except (Exception, SystemExit) as exc:
+    except SystemExit as exc:
         # `argparse` raises `SystemExit` (not `Exception`) on unknown-flag
-        # rejection; gh-aw still needs a structured result line.
+        # rejection — an expected, clean exit, so a traceback would be noise.
+        # gh-aw still needs a structured result line.
         logger.error('FATAL startup error: %r', exc)
+        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True)
+        return 1
+    except Exception as exc:
+        # A real crash before the agent run (model build, MCP load, …) — dump the
+        # full stack so a blind FATAL doesn't cost another long investigation.
+        logger.exception('FATAL startup error')
         emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True)
         return 1
