@@ -12,6 +12,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ProviderDetailsDelta,
     ToolReturnPart,
+    tool_return_ta,
 )
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
@@ -64,13 +65,14 @@ class _PydanticAIMessageMetadata(BaseModel):
 
 
 def tool_return_output(part: BaseToolReturnPart) -> Any:
-    """Extract the return value from a tool return part.
+    """Serialize a tool return's full content for `ToolOutputAvailablePart.output`.
 
-    If the model response object contains a 'return_value' key, return its value,
-    otherwise return the entire output dict. This matches the streaming output format.
+    Vercel's `output` field is `Any`, so the full return — file data included — is always dumped inline
+    and rehydrated on load via `ToolReturnContent`'s discriminator (`_validate_tool_output`). No gating.
+    The same function serializes both the `dump_messages` history path and the live event stream
+    (`tool-output-available`), so files survive either round-trip.
     """
-    output = part.model_response_object()
-    return output.get('return_value', output)
+    return tool_return_ta.dump_python(part.content, mode='json')
 
 
 def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:

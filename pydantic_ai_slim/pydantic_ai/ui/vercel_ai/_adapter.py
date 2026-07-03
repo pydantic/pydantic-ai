@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, InitVar, dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -43,10 +43,12 @@ from ...messages import (
     VideoUrl,
     narrow_message_parts,
     parse_tool_kind,
+    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
+from .._adapter import resolve_allow_uploaded_files
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     apply_message_metadata,
@@ -137,6 +139,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     server_message_id: str | None = None
     """Optional server-generated message ID to include in the `StartChunk`."""
 
+    preserve_file_data: InitVar[bool | None] = None  # TODO(v3): remove preserve_file_data
+    """Deprecated alias for [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]."""
+
+    def __post_init__(self, preserve_file_data: bool | None) -> None:
+        # `stacklevel=4` points the warning at the user's `VercelAIAdapter(...)` call:
+        # user → generated `__init__` → `__post_init__` → helper → `warn`.
+        self.allow_uploaded_files = resolve_allow_uploaded_files(
+            self.allow_uploaded_files, preserve_file_data, stacklevel=4
+        )
+
     @classmethod
     def build_run_input(cls, body: bytes) -> RequestData:
         """Build a Vercel AI run input object from the request body."""
@@ -153,10 +165,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-        preserve_file_data: bool = False,
+        allow_uploaded_files: bool = False,
+        preserve_file_data: bool | None = None,
         **kwargs: Any,
     ) -> VercelAIAdapter[AgentDepsT, OutputDataT]:
-        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters."""
+        """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with Vercel AI-specific parameters.
+
+        `preserve_file_data` is a deprecated alias for `allow_uploaded_files`.
+        """
+        allow_uploaded_files = resolve_allow_uploaded_files(allow_uploaded_files, preserve_file_data)
         return await super().from_request(
             request,
             agent=agent,
@@ -165,7 +182,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
-            preserve_file_data=preserve_file_data,
+            allow_uploaded_files=allow_uploaded_files,
             **kwargs,
         )
 
@@ -195,10 +212,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
-        preserve_file_data: bool = False,
+        allow_uploaded_files: bool = False,
+        preserve_file_data: bool | None = None,
         **kwargs: Any,
     ) -> Response:
-        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters."""
+        """Extends [`dispatch_request`][pydantic_ai.ui.UIAdapter.dispatch_request] with Vercel AI-specific parameters.
+
+        `preserve_file_data` is a deprecated alias for `allow_uploaded_files`.
+        """
+        allow_uploaded_files = resolve_allow_uploaded_files(allow_uploaded_files, preserve_file_data)
         return await super().dispatch_request(
             request,
             agent=agent,
@@ -222,7 +244,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
-            preserve_file_data=preserve_file_data,
+            allow_uploaded_files=allow_uploaded_files,
             **kwargs,
         )
 
@@ -475,11 +497,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     output = _denial_reason(part)
                                     outcome = 'denied'
                                 else:
-                                    output = (
+                                    raw_output = (
                                         part.output
                                         if isinstance(part, ToolOutputAvailablePart | DynamicToolOutputAvailablePart)
                                         else None
                                     )
+                                    output = _validate_tool_output(raw_output)
                                     outcome = 'success'
                                 builder.add(
                                     NativeToolReturnPart(
@@ -513,7 +536,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
-                                        content=part.output,
+                                        content=_validate_tool_output(part.output),
                                         tool_kind=tool_kind,
                                     )
                                 )
@@ -1022,6 +1045,65 @@ def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:
     if isinstance(part.approval, ToolApprovalResponded) and part.approval.reason:
         return part.approval.reason
     return ToolDenied().message
+
+
+def _validate_tool_output(output: Any) -> Any:
+    """Rehydrate `ToolOutputAvailablePart.output` (typed `Any` on the wire) into `ToolReturnContent`.
+
+    `tool_return_content_ta` runs the lifted `Discriminator` on the union, so multimodal items
+    (`BinaryContent`, `ImageUrl`, etc.) come back as their subclasses instead of raw dicts.
+    `BinaryContent` instances with image media types are narrowed to `BinaryImage`. JS-serialized
+    binary shapes are coerced to `bytes` first (see `_coerce_js_binary_data`).
+    """
+    return tool_return_content_ta.validate_python(_coerce_js_binary_data(output))
+
+
+def _coerce_js_binary_data(value: Any) -> Any:
+    """Convert `BinaryContent.data` shapes that JavaScript frontends commonly emit into `bytes`.
+
+    This is what lets a Vercel AI [client-side tool](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage)
+    (resolved server-side as an external/deferred tool call) return a file — an image, say — by putting a
+    `{kind: 'binary', media_type: ..., data: ...}` shape in its output, without base64-encoding the bytes
+    by hand. `JSON.stringify` serializes a `Uint8Array` as `{'0': N, '1': N, ...}` and a Node `Buffer` as
+    `{'type': 'Buffer', 'data': [N, ...]}`; pydantic's bytes validator rejects both, so we normalize them
+    (and pass base64 strings through untouched) at the wire boundary before validation. A file the agent
+    itself produced round-trips as base64 and never hits these shapes.
+    """
+    if isinstance(value, list):
+        return [_coerce_js_binary_data(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    if not isinstance(value, dict):
+        return value
+    coerced: dict[str, Any] = {k: _coerce_js_binary_data(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
+    # Gate on `media_type` (the type-specific field a real `BinaryContent` carries) so this matches
+    # the core `ToolReturnContent` discriminator: a plain user mapping that merely reuses
+    # `kind: 'binary'` stays untouched instead of having its `data` rewritten to bytes.
+    if coerced.get('kind') == 'binary' and 'media_type' in coerced:
+        coerced['data'] = _js_binary_to_bytes(coerced.get('data'))
+    return coerced
+
+
+def _js_binary_to_bytes(data: Any) -> Any:
+    """Map a JS-serialized `Uint8Array`/`Buffer` shape to `bytes`; pass through other values.
+
+    Any shape that isn't a canonical, in-range byte sequence is passed through unchanged so that
+    `tool_return_content_ta` surfaces a clean `ValidationError`, rather than this helper raising
+    `KeyError`/`ValueError` on malformed client input.
+    """
+    if not isinstance(data, dict):
+        return data
+    mapping: dict[str, Any] = data  # pyright: ignore[reportUnknownVariableType]
+    # Node Buffer: `{'type': 'Buffer', 'data': [N, ...]}`
+    if mapping.get('type') == 'Buffer':
+        buf_data: Any = mapping.get('data')
+        if isinstance(buf_data, list) and all(isinstance(b, int) and 0 <= b <= 255 for b in buf_data):  # pyright: ignore[reportUnknownVariableType]
+            return bytes(buf_data)  # pyright: ignore[reportUnknownArgumentType]
+    # Uint8Array via `JSON.stringify`: `{'0': N, '1': N, ...}`. Require canonical contiguous keys
+    # (`'0'..'n-1'`) so non-canonical keys like `'00'` pass through instead of raising `KeyError`.
+    if mapping and all(str(i) in mapping for i in range(len(mapping))):
+        values: list[Any] = [mapping[str(i)] for i in range(len(mapping))]
+        if all(isinstance(v, int) and 0 <= v <= 255 for v in values):
+            return bytes(values)
+    return data  # pyright: ignore[reportUnknownVariableType]
 
 
 def _extract_metadata_ui_parts(tool_result: ToolReturnPart) -> list[UIMessagePart]:
