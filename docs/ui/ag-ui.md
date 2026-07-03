@@ -375,14 +375,9 @@ uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 
 ### Multimodal tool returns
 
-When you persist and replay conversation history with [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] and [`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages], tool returns containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], and the other [multimodal content types](../input.md#image-audio-video-document-input) — always round-trip. No flag is needed.
+A tool return containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], or any of the other [multimodal content types](../input.md#image-audio-video-document-input), including files nested inside a list or dict — round-trips through the AG-UI adapter, both in the live event stream and when you persist and replay history with [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] / [`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages]. No flag is needed.
 
-AG-UI's `ToolMessage.content` is a plain string, but it already carries JSON for structured returns, so the full return (files serialized as base64/URL dicts included) is written inline into that content and rehydrated on load. Because the files ride inline, they round-trip verbatim through any frontend, unlike a custom sidecar message the frontend would have to echo back. Files nested inside a mapping or list round-trip too, and the original content shape — a single file, a list of text and files, a structured dict — is reconstructed exactly.
-
-!!! note
-    This applies to history serialization. During a live streamed run, multimodal tool returns are emitted as text descriptions (e.g. `[File: image/jpeg]`) without the file payload.
-
-(The [`preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data] flag below does not affect tool-return files — it only gates [`FilePart`][pydantic_ai.messages.FilePart] and [`UploadedFile`][pydantic_ai.messages.UploadedFile] sidecars, which have no content field to ride in.)
+This means a file an agent's tool produces is available again on the next step: the frontend replays it as part of the conversation history, and it's sent back to the model as the original file rather than a text description of it.
 
 ### Trust model
 

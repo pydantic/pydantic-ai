@@ -126,12 +126,13 @@ async def search_docs(query: str) -> ToolReturn:
 
 ### Multimodal tool returns
 
-Tool returns containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], and the other [multimodal content types](../input.md#image-audio-video-document-input) — always round-trip across the [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] / [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] boundary. No flag is needed. The Vercel data-stream tool `output` field carries structured content directly, so the full return (files included) is serialized inline in the output and rehydrated on load, including files nested inside a mapping or list.
+A tool return containing files — [`BinaryContent`][pydantic_ai.messages.BinaryContent], [`ImageUrl`][pydantic_ai.messages.ImageUrl], or any of the other [multimodal content types](../input.md#image-audio-video-document-input), including files nested inside a list or dict — round-trips through the Vercel AI adapter, both in the live stream and across the [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] / [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] boundary. The data-stream tool `output` field carries structured content directly, so the file is serialized inline (base64 for binary data) and rehydrated on load — meaning a file an agent's tool produces is sent back to the model as the original file on the next step, not a text description of it. No flag is needed.
 
-On load, `load_messages` rehydrates file references from client-submitted history, then the shared sanitization step strips disallowed file URL schemes and drops client-submitted [`UploadedFile`][pydantic_ai.messages.UploadedFile] references (unless you opt in with [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]) before the agent runs, per the [Trust model](#trust-model) below.
+### Files from client-side tools
 
-!!! note
-    This applies to history serialization. During a live streamed run, multimodal tool returns are emitted as text descriptions (e.g. `[File: image/jpeg]`) without the file payload.
+Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage#client-side-tools) run in the browser and submit their result back to the server, where Pydantic AI resolves them as [external tool calls](../deferred-tools.md#external-tool-execution). Such a tool can return a file by putting a [`BinaryContent`][pydantic_ai.messages.BinaryContent] shape in its output — `{ kind: 'binary', mediaType: 'image/png', data: <bytes> }` — and Pydantic AI reconstructs it into a `BinaryContent` (image media types become [`BinaryImage`][pydantic_ai.messages.BinaryImage]) before the run continues.
+
+The `data` field accepts a base64 string, or the raw byte shapes a JavaScript frontend produces when it forwards a `Uint8Array` or Node `Buffer` through `JSON.stringify` without encoding it first (`{ "0": 137, "1": 80, ... }` or `{ "type": "Buffer", "data": [137, 80, ...] }`). All three are normalized to bytes at the wire boundary, so a client-side tool can return binary data without base64-encoding it by hand.
 
 ## Message metadata
 

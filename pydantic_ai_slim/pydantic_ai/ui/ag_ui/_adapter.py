@@ -46,7 +46,6 @@ from ...messages import (
     UserPromptPart,
     VideoUrl,
     narrow_message_parts,
-    tool_return_content_ta,
 )
 from ...output import OutputDataT
 from ...tools import (
@@ -90,9 +89,11 @@ try:
         MULTIMODAL_VERSION,
         REASONING_VERSION,
         UPLOADED_FILE_ACTIVITY_TYPE,
+        dump_tool_return_content,
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_tool_kind,
+        rehydrate_tool_return_content,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
         warn_tool_kind_not_persisted,
@@ -174,55 +175,6 @@ class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
 def _new_message_id() -> str:
     """Generate a new unique message ID."""
     return str(uuid.uuid4())
-
-
-def _dump_tool_return_content(content: Any) -> str:
-    """Serialize a tool-return `content` value into a `ToolMessage.content` string.
-
-    Inverse of [`_rehydrate_tool_return_content`][pydantic_ai.ui.ag_ui._adapter._rehydrate_tool_return_content],
-    kept symmetric with it so a `ToolReturnPart` round-trips faithfully. `.content` is the source of truth
-    (`.files` is derived from it), so dumping the full content — multimodal files included — and validating
-    it back reconstructs the part.
-
-    - A plain string is emitted verbatim, not JSON-wrapped, so the loader hands the original string back.
-    - A mapping or sequence — structured returns and anything carrying files at any depth — is dumped
-      through `tool_return_content_ta`, so nested `BinaryContent`/`ImageUrl`/... become base64/URL dicts
-      that the loader restores to their subclasses.
-    - A scalar is JSON-dumped too, but reloads as its string form because AG-UI content is text-only.
-    """
-    if isinstance(content, str):
-        return content
-    if content is None:
-        return ''
-    return tool_return_content_ta.dump_json(content).decode()
-
-
-def _rehydrate_tool_return_content(content: Any) -> Any:
-    """Rehydrate a `ToolMessage.content` value into `ToolReturnContent`, restoring multimodal subclasses.
-
-    Inverse of [`_dump_tool_return_content`][pydantic_ai.ui.ag_ui._adapter._dump_tool_return_content].
-    Content is a string on the wire; for structured and file-bearing returns it's our own JSON dump, parsed
-    back through `tool_return_content_ta` so multimodal items nested in a mapping or list (`BinaryContent`,
-    `ImageUrl`, `UploadedFile`, ...) come back as their subclasses. Image `BinaryContent` is narrowed to
-    `BinaryImage`.
-
-    Only a parsed mapping or sequence is run through the discriminator, since nested multimodal items can
-    only live inside those. A non-JSON string (plain-text return) and a parsed JSON scalar (`'123'`,
-    `'true'`) are returned as the original string: content is text-only, so a scalar is indistinguishable
-    from a string on the wire and rehydrating it would silently turn `'123'` into `123`. An
-    already-structured (non-string) `content` is validated directly.
-    """
-    if isinstance(content, str):
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            return content
-        if not isinstance(parsed, (dict, list)):
-            return content
-        return tool_return_content_ta.validate_python(parsed)
-    if isinstance(content, (dict, list)):
-        return tool_return_content_ta.validate_python(content)
-    return content
 
 
 def _user_content_to_input(
@@ -516,8 +468,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
 
                     # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
-                    # multimodal content comes back as real types; see `_rehydrate_tool_return_content`.
-                    content = _rehydrate_tool_return_content(tool_msg.content)
+                    # multimodal content comes back as real types; see `rehydrate_tool_return_content`.
+                    content = rehydrate_tool_return_content(tool_msg.content)
 
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
                     # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
@@ -705,11 +657,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 user_content.append(converted)
             elif isinstance(part, ToolReturnPart):
                 flush_user_content()
-                # Tool-return files ride inline in `ToolMessage.content` (see `_dump_tool_return_content`).
+                # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
-                        content=_dump_tool_return_content(part.content),
+                        content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
                         **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
                     )
@@ -817,7 +769,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     tool_messages.append(
                         ToolMessage(
                             id=_new_message_id(),
-                            content=_dump_tool_return_content(builtin_return.content),
+                            content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
                             **tool_kind_encrypted_value_kwargs(builtin_return.tool_kind, supported=use_encrypted_value),
                         )

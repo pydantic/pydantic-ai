@@ -1061,11 +1061,13 @@ def _validate_tool_output(output: Any) -> Any:
 def _coerce_js_binary_data(value: Any) -> Any:
     """Convert `BinaryContent.data` shapes that JavaScript frontends commonly emit into `bytes`.
 
-    `JSON.stringify` produces `{'0': N, '1': N, ...}` for `Uint8Array` and
-    `{'type': 'Buffer', 'data': [N, ...]}` for Node `Buffer`. Pydantic's bytes validator
-    rejects both. We normalize them at the wire boundary so deferred frontend tools that
-    return binary data via the documented `kind: 'binary'` shape work without requiring
-    callers to base64-encode manually.
+    This is what lets a Vercel AI [client-side tool](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage)
+    (resolved server-side as an external/deferred tool call) return a file — an image, say — by putting a
+    `{kind: 'binary', media_type: ..., data: ...}` shape in its output, without base64-encoding the bytes
+    by hand. `JSON.stringify` serializes a `Uint8Array` as `{'0': N, '1': N, ...}` and a Node `Buffer` as
+    `{'type': 'Buffer', 'data': [N, ...]}`; pydantic's bytes validator rejects both, so we normalize them
+    (and pass base64 strings through untouched) at the wire boundary before validation. A file the agent
+    itself produced round-trips as base64 and never hits these shapes.
     """
     if isinstance(value, list):
         return [_coerce_js_binary_data(v) for v in value]  # pyright: ignore[reportUnknownVariableType]

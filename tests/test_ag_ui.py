@@ -4265,7 +4265,12 @@ def test_dump_messages_thinking_version_gated(version: str, expected_reasoning: 
 
 
 async def test_tool_return_with_files():
-    """Test that tool returns with files include file descriptions in the output."""
+    """A tool return carrying files streams its full content inline in `ToolCallResultEvent.content`.
+
+    Files are serialized (base64 for `BinaryContent`, URL for `ImageUrl`) using the same dump as history
+    serialization, not collapsed to a `[File: ...]` placeholder, so a streaming frontend can echo the
+    content back and have the files rehydrated and re-sent to the model on the next step.
+    """
 
     async def event_generator():
         # Content with text and file - files property extracts BinaryContent from the list
@@ -4300,7 +4305,7 @@ async def test_tool_return_with_files():
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'call_1',
-                'content': 'Image analysis result\n[File: image/png]',
+                'content': '["Image analysis result",{"data":"aW1n","media_type":"image/png","vendor_metadata":null,"kind":"binary","identifier":"978ea7"}]',
                 'role': 'tool',
             },
             {
@@ -4308,9 +4313,56 @@ async def test_tool_return_with_files():
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': 'call_2',
-                'content': '[File: https://example.com/image.jpg]',
+                'content': '{"url":"https://example.com/image.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"39cfc4"}',
                 'role': 'tool',
             },
+        ]
+    )
+
+
+async def test_stream_tool_return_files_roundtrip_to_history() -> None:
+    """The content a tool return streams can be replayed as history and rehydrates to the original file.
+
+    This is the round-trip that matters for a streaming frontend: the file a tool produced during the run
+    is streamed inline in `ToolCallResultEvent.content`, and when the frontend echoes that content back on
+    the next request it is recovered as a `BinaryImage` — so it can be sent to the model again (preserving
+    prompt-cache prefixes) instead of degrading to a text placeholder.
+    """
+    image = BinaryImage(data=b'img', media_type='image/png')
+
+    async def event_generator():
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(tool_name='get_image', content=['here it is', image], tool_call_id='call_1')
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Analyze'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    result_content = next(e['content'] for e in events if e.get('type') == 'TOOL_CALL_RESULT')
+
+    # Replay the streamed content back as client-submitted history, paired with its tool call.
+    reloaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg_2',
+                tool_calls=[
+                    ToolCall(id='call_1', type='function', function=FunctionCall(name='get_image', arguments='{}')),
+                ],
+            ),
+            ToolMessage(id='msg_3', content=result_content, tool_call_id='call_1'),
+        ]
+    )
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='get_image', content=['here it is', image], tool_call_id='call_1', timestamp=IsDatetime()
+            )
         ]
     )
 

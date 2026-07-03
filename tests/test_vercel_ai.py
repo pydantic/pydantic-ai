@@ -2260,7 +2260,11 @@ async def test_event_stream_file():
 
 
 async def test_run_stream_tool_return_with_files():
-    """Test that tool returns with files include file descriptions in the output."""
+    """A streamed tool return carrying text + a file emits its full content in the `tool-output-available` chunk.
+
+    Files are serialized inline (base64) alongside the text rather than replaced with a placeholder, so the
+    frontend can echo the output back and have the file rehydrated and re-sent to the model on the next step.
+    """
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -2308,7 +2312,16 @@ async def test_run_stream_tool_return_with_files():
             {
                 'type': 'tool-output-available',
                 'toolCallId': 'img_1',
-                'output': [{'return_value': 'Image description'}, '[File: image/png]'],
+                'output': [
+                    'Image description',
+                    {
+                        'data': 'ZmFrZV9wbmc=',
+                        'media_type': 'image/png',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': 'dcf582',
+                    },
+                ],
             },
             {'type': 'finish-step'},
             {'type': 'start-step'},
@@ -2327,7 +2340,7 @@ async def test_run_stream_tool_return_with_files():
 
 
 async def test_run_stream_tool_return_files_only():
-    """Test that tool returns with only files return file descriptions."""
+    """A streamed tool return of only files emits the file(s) inline (base64) in the output chunk, not a placeholder."""
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -2370,13 +2383,19 @@ async def test_run_stream_tool_return_files_only():
         {
             'type': 'tool-output-available',
             'toolCallId': 'file_1',
-            'output': [{}, '[File: audio/wav]'],
+            'output': {
+                'data': 'YXVkaW8=',
+                'media_type': 'audio/wav',
+                'vendor_metadata': None,
+                'kind': 'binary',
+                'identifier': 'a06a49',
+            },
         }
     )
 
 
 async def test_run_stream_tool_return_with_file_url():
-    """Test that tool returns with FileUrl (ImageUrl) include URL in description."""
+    """A streamed tool return of a `FileUrl` (`ImageUrl`) emits the structured URL reference inline in the output chunk."""
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
@@ -2419,7 +2438,14 @@ async def test_run_stream_tool_return_with_file_url():
         {
             'type': 'tool-output-available',
             'toolCallId': 'url_1',
-            'output': [{}, '[File: https://example.com/image.png]'],
+            'output': {
+                'url': 'https://example.com/image.png',
+                'force_download': False,
+                'vendor_metadata': None,
+                'kind': 'image-url',
+                'media_type': 'image/png',
+                'identifier': '01a7df',
+            },
         }
     )
 
@@ -4268,6 +4294,64 @@ async def test_adapter_dump_load_roundtrip_tool_return_multimodal(
     ]
     assert tool_returns == snapshot(
         [ToolReturnPart(tool_name='get_files', tool_call_id='tc-1', content=content, timestamp=IsDatetime())]
+    )
+
+
+async def test_stream_tool_return_files_roundtrip_to_history():
+    """The content a tool return streams can be replayed as history and rehydrates to the original file.
+
+    The Vercel counterpart of the streaming round-trip: a file streamed inline in the `tool-output-available`
+    chunk's `output`, echoed back by the frontend as a `ToolOutputAvailablePart`, is recovered as a
+    `BinaryImage` on load — so it can be sent to the model again on the next step instead of a placeholder.
+    """
+    image = BinaryImage(data=b'fake_png', media_type='image/png')
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='get_image', json_args='{}', tool_call_id='img_1')}
+        else:
+            yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    async def get_image() -> list[Any]:
+        return ['here it is', image]
+
+    request = SubmitMessage(
+        id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Get an image')])]
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events: list[str | dict[str, Any]] = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+    tool_output = next(e for e in events if isinstance(e, dict) and e.get('type') == 'tool-output-available')
+    output: Any = tool_output['output']
+
+    # Replay the streamed output back as client-submitted history.
+    reloaded = VercelAIAdapter.load_messages(
+        [
+            UIMessage(
+                id='baz',
+                role='assistant',
+                parts=[
+                    ToolOutputAvailablePart(type='tool-get_image', tool_call_id='img_1', input={}, output=output),
+                ],
+            ),
+        ]
+    )
+    tool_returns = [
+        p for m in reloaded if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='get_image', content=['here it is', image], tool_call_id='img_1', timestamp=IsDatetime()
+            )
+        ]
     )
 
 
@@ -9222,29 +9306,61 @@ class TestSdkVersion:
     [
         pytest.param(
             'string_with_files',
-            snapshot([{'return_value': 'hello'}, '[File: image/jpeg]']),
+            snapshot(
+                [
+                    'hello',
+                    {
+                        'data': 'AAEC',
+                        'media_type': 'image/jpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': '0c7a62',
+                    },
+                ]
+            ),
             id='string_with_files',
         ),
         pytest.param(
             'empty_with_files',
-            snapshot([{}, '[File: audio/mpeg]']),
+            snapshot(
+                {
+                    'data': 'EBES',
+                    'media_type': 'audio/mpeg',
+                    'vendor_metadata': None,
+                    'kind': 'binary',
+                    'identifier': 'c4c10d',
+                }
+            ),
             id='empty_with_files',
         ),
         pytest.param(
             'list_with_files',
-            snapshot([{'return_value': [1, 2]}, '[File: image/jpeg]']),
+            snapshot(
+                [
+                    [1, 2],
+                    {
+                        'data': 'AAEC',
+                        'media_type': 'image/jpeg',
+                        'vendor_metadata': None,
+                        'kind': 'binary',
+                        'identifier': '0c7a62',
+                    },
+                ]
+            ),
             id='list_with_files',
         ),
         pytest.param('empty_no_files', snapshot(''), id='empty_no_files'),
     ],
 )
 def test_tool_return_output_edge_cases(case_id: str, expected: Any, tiny_image: BinaryImage, tiny_audio: BinaryContent):
-    """`_tool_return_with_files` produces text-stream-friendly output for streaming chunks.
+    """`tool_return_output` dumps a tool return's full content — files included — for both the streaming
+    chunk and history serialization.
 
-    Multimodal cases collapse to `[model_response_object_dict, '[File: <media_type>]', ...]`;
-    text-only cases pass through `tool_return_output` (the dumped content).
+    Files are serialized inline (base64 for `BinaryContent`, URL for `ImageUrl`/...) rather than collapsed
+    to a text placeholder, so multimodal tool output round-trips through a streaming frontend and can be
+    sent back to the model on the next step. Rehydrated on load via `_validate_tool_output`.
     """
-    from pydantic_ai.ui.vercel_ai._event_stream import _tool_return_with_files  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.ui.vercel_ai._utils import tool_return_output
 
     contents: dict[str, ToolReturnContent] = {
         'string_with_files': ['hello', tiny_image],
@@ -9253,7 +9369,7 @@ def test_tool_return_output_edge_cases(case_id: str, expected: Any, tiny_image: 
         'empty_no_files': '',
     }
     part = ToolReturnPart(tool_name='t', content=contents[case_id], tool_call_id='c')
-    assert _tool_return_with_files(part) == expected
+    assert tool_return_output(part) == expected
 
 
 def test_describe_file_uploaded_file():
