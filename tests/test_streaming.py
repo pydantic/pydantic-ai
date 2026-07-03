@@ -391,6 +391,42 @@ def test_run_stream_sync_keyboard_interrupt_closes_open_stream(monkeypatch: pyte
     assert stream_closed.wait(timeout=5)
 
 
+def test_run_stream_sync_keyboard_interrupt_mid_iteration_closes_receive_stream(monkeypatch: pytest.MonkeyPatch):
+    """A Ctrl-C *while iterating* a sync stream closes its receive stream too, leaking nothing (#5975).
+
+    The interrupt stops the portal before `stream_sync`'s on-loop `aclose` can run, so the synchronous
+    `close()` fallback in its `finally` is what actually closes the receive stream. Without it, the
+    orphaned `MemoryObjectReceiveStream` warns from `__del__` at GC (escalated to an error by pytest's
+    unraisable-exception handling), so this test fails if that fallback regresses.
+    """
+    agent = Agent(TestModel(custom_output_text='The cat sat on the mat.'))
+    with agent.run_stream_sync('Hello') as result:
+        bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
+        portal = bridge._portal  # pyright: ignore[reportPrivateUsage]
+        stream = result.stream_text(delta=True, debounce_by=None)
+        assert next(stream)  # pump running, receive stream open
+
+        original_call = portal.call
+        calls = 0
+
+        def interrupt_first_call(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise KeyboardInterrupt
+            return original_call(*args, **kwargs)
+
+        monkeypatch.setattr(portal, 'call', interrupt_first_call)
+
+        # The interrupt propagates through the `stream_sync` generator's `finally`, which closes the
+        # receive stream synchronously even though the portal is now gone.
+        with pytest.raises(KeyboardInterrupt):
+            next(stream)
+
+    del stream
+    gc.collect()  # surface any unclosed `MemoryObjectReceiveStream` now, not at session teardown
+
+
 def test_run_stream_sync_early_break_tears_down_pump():
     """Abandoning a sync stream early unblocks and closes the pump without surfacing an error."""
     agent = Agent(TestModel(custom_output_text='The cat sat on the mat.'))

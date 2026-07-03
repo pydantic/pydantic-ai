@@ -202,3 +202,8 @@ class SyncStreamBridge(Generic[StreamT]):
                 self._portal.call(receive_stream.aclose)
             with suppress(BaseException):
                 future.result()
+            # If the portal was already torn down (e.g. by a `KeyboardInterrupt`), the on-loop `aclose`
+            # above was suppressed and the receive stream is still open; close it synchronously so it
+            # isn't leaked. Safe and idempotent here: the pump is no longer running, so there are no
+            # waiting senders to wake across threads.
+            receive_stream.close()
