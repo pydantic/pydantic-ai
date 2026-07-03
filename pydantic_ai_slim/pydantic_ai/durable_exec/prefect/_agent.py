@@ -34,6 +34,7 @@ from pydantic_ai.tools import (
     ToolFuncEither,
 )
 
+from .._runtime_toolsets import reject_unsupported_runtime_toolsets
 from ._model import PrefectModel
 from ._toolset import prefectify_toolset
 
@@ -180,6 +181,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @contextmanager
     def _prefect_overrides(
         self,
+        additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        *,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> Generator[None]:
         # Override with PrefectModel and PrefectMCPToolset in the toolsets.
@@ -187,9 +190,16 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         # task (via `_effective_event_stream_handler`), so the runtime handler is honored without rebuilding
         # the model and re-registering its Prefect tasks. When no per-run handler is given, keep whatever an
         # outer call already stashed (e.g. the `toolsets` property re-entering these overrides).
+        # Per-run toolsets are merged with the constructor-time durable toolsets, but only non-executing
+        # ones are supported: Prefect wraps both function tools and MCP servers in tasks registered up
+        # front, and dynamic toolsets can't be introspected ahead of time.
+        reject_unsupported_runtime_toolsets(
+            additional_toolsets, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Prefect'
+        )
         token = self._run_event_stream_handler.set(event_stream_handler or self._run_event_stream_handler.get())
+        merged_toolsets = [*self._toolsets, *(additional_toolsets or ())]
         try:
-            with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
+            with super().override(model=self._model, toolsets=merged_toolsets, tools=[]):
                 yield
         finally:
             self._run_event_stream_handler.reset(token)
@@ -315,7 +325,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
-                with self._prefect_overrides(event_stream_handler=event_stream_handler):
+                with self._prefect_overrides(toolsets, event_stream_handler=event_stream_handler):
                     result = await super(WrapperAgent, self).run(
                         user_prompt,
                         output_type=output_type,
@@ -465,7 +475,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             # Mark that we're inside a PrefectAgent flow
             token = self._in_prefect_agent_flow.set(True)
             try:
-                with self._prefect_overrides(event_stream_handler=event_stream_handler):
+                with self._prefect_overrides(toolsets, event_stream_handler=event_stream_handler):
                     # Using `run_coro_as_sync` from Prefect with async `run` to avoid event loop conflicts.
                     result = run_coro_as_sync(
                         super(PrefectAgent, self).run(
@@ -970,7 +980,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Non-Prefect model cannot be set at agent run time inside a Prefect flow, it must be set at agent creation time.'
             )
 
-        with self._prefect_overrides():
+        with self._prefect_overrides(toolsets):
             async with super().iter(
                 user_prompt=user_prompt,
                 output_type=output_type,
@@ -986,7 +996,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 retries=retries,
                 infer_name=infer_name,
-                toolsets=toolsets,
+                toolsets=None,
                 capabilities=capabilities,
                 spec=spec,
                 **_deprecated_kwargs,

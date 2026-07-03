@@ -37,6 +37,17 @@ _OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
 _TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was already processed.'
 
 
+def _duplicate_tool_call_ids(calls: Sequence[_messages.ToolCallPart]) -> list[str]:
+    """Return duplicate `tool_call_id` values, in the order each ID is first encountered as a duplicate."""
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for call in calls:
+        if call.tool_call_id in seen and call.tool_call_id not in duplicates:
+            duplicates.append(call.tool_call_id)
+        seen.add(call.tool_call_id)
+    return duplicates
+
+
 def _emit_output_tool_events(
     call: _messages.ToolCallPart,
     part: _messages.ToolReturnPart | _messages.RetryPromptPart,
@@ -240,12 +251,21 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # including `'unknown'` (hallucinated) ones, using the `'skip'` sentinel for any call that
             # was already handled in a prior step. The check below relies on that convention.
             self.executable_function_kinds = ('function', 'unknown', 'external', 'unapproved')
-            result_tool_call_ids = set(self.tool_call_results.keys())
-            eligible_call_ids = {
-                call.tool_call_id
-                for call, kind in zip(self.tool_calls, call_kinds)
+            eligible_calls = [
+                call
+                for call, kind in zip(self.tool_calls, call_kinds, strict=True)
                 if kind in self.executable_function_kinds
-            }
+            ]
+            # Results are matched back to calls by `tool_call_id`, so duplicate ids make the binding
+            # ambiguous: one supplied result would bind to more than one call. Fail closed here rather
+            # than silently mis-binding (the set comparison below would otherwise collapse duplicates).
+            if duplicate_ids := _duplicate_tool_call_ids(eligible_calls):
+                raise exceptions.UserError(
+                    'Tool call results cannot be matched unambiguously because the message history contains '
+                    f'duplicate tool_call_id values: {duplicate_ids}'
+                )
+            result_tool_call_ids = set(self.tool_call_results.keys())
+            eligible_call_ids = {call.tool_call_id for call in eligible_calls}
             if eligible_call_ids != result_tool_call_ids:
                 raise exceptions.UserError(
                     'Tool call results need to be provided for all deferred tool calls. '
@@ -780,6 +800,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
+        # Deferred calls are returned to the caller and later matched back to results by `tool_call_id`.
+        # Duplicate ids would make that matching ambiguous, so reject them before handing the requests out.
+        if duplicate_ids := _duplicate_tool_call_ids(
+            [*self.deferred_calls['external'], *self.deferred_calls['unapproved']]
+        ):
+            raise exceptions.UnexpectedModelBehavior(
+                f'Deferred tool calls must have unique tool_call_id values; duplicate ids: {duplicate_ids}'
+            )
+
         deferred_tool_requests: DeferredToolRequests | None = DeferredToolRequests(
             calls=self.deferred_calls['external'],
             approvals=self.deferred_calls['unapproved'],
