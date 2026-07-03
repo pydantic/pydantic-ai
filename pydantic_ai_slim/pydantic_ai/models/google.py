@@ -1456,7 +1456,10 @@ class GeminiStreamedResponse(StreamedResponse):
                 elif self._pending_file_search_returns:
                     # Fill every reserved file_search return from the (aggregate) `grounding_metadata`,
                     # matching the non-streaming path, and emit each filled part's deferred `PartStartEvent`
-                    # under its reserved slot.
+                    # under its reserved slot. This relies on the grounding arriving on a chunk that also
+                    # carries a text part (as Gemini does today) so the `candidate.content.parts` guard above
+                    # doesn't `continue` past it; on a hypothetical part-less grounding chunk the fill would be
+                    # deferred to the end-of-stream flush below, surfacing the return with empty content.
                     still_pending: list[NativeToolReturnPart] = []
                     for pending in self._pending_file_search_returns:
                         _fill_empty_file_search_return_content(pending, candidate.grounding_metadata)
