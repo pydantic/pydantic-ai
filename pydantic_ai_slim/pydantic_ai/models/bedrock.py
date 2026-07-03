@@ -1125,21 +1125,17 @@ class BedrockConverseModel(Model[BaseClient]):
                 and current_message['role'] == last_message['role']
                 and current_message['role'] == 'user'
             ):
-                # Don't merge if one contains a tool result and the other contains an attachment (image, document, video)
+                # Anthropic models on Bedrock reject a user message that co-locates a
+                # `toolResult` block with an attachment block (image/document/video), so
+                # don't merge the attachment turn onto a preceding tool-result turn. See #6081.
                 last_has_tool_result = any('toolResult' in block for block in last_message['content'])
                 current_has_attachment = any(
                     any(k in block for k in ('image', 'document', 'video')) for block in current_message['content']
                 )
-                last_has_attachment = any(
-                    any(k in block for k in ('image', 'document', 'video')) for block in last_message['content']
-                )
-                current_has_tool_result = any('toolResult' in block for block in current_message['content'])
-
-                if (last_has_tool_result and current_has_attachment) or (
-                    last_has_attachment and current_has_tool_result
-                ):
-                    # Insert a dummy assistant message to alternate roles
-                    processed_messages.append({'role': 'assistant', 'content': [{'text': ' '}]})
+                if last_has_tool_result and current_has_attachment:
+                    # Bedrock requires alternating roles, so separate the two user turns with a
+                    # minimal assistant turn. Anthropic rejects whitespace-only text, so use a period.
+                    processed_messages.append({'role': 'assistant', 'content': [{'text': '.'}]})
                 else:
                     # Add the new user content onto the existing user message.
                     last_content = list(last_message['content'])
@@ -1188,19 +1184,6 @@ class BedrockConverseModel(Model[BaseClient]):
         # Note: Anthropic models on Bedrock reject whitespace-only text, so we use a period.
         if not processed_messages or processed_messages[0]['role'] != 'user':
             processed_messages.insert(0, {'role': 'user', 'content': [{'text': '.'}]})
-
-        # Ensure that any user message containing a document block also has a text block.
-        # This satisfies Bedrock's API constraint: "If you include a ContentBlock with a document field, you must also include a ContentBlock with a text field."
-        for i, msg in enumerate(processed_messages):
-            if msg['role'] == 'user':
-                has_document = any('document' in block for block in msg['content'])
-                has_text = any('text' in block for block in msg['content'])
-                if has_document and not has_text:  # pragma: no cover
-                    new_content: list[ContentBlockUnionTypeDef] = [
-                        {'text': 'See attached document(s).'},
-                        *msg['content'],
-                    ]
-                    processed_messages[i] = cast(MessageUnionTypeDef, {**msg, 'content': new_content})
 
         return system_prompt, processed_messages
 

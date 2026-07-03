@@ -5104,6 +5104,12 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
 
 
 async def test_bedrock_tool_result_and_attachment_alternate(bedrock_provider: BedrockProvider):
+    """Pin the exact mapped message sequence for the #6081 fix.
+
+    Unit test (not VCR): our cassette matcher isn't sensitive to the request body, so a
+    regression in this message shaping could still match the companion VCR recording and pass
+    green. Asserting the mapped sequence directly is what catches that.
+    """
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
 
     messages: list[ModelMessage] = [
@@ -5151,7 +5157,7 @@ async def test_bedrock_tool_result_and_attachment_alternate(bedrock_provider: Be
         },
         {
             'role': 'assistant',
-            'content': [{'text': ' '}],
+            'content': [{'text': '.'}],
         },
         {
             'role': 'user',
@@ -5173,41 +5179,33 @@ async def test_bedrock_tool_result_and_attachment_alternate(bedrock_provider: Be
     ]
 
 
-async def test_bedrock_user_message_document_no_text(bedrock_provider: BedrockProvider):
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+@pytest.mark.vcr()
+async def test_bedrock_tool_result_followed_by_attachment_accepted(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, document_content: BinaryContent
+):
+    """A tool-result turn followed by a user turn with an attachment must be accepted by Bedrock.
 
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content=[
-                        DocumentUrl(url='s3://bucket/file.csv', media_type='text/csv'),
-                    ]
-                )
-            ]
-        ),
-    ]
-    prepared = model.prepare_messages(messages)
-    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        prepared, ModelRequestParameters(), BedrockModelSettings()
+    Regression for #6081: previously these merged into one user message co-locating a
+    `toolResult` with a `document` block, which Anthropic on Bedrock Converse rejects with a
+    `ValidationException`. VCR (not unit) because only a real Converse request proves the
+    reshaped history is actually accepted; the companion unit test pins the mapped shape.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_expenses() -> str:
+        return 'ok'  # pragma: no cover
+
+    result = await agent.run(
+        ['What is in this document?', document_content],
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='show me my expenses')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='get_expenses', args={}, tool_call_id='t1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_expenses', content='ok', tool_call_id='t1')]),
+        ],
     )
 
-    assert bedrock_messages == [
-        {
-            'role': 'user',
-            'content': [
-                {'text': 'See attached document(s).'},
-                {
-                    'document': {
-                        'name': 'Document 1',
-                        'format': 'csv',
-                        'source': {
-                            's3Location': {
-                                'uri': 's3://bucket/file.csv',
-                            }
-                        },
-                    }
-                },
-            ],
-        },
-    ]
+    assert result.output == snapshot(
+        'This document is a simple PDF file with the title "Dummy PDF file" at the top. The rest of the page appears to be blank. It\'s essentially a placeholder or test PDF document with minimal content - just containing that single heading and nothing else.'
+    )
