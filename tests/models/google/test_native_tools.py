@@ -332,7 +332,12 @@ def _file_search_return_start_parts(events: list[ModelResponseStreamEvent]) -> l
 
 @pytest.mark.anyio
 async def test_file_search_grounding_fills_empty_tool_response_streaming():
-    """Streaming: grounding arrives several chunks after the empty `tool_response`, so the part is filled then."""
+    """Streaming: grounding arrives several chunks after the empty `tool_response`, which is then filled in
+    place — a single `PartStartEvent` (no empty-then-filled duplicate), ordered ahead of the grounded text.
+
+    Content shape is pinned by the non-streaming test and end-to-end by the VCR test; here we only assert the
+    streaming-specific mechanics.
+    """
     events, parts = await _drive_stream(
         [
             _stream_chunk([{'tool_call': {'id': 'file_search_call', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
@@ -343,44 +348,16 @@ async def test_file_search_grounding_fills_empty_tool_response_streaming():
         ]
     )
 
-    # The empty `tool_response` is filled in place, not duplicated by a second grounding-derived part, and
-    # the part order matches the non-streaming path: the call and its (filled) return precede the grounded text.
-    assert parts == snapshot(
-        [
-            NativeToolCallPart(
-                tool_name='file_search',
-                args={},
-                tool_call_id='file_search_call',
-                provider_name='google-gla',
-            ),
-            NativeToolReturnPart(
-                tool_name='file_search',
-                content=[
-                    {
-                        'text': 'Paris is the capital of France.',
-                        'title': 'paris.txt',
-                        'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
-                        'file_search_store': 'fileSearchStores/test-store',
-                    }
-                ],
-                tool_call_id='file_search_call',
-                timestamp=IsDatetime(),
-                provider_name='google-gla',
-            ),
-            TextPart(content='Paris is the capital of France.'),
-        ]
-    )
-
-    # Exactly one `PartStartEvent` for the file_search return: the empty placeholder's event is deferred until
-    # it is filled, so streaming consumers see a single populated result rather than an empty one then a duplicate.
-    starts = _file_search_return_start_parts(events)
-    assert len(starts) == 1
-    assert starts[0].content is not None
+    call, file_search_return, text = parts
+    assert isinstance(call, NativeToolCallPart)
+    assert isinstance(file_search_return, NativeToolReturnPart) and file_search_return.content is not None
+    assert isinstance(text, TextPart)
+    assert len(_file_search_return_start_parts(events)) == 1
 
 
 @pytest.mark.anyio
 async def test_file_search_multiple_calls_all_filled_streaming():
-    """Every reserved file_search return is filled from the aggregate grounding, matching the non-streaming path."""
+    """Every reserved file_search return is filled from the aggregate grounding, not just the last."""
     events, parts = await _drive_stream(
         [
             _stream_chunk([{'tool_call': {'id': 'call_1', 'tool_type': 'FILE_SEARCH', 'args': {}}}]),
@@ -392,32 +369,8 @@ async def test_file_search_multiple_calls_all_filled_streaming():
     )
 
     returns = [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'file_search']
-    assert [(r.tool_call_id, r.content) for r in returns] == snapshot(
-        [
-            (
-                'call_1',
-                [
-                    {
-                        'text': 'Paris is the capital of France.',
-                        'title': 'paris.txt',
-                        'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
-                        'file_search_store': 'fileSearchStores/test-store',
-                    }
-                ],
-            ),
-            (
-                'call_2',
-                [
-                    {
-                        'text': 'Paris is the capital of France.',
-                        'title': 'paris.txt',
-                        'custom_metadata': [{'key': 'source_url', 'string_value': 'https://example.com/paris-facts'}],
-                        'file_search_store': 'fileSearchStores/test-store',
-                    }
-                ],
-            ),
-        ]
-    )
+    assert [r.tool_call_id for r in returns] == ['call_1', 'call_2']
+    assert all(r.content is not None for r in returns)
     assert len(_file_search_return_start_parts(events)) == 2
 
 
