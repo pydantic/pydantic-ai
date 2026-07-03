@@ -414,22 +414,21 @@ print(result2.all_messages())
 
 _(This example is complete, it can be run "as is")_
 
-### Converting Logfire OTEL Messages
+### Converting OTel messages from Logfire
 
-If you store OTEL message attributes from Logfire (for example `pydantic_ai.all_messages` on agent spans or
-`gen_ai.input.messages`/`gen_ai.output.messages` on model spans), you can convert them back into
-`ModelMessage` objects for reuse.
+When Pydantic AI is [instrumented](logfire.md), messages are recorded on spans in the OpenTelemetry GenAI format:
+`pydantic_ai.all_messages` on agent run spans, and `gen_ai.input.messages`/`gen_ai.output.messages` on model request
+spans. If you query these attributes back out of [Logfire](logfire.md) (or any other OpenTelemetry backend), you can
+convert them into `ModelMessage` objects with
+[`otel_messages_to_model_messages`][pydantic_ai.otel_messages_to_model_messages], e.g. to re-run a recorded
+conversation as `message_history`:
 
 ```python {title="otel_messages_to_model_messages.py"}
-from pydantic_ai import (
-    Agent,
-    model_messages_to_openai_format,
-    otel_messages_to_model_messages,
-)
+from pydantic_ai import Agent, otel_messages_to_model_messages
 
 agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
 
-# OTEL message attributes from a Logfire span (e.g. `gen_ai.input.messages`) are
+# OTel message attributes from a Logfire span (e.g. `gen_ai.input.messages`) are
 # stored as JSON strings of chat messages.
 otel_messages = (
     '[{"role": "user", "parts": [{"type": "text", "content": "Tell me a joke."}]}, '
@@ -442,23 +441,11 @@ history = otel_messages_to_model_messages(otel_messages)
 result = agent.run_sync('Explain?', message_history=history)
 print(result.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
-
-# Optionally convert to OpenAI chat completion format for display or interop.
-openai_messages = model_messages_to_openai_format(history)
-print(openai_messages)
-"""
-[
-    {'role': 'user', 'content': 'Tell me a joke.'},
-    {
-        'role': 'assistant',
-        'content': 'Did you hear about the toothpaste scandal? They called it Colgate.',
-    },
-]
-"""
 ```
 
-Note: the OTEL → `ModelMessage` conversion is lossy — timestamps, `instructions`, provider details, and content
-excluded by `include_content=False` are not preserved.
+Note: the OTel → `ModelMessage` conversion is lossy — timestamps, `instructions`, provider details, and content
+excluded by [`InstrumentationSettings(include_content=False)`][pydantic_ai.models.instrumented.InstrumentationSettings]
+are not preserved.
 
 ## Sharing messages between agents
 

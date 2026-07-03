@@ -1,8 +1,8 @@
-"""Utilities for converting between OTEL message formats and pydantic-ai ModelMessages.
+"""Conversion of OTel-format messages back to pydantic-ai ModelMessages.
 
-These functions support round-tripping messages through OTEL instrumentation:
-- Forward: ModelMessage -> OTEL format (handled by InstrumentationSettings)
-- Reverse: OTEL format -> ModelMessage (handled by this module)
+This is the reverse of the instrumentation layer's forward conversion
+(`InstrumentationSettings.messages_to_otel_messages`), enabling recorded conversations
+to be replayed as `message_history`.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import base64
 import itertools
 import json
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from pydantic import ValidationError
 
@@ -19,9 +19,9 @@ from . import _utils
 from .messages import (
     AudioUrl,
     BinaryContent,
-    CachePoint,
     DocumentUrl,
     FilePart,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -31,7 +31,6 @@ from .messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     SystemPromptPart,
-    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -41,6 +40,8 @@ from .messages import (
     UserPromptPart,
     VideoUrl,
 )
+
+_FINISH_REASONS: frozenset[str] = frozenset(get_args(FinishReason))
 
 
 def otel_messages_to_model_messages(
@@ -92,41 +93,6 @@ def otel_messages_to_model_messages(
         return _chat_messages_to_model_messages(parsed)
 
 
-def model_messages_to_openai_format(
-    messages: Sequence[ModelMessage],
-) -> list[dict[str, Any]]:
-    """Convert pydantic-ai ModelMessages to OpenAI chat completion format.
-
-    Returns messages in the format expected by the
-    [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat).
-
-    Each [`ModelRequest`][pydantic_ai.messages.ModelRequest] is expanded into one or more messages
-    (system, user, tool), and each [`ModelResponse`][pydantic_ai.messages.ModelResponse] becomes an
-    assistant message with optional `tool_calls`.
-
-    Note: [`ThinkingPart`][pydantic_ai.messages.ThinkingPart], [`FilePart`][pydantic_ai.messages.FilePart],
-    [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart], and
-    [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] are not included in the output
-    as they have no standard OpenAI representation. Assistant messages that only contain
-    unsupported parts are omitted.
-
-    Args:
-        messages: A sequence of ModelMessage objects.
-
-    Returns:
-        A list of message dicts in OpenAI chat completion format.
-    """
-    result: list[dict[str, Any]] = []
-
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            result.extend(_model_request_to_openai(message))
-        elif openai_message := _model_response_to_openai(message):
-            result.append(openai_message)
-
-    return result
-
-
 # ── ChatMessage format → ModelMessages ────────────────────────────────
 
 
@@ -152,7 +118,8 @@ def _chat_messages_to_model_messages(
 
             response_parts = _convert_assistant_parts(parts_data)
             kwargs: dict[str, Any] = {}
-            if finish_reason := msg.get('finish_reason'):
+            # Third-party traces may carry finish reasons outside pydantic-ai's `FinishReason` values; drop those.
+            if (finish_reason := msg.get('finish_reason')) in _FINISH_REASONS:
                 kwargs['finish_reason'] = finish_reason
             result.append(ModelResponse(parts=response_parts, **kwargs))
         elif role == 'system':
@@ -224,7 +191,8 @@ def _binary_from_otel(part: dict[str, Any]) -> BinaryContent:
     media_type = part.get('media_type') or part.get('mime_type') or 'application/octet-stream'
     b64_content = part.get('content', '')
     data = base64.b64decode(b64_content) if b64_content else b''
-    return BinaryContent(data=data, media_type=media_type)
+    # Match Pydantic validation of real messages, which narrows image content to `BinaryImage`.
+    return BinaryContent.narrow_type(BinaryContent(data=data, media_type=media_type))
 
 
 def _uri_part_to_url(part: dict[str, Any]) -> ImageUrl | AudioUrl | VideoUrl | DocumentUrl | None:
@@ -440,124 +408,3 @@ def _extend_from_legacy_content_list(parts: list[ModelResponsePart], content: li
             parts.append(TextPart(text))
         elif kind == 'thinking':
             parts.append(ThinkingPart(text))
-
-
-# ── ModelMessages → OpenAI format ────────────────────────────────────
-
-
-def _model_request_to_openai(request: ModelRequest) -> list[dict[str, Any]]:
-    """Convert a ModelRequest to one or more OpenAI format messages."""
-    result: list[dict[str, Any]] = []
-
-    for part in request.parts:
-        if isinstance(part, SystemPromptPart):
-            result.append({'role': 'system', 'content': part.content})
-        elif isinstance(part, UserPromptPart):
-            result.append({'role': 'user', 'content': _user_content_to_openai(part.content)})
-        elif isinstance(part, ToolReturnPart):
-            result.append(
-                {
-                    'role': 'tool',
-                    'tool_call_id': part.tool_call_id,
-                    'content': part.model_response_str(),
-                }
-            )
-        else:
-            # The only remaining `ModelRequestPart` is a `RetryPromptPart`.
-            if part.tool_name is not None:
-                result.append(
-                    {
-                        'role': 'tool',
-                        'tool_call_id': part.tool_call_id,
-                        'content': part.model_response(),
-                    }
-                )
-            else:
-                result.append({'role': 'user', 'content': part.model_response()})
-
-    return result
-
-
-def _openai_image_url(url: str, vendor_metadata: dict[str, Any] | None) -> dict[str, Any]:
-    """Build an OpenAI `image_url` dict, preserving the `detail` fidelity hint if present."""
-    image_url: dict[str, Any] = {'url': url}
-    if vendor_metadata and (detail := vendor_metadata.get('detail')):
-        image_url['detail'] = detail
-    return image_url
-
-
-def _binary_content_to_openai(item: BinaryContent) -> dict[str, Any]:
-    """Convert a `BinaryContent` item to an OpenAI multimodal content part."""
-    if item.is_image:
-        return {'type': 'image_url', 'image_url': _openai_image_url(item.data_uri, item.vendor_metadata)}
-    if item.is_audio:
-        try:
-            audio_format = item.format
-        except ValueError:
-            # Fall back to a text marker for unknown audio formats.
-            return {'type': 'text', 'text': f'[Audio: {item.media_type}]'}
-        if audio_format in ('wav', 'mp3'):
-            return {'type': 'input_audio', 'input_audio': {'data': item.base64, 'format': audio_format}}
-        # OpenAI Chat Completions only accepts wav/mp3 audio; fall back to a text marker.
-        return {'type': 'text', 'text': f'[Audio: {item.media_type}]'}
-    # No standard OpenAI representation for non-image/audio binary
-    return {'type': 'text', 'text': f'[Binary: {item.media_type}]'}
-
-
-def _user_content_to_openai(content: str | Sequence[UserContent]) -> str | list[dict[str, Any]]:
-    """Convert UserPromptPart content to OpenAI multimodal content format."""
-    if isinstance(content, str):
-        return content
-
-    parts: list[dict[str, Any]] = []
-    for item in content:
-        if isinstance(item, str | TextContent):
-            parts.append({'type': 'text', 'text': item if isinstance(item, str) else item.content})
-        elif isinstance(item, ImageUrl):
-            parts.append({'type': 'image_url', 'image_url': _openai_image_url(item.url, item.vendor_metadata)})
-        elif isinstance(item, BinaryContent):
-            parts.append(_binary_content_to_openai(item))
-        elif isinstance(item, AudioUrl):
-            # OpenAI input_audio expects base64, not a URL — fall back to text reference
-            parts.append({'type': 'text', 'text': f'[Audio: {item.url}]'})
-        elif isinstance(item, (DocumentUrl, VideoUrl)):
-            # No standard OpenAI representation for document/video URLs
-            parts.append({'type': 'text', 'text': f'[{type(item).__name__}: {item.url}]'})
-        elif isinstance(item, UploadedFile):
-            # OpenAI Chat Completions' `file` type requires base64 data, but `UploadedFile.file_id` is a
-            # provider-hosted reference. Fall back to a text marker so the reference isn't silently dropped.
-            parts.append({'type': 'text', 'text': f'[UploadedFile: {item.file_id} ({item.provider_name})]'})
-        elif isinstance(item, CachePoint):
-            pass
-
-    if len(parts) == 1 and parts[0].get('type') == 'text':
-        return parts[0]['text']
-    return parts
-
-
-def _model_response_to_openai(response: ModelResponse) -> dict[str, Any] | None:
-    """Convert a ModelResponse to an OpenAI format assistant message."""
-    content = response.text
-    msg: dict[str, Any] = {'role': 'assistant', 'content': content}
-
-    tool_calls: list[dict[str, Any]] = []
-    for part in response.parts:
-        if isinstance(part, ToolCallPart):
-            tool_calls.append(
-                {
-                    'id': part.tool_call_id,
-                    'type': 'function',
-                    'function': {
-                        'name': part.tool_name,
-                        'arguments': part.args_as_json_str(),
-                    },
-                }
-            )
-
-    if tool_calls:
-        msg['tool_calls'] = tool_calls
-
-    if content is None and not tool_calls:
-        return None
-
-    return msg

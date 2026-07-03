@@ -1,4 +1,4 @@
-"""Tests for _conversions.py — round-tripping OTEL messages and OpenAI format conversion."""
+"""Tests for `_otel_conversions.py` — converting OTel-format messages back to `ModelMessage`s."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ import json
 
 from inline_snapshot import snapshot
 
-from pydantic_ai import model_messages_to_openai_format, otel_messages_to_model_messages
+from pydantic_ai import InstrumentationSettings, otel_messages_to_model_messages
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
-    CachePoint,
+    BinaryImage,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -20,9 +20,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SystemPromptPart,
-    TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -33,6 +31,17 @@ from pydantic_ai.messages import (
 )
 
 from .conftest import IsDatetime
+
+
+def otel_round_trip(messages: list[ModelMessage], *, include_content: bool = True) -> list[ModelMessage]:
+    """Convert messages through the forward instrumentation path and back.
+
+    Serializes through JSON to match how the OTel messages are stored as span attributes.
+    """
+    settings = InstrumentationSettings(include_content=include_content)
+    otel_messages = settings.messages_to_otel_messages(messages)
+    return otel_messages_to_model_messages(json.dumps(otel_messages))
+
 
 # ── otel_messages_to_model_messages: ChatMessage format ────────────────
 
@@ -286,7 +295,7 @@ class TestChatMessagesToModelMessages:
                         UserPromptPart(
                             content=[
                                 'Describe this',
-                                BinaryContent(data=b'fake image data', media_type='image/png', identifier='d7c7d6'),
+                                BinaryImage(data=b'fake image data', media_type='image/png', identifier='d7c7d6'),
                             ],
                             timestamp=IsDatetime(),
                         )
@@ -314,7 +323,7 @@ class TestChatMessagesToModelMessages:
                 ModelResponse(
                     parts=[
                         FilePart(
-                            content=BinaryContent(data=b'fake image data', media_type='image/png', identifier='d7c7d6')
+                            content=BinaryImage(data=b'fake image data', media_type='image/png', identifier='d7c7d6')
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -385,14 +394,14 @@ class TestChatMessagesToModelMessages:
                 ModelRequest(
                     parts=[
                         UserPromptPart(
-                            content=[BinaryContent(data=b'blob bytes', media_type='image/png', identifier='2261db')],
+                            content=[BinaryImage(data=b'blob bytes', media_type='image/png', identifier='2261db')],
                             timestamp=IsDatetime(),
                         )
                     ]
                 ),
                 ModelResponse(
                     parts=[
-                        FilePart(content=BinaryContent(data=b'blob bytes', media_type='image/png', identifier='2261db'))
+                        FilePart(content=BinaryImage(data=b'blob bytes', media_type='image/png', identifier='2261db'))
                     ],
                     timestamp=IsDatetime(),
                 ),
@@ -913,414 +922,169 @@ class TestLegacyEventsToModelMessages:
         )
 
 
-# ── model_messages_to_openai_format ──────────────────────────────────
+# ── Round-trip: forward instrumentation format → ModelMessages ────────
 
 
-class TestModelMessagesToOpenaiFormat:
-    def test_empty(self):
-        assert model_messages_to_openai_format([]) == []
+class TestInstrumentationRoundTrip:
+    """Round-trip through the real forward converter, `InstrumentationSettings.messages_to_otel_messages`.
 
-    def test_simple_conversation(self):
+    These tests are the guardrail that keeps the reverse conversion in lockstep with the
+    instrumentation format: they break if the forward format changes shape.
+    """
+
+    def test_text_conversation(self):
         messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart('Be helpful.'),
-                    UserPromptPart('Hello'),
-                ]
-            ),
-            ModelResponse(parts=[TextPart('Hi there!')]),
+            ModelRequest(parts=[SystemPromptPart('Be helpful.'), UserPromptPart('Hello')]),
+            ModelResponse(parts=[TextPart('Hi there!')], finish_reason='stop'),
         ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
+        assert otel_round_trip(messages) == snapshot(
             [
-                {'role': 'system', 'content': 'Be helpful.'},
-                {'role': 'user', 'content': 'Hello'},
-                {'role': 'assistant', 'content': 'Hi there!'},
+                ModelRequest(
+                    parts=[
+                        SystemPromptPart(content='Be helpful.', timestamp=IsDatetime()),
+                        UserPromptPart(content='Hello', timestamp=IsDatetime()),
+                    ]
+                ),
+                ModelResponse(parts=[TextPart(content='Hi there!')], timestamp=IsDatetime(), finish_reason='stop'),
             ]
         )
 
-    def test_tool_call_and_return(self):
+    def test_tool_call_cycle(self):
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('Weather?')]),
+            ModelRequest(parts=[UserPromptPart('Weather in Paris?')]),
             ModelResponse(
-                parts=[
-                    ToolCallPart(tool_name='get_weather', args='{"city":"London"}', tool_call_id='call_1'),
-                ]
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1')],
+                finish_reason='tool_call',
             ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(tool_name='get_weather', content='Sunny', tool_call_id='call_1'),
-                ]
-            ),
-            ModelResponse(parts=[TextPart('It is sunny.')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content={'temp': 21}, tool_call_id='call_1')]),
+            ModelResponse(parts=[TextPart('21 degrees.')], finish_reason='stop'),
         ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
+        assert otel_round_trip(messages) == snapshot(
             [
-                {'role': 'user', 'content': 'Weather?'},
-                {
-                    'role': 'assistant',
-                    'content': None,
-                    'tool_calls': [
-                        {
-                            'id': 'call_1',
-                            'type': 'function',
-                            'function': {'name': 'get_weather', 'arguments': '{"city":"London"}'},
-                        },
-                    ],
-                },
-                {'role': 'tool', 'tool_call_id': 'call_1', 'content': 'Sunny'},
-                {'role': 'assistant', 'content': 'It is sunny.'},
+                ModelRequest(parts=[UserPromptPart(content='Weather in Paris?', timestamp=IsDatetime())]),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1')],
+                    timestamp=IsDatetime(),
+                    finish_reason='tool_call',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_weather', content={'temp': 21}, tool_call_id='call_1', timestamp=IsDatetime()
+                        )
+                    ]
+                ),
+                ModelResponse(parts=[TextPart(content='21 degrees.')], timestamp=IsDatetime(), finish_reason='stop'),
             ]
         )
 
-    def test_text_with_tool_calls(self):
-        """Assistant message with both text and tool calls."""
+    def test_thinking_native_tools_and_file(self):
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('Hello')]),
-            ModelResponse(
-                parts=[
-                    TextPart('Let me check.'),
-                    ToolCallPart(tool_name='search', args='{"q":"test"}', tool_call_id='call_1'),
-                ]
-            ),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {'role': 'user', 'content': 'Hello'},
-                {
-                    'role': 'assistant',
-                    'content': 'Let me check.',
-                    'tool_calls': [
-                        {
-                            'id': 'call_1',
-                            'type': 'function',
-                            'function': {'name': 'search', 'arguments': '{"q":"test"}'},
-                        },
-                    ],
-                },
-            ]
-        )
-
-    def test_thinking_parts_excluded(self):
-        """ThinkingParts should not appear in OpenAI format."""
-        messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('Think')]),
+            ModelRequest(parts=[UserPromptPart('Search and draw something')]),
             ModelResponse(
                 parts=[
                     ThinkingPart('Let me think...'),
-                    TextPart('Here is my answer.'),
-                ]
+                    NativeToolCallPart(tool_name='web_search', args={'query': 'pydantic'}, tool_call_id='srch_1'),
+                    NativeToolReturnPart(tool_name='web_search', content={'results': []}, tool_call_id='srch_1'),
+                    FilePart(content=BinaryImage(data=b'fake image', media_type='image/png')),
+                    TextPart('Done!'),
+                ],
             ),
         ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
+        assert otel_round_trip(messages) == snapshot(
             [
-                {'role': 'user', 'content': 'Think'},
-                {'role': 'assistant', 'content': 'Here is my answer.'},
+                ModelRequest(parts=[UserPromptPart(content='Search and draw something', timestamp=IsDatetime())]),
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(content='Let me think...'),
+                        NativeToolCallPart(tool_name='web_search', args={'query': 'pydantic'}, tool_call_id='srch_1'),
+                        NativeToolReturnPart(
+                            tool_name='web_search',
+                            content={'results': []},
+                            tool_call_id='srch_1',
+                            timestamp=IsDatetime(),
+                        ),
+                        FilePart(content=BinaryImage(data=b'fake image', media_type='image/png', identifier='735dcd')),
+                        TextPart(content='Done!'),
+                    ],
+                    timestamp=IsDatetime(),
+                ),
             ]
         )
 
-    def test_response_with_only_thinking_is_skipped(self):
+    def test_multi_modal_user_content(self):
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('Think')]),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'What are these?',
+                            ImageUrl('https://example.com/image.png'),
+                            AudioUrl('https://example.com/audio.mp3'),
+                            DocumentUrl('https://example.com/doc.pdf'),
+                            BinaryContent(data=b'binary data', media_type='application/octet-stream'),
+                            UploadedFile(file_id='file-abc123', provider_name='openai', media_type='application/pdf'),
+                        ]
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart('Various media.')], finish_reason='stop'),
+        ]
+        assert otel_round_trip(messages) == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=[
+                                'What are these?',
+                                ImageUrl(
+                                    url='https://example.com/image.png', media_type='image/png', identifier='01a7df'
+                                ),
+                                AudioUrl(url='https://example.com/audio.mp3', _media_type='audio/mpeg'),
+                                DocumentUrl(
+                                    url='https://example.com/doc.pdf', media_type='application/pdf', identifier='e3337d'
+                                ),
+                                BinaryContent(
+                                    data=b'binary data', media_type='application/octet-stream', identifier='57978a'
+                                ),
+                                UploadedFile(
+                                    file_id='file-abc123', provider_name='openai', _media_type='application/pdf'
+                                ),
+                            ],
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(parts=[TextPart(content='Various media.')], timestamp=IsDatetime(), finish_reason='stop'),
+            ]
+        )
+
+    def test_include_content_false_degrades_gracefully(self):
+        """Without recorded content, structure survives but content comes back empty."""
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Secret prompt')]),
             ModelResponse(
-                parts=[
-                    ThinkingPart('Let me think...'),
-                ]
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1')],
+                finish_reason='tool_call',
             ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='rainy', tool_call_id='call_1')]),
+            ModelResponse(parts=[TextPart('Secret answer')], finish_reason='stop'),
         ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
+        assert otel_round_trip(messages, include_content=False) == snapshot(
             [
-                {'role': 'user', 'content': 'Think'},
-            ]
-        )
-
-    def test_image_url_in_user_content(self):
-        messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        [
-                            'What is in this image?',
-                            ImageUrl('https://example.com/cat.png'),
-                        ]
-                    ),
-                ]
-            ),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {
-                    'role': 'user',
-                    'content': [
-                        {'type': 'text', 'text': 'What is in this image?'},
-                        {'type': 'image_url', 'image_url': {'url': 'https://example.com/cat.png'}},
-                    ],
-                },
-            ]
-        )
-
-    def test_image_url_detail_metadata_preserved(self):
-        """`vendor_metadata['detail']` is carried over to the OpenAI `image_url` fidelity hint."""
-        messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    UserPromptPart([ImageUrl('https://example.com/cat.png', vendor_metadata={'detail': 'high'})]),
-                ]
-            ),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {
-                    'role': 'user',
-                    'content': [
-                        {'type': 'image_url', 'image_url': {'url': 'https://example.com/cat.png', 'detail': 'high'}}
-                    ],
-                }
-            ]
-        )
-
-    def test_binary_image_and_audio_in_user_content(self):
-        """Image binary becomes a data URI; audio binary becomes input_audio."""
-        png = base64.b64encode(b'png-bytes').decode()
-        wav = base64.b64encode(b'wav-bytes').decode()
-        messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        [
-                            BinaryContent(data=base64.b64decode(png), media_type='image/png'),
-                            BinaryContent(data=base64.b64decode(wav), media_type='audio/wav'),
-                        ]
-                    ),
-                ]
-            ),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {
-                    'role': 'user',
-                    'content': [
-                        {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}},
-                        {'type': 'input_audio', 'input_audio': {'data': 'd2F2LWJ5dGVz', 'format': 'wav'}},
-                    ],
-                }
-            ]
-        )
-
-    def test_non_media_binary_falls_back_to_text(self):
-        messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart([BinaryContent(data=b'%PDF', media_type='application/pdf')])]),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot([{'role': 'user', 'content': '[Binary: application/pdf]'}])
-
-    def test_audio_url_and_other_urls_fall_back_to_text(self):
-        messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        [
-                            AudioUrl('https://example.com/a.mp3'),
-                            DocumentUrl('https://example.com/d.pdf'),
-                            VideoUrl('https://example.com/v.mp4'),
-                        ]
-                    ),
-                ]
-            ),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {
-                    'role': 'user',
-                    'content': [
-                        {'type': 'text', 'text': '[Audio: https://example.com/a.mp3]'},
-                        {'type': 'text', 'text': '[DocumentUrl: https://example.com/d.pdf]'},
-                        {'type': 'text', 'text': '[VideoUrl: https://example.com/v.mp4]'},
-                    ],
-                }
-            ]
-        )
-
-    def test_cache_point_is_dropped(self):
-        messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart(['Hello', CachePoint()])]),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot([{'role': 'user', 'content': 'Hello'}])
-
-    def test_text_content_in_user_content(self):
-        """`TextContent` contributes its `.content` as a text part, like a plain `str`."""
-        messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(['Plain text', TextContent(content='Tagged text', metadata={'tag': 'important'})]),
-                ]
-            ),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {
-                    'role': 'user',
-                    'content': [
-                        {'type': 'text', 'text': 'Plain text'},
-                        {'type': 'text', 'text': 'Tagged text'},
-                    ],
-                }
-            ]
-        )
-
-    def test_uploaded_file_falls_back_to_text(self):
-        """`UploadedFile` is a provider-hosted reference with no Chat Completions equivalent, so it becomes a marker."""
-        messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(['What is in this file?', UploadedFile(file_id='file-abc', provider_name='openai')]),
-                ]
-            ),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {
-                    'role': 'user',
-                    'content': [
-                        {'type': 'text', 'text': 'What is in this file?'},
-                        {'type': 'text', 'text': '[UploadedFile: file-abc (openai)]'},
-                    ],
-                }
-            ]
-        )
-
-    def test_retry_prompt_with_tool(self):
-        messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(content='Try again', tool_name='my_tool', tool_call_id='call_1'),
-                ]
-            ),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {
-                    'role': 'tool',
-                    'tool_call_id': 'call_1',
-                    'content': """\
-Try again
-
-Fix the errors and try again.\
-""",
-                }
-            ]
-        )
-
-    def test_retry_prompt_without_tool(self):
-        messages: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(content='Invalid output'),
-                ]
-            ),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {
-                    'role': 'user',
-                    'content': """\
-Validation feedback:
-Invalid output
-
-Fix the errors and try again.\
-""",
-                }
-            ]
-        )
-
-    def test_unknown_audio_format_falls_back_to_text(self):
-        messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart([BinaryContent(data=b'abc', media_type='audio/webm')])]),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot(
-            [
-                {'role': 'user', 'content': '[Audio: audio/webm]'},
-            ]
-        )
-
-    def test_non_openai_audio_format_falls_back_to_text(self):
-        """Audio formats OpenAI doesn't accept (e.g. flac) fall back to a text marker."""
-        messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart([BinaryContent(data=b'abc', media_type='audio/flac')])]),
-        ]
-        result = model_messages_to_openai_format(messages)
-        assert result == snapshot([{'role': 'user', 'content': '[Audio: audio/flac]'}])
-
-
-# ── Round-trip tests ─────────────────────────────────────────────────
-
-
-class TestRoundTrip:
-    """Test that converting ModelMessages → OTEL → ModelMessages preserves semantics."""
-
-    def test_round_trip_simple(self):
-        """Simple text conversation round-trips through OTEL format."""
-        otel = [
-            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
-            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hi'}]},
-        ]
-        messages = otel_messages_to_model_messages(otel)
-        openai_fmt = model_messages_to_openai_format(messages)
-        assert openai_fmt == snapshot(
-            [
-                {'role': 'user', 'content': 'Hello'},
-                {'role': 'assistant', 'content': 'Hi'},
-            ]
-        )
-
-    def test_round_trip_with_tools(self):
-        otel = [
-            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Weather?'}]},
-            {
-                'role': 'assistant',
-                'parts': [
-                    {'type': 'tool_call', 'id': 'call_1', 'name': 'weather', 'arguments': {'city': 'NYC'}},
-                ],
-            },
-            {
-                'role': 'user',
-                'parts': [
-                    {'type': 'tool_call_response', 'id': 'call_1', 'name': 'weather', 'result': 'Rainy'},
-                ],
-            },
-            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'It is rainy.'}]},
-        ]
-        messages = otel_messages_to_model_messages(otel)
-        openai_fmt = model_messages_to_openai_format(messages)
-        assert openai_fmt == snapshot(
-            [
-                {'role': 'user', 'content': 'Weather?'},
-                {
-                    'role': 'assistant',
-                    'content': None,
-                    'tool_calls': [
-                        {
-                            'id': 'call_1',
-                            'type': 'function',
-                            'function': {'name': 'weather', 'arguments': '{"city":"NYC"}'},
-                        },
-                    ],
-                },
-                {'role': 'tool', 'tool_call_id': 'call_1', 'content': 'Rainy'},
-                {'role': 'assistant', 'content': 'It is rainy.'},
+                ModelRequest(parts=[UserPromptPart(content='', timestamp=IsDatetime())]),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='get_weather', tool_call_id='call_1')],
+                    timestamp=IsDatetime(),
+                    finish_reason='tool_call',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_weather', content='', tool_call_id='call_1', timestamp=IsDatetime()
+                        )
+                    ]
+                ),
+                ModelResponse(parts=[TextPart(content='')], timestamp=IsDatetime(), finish_reason='stop'),
             ]
         )

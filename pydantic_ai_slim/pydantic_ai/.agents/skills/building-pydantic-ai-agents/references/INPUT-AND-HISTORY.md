@@ -43,6 +43,12 @@ Important distinctions:
 - `all_messages()` returns the full history accumulated so far
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
 
+To replay a conversation recorded by OTel instrumentation (e.g. the `gen_ai.input.messages` or
+`pydantic_ai.all_messages` span attributes queried from Logfire), convert it back to messages with
+`otel_messages_to_model_messages()` from `pydantic_ai` and pass the result as `message_history`.
+The conversion is lossy: timestamps, instructions, and content recorded with `include_content=False`
+are not preserved.
+
 ## Manage Context Size
 
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
