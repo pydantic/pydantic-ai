@@ -34,7 +34,7 @@ def best_effort_price_calculation(response: ModelResponse) -> PriceCalculation |
         return None
     except Exception as e:
         warnings.warn(
-            f'Failed to calculate the cost of the response: {type(e).__name__}: {e}',
+            f'Failed to get cost from response: {type(e).__name__}: {e}',
             CostCalculationFailedWarning,
             stacklevel=2,
         )
