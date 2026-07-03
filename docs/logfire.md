@@ -249,6 +249,21 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ## Advanced usage
 
+### Emitted metrics
+
+In addition to spans, the instrumentation records the following [OpenTelemetry metrics](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/), all histograms:
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `gen_ai.client.token.usage` | `{token}` | Number of tokens used per model or embedding request, split by the `gen_ai.token.type` attribute (`input` or `output`). Defined by the GenAI semantic conventions. |
+| `operation.cost` | `{USD}` | Estimated monetary cost of each model or embedding request, recorded when a price is known for the model. |
+| `gen_ai.client.operation.time_to_first_chunk` | `s` | Time from issuing a streaming request to the first chunk being surfaced to the consumer. Only recorded for streaming requests; the same value is also set as an attribute of the same name on the model request span. |
+
+Each metric point carries the `gen_ai.provider.name` (and legacy `gen_ai.system`), `gen_ai.operation.name`, `gen_ai.request.model`, and `gen_ai.response.model` attributes, so histograms can be broken down by provider and model.
+
+!!! note "Histogram bucket boundaries"
+    `gen_ai.client.token.usage` advises the bucket boundaries specified by the semantic conventions. The conventions don't advise boundaries for `gen_ai.client.operation.time_to_first_chunk`, so Pydantic AI advises the ladder the spec uses for `gen_ai.client.operation.duration` (0.01s through 81.92s) — without an advisory, the OTel SDK's default buckets would collapse nearly all sub-second values into the lowest bucket. These are only advisories: you can override them by configuring a [View](https://opentelemetry.io/docs/specs/otel/metrics/sdk/#view) on your `MeterProvider`, and SDKs configured for exponential histogram aggregation (such as Logfire) ignore them entirely.
+
 ### Aggregated usage attribute names
 
 By default, model request spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes, while agent run spans use `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`.
