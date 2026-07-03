@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -17,6 +17,7 @@ from pydantic_ai.capabilities.abstract import (
     CapabilityOrdering,
     WrapModelRequestHandler,
 )
+from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, call_model, open_model_stream, process_event_stream
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -219,11 +220,13 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
             return run_coro_as_sync(original_run(*args, **kwargs))
 
         async def patched_run(*args: Any, **kwargs: Any) -> Any:
+            self._reject_runtime_toolsets(kwargs.get('toolsets'))
             if FlowRunContext.get() is not None:
                 return await original_run(*args, **kwargs)
             return cast(Any, await _auto_run_flow(*args, **kwargs))
 
         def patched_run_sync(*args: Any, **kwargs: Any) -> Any:
+            self._reject_runtime_toolsets(kwargs.get('toolsets'))
             if FlowRunContext.get() is not None:  # pragma: lax no cover
                 return original_run_sync(*args, **kwargs)
             return cast(Any, _auto_run_sync_flow(*args, **kwargs))
@@ -231,6 +234,19 @@ class PrefectDurability(AbstractCapability[AgentDepsT]):
         patched_run._pydantic_ai_prefect_wrapped = True  # pyright: ignore[reportFunctionMemberAccess]
         agent.run = patched_run
         agent.run_sync = patched_run_sync
+
+    def _reject_runtime_toolsets(self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None) -> None:
+        """Reject executing toolsets added per-run.
+
+        Every run on an agent with `PrefectDurability` is a Prefect flow. Prefect wraps
+        both function tools and MCP servers in tasks registered up front, and dynamic
+        toolsets can't be introspected ahead of time, so a per-run executing toolset
+        would run un-tasked inside the flow — rejected explicitly, like the deprecated
+        `PrefectAgent` does. Non-executing toolsets like `ExternalToolset` are allowed.
+        """
+        reject_unsupported_runtime_toolsets(
+            toolsets, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Prefect'
+        )
 
     def _prefectify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap leaf toolsets as Prefect tasks."""

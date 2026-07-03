@@ -6679,3 +6679,118 @@ async def test_durability_uploaded_file_serialization_preserves_media_type(allow
         assert output == snapshot(
             UploadedFile(file_id='file-abc123', provider_name='openai', _media_type='image/png', _identifier='file-1')
         )
+
+
+# --- Toolsets at runtime ---
+
+
+@workflow.defn
+class DurabilityRuntimeFunctionToolsetWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_durable_agent.run(prompt, toolsets=[FunctionToolset()])
+        return result.output  # pragma: no cover
+
+
+async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_temporal_agent_run_in_workflow_with_executing_toolsets`.
+
+    Executing toolsets can't be added per-run inside a workflow because their activities must
+    be registered with the worker before the workflow runs.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRuntimeFunctionToolsetWorkflow],
+        plugins=[DurabilityPlugin(simple_durable_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
+                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
+                'execution when the agent is constructed. Pass them to the agent constructor instead. '
+                'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
+            ),
+        ):
+            await client.execute_workflow(
+                DurabilityRuntimeFunctionToolsetWorkflow.run,
+                args=['What is the capital of Mexico?'],
+                id=DurabilityRuntimeFunctionToolsetWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_durability_allows_runtime_toolsets_outside_workflow(allow_model_requests: None):
+    """Outside a workflow the capability is transparent, so per-run executing toolsets are fine."""
+
+    def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('runtime_tool', {}, tool_call_id='call-1')])
+
+    def runtime_tool() -> str:
+        return 'tool-result'
+
+    agent = Agent(
+        FunctionModel(call_then_answer),
+        name='durability_runtime_outside_workflow',
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    result = await agent.run('Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')])
+    assert result.output == 'done'
+
+
+def _durability_request_external_tool(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
+
+
+_durability_runtime_external_agent = Agent(
+    FunctionModel(_durability_request_external_tool),
+    name='durability_runtime_external_agent',
+    output_type=[str, DeferredToolRequests],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+_durability_runtime_external_toolset = ExternalToolset(
+    tool_defs=[
+        ToolDefinition(
+            name='external',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'query': {'type': 'string'}},
+                'required': ['query'],
+            },
+        )
+    ],
+    id='external',
+)
+
+
+@workflow.defn
+class DurabilityRuntimeExternalToolsetWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> DeferredToolRequests | str:
+        result = await _durability_runtime_external_agent.run(
+            prompt, toolsets=[_durability_runtime_external_toolset]
+        )
+        return result.output
+
+
+async def test_durability_run_in_workflow_with_runtime_external_toolset(allow_model_requests: None, client: Client):
+    """Capability-path equivalent of `test_temporal_agent_run_in_workflow_with_runtime_external_toolset`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRuntimeExternalToolsetWorkflow],
+        plugins=[DurabilityPlugin(_durability_runtime_external_agent)],
+    ):
+        output = await client.execute_workflow(
+            DurabilityRuntimeExternalToolsetWorkflow.run,
+            args=['Call the runtime external tool.'],
+            id=DurabilityRuntimeExternalToolsetWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == DeferredToolRequests(
+            calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+        )

@@ -1497,3 +1497,18 @@ def test_prefect_durability_idempotent_for_agent() -> None:
     # Re-binding another PrefectDurability should leave agent.run untouched.
     PrefectDurability().for_agent(agent)
     assert agent.run is first_run
+
+
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
+async def test_prefect_durability_rejects_executing_runtime_toolsets(kind: str) -> None:
+    """Capability-path equivalent of `test_prefect_agent_run_rejects_executing_runtime_toolsets`."""
+    toolset_factories = {
+        'function': lambda: FunctionToolset(),
+        'mcp': lambda: MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp'),
+        'dynamic': lambda: DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic'),
+    }
+    labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
+
+    agent = Agent(TestModel(), name=f'durability_reject_{kind}', capabilities=[PrefectDurability()])
+    with pytest.raises(UserError, match=f'{labels[kind]} cannot be passed to '):
+        await agent.run('Hello', toolsets=[toolset_factories[kind]()])

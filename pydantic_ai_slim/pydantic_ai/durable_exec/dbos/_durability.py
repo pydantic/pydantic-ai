@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -16,6 +16,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
+from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, call_model, open_model_stream, process_event_stream
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
@@ -215,6 +216,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         self._auto_run_sync_workflow = _auto_run_sync_workflow
 
         async def patched_run(*args: Any, **kwargs: Any) -> Any:
+            self._reject_runtime_toolsets(kwargs.get('toolsets'))
             if DBOS.workflow_id is not None and DBOS.step_id is None:
                 # Already inside a DBOS workflow — skip the auto-wrap and just apply the mode.
                 with agent.parallel_tool_call_execution_mode(parallel_mode):
@@ -222,6 +224,7 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
             return await _auto_run_workflow(*args, **kwargs)
 
         def patched_run_sync(*args: Any, **kwargs: Any) -> Any:
+            self._reject_runtime_toolsets(kwargs.get('toolsets'))
             if DBOS.workflow_id is not None and DBOS.step_id is None:  # pragma: lax no cover
                 with agent.parallel_tool_call_execution_mode(parallel_mode):
                     return original_run_sync(*args, **kwargs)
@@ -230,6 +233,17 @@ class DBOSDurability(AbstractCapability[AgentDepsT]):
         patched_run._pydantic_ai_dbos_wrapped = True  # pyright: ignore[reportFunctionMemberAccess]
         agent.run = patched_run
         agent.run_sync = patched_run_sync
+
+    def _reject_runtime_toolsets(self, toolsets: Sequence[AbstractToolset[AgentDepsT]] | None) -> None:
+        """Reject executing toolsets added per-run.
+
+        Every run on an agent with `DBOSDurability` is a DBOS workflow, so a per-run MCP
+        toolset would run un-checkpointed inside it and a dynamic toolset can't be
+        introspected up front — rejected explicitly, like the deprecated `DBOSAgent` does.
+        DBOS runs function tools inline, so `FunctionToolset` is allowed at runtime, as
+        are non-executing toolsets like `ExternalToolset`.
+        """
+        reject_unsupported_runtime_toolsets(toolsets, unsupported_kinds=frozenset({'mcp', 'dynamic'}), engine='DBOS')
 
     def _dbosify_leaf_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Wrap MCP leaf toolsets as DBOS steps."""

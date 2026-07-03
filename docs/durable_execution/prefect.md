@@ -179,7 +179,7 @@ The event stream handler function will receive the agent [run context][pydantic_
 
 ### Toolsets at Runtime
 
-Additional toolsets can be passed per run via [`PrefectAgent.run(toolsets=...)`][pydantic_ai.durable_exec.prefect.PrefectAgent.run], but only non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, are supported. Executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`.
+Additional toolsets can be passed per run via `agent.run(toolsets=...)` (on both the [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] and `PrefectAgent` paths), but only non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, are supported. Executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their tasks are registered before the flow runs; passing them at runtime raises a `UserError`.
 
 ## Task Configuration
 

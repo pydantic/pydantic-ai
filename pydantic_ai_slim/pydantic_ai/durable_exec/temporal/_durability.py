@@ -23,6 +23,7 @@ from pydantic_ai.capabilities.abstract import (
     WrapModelRequestHandler,
     WrapRunHandler,
 )
+from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
     call_model,
@@ -569,6 +570,8 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Replace leaf toolsets with their Temporal-wrapped versions."""
+        self._reject_runtime_toolsets(toolset)
+
         if not self._temporal_toolsets_by_id:
             return None
 
@@ -579,6 +582,36 @@ class TemporalDurability(AbstractCapability[AgentDepsT]):
             return ts
 
         return toolset.visit_and_replace(swap)
+
+    def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
+        """Reject executing toolsets added per-run inside a workflow.
+
+        The run toolset assembled by the agent contains both construction-time toolsets
+        (whose activities `for_agent` registered with the worker) and any extras passed
+        via `run(toolsets=...)`. Executing extras would run un-wrapped inside the workflow
+        — no activity, non-deterministic on replay — so they're rejected explicitly, like
+        the deprecated `TemporalAgent` does. Non-executing toolsets like `ExternalToolset`
+        pass through. Only applies inside a workflow; outside one the capability is
+        transparent and any toolset is fine.
+        """
+        if not workflow.in_workflow():
+            return
+
+        construction_leaves: set[int] = set()
+        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
+            for agent_toolset in self._agent.toolsets:
+                agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
+
+        runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
+
+        def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
+            if id(leaf) not in construction_leaves:
+                runtime_leaves.append(leaf)
+
+        toolset.apply(collect)
+        reject_unsupported_runtime_toolsets(
+            runtime_leaves, unsupported_kinds=frozenset({'function', 'mcp', 'dynamic'}), engine='Temporal'
+        )
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='innermost')

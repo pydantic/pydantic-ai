@@ -2255,3 +2255,40 @@ async def test_dbos_durability_get_wrapper_toolset_with_mcp(dbos: DBOS) -> None:
     replaced = bound.get_wrapper_toolset(mcp_toolset)
     assert replaced is not None
     assert isinstance(replaced, DBOSMCPToolset)
+
+
+async def test_dbos_durability_allows_runtime_function_toolset(dbos: DBOS) -> None:
+    """A `FunctionToolset` added per-run is allowed and executes inline, like on `DBOSAgent`."""
+
+    def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('runtime_tool', {}, tool_call_id='call-1')])
+
+    agent = Agent(
+        FunctionModel(call_then_answer), name='durability_runtime_fn', capabilities=[DBOSDurability()]
+    )
+
+    result = await agent.run('Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')])
+    assert result.output == 'done'
+
+
+async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
+    """An `MCPToolset` added per-run is rejected: its I/O steps must be registered at construction."""
+    agent = Agent(_durability_fn_model, name='durability_runtime_mcp', capabilities=[DBOSDurability()])
+
+    with pytest.raises(UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'):
+        await agent.run(
+            'Hello',
+            toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp')],
+        )
+
+
+def test_dbos_durability_rejects_runtime_dynamic_toolset_sync(dbos: DBOS) -> None:
+    """A `DynamicToolset` added per-run is rejected, on `run_sync` as well as `run`."""
+    agent = Agent(_durability_fn_model, name='durability_runtime_dynamic', capabilities=[DBOSDurability()])
+
+    with pytest.raises(
+        UserError, match=r'DynamicToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+    ):
+        agent.run_sync('Hello', toolsets=[DynamicToolset(lambda _: FunctionToolset(), id='runtime_dynamic')])
