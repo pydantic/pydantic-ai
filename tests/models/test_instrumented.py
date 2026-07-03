@@ -2133,3 +2133,69 @@ async def test_instrumented_model_request_error(capfire: CaptureLogfire):
     # finish() was never called, so response-specific attributes are absent
     assert 'gen_ai.response.id' not in spans[0]['attributes']
     assert 'gen_ai.usage.input_tokens' not in spans[0]['attributes']
+
+
+def _metric_attribute_sets(capfire: CaptureLogfire) -> list[dict[str, object]]:
+    """Collect the attribute dicts of every metric data point that was recorded."""
+    attribute_sets: list[dict[str, object]] = []
+    for metric in capfire.get_collected_metrics():
+        for data_point in metric['data']['data_points']:
+            attribute_sets.append(data_point['attributes'])
+    return attribute_sets
+
+
+async def test_metrics_omit_agent_name_by_default(capfire: CaptureLogfire):
+    """By default, `gen_ai.agent.name` is not stamped on client metric data points."""
+    from opentelemetry import context
+    from opentelemetry.baggage import set_baggage
+
+    from pydantic_ai._instrumentation import AGENT_NAME_BAGGAGE_KEY
+
+    model = InstrumentedModel(MyModel(), InstrumentationSettings())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+
+    token = context.attach(set_baggage(AGENT_NAME_BAGGAGE_KEY, 'planner'))
+    try:
+        await model.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+    finally:
+        context.detach(token)
+
+    attribute_sets = _metric_attribute_sets(capfire)
+    assert attribute_sets  # sanity: metrics were recorded
+    assert all(AGENT_NAME_BAGGAGE_KEY not in attrs for attrs in attribute_sets)
+
+
+async def test_metrics_include_agent_name_when_enabled(capfire: CaptureLogfire):
+    """When opted in, `gen_ai.agent.name` from baggage is stamped on client metric data points."""
+    from opentelemetry import context
+    from opentelemetry.baggage import set_baggage
+
+    from pydantic_ai._instrumentation import AGENT_NAME_BAGGAGE_KEY
+
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(include_agent_name_in_metric_attributes=True))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+
+    token = context.attach(set_baggage(AGENT_NAME_BAGGAGE_KEY, 'planner'))
+    try:
+        await model.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+    finally:
+        context.detach(token)
+
+    attribute_sets = _metric_attribute_sets(capfire)
+    # Both the token-usage (input/output) and cost data points carry the agent name.
+    assert attribute_sets
+    assert all(attrs.get(AGENT_NAME_BAGGAGE_KEY) == 'planner' for attrs in attribute_sets)
+
+
+async def test_metrics_omit_agent_name_when_enabled_but_unnamed(capfire: CaptureLogfire):
+    """With the flag on but no agent name in baggage, the attribute is omitted (direct model use)."""
+    from pydantic_ai._instrumentation import AGENT_NAME_BAGGAGE_KEY
+
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(include_agent_name_in_metric_attributes=True))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello')], timestamp=IsDatetime())]
+
+    await model.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+
+    attribute_sets = _metric_attribute_sets(capfire)
+    assert attribute_sets
+    assert all(AGENT_NAME_BAGGAGE_KEY not in attrs for attrs in attribute_sets)

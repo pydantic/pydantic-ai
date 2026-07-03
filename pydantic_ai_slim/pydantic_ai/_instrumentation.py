@@ -247,13 +247,18 @@ def open_model_request_span(
                 price_calculation = None
 
                 def _record_metrics() -> None:
-                    metric_attributes = {
+                    metric_attributes: dict[str, AttributeValue] = {
                         GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,
                         GEN_AI_SYSTEM_ATTRIBUTE: system,
                         'gen_ai.operation.name': operation,
                         'gen_ai.request.model': request_model,
                         'gen_ai.response.model': response_model,
                     }
+                    if (
+                        settings.include_agent_name_in_metric_attributes
+                        and (agent_name := attributes.get(AGENT_NAME_BAGGAGE_KEY)) is not None
+                    ):
+                        metric_attributes[AGENT_NAME_BAGGAGE_KEY] = agent_name
                     settings.record_metrics(response, price_calculation, metric_attributes)
 
                 record_metrics = _record_metrics

@@ -66,6 +66,7 @@ class InstrumentationSettings:
     include_content: bool = True
     version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION
     use_aggregated_usage_attribute_names: bool = True
+    include_agent_name_in_metric_attributes: bool = False
 
     def __init__(
         self,
@@ -76,6 +77,7 @@ class InstrumentationSettings:
         include_content: bool = True,
         version: Literal[2, 3, 4, 5] = DEFAULT_INSTRUMENTATION_VERSION,
         use_aggregated_usage_attribute_names: bool = True,
+        include_agent_name_in_metric_attributes: bool = False,
     ):
         """Create instrumentation options.
 
@@ -110,6 +112,15 @@ class InstrumentationSettings:
                 attributes across parent and child spans.
                 Note: `gen_ai.aggregated_usage.*` is a custom namespace, not part of the OpenTelemetry
                 Semantic Conventions. It may be updated if OTel introduces an official convention.
+            include_agent_name_in_metric_attributes: Whether to stamp the `gen_ai.agent.name` attribute
+                (read from OpenTelemetry baggage) on the GenAI client metric data points, such as
+                `gen_ai.client.token.usage` and `operation.cost`. Defaults to False.
+                The OpenTelemetry GenAI semantic conventions currently specify `gen_ai.agent.name` only for
+                spans (`invoke_agent`), not for client metrics, so it is not emitted by default. Enable this
+                to break metrics down by agent (e.g. in metrics-only backends like Prometheus/Grafana that
+                have no span pipeline). Note that enabling it adds a dimension that splits existing metric
+                series keyed on the current attributes. The attribute is only added when the request is made
+                on behalf of a named agent; it is omitted for direct model use and unnamed agents.
         """
         from pydantic_ai import __version__
 
@@ -131,6 +142,7 @@ class InstrumentationSettings:
             )
         self.version = version
         self.use_aggregated_usage_attribute_names = use_aggregated_usage_attribute_names
+        self.include_agent_name_in_metric_attributes = include_agent_name_in_metric_attributes
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
