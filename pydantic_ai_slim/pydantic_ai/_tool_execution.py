@@ -38,7 +38,7 @@ _TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was 
 
 
 def _duplicate_tool_call_ids(calls: Sequence[_messages.ToolCallPart]) -> list[str]:
-    """Return duplicate tool call ids, preserving the order in which each duplicate first appears."""
+    """Return duplicate `tool_call_id` values, in the order each ID is first encountered as a duplicate."""
     seen: set[str] = set()
     duplicates: list[str] = []
     for call in calls:
