@@ -45,6 +45,20 @@ jobs:
             exit 0
           fi
 
+          # Only PRs targeting the default branch are checked. GitHub interprets
+          # closing keywords ("Fixes #123") *only* on default-branch PRs; on any
+          # other base branch the keywords are ignored and closingIssuesReferences
+          # is always empty. Enforcing the issue-link policy there would close
+          # validly-linked PRs (e.g. a fix targeting a maintenance branch), and
+          # dedup can't work without the link either, so leave them to maintainers.
+          # Fail open if we can't confidently establish the base is the default
+          # branch (either value empty), so a missing payload field never leads to
+          # enforcing the policy on a PR we can't verify.
+          if [ -z "${DEFAULT_BRANCH}" ] || [ -z "${GITHUB_EVENT_PULL_REQUEST_BASE_REF}" ] || [ "${GITHUB_EVENT_PULL_REQUEST_BASE_REF}" != "${DEFAULT_BRANCH}" ]; then
+            echo "PR base '${GITHUB_EVENT_PULL_REQUEST_BASE_REF}' is not the confirmed default branch '${DEFAULT_BRANCH}'; skipping checks."
+            exit 0
+          fi
+
           # Maintainer bypass
           if [[ "$AUTHOR_ASSOCIATION" == "MEMBER" || "$AUTHOR_ASSOCIATION" == "OWNER" || "$AUTHOR_ASSOCIATION" == "COLLABORATOR" ]]; then
             echo "Author is a maintainer/collaborator, skipping checks."
@@ -62,37 +76,393 @@ jobs:
           fi
           PR_CREATED_EPOCH=$(date -u -d "$GITHUB_EVENT_PULL_REQUEST_CREATED_AT" +%s)
 
-          # Helper: close a contributor PR that doesn't link to any existing issue.
-          # Only external contributors reach this point (maintainers/collaborators
-          # bypass above). Exemptions:
-          #   - bot authors (pydanty, dependabot, etc.) — they never file issues first
+          # ---- Auto-close safety gates ---------------------------------------
+          # Every automated close of *this* PR is destructive and contributor-
+          # facing, so all close paths below run it through these gates first:
+          #   1. is_close_exempt      — bot/docs-only PRs are never auto-closed
+          #   2. body_references_issue — veto a missing-issue close when the body
+          #                              shows linking intent GitHub hasn't resolved
+          #   3. pr_currently_closable — re-confirm the PR is still open/ready/on the
+          #                              default branch before acting on stale state
+
+          # Memoized: is this PR categorically exempt from any automated close?
+          #   - bot authors (pydanty, dependabot, …) — they don't file issues first
           #   - docs-only changes — small doc fixes are welcome without an issue
-          close_for_missing_issue() {
-            case "$PR_AUTHOR" in
+          # Fails open (exempt) when the changed files can't be determined, since we
+          # then can't rule out the docs-only exemption. Cached because most PRs
+          # never reach a close path.
+          # Is PR <#1> (authored by <#2>) categorically exempt from any automated
+          # close? Bots (they don't file issues first) and docs-only changes are
+          # exempt. Works for any PR — the current one or a supersede target — so the
+          # exemption is honored consistently. Fails open (exempt) when the changed
+          # files can't be determined, since the docs-only case then can't be ruled out.
+          pr_is_close_exempt() {
+            local pr_num="$1" author="$2" changed_files file
+            case "$author" in
               *"[bot]")
-                echo "Author ${PR_AUTHOR} is a bot; not closing for missing issue link."
+                echo "PR #${pr_num} author ${author} is a bot; exempt from automated close."
                 return 0
                 ;;
             esac
-
-            # If the changed files can't be determined, err on the side of leaving
-            # the PR open: closing is destructive and the docs-only exemption
-            # can't be ruled out.
-            if ! CHANGED_FILES=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100" --paginate --jq '.[].filename') || [ -z "$CHANGED_FILES" ]; then
-              echo "Could not determine changed files; not closing for missing issue link."
+            if ! changed_files=$(gh api "repos/${REPO}/pulls/${pr_num}/files?per_page=100" --paginate --jq '.[].filename') || [ -z "$changed_files" ]; then
+              echo "Could not determine changed files for PR #${pr_num}; exempting from automated close to stay safe."
               return 0
             fi
-            DOCS_ONLY="true"
-            while IFS= read -r CHANGED_FILE; do
-              case "$CHANGED_FILE" in
+            while IFS= read -r file; do
+              case "$file" in
                 docs/*|*.md|mkdocs.yml) ;;
-                *) DOCS_ONLY="false"; break ;;
+                *) return 1 ;;
               esac
-            done <<< "$CHANGED_FILES"
-            if [ "$DOCS_ONLY" = "true" ]; then
-              echo "PR only touches documentation; not closing for missing issue link."
+            done <<< "$changed_files"
+            echo "PR #${pr_num} only touches documentation; exempt from automated close."
+            return 0
+          }
+
+          # Memoized exemption check for the *current* PR (most PRs never reach a close
+          # path, so compute lazily and cache).
+          CLOSE_EXEMPT=""
+          is_close_exempt() {
+            if [ -z "$CLOSE_EXEMPT" ]; then
+              if pr_is_close_exempt "$PR_NUMBER" "$PR_AUTHOR"; then CLOSE_EXEMPT="true"; else CLOSE_EXEMPT="false"; fi
+            fi
+            [ "$CLOSE_EXEMPT" = "true" ]
+          }
+
+          # Does the PR *body* reference an issue with a closing keyword or issue URL?
+          # Used only to *veto* a missing-issue close: closingIssuesReferences resolves
+          # asynchronously and can still be empty after our retries, so if the body
+          # itself shows clear linking intent we leave the PR open rather than risk
+          # closing a validly-linked PR over a reference GitHub hasn't caught up on.
+          # This never *causes* a close — positive detection stays with GitHub's
+          # authoritative parser. Fails open (treats as referencing) on fetch error.
+          body_references_issue() {
+            local body rc=0
+            body=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.body // ""') || return 0
+            # here-string (not a pipe) so the result is grep's exit status directly:
+            # `printf ... | grep -q` would, under `set -o pipefail`, report a SIGPIPE
+            # from printf (grep -q exits on first match) as a pipeline failure and
+            # wrongly skip the veto for a large body whose keyword appears early.
+            # `|| rc=$?` captures grep's status independent of errexit context.
+            grep -iqE '(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]+([[:alnum:]._-]+/[[:alnum:]._-]+)?#[0-9]+|https?://github\.com/[^ ]+/issues/[0-9]+' <<< "$body" || rc=$?
+            # 0 = matched (veto, leave open); 1 = no match (allow close); >=2 = grep
+            # error => fail open (veto) rather than silently allowing a close.
+            [ "$rc" -eq 1 ] && return 1
+            return 0
+          }
+
+          # Print the in-repo issue numbers GitHub has resolved as closing references
+          # for a PR. Args: <PR number>. Returns non-zero (so callers fail open) on any
+          # query error OR when the reference set is paginated (>100), i.e. can't be
+          # fully seen — never let an incomplete set drive a close decision.
+          fresh_linked_issues() {
+            local pr_num="$1" json has_more
+            json=$(gh api graphql \
+              -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$pr_num" \
+              -f query='
+                query($owner: String!, $name: String!, $number: Int!) {
+                  repository(owner: $owner, name: $name) {
+                    pullRequest(number: $number) {
+                      closingIssuesReferences(first: 100) {
+                        pageInfo { hasNextPage }
+                        nodes { number repository { nameWithOwner } }
+                      }
+                    }
+                  }
+                }') || return 1
+            has_more=$(echo "$json" | jq -r '.data.repository.pullRequest.closingIssuesReferences.pageInfo.hasNextPage')
+            [ "$has_more" != "false" ] && return 1
+            echo "$json" | jq -r ".data.repository.pullRequest.closingIssuesReferences.nodes[] | select(.repository.nameWithOwner == \"${REPO}\") | .number"
+          }
+
+          # Conservative async-edit veto. Does every in-repo issue referenced by a
+          # closing keyword (or in-repo issue URL) in PR <#1>'s body already appear in
+          # the resolved set <#2, whitespace-separated>? closingIssuesReferences lags
+          # body edits, so a body just changed to add "fixes #N" can reference an issue
+          # GitHub hasn't resolved yet. Returns 0 only when every body reference is
+          # accounted for (safe to act on the resolved set); 1 otherwise, and on fetch
+          # error, so a close/supersede never fires on a set that may be incomplete.
+          body_refs_all_resolved() {
+            local pr_num="$1" resolved="$2" body kw_refs url_refs nums n rc
+            body=$(gh api "repos/${REPO}/pulls/${pr_num}" --jq '.body // ""') || return 1
+            # Extract keyword/URL references separately so a grep *error* (exit >=2) is
+            # distinguishable from "no match" (exit 1) and fails open, rather than
+            # `|| true` masking an error as an empty (all-resolved) set.
+            rc=0; kw_refs=$(grep -ioE '(close[sd]?|fix(es|ed)?|resolve[sd]?)[[:space:]]*:?[[:space:]]+([[:alnum:]._-]+/[[:alnum:]._-]+)?#[0-9]+' <<< "$body") || rc=$?
+            [ "$rc" -ge 2 ] && return 1
+            rc=0; url_refs=$(grep -ioE 'https?://github\.com/[^ ]+/issues/[0-9]+' <<< "$body") || rc=$?
+            [ "$rc" -ge 2 ] && return 1
+            rc=0; nums=$(printf '%s\n%s\n' "$kw_refs" "$url_refs" | grep -oE '[0-9]+$') || rc=$?
+            [ "$rc" -ge 2 ] && return 1
+            for n in $nums; do
+              rc=0; grep -qxF "$n" <<< "$resolved" || rc=$?
+              [ "$rc" -ne 0 ] && return 1
+            done
+            return 0
+          }
+
+          # Does PR <#1>'s *current body* still reference in-repo issue <#2> via a
+          # closing keyword or an in-repo issue URL? Used to require direct current
+          # evidence that a blocker/superseder actually covers an issue, since GitHub's
+          # closing-reference graph can lag a body edit that *removed* the link
+          # (stale-positive). Precise, in-repo, exact-number match so a cross-repo or
+          # number-prefix reference can't be mistaken for coverage (a false positive
+          # here would wrongly close a PR). Fails open (return 1) on fetch/grep error.
+          # Print the in-repo PR numbers GitHub currently records as closing issue <#1>
+          # (the issue -> PR direction of the closing-reference graph). Returns non-zero
+          # (callers fail open) on query error or pagination (>100), never letting an
+          # incomplete set drive a decision.
+          fresh_closing_prs() {
+            local issue_num="$1" json has_more
+            json=$(gh api graphql \
+              -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$issue_num" \
+              -f query='
+                query($owner: String!, $name: String!, $number: Int!) {
+                  repository(owner: $owner, name: $name) {
+                    issue(number: $number) {
+                      closedByPullRequestsReferences(first: 100) {
+                        pageInfo { hasNextPage }
+                        nodes { number repository { nameWithOwner } }
+                      }
+                    }
+                  }
+                }') || return 1
+            has_more=$(echo "$json" | jq -r '.data.repository.issue.closedByPullRequestsReferences.pageInfo.hasNextPage')
+            [ "$has_more" != "false" ] && return 1
+            echo "$json" | jq -r ".data.repository.issue.closedByPullRequestsReferences.nodes[] | select(.repository.nameWithOwner == \"${REPO}\") | .number"
+          }
+
+          # Does PR <#1> currently close in-repo issue <#2>? We deliberately do NOT
+          # re-parse the PR body ourselves — GitHub-Flavored Markdown (code fences of any
+          # length/char, indented code, HTML comments, code spans, autolink rules) can't
+          # be matched reliably by regex, and a false positive here would enable a
+          # wrongful close. Instead we trust GitHub's own re-parsed-on-edit closing graph,
+          # and require BOTH directions to agree: the PR's closingIssuesReferences lists
+          # the issue AND the issue's closedByPullRequestsReferences lists the PR. If
+          # either direction has dropped the link (e.g. the body was edited to remove it),
+          # the confirmation fails and the caller leaves the PR open. Fails open (return
+          # 1) on any error/pagination.
+          pr_currently_closes_issue() {
+            local pr_num="$1" issue_num="$2" pr_links issue_prs
+            pr_links=$(fresh_linked_issues "$pr_num") || return 1
+            grep -qxF "$issue_num" <<< "$pr_links" || return 1
+            issue_prs=$(fresh_closing_prs "$issue_num") || return 1
+            grep -qxF "$pr_num" <<< "$issue_prs"
+          }
+
+          # Re-fetch the repo's CURRENT default branch. The event payload's
+          # default_branch is a snapshot; a maintainer could change it mid-run, after
+          # which GitHub no longer interprets closing keywords on PRs targeting the old
+          # branch. Prints it; returns non-zero (callers fail open) on error.
+          current_default_branch() {
+            local db
+            db=$(gh api "repos/${REPO}" --jq '.default_branch') || return 1
+            [ -z "$db" ] && return 1
+            printf '%s' "$db"
+          }
+
+          # Re-fetch the PR's *current* state right before a destructive close. The
+          # event payload is a snapshot from when the run was queued, and during our
+          # retries/sleeps the author may have converted the PR to draft, retargeted
+          # it off the default branch, or closed it — so confirm it's still an open,
+          # ready, default-branch PR (against the *current* default branch). Fails open
+          # (not closable) on fetch error.
+          pr_currently_closable() {
+            local json state draft base assoc fresh_default
+            fresh_default=$(current_default_branch) || { echo "Could not fetch current default branch; not closing."; return 1; }
+            json=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}") || { echo "Could not re-fetch PR state; not closing."; return 1; }
+            state=$(echo "$json" | jq -r '.state')
+            draft=$(echo "$json" | jq -r '.draft')
+            base=$(echo "$json" | jq -r '.base.ref')
+            assoc=$(echo "$json" | jq -r '.author_association')
+            # Require each field to be affirmatively eligible (draft must be exactly
+            # "false", not merely "not true"), so a missing/null/unexpected value
+            # fails open rather than being read as closable.
+            if [ "$state" != "open" ] || [ "$draft" != "false" ] || [ "$base" != "$fresh_default" ]; then
+              echo "PR is no longer an open, ready, default-branch PR (state=${state} draft=${draft} base=${base} default=${fresh_default}); not closing."
+              return 1
+            fi
+            # Re-check authorization here too: the maintainer bypass ran against the
+            # event snapshot, and the author may have become a maintainer/collaborator
+            # since. Only close for a KNOWN non-privileged association; fail open on a
+            # privileged, empty, or unrecognized value.
+            case "$assoc" in
+              CONTRIBUTOR|FIRST_TIME_CONTRIBUTOR|FIRST_TIMER|NONE|MANNEQUIN) ;;
+              *)
+                echo "PR author association '${assoc}' is now privileged or unknown; not closing."
+                return 1
+                ;;
+            esac
+            return 0
+          }
+
+          # Re-verify — right before pydanty supersedes (closes) another contributor's
+          # PR — from *fresh* data, that pydanty's PR still wholly covers the target and
+          # the target is a genuine duplicate safe to close. Everything from the earlier
+          # snapshot (pydanty's own state/links, the target's state/links/labels) may
+          # have changed, so re-fetch it all. Arg: <target PR number>. Fails open on any
+          # error, pagination, unresolved body edit, subset mismatch, or issue-author
+          # ownership. Supersede only when ALL of these hold:
+          #   - pydanty's PR is still open/ready/default-branch/non-stale, its links are
+          #     fully resolved (no pagination) and consistent with its body;
+          #   - the target is still open/ready/default-branch/non-stale, its links are
+          #     fully resolved and body-consistent;
+          #   - the target's links are a non-empty SUBSET of pydanty's (pydanty covers
+          #     everything the target does — else the target contributes something new);
+          #   - the target's author authored none of the issues it targets (an issue's
+          #     author keeps priority for their own issue, regardless of loop order).
+          pr_still_supersedable() {
+            local target="$1"
+            local fresh_default pj ps pd pb pstale p_issues tj ts td tb tstale t_author t_assoc t_issues num author
+            fresh_default=$(current_default_branch) || { echo "Could not fetch current default branch; not superseding."; return 1; }
+            pj=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}") || { echo "Could not re-fetch pydanty PR #${PR_NUMBER}; not superseding."; return 1; }
+            ps=$(echo "$pj" | jq -r '.state'); pd=$(echo "$pj" | jq -r '.draft'); pb=$(echo "$pj" | jq -r '.base.ref')
+            pstale=$(echo "$pj" | jq -r '[.labels[].name] | any(. == "Stale")')
+            if [ "$ps" != "open" ] || [ "$pd" != "false" ] || [ "$pb" != "$fresh_default" ] || [ "$pstale" != "false" ]; then
+              echo "pydanty PR #${PR_NUMBER} is no longer a non-stale open ready default-branch PR (state=${ps} draft=${pd} base=${pb} default=${fresh_default} stale=${pstale}); not superseding."
+              return 1
+            fi
+            p_issues=$(fresh_linked_issues "$PR_NUMBER") || { echo "Could not resolve pydanty PR #${PR_NUMBER} links; not superseding."; return 1; }
+            [ -z "$p_issues" ] && { echo "pydanty PR #${PR_NUMBER} links no in-repo issue now; not superseding."; return 1; }
+            body_refs_all_resolved "$PR_NUMBER" "$p_issues" || { echo "pydanty PR #${PR_NUMBER} has an unresolved body reference; not superseding."; return 1; }
+
+            tj=$(gh api "repos/${REPO}/pulls/${target}") || { echo "Could not re-fetch PR #${target}; not superseding."; return 1; }
+            ts=$(echo "$tj" | jq -r '.state'); td=$(echo "$tj" | jq -r '.draft'); tb=$(echo "$tj" | jq -r '.base.ref')
+            tstale=$(echo "$tj" | jq -r '[.labels[].name] | any(. == "Stale")')
+            t_author=$(echo "$tj" | jq -r '.user.login')
+            t_assoc=$(echo "$tj" | jq -r '.author_association')
+            if [ -z "$t_author" ] || [ "$t_author" = "null" ]; then
+              echo "Could not determine author of PR #${target}; not superseding."
+              return 1
+            fi
+            if [ "$ts" != "open" ] || [ "$td" != "false" ] || [ "$tb" != "$fresh_default" ] || [ "$tstale" != "false" ]; then
+              echo "PR #${target} is no longer a non-stale open ready default-branch PR (state=${ts} draft=${td} base=${tb} default=${fresh_default} stale=${tstale}); not superseding."
+              return 1
+            fi
+            # The current-PR maintainer bypass doesn't cover the target; apply it here,
+            # and only supersede for a KNOWN non-privileged association — fail open for
+            # a maintainer/collaborator or any empty/unrecognized value.
+            case "$t_assoc" in
+              CONTRIBUTOR|FIRST_TIME_CONTRIBUTOR|FIRST_TIMER|NONE|MANNEQUIN) ;;
+              *)
+                echo "PR #${target} author association '${t_assoc}' is privileged or unknown; not superseding."
+                return 1
+                ;;
+            esac
+            t_issues=$(fresh_linked_issues "$target") || { echo "Could not resolve PR #${target} links; not superseding."; return 1; }
+            [ -z "$t_issues" ] && { echo "PR #${target} links no in-repo issue now; not superseding."; return 1; }
+            body_refs_all_resolved "$target" "$t_issues" || { echo "PR #${target} has an unresolved body reference; not superseding."; return 1; }
+
+            # A bot or docs-only target is exempt from automated close, here too.
+            if pr_is_close_exempt "$target" "$t_author"; then
+              echo "PR #${target} is exempt from automated close; not superseding."
+              return 1
+            fi
+
+            for num in $t_issues; do
+              # Require GitHub (both graph directions) to still record BOTH sides as
+              # closing the issue, so a stale-positive edge on either PR can't drive a
+              # supersede: the target genuinely targets it, and pydanty genuinely covers it.
+              pr_currently_closes_issue "$target" "$num" || { echo "PR #${target} no longer closes issue #${num}; not superseding."; return 1; }
+              grep -qxF "$num" <<< "$p_issues" || { echo "PR #${target} also links issue #${num}, which pydanty's PR does not address; not superseding."; return 1; }
+              pr_currently_closes_issue "$PR_NUMBER" "$num" || { echo "pydanty PR #${PR_NUMBER} no longer closes issue #${num}; not superseding."; return 1; }
+              author=$(gh api "repos/${REPO}/issues/${num}" --jq '.user.login' 2>/dev/null) || { echo "Could not check author of issue #${num}; not superseding."; return 1; }
+              if [ "$author" = "$t_author" ]; then
+                echo "PR #${target} is by the author of issue #${num} (${t_author}); leaving it for a maintainer."
+                return 1
+              fi
+            done
+            return 0
+          }
+
+          # Re-derive, from *fresh* data at close time, whether this PR is genuinely a
+          # duplicate: every currently-linked open issue is already covered by a
+          # qualifying earlier active PR. The in-loop blocker scan is a snapshot that
+          # could be stale by the time we close (a blocker went stale/draft/closed, or
+          # the author edited the PR to link a new unblocked issue). Returns 0 only if
+          # there is >=1 linked open issue and ALL of them are currently blocked; fails
+          # open (return 1) on any query error, pagination (>100 links or >100 labels on
+          # a blocker), an unresolved body reference, unknown issue state, or an open
+          # issue with no qualifying blocker.
+          all_open_issues_currently_blocked() {
+            local fresh num state blockers any_open="false" confirmed bnum
+            fresh=$(fresh_linked_issues "$PR_NUMBER") || return 1
+            [ -z "$fresh" ] && return 1
+            # If the body references an issue GitHub hasn't resolved yet, the set may be
+            # incomplete (a just-added, still-unblocked issue) — don't close on it.
+            body_refs_all_resolved "$PR_NUMBER" "$fresh" || return 1
+            for num in $fresh; do
+              state=$(gh api "repos/${REPO}/issues/${num}" --jq '.state' 2>/dev/null) || return 1
+              case "$state" in
+                open) any_open="true" ;;
+                # A closed linked issue means the PR references work that may still need
+                # maintainer triage (the removed all-closed path would have left it
+                # open); don't close such a PR as a pure duplicate — fail open.
+                closed) return 1 ;;
+                *) return 1 ;;
+              esac
+              # A blocker counts only if it is OPEN, non-draft, on the default branch,
+              # earlier, another PR, and confirmed non-stale. Requiring
+              # labels.pageInfo.hasNextPage == false means a blocker whose labels can't
+              # be fully seen (so a Stale label might be hidden) is not counted — the
+              # issue then looks unblocked and we fail open rather than risk closing
+              # over a blocker that is actually stale.
+              blockers=$(gh api graphql \
+                -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$num" \
+                -f query='
+                  query($owner: String!, $name: String!, $number: Int!) {
+                    repository(owner: $owner, name: $name) {
+                      issue(number: $number) {
+                        closedByPullRequestsReferences(first: 100) {
+                          nodes {
+                            number state isDraft baseRefName createdAt
+                            repository { nameWithOwner }
+                            labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
+                          }
+                        }
+                      }
+                    }
+                  }' \
+                --jq ".data.repository.issue.closedByPullRequestsReferences.nodes[]
+                  | select(.state == \"OPEN\" and .isDraft == false and .baseRefName == \"${DEFAULT_BRANCH}\" and .repository.nameWithOwner == \"${REPO}\" and .number != ${PR_NUMBER} and .createdAt < \"${GITHUB_EVENT_PULL_REQUEST_CREATED_AT}\" and .labels.pageInfo.hasNextPage == false and (([.labels.nodes[].name] | any(. == \"Stale\")) | not))
+                  | .number") || return 1
+              [ -z "$blockers" ] && return 1
+              # A closing-reference edge can be stale-positive (a blocker whose body
+              # dropped the link before one direction of GitHub's graph caught up).
+              # Require at least one candidate blocker that GitHub *still* records as
+              # closing this issue in both graph directions, so a PR that dropped the
+              # link can't keep a valid new PR from being allowed.
+              confirmed="false"
+              for bnum in $blockers; do
+                if pr_currently_closes_issue "$bnum" "$num"; then confirmed="true"; break; fi
+              done
+              [ "$confirmed" != "true" ] && return 1
+            done
+            [ "$any_open" = "true" ]
+          }
+
+          # Close this contributor PR for not linking to any existing issue, subject
+          # to the safety gates above. Only external contributors reach here
+          # (maintainers/collaborators bypass earlier).
+          close_for_missing_issue() {
+            local fresh_issues
+            if is_close_exempt; then
               return 0
             fi
+            if body_references_issue; then
+              echo "PR body references an issue but GitHub hasn't resolved it to a closing reference; leaving open for a maintainer."
+              return 0
+            fi
+            # Re-confirm against GitHub's live linked-issue graph right before closing:
+            # the "no links" decision came from an earlier fetch, and a link may have
+            # appeared since (a late-resolving keyword, or a maintainer manually linking
+            # the PR to an issue in the sidebar — which the body-keyword veto can't see).
+            # Fail open on error/pagination or any resolved link.
+            fresh_issues=$(fresh_linked_issues "$PR_NUMBER") || return 0
+            if [ -n "$fresh_issues" ]; then
+              echo "PR now has linked issue(s) (${fresh_issues//$'\n'/, }); leaving open."
+              return 0
+            fi
+            pr_currently_closable || return 0
 
             echo "Closing PR #${PR_NUMBER} — no linked issue."
             COMMENT=$(printf '%s\n\n%s\n\n%s' \
@@ -131,14 +501,18 @@ jobs:
 
           ISSUE_NUMBERS=$(fetch_linked_issues)
 
-          if [ -z "$ISSUE_NUMBERS" ]; then
-            # GitHub resolves closing references asynchronously, so a query right
-            # after a PR is opened or edited can transiently come back empty.
-            # Closing is destructive — wait and confirm before acting on it.
-            echo "No linked issues found; re-checking in 30s in case GitHub hasn't resolved references yet."
-            sleep 30
+          # GitHub resolves closing references asynchronously, so a query right
+          # after a PR is opened or edited can transiently come back empty. Closing
+          # is destructive, so retry a few times before concluding a PR is genuinely
+          # unlinked rather than acting on a reference GitHub simply hasn't resolved yet.
+          RETRY=0
+          MAX_RETRIES=3
+          while [ -z "$ISSUE_NUMBERS" ] && [ "$RETRY" -lt "$MAX_RETRIES" ]; do
+            RETRY=$((RETRY + 1))
+            echo "No linked issues found; re-checking in 20s (attempt ${RETRY}/${MAX_RETRIES}) in case GitHub hasn't resolved references yet."
+            sleep 20
             ISSUE_NUMBERS=$(fetch_linked_issues)
-          fi
+          done
 
           if [ -z "$ISSUE_NUMBERS" ]; then
             echo "No linked issues found in PR body."
@@ -166,6 +540,13 @@ jobs:
 
           FOUND_OPEN_ISSUE="false"
           FOUND_CLOSED_ISSUE="false"
+          # A linked reference whose issue state couldn't be classified (open/closed):
+          # its presence makes us fail open on any close decision.
+          FOUND_UNCLASSIFIED_REFERENCE="false"
+          # For the deferred duplicate check: whether any linked open issue is NOT
+          # already blocked, plus the aggregated blocking-PR list across all issues.
+          HAS_UNBLOCKED_OPEN_ISSUE="false"
+          ALL_BLOCKING_PRS=""
           for ISSUE_NUM in $ISSUE_NUMBERS; do
             echo ""
             echo "--- Checking issue #${ISSUE_NUM} ---"
@@ -183,13 +564,28 @@ jobs:
               continue
             fi
 
-            # Skip closed issues — duplicate check only applies to open issues
+            # Classify state explicitly. Only "closed" counts toward the all-closed
+            # check below; an unexpected/missing value must not be read as closed
+            # (that could feed a wrongful "all referenced issues are closed" close),
+            # so skip it without classifying either way.
             ISSUE_STATE=$(echo "$ISSUE_JSON" | jq -r '.state')
-            if [ "$ISSUE_STATE" != "open" ]; then
-              echo "Issue #${ISSUE_NUM} is ${ISSUE_STATE}, skipping."
-              FOUND_CLOSED_ISSUE="true"
-              continue
-            fi
+            case "$ISSUE_STATE" in
+              open) ;;
+              closed)
+                echo "Issue #${ISSUE_NUM} is closed, skipping."
+                FOUND_CLOSED_ISSUE="true"
+                continue
+                ;;
+              *)
+                # Can't classify this linked issue: record it so neither the deferred
+                # duplicate close (which assumes every open issue is blocked) nor the
+                # missing-issue close fires while a real reference is unresolved.
+                echo "Issue #${ISSUE_NUM} has unexpected state '${ISSUE_STATE}'; skipping without classifying (and blocking any automated close)."
+                HAS_UNBLOCKED_OPEN_ISSUE="true"
+                FOUND_UNCLASSIFIED_REFERENCE="true"
+                continue
+                ;;
+            esac
 
             FOUND_OPEN_ISSUE="true"
             ISSUE_AUTHOR=$(echo "$ISSUE_JSON" | jq -r '.user.login')
@@ -200,6 +596,10 @@ jobs:
             # closing syntaxes (and manually linked PRs) are recognized. Bot
             # logins get their "[bot]" suffix restored to match the REST-style
             # logins used elsewhere (PYDANTY_LOGIN, ISSUE_AUTHOR).
+            # Only ready (non-draft) PRs targeting the default branch count as
+            # blockers: a draft is work-in-progress a contributor may abandon, and a
+            # non-default-branch PR has no real closing link to this issue, so
+            # neither should get a ready PR auto-closed as a duplicate.
             # Only PRs created before this one can block it: two PRs racing each
             # other's guard runs would otherwise both see the other as open and
             # both get closed, and a newer PR (e.g. pydanty's, deliberately left
@@ -220,6 +620,8 @@ jobs:
                         nodes {
                           number
                           state
+                          isDraft
+                          baseRefName
                           createdAt
                           repository { nameWithOwner }
                           author { __typename login }
@@ -230,7 +632,7 @@ jobs:
                   }
                 }' \
               --jq ".data.repository.issue.closedByPullRequestsReferences.nodes[]
-                | select(.state == \"OPEN\" and .repository.nameWithOwner == \"${REPO}\" and .number != ${PR_NUMBER} and .createdAt < \"${GITHUB_EVENT_PULL_REQUEST_CREATED_AT}\")
+                | select(.state == \"OPEN\" and .isDraft == false and .baseRefName == \"${DEFAULT_BRANCH}\" and .repository.nameWithOwner == \"${REPO}\" and .number != ${PR_NUMBER} and .createdAt < \"${GITHUB_EVENT_PULL_REQUEST_CREATED_AT}\")
                 | {number, created_at: .createdAt, user: {login: (if .author.__typename == \"Bot\" then .author.login + \"[bot]\" else .author.login end)}, labels: [.labels.nodes[]]}")
 
             while IFS= read -r PR_JSON; do
@@ -263,11 +665,13 @@ jobs:
                 DELTA=$(( PR_CREATED_EPOCH - EXISTING_EPOCH ))
                 if [ "$DELTA" -ge 0 ] && [ "$DELTA" -le "$WINDOW_SECONDS" ]; then
                   echo "pydanty PR #${PR_NUMBER} opened ${DELTA}s after PR #${EXISTING_PR_NUM} (<= ${WINDOW_SECONDS}s); superseding it."
-                  SUPERSEDE_COMMENT=$(printf '%s\n\n%s' \
-                    "An automated pull request from @${PYDANTY_LOGIN} addressing issue #${ISSUE_NUM} opened within ~10 minutes of this one, so it is taking precedence and this PR has been closed to avoid duplicate effort." \
-                    "Thanks for contributing — if you'd like to keep working on this, please comment on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) and a maintainer can help coordinate.")
-                  gh pr comment "$EXISTING_PR_NUM" --repo "$REPO" --body "$SUPERSEDE_COMMENT"
-                  gh pr close "$EXISTING_PR_NUM" --repo "$REPO"
+                  if pr_still_supersedable "$EXISTING_PR_NUM"; then
+                    SUPERSEDE_COMMENT=$(printf '%s\n\n%s' \
+                      "An automated pull request from @${PYDANTY_LOGIN} addressing issue #${ISSUE_NUM} opened within ~10 minutes of this one, so it is taking precedence and this PR has been closed to avoid duplicate effort." \
+                      "Thanks for contributing — if you'd like to keep working on this, please comment on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) and a maintainer can help coordinate.")
+                    gh pr comment "$EXISTING_PR_NUM" --repo "$REPO" --body "$SUPERSEDE_COMMENT"
+                    gh pr close "$EXISTING_PR_NUM" --repo "$REPO"
+                  fi
                 else
                   echo "PR #${EXISTING_PR_NUM} opened more than ${WINDOW_SECONDS}s before pydanty's; leaving both open for a maintainer."
                 fi
@@ -282,23 +686,30 @@ jobs:
               fi
             done <<< "$MATCHING_PRS"
 
+            # Record whether this open issue is blocked by an earlier active PR. The
+            # current PR is only closed as a duplicate if EVERY open issue it links is
+            # blocked (decided after the loop) — a PR that also links an unblocked
+            # issue is contributing something new and must not be closed here on
+            # account of one already-covered issue.
             if [ "$IS_PYDANTY_PR" != "true" ] && [ -n "$BLOCKING_PRS" ]; then
-              echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} already has active PRs: ${BLOCKING_PRS}"
+              if [ -z "$ALL_BLOCKING_PRS" ]; then
+                ALL_BLOCKING_PRS="${BLOCKING_PRS}"
+              else
+                ALL_BLOCKING_PRS="${ALL_BLOCKING_PRS}, ${BLOCKING_PRS}"
+              fi
+              # Blocked issue: skip assignment (the PR may be closed as a duplicate).
+              continue
+            fi
 
-              COMMENT=$(printf '%s\n\n%s\n\n%s' \
-                "Thanks for your interest in this issue! However, there are already open PRs addressing issue #${ISSUE_NUM}: ${BLOCKING_PRS}." \
-                "To avoid duplicate efforts, this PR has been closed. If you'd like to contribute, you can review the existing PRs or share your thoughts on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM})." \
-                "If you believe the existing PRs are inactive, please comment on the issue and a maintainer can reassess.")
-              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
-              gh pr close "$PR_NUMBER" --repo "$REPO"
-              exit 0
+            if [ "$IS_PYDANTY_PR" != "true" ]; then
+              HAS_UNBLOCKED_OPEN_ISSUE="true"
             fi
 
             if [ "$FOUND_STALE_PR" = "true" ]; then
               echo "All existing PRs for issue #${ISSUE_NUM} are stale. Allowing new PR."
             fi
 
-            # Now handle assignment (best-effort, does not gate duplicate check above)
+            # Now handle assignment (best-effort, does not gate the duplicate check)
             ASSIGNEES=$(echo "$ISSUE_JSON" | jq -r '[.assignees[].login] | join(",")')
             echo "Current assignees: ${ASSIGNEES:-none}"
 
@@ -312,19 +723,48 @@ jobs:
             fi
           done
 
+          # Close as a duplicate only if the PR links at least one open issue and
+          # EVERY linked open issue is already covered by an earlier active PR.
+          # Deferring the decision to here avoids closing a multi-issue PR that also
+          # addresses a not-yet-covered issue (the loop tracks that in
+          # HAS_UNBLOCKED_OPEN_ISSUE). Before actually closing, re-derive the same
+          # conclusion from fresh data via all_open_issues_currently_blocked so a
+          # blocker that went stale/draft/closed — or an issue edited in since the
+          # loop — can't get a now-valid PR closed on a stale snapshot.
+          if [ "$IS_PYDANTY_PR" != "true" ] && [ "$FOUND_OPEN_ISSUE" = "true" ] && [ "$HAS_UNBLOCKED_OPEN_ISSUE" = "false" ] && [ -n "$ALL_BLOCKING_PRS" ]; then
+            if is_close_exempt; then
+              echo "PR is exempt from automated close; leaving open despite existing PRs: ${ALL_BLOCKING_PRS}."
+            elif pr_currently_closable && all_open_issues_currently_blocked; then
+              echo "Closing PR #${PR_NUMBER} — every linked open issue already has an active PR: ${ALL_BLOCKING_PRS}"
+              COMMENT=$(printf '%s\n\n%s\n\n%s' \
+                "Thanks for your interest! There are already open PRs addressing the issue(s) this PR targets: ${ALL_BLOCKING_PRS}." \
+                "To avoid duplicate efforts, this PR has been closed. If you'd like to contribute, you can review the existing PRs or share your thoughts on the linked issue(s)." \
+                "If you believe the existing PRs are inactive, please comment on the issue and a maintainer can reassess.")
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$COMMENT"
+              gh pr close "$PR_NUMBER" --repo "$REPO"
+              exit 0
+            else
+              echo "Not closing as duplicate: could not confirm from fresh data that every linked open issue is still blocked."
+            fi
+          fi
+
           # If none of the referenced numbers resolved to an actual issue (open or
-          # closed), the PR is effectively unlinked — same policy as no keywords at all.
-          if [ "$FOUND_OPEN_ISSUE" = "false" ] && [ "$FOUND_CLOSED_ISSUE" = "false" ]; then
+          # closed), the PR is effectively unlinked — same policy as no keywords at
+          # all. Skip if any reference couldn't be classified: a real link we simply
+          # failed to read must not be treated as "no link".
+          if [ "$FOUND_OPEN_ISSUE" = "false" ] && [ "$FOUND_CLOSED_ISSUE" = "false" ] && [ "$FOUND_UNCLASSIFIED_REFERENCE" = "false" ]; then
             echo "No referenced numbers resolved to actual issues."
             close_for_missing_issue
             exit 0
           fi
 
-          # If we found closed issues but no open ones, close the PR (pydanty PRs are exempt).
-          if [ "$IS_PYDANTY_PR" != "true" ] && [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
-            echo "All referenced issues are closed. Closing PR."
-            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "All issues referenced by this PR are already closed. If you believe an issue should be reopened, please comment on it first."
-            gh pr close "$PR_NUMBER" --repo "$REPO"
+          # A PR whose linked issues are all closed is intentionally NOT auto-closed:
+          # deciding "all closed" reliably requires a complete, fully-resolved
+          # reference set, and getting that wrong closes a validly-linked PR. The
+          # marginal value of that nudge isn't worth the risk, so leave it for a
+          # maintainer to triage.
+          if [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
+            echo "All classified referenced issues are closed; leaving open for a maintainer to triage."
           fi
         env:
           GH_TOKEN: ${{ github.token }}
@@ -335,3 +775,5 @@ jobs:
           GITHUB_EVENT_PULL_REQUEST_CREATED_AT: ${{ github.event.pull_request.created_at }}
           GITHUB_EVENT_PULL_REQUEST_DRAFT: ${{ github.event.pull_request.draft }}
           GITHUB_EVENT_PULL_REQUEST_STATE: ${{ github.event.pull_request.state }}
+          GITHUB_EVENT_PULL_REQUEST_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
