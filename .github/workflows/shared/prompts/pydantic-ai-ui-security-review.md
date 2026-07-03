@@ -54,8 +54,11 @@ Existing examples of that model (the precedents you hold new code to):
   fetch with the *server's* IAM role (PR #5228).
 - client-submitted `FileUrl.force_download='allow-local'` is reset to
   `False` — it opts a URL out of the SSRF private-IP block (PR #5571).
-- `preserve_file_data` (off by default) gates round-tripping binary file
-  data (PRs #3971, #5255).
+- `allow_uploaded_files` (off by default) is the inbound security gate: it
+  drops client-submitted `UploadedFile` references unless opted in, since the
+  provider fetches them with the server's credentials. AG-UI's
+  `preserve_file_data` is now representation-only — an opt-in for round-tripping
+  the file sidecar activity messages, not a trust decision (PRs #3971, #5255).
 - `instructions` was removed from the Vercel `UIMessage.metadata` dump
   entirely — never sent to the client, never read back (PR #5279).
 
