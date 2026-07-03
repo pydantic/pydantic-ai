@@ -45,6 +45,23 @@ def best_effort_price_calculation(response: ModelResponse) -> PriceCalculation |
         return None
 
 
+def cost_from_provider_details(response: ModelResponse) -> Decimal | None:
+    """Try to get the cost from the provider details."""
+    if provider_details := response.provider_details:
+        # For openrouter
+        if (cost := provider_details.get('cost')) is not None:
+            return Decimal(str(cost))
+
+        # For gateway
+        if (
+            (usage := provider_details.get('usage'))
+            and (pydantic_ai_gateway := usage.get('pydantic_ai_gateway')) is not None
+            and (cost_estimate := pydantic_ai_gateway.get('cost_estimate')) is not None
+        ):
+            return Decimal(str(cost_estimate))
+    return None
+
+
 def calculate_price_for_usage(
     usage: RequestUsage | RunUsage,
     *,
@@ -112,6 +129,8 @@ def best_effort_usage_cost(
 
 def best_effort_cost(response: ModelResponse) -> Decimal:
     """Best-effort cost of a response in USD; a pricing failure never fails the run."""
+    if (provider_cost := cost_from_provider_details(response)) is not None:
+        return provider_cost
     price_calculation = best_effort_price_calculation(response)
     if price_calculation is None:
         return Decimal(0)
