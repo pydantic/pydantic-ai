@@ -1584,14 +1584,21 @@ class TestGoogle:
 class TestSentenceTransformers:
     @pytest.fixture(scope='session')
     def stsb_bert_tiny_model(self):
-        try:
-            model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
-        except OSError as e:  # pragma: no cover
-            # A cold HF cache under offline mode (or an unreachable/rate-limited
-            # Hub) raises OSError; skip rather than fail so a HF outage never reds
-            # the whole suite. CI keeps the cache warm (see ci.yml) so this is a
-            # last-resort net, not the normal path.
-            pytest.skip(f'sentence-transformers test model unavailable (HF Hub): {e}')
+        # Load offline so sentence-transformers never revalidates the model against
+        # the HF Hub (a recurring source of 429 flakes). Scoped to just this load:
+        # a job-wide HF_HUB_OFFLINE would also block the HuggingFace VCR tests, whose
+        # cassette replay still trips huggingface_hub's offline check. CI warms the
+        # cache out-of-band (see ci.yml) so the load hits disk.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv('HF_HUB_OFFLINE', '1')
+            try:
+                model = SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors')
+            except OSError as e:  # pragma: no cover
+                # A cold HF cache under offline mode (or an unreachable/rate-limited
+                # Hub) raises OSError; skip rather than fail so a HF outage never reds
+                # the whole suite. CI keeps the cache warm (see ci.yml) so this is a
+                # last-resort net, not the normal path.
+                pytest.skip(f'sentence-transformers test model unavailable (HF Hub): {e}')
         # Under HF_HUB_OFFLINE the model card isn't fetched, so `model_id` is unset
         # and the model would report its name as 'unknown'. Set it explicitly to
         # match the name users get online (a no-op when the card did load).
