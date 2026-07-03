@@ -414,19 +414,19 @@ async def test_request_tool_call(allow_model_requests: None):
         )
     )
 
-    # Cohere stores billed units under `details['input_tokens']`/`details['output_tokens']`, which differ
-    # from the first-class token counts (from `usage.tokens`). These are genuine extra telemetry, not
-    # duplicates, so `opentelemetry_attributes()` must still emit them under `gen_ai.usage.details.*`
-    # rather than dropping them as it does for exact duplicates (see the Anthropic double-count fix).
+    # Cohere stores billed units under `details['input_tokens']`/`details['output_tokens']`. Those names
+    # collide with the first-class `gen_ai.usage.{input,output}_tokens` attributes, so emitting them under
+    # `gen_ai.usage.details.*` too would let consumers like Langfuse sum billed + actual and double-count.
+    # They must be dropped from the OTel attributes (only the first-class counts remain) while staying
+    # accessible on `usage.details`.
     tool_call_usage = next(
         m.usage for m in result.all_messages() if isinstance(m, ModelResponse) and m.usage.details
     )
+    assert tool_call_usage.details == {'input_tokens': 4, 'output_tokens': 2}
     assert tool_call_usage.opentelemetry_attributes() == snapshot(
         {
             'gen_ai.usage.input_tokens': 5,
             'gen_ai.usage.output_tokens': 3,
-            'gen_ai.usage.details.input_tokens': 4,
-            'gen_ai.usage.details.output_tokens': 2,
         }
     )
 

@@ -13,6 +13,13 @@ from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
 
+_FIRST_CLASS_TOKEN_DETAIL_KEYS = frozenset({'input_tokens', 'output_tokens'})
+"""`details` keys whose names collide with the first-class `gen_ai.usage.{input,output}_tokens`
+attributes. They must never be emitted under `gen_ai.usage.details.*` too: doing so reports the same
+conceptual quantity under two attributes that consumers like Langfuse then sum, double-counting tokens
+and cost. Adapters that stash these keys in `details` (e.g. Anthropic's streaming carry-forward, Cohere's
+billed units) keep them accessible on `RequestUsage.details`; only the ambiguous OTel emission is dropped."""
+
 
 @dataclass(repr=False, kw_only=True)
 class UsageBase:
@@ -86,18 +93,12 @@ class UsageBase:
         if self.output_audio_tokens:
             details['output_audio_tokens'] = self.output_audio_tokens
         if details:
-            # A first-class token attribute (e.g. `gen_ai.usage.output_tokens`) and its same-named `details`
-            # entry map to the same value only when the entry is an exact copy of the first-class field.
-            first_class_token_values = {'input_tokens': self.input_tokens, 'output_tokens': self.output_tokens}
             prefix = 'gen_ai.usage.details.'
             for key, value in details.items():
-                # Skip a `details` entry only when it exactly duplicates a first-class token attribute (e.g.
-                # Anthropic copies the raw `input_tokens`/`output_tokens` into `details` as a streaming
-                # carry-forward carrier). Emitting the same value under both `gen_ai.usage.{input,output}_tokens`
-                # and `gen_ai.usage.details.*` makes consumers like Langfuse sum them, double-counting tokens
-                # and cost. An entry carrying a *different* value (e.g. Cohere's billed units) is genuine extra
-                # telemetry and is kept.
-                if first_class_token_values.get(key) == value:
+                # Never emit a `details` entry whose name collides with a first-class token attribute: the
+                # value is already reported as `gen_ai.usage.{input,output}_tokens`, and emitting it again
+                # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
+                if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
                     continue
                 # Skipping check for value since spec implies all detail values are relevant
                 if value:
