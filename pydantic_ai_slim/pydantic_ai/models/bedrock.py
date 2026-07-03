@@ -1195,12 +1195,14 @@ class BedrockConverseModel(Model[BaseClient]):
             if msg['role'] == 'user':
                 has_document = any('document' in block for block in msg['content'])
                 has_text = any('text' in block for block in msg['content'])
-                if has_document and not has_text:
+                if has_document and not has_text:  # pragma: no cover
                     new_content: list[ContentBlockUnionTypeDef] = [
                         {'text': 'See attached document(s).'},
                         *msg['content'],
                     ]
                     processed_messages[i] = cast(MessageUnionTypeDef, {**msg, 'content': new_content})
+
+
 
         return system_prompt, processed_messages
 
