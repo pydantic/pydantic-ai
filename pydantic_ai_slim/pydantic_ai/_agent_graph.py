@@ -1243,10 +1243,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         base_messages = messages[:-1]
 
         # `resumed_request` = the request that triggered the paused turn, so `new_messages()`
-        # yields just the completed (merged) response.
-        for message in reversed(base_messages):
-            if isinstance(message, _messages.ModelRequest):
+        # yields just the completed (merged) response. Track it by object (identity/value) and by
+        # position so `_first_new_message_index` can exclude it however processors mutate the list.
+        for index in range(len(base_messages) - 1, -1, -1):
+            if isinstance(message := base_messages[index], _messages.ModelRequest):
                 ctx.deps.resumed_request = message
+                ctx.deps.resumed_request_index = index
                 break
 
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so
@@ -1254,7 +1256,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # `_finish_handling` then appends the final merged response after the base history.
         ctx.state.message_history[:] = base_messages
         ctx.deps.new_message_index = _first_new_message_index(
-            base_messages, ctx.state.run_id, resumed_request=ctx.deps.resumed_request
+            base_messages,
+            ctx.state.run_id,
+            resumed_request=ctx.deps.resumed_request,
+            resumed_request_index=ctx.deps.resumed_request_index,
         )
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None

@@ -112,5 +112,5 @@ class DBOSModel(WrapperModel):
         # produces content. With a handler, events were already delivered inside the step, so the
         # workflow-side stream stays empty to avoid delivering them twice.
         yield CompletedStreamedResponse(
-            model_request_parameters, response, replay_events=self.event_stream_handler is None
+            model_request_parameters, response, replay_events=self._get_event_stream_handler() is None
         )

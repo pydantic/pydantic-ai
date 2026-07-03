@@ -113,4 +113,11 @@ class PrefectModel(WrapperModel):
         response = await self._wrapped_request_stream.with_options(
             name=f'Model Request (Streaming): {self.wrapped.model_name}', **self.task_config
         )(messages, model_settings, model_request_parameters, run_context)
-        yield CompletedStreamedResponse(model_request_parameters, response)
+        # Without an `event_stream_handler`, the task drained and discarded the real stream's events
+        # (e.g. `agent.iter` inside a flow, where the caller drives the flow-side stream via
+        # `node.stream(...)`/`stream_text()`). Replay the response's parts as events so that stream
+        # produces content. With a handler, events were already delivered inside the task, so the
+        # flow-side stream stays empty to avoid delivering them twice.
+        yield CompletedStreamedResponse(
+            model_request_parameters, response, replay_events=self._get_event_stream_handler() is None
+        )
