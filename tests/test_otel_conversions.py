@@ -505,6 +505,19 @@ class TestChatMessagesToModelMessages:
             ]
         )
 
+    def test_unknown_finish_reason_is_dropped(self):
+        """Third-party traces may carry finish reasons outside pydantic-ai's `FinishReason` values."""
+        otel = [
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]},
+            {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hi'}], 'finish_reason': 'tool_calls'},
+        ]
+        assert otel_messages_to_model_messages(otel) == snapshot(
+            [
+                ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())]),
+                ModelResponse(parts=[TextPart(content='Hi')], timestamp=IsDatetime()),
+            ]
+        )
+
     def test_missing_content_uses_empty_string(self):
         """When include_content=False was used, parts lack content fields."""
         otel = [
