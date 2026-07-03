@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -413,6 +414,20 @@ async def test_request_tool_call(allow_model_requests: None):
         )
     )
 
+    # Cohere stores billed units under `details['input_tokens']`/`details['output_tokens']`. Those names
+    # collide with the first-class `gen_ai.usage.{input,output}_tokens` attributes, so emitting them under
+    # `gen_ai.usage.details.*` too would let consumers like Langfuse sum billed + actual and double-count.
+    # They must be dropped from the OTel attributes (only the first-class counts remain) while staying
+    # accessible on `usage.details`.
+    tool_call_usage = next(m.usage for m in result.all_messages() if isinstance(m, ModelResponse) and m.usage.details)
+    assert tool_call_usage.details == {'input_tokens': 4, 'output_tokens': 2}
+    assert tool_call_usage.opentelemetry_attributes() == snapshot(
+        {
+            'gen_ai.usage.input_tokens': 5,
+            'gen_ai.usage.output_tokens': 3,
+        }
+    )
+
 
 def test_text_content_in_request(allow_model_requests: None):
     req = ModelRequest(
@@ -461,7 +476,7 @@ async def test_multimodal(allow_model_requests: None):
     m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(RuntimeError, match='Cohere does not yet support multi-modal inputs.'):
+    with pytest.raises(RuntimeError, match=re.escape('Cohere does not yet support multi-modal inputs.')):
         await agent.run(
             [
                 'hello',

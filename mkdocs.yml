@@ -78,10 +78,12 @@ nav:
           - Overview: evals/evaluators/overview.md
           - Built-in Evaluators: evals/evaluators/built-in.md
           - LLM Judge: evals/evaluators/llm-judge.md
+          - Standard Quality Metrics: evals/evaluators/standard-quality-metrics.md
           - Third-Party Integrations: evals/evaluators/framework-integrations.md
           - Custom Evaluators: evals/evaluators/custom.md
           - Report Evaluators: evals/evaluators/report-evaluators.md
           - Span-Based: evals/evaluators/span-based.md
+          - Agentic: evals/evaluators/agentic.md
       - Online Evaluation: evals/online-evaluation.md
       - How-To Guides:
           - Logfire Integration: evals/how-to/logfire-integration.md

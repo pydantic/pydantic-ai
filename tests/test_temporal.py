@@ -1349,7 +1349,9 @@ async def test_agent_name_collision(allow_model_requests: None, client: Client):
 async def test_agent_without_name():
     with pytest.raises(
         UserError,
-        match="An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow.",
+        match=re.escape(
+            "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
+        ),
     ):
         TemporalAgent(Agent())
 
@@ -1357,7 +1359,9 @@ async def test_agent_without_name():
 async def test_agent_without_model():
     with pytest.raises(
         UserError,
-        match="The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time.",
+        match=re.escape(
+            "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
+        ),
     ):
         TemporalAgent(Agent(name='test_agent'))
 
@@ -1783,6 +1787,37 @@ async def test_model_construction_in_workflow_passes_sandbox(
             task_queue=TASK_QUEUE,
         )
     assert result == expected_model_class
+
+
+# Regression test for the `genai_prices`/`httpx2` passthrough entries in `_workflow_runner`.
+# `ModelResponse.cost()` lazily imports genai-prices on first call; inside a workflow that trips the
+# sandbox unless those modules are passed through (see #6215).
+@workflow.defn
+class CalculateCostInWorkflow:
+    @workflow.run
+    async def run(self) -> float:
+        response = ModelResponse(
+            parts=[TextPart('ok')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+            model_name='claude-sonnet-4-5',
+            provider_name='anthropic',
+        )
+        return float(response.cost().total_price)
+
+
+async def test_response_cost_in_workflow_passes_sandbox(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CalculateCostInWorkflow],
+        workflow_failure_exception_types=[Exception],
+    ):
+        result = await client.execute_workflow(
+            CalculateCostInWorkflow.run,
+            id='calculate_cost_in_workflow',
+            task_queue=TASK_QUEUE,
+        )
+    assert result > 0
 
 
 async def test_temporal_agent():
@@ -2224,7 +2259,9 @@ class SimpleAgentWorkflowWithRunToolsets:
         return result.output  # pragma: no cover
 
 
-async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests: None, client: Client):
+async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_model_requests: None, client: Client):
+    # Executing toolsets (here a `FunctionToolset`) can't be added per-run because their activities must
+    # be registered with the worker before the workflow runs.
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -2234,7 +2271,10 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
         with workflow_raises(
             UserError,
             snapshot(
-                'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
+                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
+                'execution when the agent is constructed. Pass them to the agent constructor instead. '
+                'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
             ),
         ):
             await client.execute_workflow(
@@ -2243,6 +2283,58 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
                 id=SimpleAgentWorkflowWithRunToolsets.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+def request_runtime_external_tool(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')])
+
+
+runtime_external_agent = Agent(
+    FunctionModel(request_runtime_external_tool),
+    name='runtime_external_toolset_agent',
+    output_type=[str, DeferredToolRequests],
+)
+runtime_external_temporal_agent = TemporalAgent(runtime_external_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+runtime_external_toolset = ExternalToolset(
+    tool_defs=[
+        ToolDefinition(
+            name='external',
+            parameters_json_schema={
+                'type': 'object',
+                'properties': {'query': {'type': 'string'}},
+                'required': ['query'],
+            },
+        )
+    ],
+    id='external',
+)
+
+
+@workflow.defn
+class RuntimeExternalToolsetWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+        return await runtime_external_temporal_agent.run(prompt, toolsets=[runtime_external_toolset])
+
+
+async def test_temporal_agent_run_in_workflow_with_runtime_external_toolset(allow_model_requests: None, client: Client):
+    # Non-executing toolsets like `ExternalToolset` need no durable wrapping, so they can be added per-run.
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RuntimeExternalToolsetWorkflow],
+        plugins=[AgentPlugin(runtime_external_temporal_agent)],
+    ):
+        result = await client.execute_workflow(
+            RuntimeExternalToolsetWorkflow.run,
+            args=['Call the runtime external tool.'],
+            id=RuntimeExternalToolsetWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert result.output == DeferredToolRequests(
+            calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+        )
 
 
 @workflow.defn

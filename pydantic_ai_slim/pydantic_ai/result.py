@@ -1,15 +1,16 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
-from contextlib import aclosing
+from contextlib import AbstractAsyncContextManager, aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 import anyio
 from pydantic import ValidationError
-from typing_extensions import TypeVar
+from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
@@ -22,6 +23,7 @@ from ._output import (
     run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
+from ._sync_stream import SyncStreamBridge
 from .messages import ModelResponseStreamEvent
 from .output import (
     OutputDataT,
@@ -42,10 +44,6 @@ __all__ = (
     'OutputValidatorFunc',
     'StreamedRunResultSync',
 )
-
-
-T = TypeVar('T')
-"""An invariant TypeVar."""
 
 
 @dataclass(kw_only=True)
@@ -720,14 +718,54 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         return False  # pragma: no cover -- only reachable via wrap_run short-circuit (no stream)
 
 
-@dataclass(init=False)
 class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
-    """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods."""
+    """Synchronous wrapper for [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] that only exposes sync methods.
+
+    All of the run's async work happens in a single dedicated event loop thread (an
+    [`anyio` blocking portal][anyio.from_thread.BlockingPortal]), so cancel scopes entered and exited
+    by the agent graph never straddle tasks, and OpenTelemetry spans stay correctly nested.
+
+    This is a synchronous context manager; the underlying stream and event loop are cleaned up on exit:
+
+    ```python
+    from pydantic_ai import Agent
+
+    agent = Agent('openai:gpt-5.2')
+
+    def main():
+        with agent.run_stream_sync('What is the capital of the UK?') as response:
+            print(response.get_output())
+            #> The capital of the UK is London.
+    ```
+
+    Using it without a `with` block also works for backwards compatibility; cleanup then happens when
+    the object is garbage collected.
+    """
 
     _streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]
 
-    def __init__(self, streamed_run_result: StreamedRunResult[AgentDepsT, OutputDataT]) -> None:
-        self._streamed_run_result = streamed_run_result
+    def __init__(self, run_stream_cm: AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]) -> None:
+        if isinstance(run_stream_cm, StreamedRunResult):
+            # This wrapper used to take an already-entered `StreamedRunResult`, but it now needs the
+            # `run_stream()` context manager so it can enter it on the portal thread. Construct it via
+            # `agent.run_stream_sync(...)` instead. TODO (v3): remove this check.
+            raise TypeError(
+                '`StreamedRunResultSync` now takes the `run_stream()` context manager rather than an '
+                'already-entered `StreamedRunResult`; use `agent.run_stream_sync(...)` to construct it.'
+            )
+        self._bridge = SyncStreamBridge(run_stream_cm, async_alternative='`run_stream`')
+        self._streamed_run_result = self._bridge.stream
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self._bridge.shutdown((exc_type, exc_val, exc_tb))
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of messages.
@@ -802,7 +840,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of the response data.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_output(debounce_by=debounce_by))
+        return self._bridge.stream_sync(lambda: self._streamed_run_result.stream_output(debounce_by=debounce_by))
 
     def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> Iterator[str]:
         """Stream the text result as an iterable.
@@ -819,7 +857,9 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_text(delta=delta, debounce_by=debounce_by))
+        return self._bridge.stream_sync(
+            lambda: self._streamed_run_result.stream_text(delta=delta, debounce_by=debounce_by)
+        )
 
     def stream_response(self, *, debounce_by: float | None = 0.1) -> Iterator[_messages.ModelResponse]:
         """Stream the response as an iterable of `ModelResponse` snapshots.
@@ -835,11 +875,11 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An iterable of `ModelResponse` snapshots.
         """
-        return _utils.sync_async_iterator(self._streamed_run_result.stream_response(debounce_by=debounce_by))
+        return self._bridge.stream_sync(lambda: self._streamed_run_result.stream_response(debounce_by=debounce_by))
 
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
-        return _utils.get_event_loop().run_until_complete(self._streamed_run_result.get_output())
+        return self._bridge.call_with_otel_context(self._streamed_run_result.get_output)
 
     @property
     def response(self) -> _messages.ModelResponse:
@@ -877,8 +917,8 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
-        return _utils.get_event_loop().run_until_complete(
-            self._streamed_run_result.validate_response_output(message, allow_partial=allow_partial)
+        return self._bridge.call_with_otel_context(
+            lambda: self._streamed_run_result.validate_response_output(message, allow_partial=allow_partial),
         )
 
     @property

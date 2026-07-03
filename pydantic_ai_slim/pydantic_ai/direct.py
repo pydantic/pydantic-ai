@@ -9,8 +9,6 @@ These methods are thin wrappers around [`Model`][pydantic_ai.models.Model] imple
 from __future__ import annotations as _annotations
 
 import dataclasses
-import queue
-import threading
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -18,9 +16,10 @@ from datetime import datetime
 from types import TracebackType
 
 from pydantic_ai.usage import RequestUsage
-from pydantic_graph._utils import get_event_loop as _get_event_loop
+from pydantic_graph._utils import run_until_complete as _run_until_complete
 
 from . import agent, messages, models, settings
+from ._sync_stream import SyncStreamBridge
 from .models import StreamedResponse, instrumented as instrumented_models
 
 __all__ = (
@@ -30,8 +29,6 @@ __all__ = (
     'model_request_stream_sync',
     'StreamedResponseSync',
 )
-
-STREAM_INITIALIZATION_TIMEOUT = 30
 
 
 def _ensure_instruction_parts(
@@ -153,7 +150,7 @@ def model_request_sync(
     Returns:
         The model response and token usage associated with the request.
     """
-    return _get_event_loop().run_until_complete(
+    return _run_until_complete(
         model_request(
             model,
             list(messages),
@@ -305,117 +302,75 @@ def _prepare_model(
 
 @dataclass
 class StreamedResponseSync:
-    """Synchronous wrapper to async streaming responses by running the async producer in a background thread and providing a synchronous iterator.
+    """Synchronous wrapper for an async streaming response, running the whole stream on a dedicated event-loop thread.
+
+    The stream runs on an [`anyio` blocking portal][anyio.from_thread.BlockingPortal] (see
+    [`SyncStreamBridge`][pydantic_ai._sync_stream.SyncStreamBridge]) rather than pumping a shared event loop
+    from a background thread, so exiting the `with` block cancels the underlying request promptly and closes
+    the connection instead of waiting for the whole response to arrive.
 
     This class must be used as a context manager with the `with` statement.
     """
 
     _async_stream_cm: AbstractAsyncContextManager[StreamedResponse]
-    _queue: queue.Queue[messages.ModelResponseStreamEvent | Exception | None] = field(
-        default_factory=queue.Queue[messages.ModelResponseStreamEvent | Exception | None], init=False
-    )
-    _thread: threading.Thread | None = field(default=None, init=False)
-    _stream_response: StreamedResponse | None = field(default=None, init=False)
-    _exception: Exception | None = field(default=None, init=False)
+    _bridge: SyncStreamBridge[StreamedResponse] | None = field(default=None, init=False)
     _context_entered: bool = field(default=False, init=False)
-    _stream_ready: threading.Event = field(default_factory=threading.Event, init=False)
 
     def __enter__(self) -> StreamedResponseSync:
         self._context_entered = True
-        self._start_producer()
+        self._bridge = SyncStreamBridge(self._async_stream_cm, async_alternative='`model_request_stream`')
         return self
 
     def __exit__(
         self,
-        _exc_type: type[BaseException] | None,
-        _exc_val: BaseException | None,
-        _exc_tb: TracebackType | None,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
-        self._cleanup()
+        assert self._bridge is not None, '`__exit__` is only reachable after `__enter__` sets `_bridge`'
+        self._bridge.shutdown((exc_type, exc_val, exc_tb))
 
     def __iter__(self) -> Iterator[messages.ModelResponseStreamEvent]:
         """Stream the response as an iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
-        self._check_context_manager_usage()
-
-        while True:
-            item = self._queue.get()
-            if item is None:  # End of stream
-                break
-            elif isinstance(item, Exception):
-                raise item
-            else:
-                yield item
+        bridge = self._ensure_bridge()
+        return bridge.stream_sync(lambda: aiter(bridge.stream))
 
     def __repr__(self) -> str:
-        if self._stream_response:
-            return repr(self._stream_response)
+        if self._bridge is not None:
+            return repr(self._bridge.stream)
         else:
             return f'{self.__class__.__name__}(context_entered={self._context_entered})'
 
     __str__ = __repr__
 
-    def _check_context_manager_usage(self) -> None:
-        if not self._context_entered:
+    def _ensure_bridge(self) -> SyncStreamBridge[StreamedResponse]:
+        if self._bridge is None:
             raise RuntimeError(
                 'StreamedResponseSync must be used as a context manager. '
                 'Use: `with model_request_stream_sync(...) as stream:`'
             )
-
-    def _ensure_stream_ready(self) -> StreamedResponse:
-        self._check_context_manager_usage()
-
-        if self._stream_response is None:
-            # Wait for the background thread to signal that the stream is ready
-            if not self._stream_ready.wait(timeout=STREAM_INITIALIZATION_TIMEOUT):
-                raise RuntimeError('Stream failed to initialize within timeout')
-
-            if self._stream_response is None:  # pragma: no cover
-                raise RuntimeError('Stream failed to initialize')
-
-        return self._stream_response
-
-    def _start_producer(self):
-        self._thread = threading.Thread(target=self._async_producer, daemon=True)
-        self._thread.start()
-
-    def _async_producer(self):
-        async def _consume_async_stream():
-            try:
-                async with self._async_stream_cm as stream:
-                    self._stream_response = stream
-                    # Signal that the stream is ready
-                    self._stream_ready.set()
-                    async for event in stream:
-                        self._queue.put(event)
-            except Exception as e:
-                # Signal ready even on error so waiting threads don't hang
-                self._stream_ready.set()
-                self._queue.put(e)
-            finally:
-                self._queue.put(None)  # Signal end
-
-        _get_event_loop().run_until_complete(_consume_async_stream())
-
-    def _cleanup(self):
-        if self._thread and self._thread.is_alive():
-            self._thread.join()
+        return self._bridge
 
     @property
     def response(self) -> messages.ModelResponse:
         """Get the current state of the response."""
-        return self._ensure_stream_ready().get()
+        bridge = self._ensure_bridge()
+        return bridge.call(bridge.stream.get)
 
     @property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
-        return self._ensure_stream_ready().usage
+        bridge = self._ensure_bridge()
+        return bridge.call(lambda: bridge.stream.usage)
 
     @property
     def model_name(self) -> str:
         """Get the model name of the response."""
-        return self._ensure_stream_ready().model_name
+        bridge = self._ensure_bridge()
+        return bridge.call(lambda: bridge.stream.model_name)
 
     @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
-        return self._ensure_stream_ready().timestamp
+        bridge = self._ensure_bridge()
+        return bridge.call(lambda: bridge.stream.timestamp)

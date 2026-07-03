@@ -92,8 +92,8 @@ OutputT = TypeVar('OutputT')
 
 
 async def _cancel_task(task: Task[Any]) -> None:
-    if not task.done():
-        task.cancel()
+    # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
+    task.cancel()
     try:
         await task
     except BaseException:
@@ -1780,6 +1780,12 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                     or not message.instructions
                     or last_message.instructions == message.instructions
                 )
+                # We intentionally don't block merging when `conversation_id` or `metadata` differ,
+                # nor try to preserve them across the merge. These fields are only bookkeeping for
+                # callers; they're never part of what gets sent to the model. Refusing to merge on a
+                # mismatch would leave two consecutive requests where the model expects one, breaking
+                # providers (and provider-side conversation state) that require a single request per
+                # turn -- a real regression -- just to preserve fields the model request node never reads.
             ):
                 parts = [*last_message.parts, *message.parts]
                 parts.sort(
