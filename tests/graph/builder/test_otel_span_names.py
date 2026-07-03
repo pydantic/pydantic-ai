@@ -1,6 +1,6 @@
 """Tests that GraphBuilder preformats OTel span names for non-Logfire backends.
 
-Logfire interpolates ``{...}`` placeholders in a span message for its own display, but the
+Logfire interpolates `{...}` placeholders in a span message for its own display, but the
 underlying OTel span *name* is left as the literal template unless it is preformatted. Other
 OTel backends use that span name verbatim, so it must already contain the interpolated values.
 
@@ -27,7 +27,7 @@ logfire_installed = importlib.util.find_spec('logfire') is not None
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 async def test_graph_and_node_span_names_are_preformatted(capfire: CaptureLogfire):
-    """Span names must be the interpolated values, not the literal ``{...}`` templates."""
+    """Span names must be the interpolated values, not the literal `{...}` templates."""
     g = GraphBuilder(name='my_graph', output_type=int)
 
     @g.step
