@@ -13,6 +13,10 @@ from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
 
+_FIRST_CLASS_TOKEN_DETAIL_KEYS = frozenset({'input_tokens', 'output_tokens'})
+"""`details` keys whose names collide with first-class `gen_ai.usage.*` token attributes, so they must not
+also be emitted under the `gen_ai.usage.details.*` namespace."""
+
 
 @dataclass(repr=False, kw_only=True)
 class UsageBase:
@@ -88,6 +92,12 @@ class UsageBase:
         if details:
             prefix = 'gen_ai.usage.details.'
             for key, value in details.items():
+                # Skip keys that duplicate a first-class token attribute (e.g. some adapters copy the raw
+                # `input_tokens`/`output_tokens` into `details`). Emitting them here too would report the same
+                # value under both `gen_ai.usage.{input,output}_tokens` and `gen_ai.usage.details.*`, which
+                # consumers like Langfuse sum, double-counting tokens and cost.
+                if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
+                    continue
                 # Skipping check for value since spec implies all detail values are relevant
                 if value:
                     result[prefix + key] = value

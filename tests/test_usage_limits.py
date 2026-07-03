@@ -324,6 +324,27 @@ async def test_multi_agent_usage_no_incr():
     }
 
 
+def test_opentelemetry_attributes_excludes_first_class_token_details():
+    """Detail keys that duplicate a first-class token attribute must not be emitted twice.
+
+    Some adapters (e.g. Anthropic) copy the raw `input_tokens`/`output_tokens` into `details` as a
+    streaming carry-forward carrier. Emitting those under `gen_ai.usage.details.*` as well as the
+    first-class `gen_ai.usage.{input,output}_tokens` makes consumers like Langfuse sum them and
+    double-count tokens and cost. Not reachable through the public API since it depends on an adapter
+    leaving these keys in `details`, so pinned directly on the OTel attribute mapping.
+    """
+    usage = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        details={'input_tokens': 100, 'output_tokens': 50, 'reasoning_tokens': 10},
+    )
+    assert usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 100,
+        'gen_ai.usage.output_tokens': 50,
+        'gen_ai.usage.details.reasoning_tokens': 10,
+    }
+
+
 async def test_multi_agent_usage_sync():
     """As in `test_multi_agent_usage_async`, with a sync tool."""
     controller_agent = Agent(TestModel())
