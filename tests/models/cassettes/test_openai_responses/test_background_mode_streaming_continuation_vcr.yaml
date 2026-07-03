@@ -84,7 +84,7 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       openai-organization:
-      - diligentiq
+      - XXXXXX
       openai-processing-ms:
       - '917'
       openai-project:
@@ -124,7 +124,7 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - diligentiq
+      - XXXXXX
       openai-processing-ms:
       - '387'
       openai-project:

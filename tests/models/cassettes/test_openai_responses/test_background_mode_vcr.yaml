@@ -33,7 +33,7 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - diligentiq
+      - XXXXXX
       openai-processing-ms:
       - '484'
       openai-project:
@@ -112,7 +112,7 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - diligentiq
+      - XXXXXX
       openai-processing-ms:
       - '108'
       openai-project:
@@ -191,7 +191,7 @@ interactions:
       content-type:
       - application/json
       openai-organization:
-      - diligentiq
+      - XXXXXX
       openai-processing-ms:
       - '229'
       openai-project:
