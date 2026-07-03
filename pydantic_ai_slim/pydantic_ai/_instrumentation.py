@@ -60,13 +60,11 @@ ANY_ADAPTER = TypeAdapter[Any](Any)
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
 TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
 
-# The spec doesn't advise boundaries for `gen_ai.client.operation.time_to_first_chunk`, but without
-# advice the OTel SDK's default histogram buckets (0, 5, 10, 25, ... seconds) collapse virtually all
-# TTFT values into the first two buckets. This is the ladder the spec advises for
-# `gen_ai.client.operation.duration`, which spans fast-provider TTFTs (~10ms) through reasoning-model
-# worst cases (~80s). Like any bucket advisory it's only advice: users can override it by configuring
-# a View for this instrument on their MeterProvider, and SDKs configured for exponential-bucket
-# histogram aggregation (e.g. logfire) ignore it entirely.
+# These are advised by the spec (the metric is "Development" stability, so this may change):
+# https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md#metric-gen_aiclientoperationtime_to_first_chunk
+# Like any bucket advisory it's only advice: users can override it by configuring a View for this
+# instrument on their MeterProvider, and SDKs configured for exponential-bucket histogram
+# aggregation (e.g. logfire) ignore it entirely.
 TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 )  # fmt: skip

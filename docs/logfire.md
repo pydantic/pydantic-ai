@@ -261,8 +261,8 @@ In addition to spans, the instrumentation records the following [OpenTelemetry m
 
 Each metric point carries the `gen_ai.provider.name` (and legacy `gen_ai.system`), `gen_ai.operation.name`, `gen_ai.request.model`, and `gen_ai.response.model` attributes, so histograms can be broken down by provider and model.
 
-!!! note "Histogram bucket boundaries"
-    `gen_ai.client.token.usage` advises the bucket boundaries specified by the semantic conventions. The conventions don't advise boundaries for `gen_ai.client.operation.time_to_first_chunk`, so Pydantic AI advises the ladder the spec uses for `gen_ai.client.operation.duration` (0.01s through 81.92s) — without an advisory, the OTel SDK's default buckets would collapse nearly all sub-second values into the lowest bucket. These are only advisories: you can override them by configuring a [View](https://opentelemetry.io/docs/specs/otel/metrics/sdk/#view) on your `MeterProvider`, and SDKs configured for exponential histogram aggregation (such as Logfire) ignore them entirely.
+!!! note "Stability and histogram buckets"
+    `gen_ai.client.operation.time_to_first_chunk` is currently at **Development** stability in the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-metrics.md#metric-gen_aiclientoperationtime_to_first_chunk), so its name or shape may change before stabilization. Both `gen_ai.client.token.usage` and `gen_ai.client.operation.time_to_first_chunk` advise the explicit bucket boundaries specified by the conventions. These are only advisories: you can override them by configuring a [View](https://opentelemetry.io/docs/specs/otel/metrics/sdk/#view) on your `MeterProvider`, and SDKs configured for exponential histogram aggregation (such as Logfire) ignore them entirely.
 
 ### Aggregated usage attribute names
 
