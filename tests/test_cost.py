@@ -20,6 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._cost import best_effort_price_calculation
 from pydantic_ai._warnings import CostCalculationFailedWarning
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models.test import TestModel
@@ -114,6 +115,9 @@ async def test_cost_matches_response_price(allow_model_requests: None, stream: b
     assert output == 'world'
     response = messages[-1]
     assert isinstance(response, ModelResponse)
+    price_calculation = best_effort_price_calculation(response)
+    assert price_calculation is not None
+    assert usage.cost == price_calculation.total_price
     assert usage.cost == response.cost().total_price
     assert usage.cost == snapshot(Decimal('0.00075'))
 
