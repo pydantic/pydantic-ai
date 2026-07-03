@@ -263,6 +263,10 @@ class MultiModelWorkflow:
         return result.output
 ```
 
+### Toolsets at Runtime
+
+Additional toolsets can be passed per run via [`TemporalAgent.run(toolsets=...)`][pydantic_ai.durable_exec.temporal.TemporalAgent.run], but only non-executing toolsets like [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset], whose tools are executed outside the agent run, are supported. Executing toolsets ([`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) and dynamic toolsets must be set when constructing the agent so their activities can be registered with the worker before the workflow runs; passing them at runtime raises a `UserError`.
+
 ## Activity Configuration
 
 Temporal activity configuration, like timeouts and retry policies, can be customized by passing [`temporalio.workflow.ActivityConfig`](https://python.temporal.io/temporalio.workflow._activities.ActivityConfig.html) objects to the `TemporalAgent` constructor:
