@@ -252,7 +252,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # was already handled in a prior step. The check below relies on that convention.
             self.executable_function_kinds = ('function', 'unknown', 'external', 'unapproved')
             eligible_calls = [
-                call for call, kind in zip(self.tool_calls, call_kinds) if kind in self.executable_function_kinds
+                call
+                for call, kind in zip(self.tool_calls, call_kinds, strict=True)
+                if kind in self.executable_function_kinds
             ]
             # Results are matched back to calls by `tool_call_id`, so duplicate ids make the binding
             # ambiguous: one supplied result would bind to more than one call. Fail closed here rather
