@@ -85,7 +85,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
-    from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+    from openai.types.completion_usage import CompletionTokensDetails, CompletionUsage, PromptTokensDetails
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import (
@@ -5449,6 +5449,76 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None):
     # Final usage should be from the last chunk (15 output tokens)
     # NOT the sum of all chunks (5+10+15+15 = 45 output tokens)
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+
+
+async def test_stream_continuous_usage_stats_retains_dropped_fields(allow_model_requests: None):
+    """`continuous_usage_stats` cumulative snapshots must not drop a field a later chunk omits (#5889).
+
+    Not a VCR test: it pins a defensive branch that needs an intermediate chunk to report a sub-field
+    (`reasoning_tokens`, `cached_tokens`) that a later cumulative chunk then omits — behavior a recorded
+    stream doesn't reliably produce. Same shape as the `GoogleModel` fix in #5886.
+    """
+
+    def usage_chunk(
+        delta: list[ChoiceDelta],
+        *,
+        completion_tokens: int,
+        prompt_tokens: int,
+        reasoning_tokens: int | None = None,
+        cached_tokens: int | None = None,
+        finish_reason: FinishReason | None = None,
+    ) -> chat.ChatCompletionChunk:
+        return chat.ChatCompletionChunk(
+            id='123',
+            choices=[ChunkChoice(index=0, delta=d, finish_reason=finish_reason) for d in delta],
+            created=1704067200,
+            model='gpt-5-123',
+            object='chat.completion.chunk',
+            usage=CompletionUsage(
+                completion_tokens=completion_tokens,
+                prompt_tokens=prompt_tokens,
+                total_tokens=completion_tokens + prompt_tokens,
+                completion_tokens_details=CompletionTokensDetails(reasoning_tokens=reasoning_tokens)
+                if reasoning_tokens is not None
+                else None,
+                prompt_tokens_details=PromptTokensDetails(cached_tokens=cached_tokens)
+                if cached_tokens is not None
+                else None,
+            ),
+        )
+
+    # An intermediate chunk reports reasoning_tokens=50 and cached_tokens=30; the later chunks omit both.
+    stream = [
+        usage_chunk(
+            [ChoiceDelta(content='hello ', role='assistant')],
+            completion_tokens=5,
+            prompt_tokens=20,
+            reasoning_tokens=50,
+            cached_tokens=30,
+        ),
+        usage_chunk([ChoiceDelta(content='world')], completion_tokens=10, prompt_tokens=20),
+        usage_chunk([], completion_tokens=12, prompt_tokens=20, finish_reason='stop'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    settings = cast(OpenAIChatModelSettings, {'openai_continuous_usage_stats': True})
+    async with agent.run_stream('', model_settings=settings) as result:
+        async for _ in result.stream_text(debounce_by=None):
+            pass
+
+    # `reasoning_tokens` (details) and `cache_read_tokens` (typed, from `cached_tokens`) survive the
+    # later chunks that dropped them, instead of being zeroed by the replacing snapshot.
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=20,
+            cache_read_tokens=30,
+            output_tokens=12,
+            details={'reasoning_tokens': 50},
+        )
+    )
 
 
 async def test_openai_chat_refusal_non_streaming(allow_model_requests: None):

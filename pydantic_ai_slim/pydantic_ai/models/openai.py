@@ -100,6 +100,7 @@ from ..profiles.openai import (
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import AgentDepsT, ToolDefinition
+from ..usage import merge_cumulative_usage
 from . import (
     Model,
     ModelRequestContext,
@@ -3178,8 +3179,9 @@ class OpenAIStreamedResponse(StreamedResponse):
                 chunk_usage = self._map_usage(chunk)
                 if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
                     # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
-                    # so we replace rather than increment to avoid double-counting.
-                    self._usage = chunk_usage
+                    # so we replace rather than increment to avoid double-counting. Merge with the usage
+                    # so far to retain any field a later cumulative chunk dropped (#5889, same shape as #5886).
+                    self._usage = merge_cumulative_usage(self._usage, chunk_usage)
                 else:
                     self._usage += chunk_usage
 

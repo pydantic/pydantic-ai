@@ -58,7 +58,7 @@ from ..profiles.grok import GrokModelProfile, GrokReasoningEffort
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
-from ..usage import RequestUsage
+from ..usage import RequestUsage, merge_cumulative_usage
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -949,8 +949,11 @@ class XaiStreamedResponse(StreamedResponse):
 
     def _update_response_state(self, response: chat_types.Response) -> None:
         """Update response state including usage, response ID, and finish reason."""
-        # Update usage (SDK Response always provides a usage object)
-        self._usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
+        # Update usage (SDK Response always provides a usage object). xAI streams cumulative
+        # snapshots, so merge with the usage so far to retain any field a later chunk dropped
+        # (#5889, same shape as #5886).
+        latest_usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
+        self._usage = merge_cumulative_usage(self._usage, latest_usage)
 
         # Set provider response ID (only set once)
         if response.id and self.provider_response_id is None:

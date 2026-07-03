@@ -243,6 +243,30 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
             slf.details[key] = slf.details.get(key, 0) + value
 
 
+def merge_cumulative_usage(previous: RequestUsage, latest: RequestUsage) -> RequestUsage:
+    """Merge a cumulative-snapshot `latest` usage with the usage accumulated so far.
+
+    Some providers stream usage as cumulative snapshots where each chunk's usage supersedes the previous
+    one (rather than being a delta to sum). Because the per-chunk usage is built with `exclude_none`/
+    conditional includes, a sub-field reported on an earlier chunk (e.g. `reasoning_tokens` or
+    `cache_read_tokens`) can be absent from a later one, which would zero the typed field when the later
+    snapshot replaces the accumulated usage. Backfill any token field or `details` entry that `latest`
+    dropped from `previous`, so those values survive. Safe because cumulative snapshots are monotonic: a
+    real drop to zero never overwrites a prior non-zero. See #5886.
+
+    `latest` is mutated in place and returned (callers build it fresh from each chunk).
+    """
+    latest.details = {**previous.details, **latest.details}
+    latest.input_tokens = latest.input_tokens or previous.input_tokens
+    latest.cache_write_tokens = latest.cache_write_tokens or previous.cache_write_tokens
+    latest.cache_read_tokens = latest.cache_read_tokens or previous.cache_read_tokens
+    latest.output_tokens = latest.output_tokens or previous.output_tokens
+    latest.input_audio_tokens = latest.input_audio_tokens or previous.input_audio_tokens
+    latest.cache_audio_read_tokens = latest.cache_audio_read_tokens or previous.cache_audio_read_tokens
+    latest.output_audio_tokens = latest.output_audio_tokens or previous.output_audio_tokens
+    return latest
+
+
 @dataclass(repr=False, kw_only=True)
 class UsageLimits:
     """Limits on model usage.

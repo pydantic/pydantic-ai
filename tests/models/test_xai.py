@@ -1154,6 +1154,54 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
             )
 
 
+async def test_xai_stream_usage_retains_dropped_fields(allow_model_requests: None):
+    """xAI cumulative usage snapshots must not drop a field a later chunk omits (#5889).
+
+    Not a VCR test (xAI is gRPC, so these paths use mock proto objects): it pins a defensive branch
+    that needs an intermediate `Response` to report a sub-field (`reasoning_tokens`,
+    `cached_prompt_text_tokens`) that a later cumulative `Response` then omits — behavior a recorded
+    stream doesn't reliably produce. Same shape as the `GoogleModel` fix in #5886.
+    """
+
+    def usage_chunk(text: str, usage: Any, finish_reason: str = '') -> tuple[Any, Any]:
+        chunk = create_stream_chunk(content=text, finish_reason=finish_reason or None)  # type: ignore[arg-type]
+        response = create_response(content=text, finish_reason=finish_reason or 'stop', usage=usage)  # type: ignore[arg-type]
+        return (response, chunk)
+
+    # An intermediate snapshot reports reasoning_tokens=50 and cached_prompt_text_tokens=30; the final
+    # cumulative snapshot omits both.
+    stream = [
+        usage_chunk(
+            'hello ',
+            create_usage(prompt_tokens=20, completion_tokens=5, reasoning_tokens=50, cached_prompt_text_tokens=30),
+        ),
+        usage_chunk(
+            'world',
+            create_usage(prompt_tokens=20, completion_tokens=12),
+            finish_reason='stop',
+        ),
+    ]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(debounce_by=None):
+            pass
+
+    # `reasoning_tokens` (details) and `cache_read_tokens` (typed, from `cached_prompt_text_tokens`)
+    # survive the final snapshot that dropped them, instead of being zeroed by the replacement.
+    assert result.usage == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=20,
+            cache_read_tokens=30,
+            output_tokens=12,
+            details={'reasoning_tokens': 50},
+        )
+    )
+
+
 class MyTypedDict(TypedDict, total=False):
     first: str
     second: str
