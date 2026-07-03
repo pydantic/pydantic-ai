@@ -139,24 +139,6 @@ CASES = [
 ]
 
 
-_MISSING = object()
-
-
-def _body_path(body: dict[str, Any], path: str) -> Any:
-    """Resolve a dotted path in a decoded JSON body, returning `_MISSING` if any segment is absent.
-
-    `present`/`absent` keys may be nested (e.g. Google's `generationConfig.thinkingConfig.thinking_budget`),
-    so a flat `body.get(key)` isn't enough. Returns a sentinel rather than `None` so a real `None`/`0` on the
-    wire is distinguishable from an absent key.
-    """
-    node: Any = body
-    for key in path.split('.'):
-        if not isinstance(node, dict) or key not in node:
-            return _MISSING
-        node = node[key]  # pyright: ignore[reportUnknownVariableType]
-    return node  # pyright: ignore[reportUnknownVariableType]
-
-
 def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str, gemini_api_key: str) -> Model:
     if case.provider == 'groq':
         return GroqModel(case.model_name, provider=GroqProvider(api_key=groq_api_key))
@@ -197,9 +179,12 @@ async def test_reasoning_wire_contract(
         await agent.run('What is 2+2? Reply with just the number.')
 
     body = single_request_body(vcr)
-    for key, value in case.present.items():
-        actual = _body_path(body, key)
-        assert actual == value, f'expected {key}={value!r} on the wire, got {actual!r}'
+    for path, value in case.present.items():
+        # `path` is dotted where a provider nests the signal (Google: `generationConfig.thinkingConfig.thinking_budget`);
+        # flat keys are just a single segment.
+        node: Any = body
+        for key in path.split('.'):
+            node = node[key]
+        assert node == value, f'expected {path}={value!r} on the wire, got {node!r}'
     for key in case.absent:
-        actual = _body_path(body, key)
-        assert actual is _MISSING, f'expected {key!r} absent from the wire, got {actual!r}'
+        assert key not in body, f'expected {key!r} absent from the wire, got {body[key]!r}'
