@@ -1240,6 +1240,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Determine root capability: override > agent default
         override_cap = self._override_root_capability.get()
         base_capability = override_cap.value if override_cap is not None else self._root_capability
+        if override_cap is not None:
+            # `override(spec=...)` replaces the agent's root capability, so its native tools form the
+            # base layer for this run and are never checked at construction. Validate them here,
+            # mirroring the construction-time check on the agent's own capabilities.
+            _validate_native_tool_ids(base_capability.get_native_tools(), source='override spec capabilities')
 
         # Merge spec and run-time capabilities additively with the base capability
         extra_capabilities: list[AbstractCapability[AgentDepsT]] = []
