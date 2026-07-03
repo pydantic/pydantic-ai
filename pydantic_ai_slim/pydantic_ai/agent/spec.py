@@ -133,7 +133,9 @@ class AgentSpec(BaseModel):
             if not schema_path.is_absolute():
                 schema_ref = str(schema_path)
                 schema_path = path.parent / schema_path
-            else:  # pragma: no cover
+            elif schema_path.is_relative_to(path.parent):
+                schema_ref = str(schema_path.relative_to(path.parent))
+            else:
                 schema_ref = str(schema_path)
             self._save_schema(schema_path, custom_capability_types)
 

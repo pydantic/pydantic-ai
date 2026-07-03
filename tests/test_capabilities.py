@@ -2127,6 +2127,20 @@ def test_to_file_json(tmp_path: str):
     assert schema_path.exists()
 
 
+def test_to_file_json_with_absolute_schema_path(tmp_path: str):
+    import json
+
+    spec = AgentSpec(model='test', name='my-agent')
+    spec_path = Path(tmp_path) / 'agent.json'
+    schema_path = Path(tmp_path) / 'agent_schema.json'
+
+    spec.to_file(spec_path, schema_path=schema_path)
+
+    data = json.loads(spec_path.read_text(encoding='utf-8'))
+    assert data['$schema'] == 'agent_schema.json'
+    assert schema_path.exists()
+
+
 def test_to_file_no_schema(tmp_path: str):
     spec = AgentSpec(model='test')
     spec_path = Path(tmp_path) / 'agent.yaml'
