@@ -13649,6 +13649,71 @@ class _CommitRunCodeResultAsOutput(AbstractCapability[Any]):
         return committed or result
 
 
+async def test_run_context_output_unavailable_outside_agent_run():
+    """`RunContext.output` raises clearly when no run output schema is installed.
+
+    This is not a VCR test because it checks a local guard on synthetic run contexts, before any model
+    request can be made.
+    """
+    ctx = _build_run_context()
+
+    with pytest.raises(UserError, match=re.escape('`RunContext.output` is only available during an agent run')):
+        await ctx.output.process_candidate('hello')
+
+
+async def test_run_context_output_process_candidate_without_retry_state():
+    """Synthetic contexts can process candidates when output state is present but retry state is absent.
+
+    This is not a VCR test because it covers the local `RunContext.output` helper path used by capabilities,
+    not provider behavior.
+    """
+    agent = Agent(TestModel(), output_type=str)
+    ctx = _build_run_context()
+    ctx._output_schema = agent._output_schema  # pyright: ignore[reportPrivateUsage]
+    ctx._root_capability = agent.root_capability  # pyright: ignore[reportPrivateUsage]
+
+    output = await ctx.output.commit_candidate('hello')
+
+    assert output.data.output == 'hello'
+
+
+def test_run_context_output_end_pending_tool_return_guards():
+    """`OutputController.end` only appends pending tool returns that are not already in history.
+
+    This is not a VCR test because the behavior is local message-history bookkeeping with synthetic graph nodes.
+    """
+    from pydantic_ai import ModelRequestNode
+
+    ctx = _build_run_context()
+    output = ctx.output.end('hello', result=object())
+    assert output.data.output == 'hello'
+    assert ctx.messages == []
+
+    request_without_tool_return = ModelRequest(parts=[UserPromptPart(content='no tool return')])
+    ctx.output.end('hello', result=cast(Any, ModelRequestNode(request=request_without_tool_return)))
+    assert ctx.messages == []
+
+    request_already_recorded = ModelRequest(parts=[ToolReturnPart(tool_name='run_code', content='ok')])
+    ctx.messages.append(request_already_recorded)
+    ctx.output.end('hello', result=cast(Any, ModelRequestNode(request=request_already_recorded)))
+    assert ctx.messages == [request_already_recorded]
+
+
+async def test_run_context_output_candidate_capability_ignores_turn_without_code_result():
+    """The test capability only tries to commit after seeing the `run_code` tool result.
+
+    This is not a VCR test because it pins the local capability handoff used by the candidate-output tests.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_CommitRunCodeResultAsOutput()])
+    result = await agent.run('hello')
+
+    assert result.output == 'done'
+
+
 async def test_run_context_output_try_commit_candidate_preserves_tool_return():
     """A capability can end from a tool result while preserving the tool return in history.
 
@@ -13753,6 +13818,271 @@ async def test_run_context_output_try_commit_candidate_invalid_continues_normall
     assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
 
 
+async def test_run_context_output_try_commit_none_candidate():
+    """A capability can commit `None` as output when the schema allows it.
+
+    This is not a VCR test because it covers the local candidate-output `None` path and process hooks,
+    not provider response parsing.
+    """
+    model_call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_call_count
+        model_call_count += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+    agent = Agent(FunctionModel(model_fn), output_type=int | None, capabilities=[_CommitRunCodeResultAsOutput()])
+
+    @agent.tool_plain
+    def run_code() -> None:
+        return None
+
+    result = await agent.run('hello')
+
+    assert result.output is None
+    assert model_call_count == 1
+
+
+async def test_run_context_output_try_commit_image_candidate():
+    """A capability can commit a `BinaryImage` candidate through the image output path.
+
+    This is not a VCR test because it checks local candidate processing for already-materialized image data.
+    """
+    image = BinaryImage(data=b'test-png', media_type='image/png')
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+    image_profile = ModelProfile(supports_image_output=True)
+    agent = Agent(
+        FunctionModel(model_fn, profile=image_profile),
+        output_type=BinaryImage,
+        capabilities=[_CommitRunCodeResultAsOutput()],
+    )
+
+    @agent.tool_plain
+    def run_code() -> BinaryImage:
+        return image
+
+    result = await agent.run('hello')
+
+    assert result.output == image
+
+
+async def test_run_context_output_try_commit_text_candidate():
+    """A capability can commit text through the normal `TextOutput` function path.
+
+    This is not a VCR test because it checks local candidate text processing and function execution.
+    """
+
+    def upcase(text: str) -> str:
+        return text.upper()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+    agent = Agent(
+        FunctionModel(model_fn), output_type=TextOutput(upcase), capabilities=[_CommitRunCodeResultAsOutput()]
+    )
+
+    @agent.tool_plain
+    def run_code() -> str:
+        return 'candidate'
+
+    result = await agent.run('hello')
+
+    assert result.output == 'CANDIDATE'
+
+
+async def test_run_context_output_candidate_no_text_schema_match_continues_normally():
+    """Candidates that do not match a text-only schema are ignored and normal model output continues.
+
+    This is not a VCR test because it covers the local schema-mismatch branch for capability candidates.
+    """
+    model_responses = iter(
+        [
+            ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')]),
+            ModelResponse(parts=[TextPart(content='fallback')]),
+        ]
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return next(model_responses)
+
+    agent = Agent(FunctionModel(model_fn), output_type=str, capabilities=[_CommitRunCodeResultAsOutput()])
+
+    @agent.tool_plain
+    def run_code() -> int:
+        return 1
+
+    result = await agent.run('hello')
+
+    assert result.output == 'fallback'
+
+
+async def test_run_context_output_candidate_unknown_output_tool_name_continues_normally():
+    """Unknown `output_tool_name` rejects the candidate without consuming output retries.
+
+    This is not a VCR test because it checks local output-tool selection for capability candidates.
+    """
+
+    class NumericOutput(BaseModel):
+        value: int
+
+    class TextOnlyOutput(BaseModel):
+        text: str
+
+    model_responses = iter(
+        [
+            ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='numeric_output', args={'value': 5}, tool_call_id='final-1')]),
+        ]
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return next(model_responses)
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=[
+            ToolOutput(NumericOutput, name='numeric_output'),
+            ToolOutput(TextOnlyOutput, name='text_output'),
+        ],
+        capabilities=[_CommitRunCodeResultAsOutput(output_tool_name='missing_output')],
+    )
+
+    @agent.tool_plain
+    def run_code() -> dict[str, int]:
+        return {'value': 42}
+
+    result = await agent.run('hello')
+
+    assert result.output == NumericOutput(value=5)
+    assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
+
+
+async def test_run_context_output_candidate_selects_single_matching_output_tool():
+    """Candidate output selects the only output tool whose schema accepts the value.
+
+    This is not a VCR test because it checks local output-tool candidate probing and disambiguation.
+    """
+
+    class NumericOutput(BaseModel):
+        value: int
+
+    class TextOnlyOutput(BaseModel):
+        text: str
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=[
+            ToolOutput(NumericOutput, name='numeric_output'),
+            ToolOutput(TextOnlyOutput, name='text_output'),
+        ],
+        capabilities=[_CommitRunCodeResultAsOutput()],
+    )
+
+    @agent.tool_plain
+    def run_code() -> dict[str, int]:
+        return {'value': 42}
+
+    result = await agent.run('hello')
+
+    assert result.output == NumericOutput(value=42)
+
+
+async def test_run_context_output_candidate_no_matching_output_tool_continues_normally():
+    """Candidate output is ignored when no output tool schema accepts it.
+
+    This is not a VCR test because it checks local candidate validation across output tools.
+    """
+
+    class NumericOutput(BaseModel):
+        value: int
+
+    class TextOnlyOutput(BaseModel):
+        text: str
+
+    model_responses = iter(
+        [
+            ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')]),
+            ModelResponse(parts=[ToolCallPart(tool_name='numeric_output', args={'value': 5}, tool_call_id='final-1')]),
+        ]
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return next(model_responses)
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=[
+            ToolOutput(NumericOutput, name='numeric_output'),
+            ToolOutput(TextOnlyOutput, name='text_output'),
+        ],
+        capabilities=[_CommitRunCodeResultAsOutput()],
+    )
+
+    @agent.tool_plain
+    def run_code() -> dict[str, int]:
+        return {'other': 42}
+
+    result = await agent.run('hello')
+
+    assert result.output == NumericOutput(value=5)
+    assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
+
+
+async def test_run_context_output_union_candidate_accepts_wrapped_result_dict():
+    """Union candidate dispatch accepts the same wrapped `result` dict shape used by prompted output.
+
+    This is not a VCR test because it validates local Python candidate dispatch, not model JSON generation.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=PromptedOutput([MyOutput, int]),
+        capabilities=[_CommitRunCodeResultAsOutput()],
+    )
+
+    @agent.tool_plain
+    def run_code() -> dict[str, Any]:
+        return {'result': {'kind': 'MyOutput', 'data': {'value': 42}}}
+
+    result = await agent.run('hello')
+
+    assert result.output == MyOutput(value=42)
+
+
+async def test_run_context_output_union_candidate_uses_fast_path_success():
+    """Union candidate dispatch uses the direct type fast path when validation succeeds.
+
+    This is not a VCR test because it targets local candidate dispatch for already-typed Python values.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=PromptedOutput([MyOutput, list[int]]),
+        capabilities=[_CommitRunCodeResultAsOutput()],
+    )
+
+    @agent.tool_plain
+    def run_code() -> MyOutput:
+        return MyOutput(value=42)
+
+    result = await agent.run('hello')
+
+    assert result.output == MyOutput(value=42)
+
+
 async def test_run_context_output_union_candidate_falls_back_after_fast_path_validation_failure():
     """Union candidate dispatch falls back when a same-origin generic fast-path match fails validation.
 
@@ -13790,11 +14120,8 @@ async def test_run_context_output_candidate_uses_output_tool_name_to_disambiguat
     """
     model_call_count = 0
 
-    def first_output(value: int) -> MyOutput:
-        return MyOutput(value=value + 1)
-
-    def second_output(value: int) -> MyOutput:
-        return MyOutput(value=value + 2)
+    class OutputValue(BaseModel):
+        value: int
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal model_call_count
@@ -13804,19 +14131,19 @@ async def test_run_context_output_candidate_uses_output_tool_name_to_disambiguat
     agent = Agent(
         FunctionModel(model_fn),
         output_type=[
-            ToolOutput(first_output, name='first_output'),
-            ToolOutput(second_output, name='second_output'),
+            ToolOutput(OutputValue, name='first_output'),
+            ToolOutput(OutputValue, name='second_output'),
         ],
         capabilities=[_CommitRunCodeResultAsOutput(output_tool_name='second_output')],
     )
 
     @agent.tool_plain
-    def run_code() -> int:
-        return 40
+    def run_code() -> dict[str, int]:
+        return {'value': 42}
 
     result = await agent.run('hello')
 
-    assert result.output == MyOutput(value=42)
+    assert result.output == OutputValue(value=42)
     assert model_call_count == 1
 
 
@@ -13828,11 +14155,8 @@ async def test_run_context_output_candidate_ambiguous_output_tools_continue_norm
     """
     model_call_count = 0
 
-    def first_output(value: int) -> MyOutput:
-        return MyOutput(value=value + 1)
-
-    def second_output(value: int) -> MyOutput:
-        return MyOutput(value=value + 2)
+    class OutputValue(BaseModel):
+        value: int
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal model_call_count
@@ -13845,20 +14169,89 @@ async def test_run_context_output_candidate_ambiguous_output_tools_continue_norm
     agent = Agent(
         FunctionModel(model_fn),
         output_type=[
-            ToolOutput(first_output, name='first_output'),
-            ToolOutput(second_output, name='second_output'),
+            ToolOutput(OutputValue, name='first_output'),
+            ToolOutput(OutputValue, name='second_output'),
         ],
         capabilities=[_CommitRunCodeResultAsOutput()],
     )
 
     @agent.tool_plain
-    def run_code() -> int:
-        return 40
+    def run_code() -> dict[str, int]:
+        return {'value': 40}
+
+    result = await agent.run('hello')
+
+    assert result.output == OutputValue(value=5)
+    assert model_call_count == 2
+    assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
+
+
+async def test_run_context_output_union_candidate_falls_back_to_raw_validation():
+    """Union candidate dispatch falls back to raw validation for serialized prompted-output content.
+
+    This is not a VCR test because it checks local candidate dispatch for a Python string already held by a
+    capability.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=PromptedOutput([MyOutput, int]),
+        capabilities=[_CommitRunCodeResultAsOutput()],
+    )
+
+    @agent.tool_plain
+    def run_code() -> str:
+        return '{"result": {"kind": "MyOutput", "data": {"value": 42}}}'
+
+    result = await agent.run('hello')
+
+    assert result.output == MyOutput(value=42)
+
+
+async def test_run_context_output_union_candidate_ambiguous_multi_arg_functions_continue_normally():
+    """Ambiguous union candidates are ignored so normal prompted output can continue.
+
+    This is not a VCR test because it targets local union candidate dispatch for Python values that match
+    multiple output functions.
+    """
+    model_responses = iter(
+        [
+            ModelResponse(parts=[ToolCallPart(tool_name='run_code', args='{}', tool_call_id='code-1')]),
+            ModelResponse(
+                parts=[TextPart(content='{"result": {"kind": "first_output", "data": {"value": 5, "label": "x"}}}')]
+            ),
+        ]
+    )
+
+    def make_output(offset: int, name: str) -> Callable[[int, str], MyOutput]:
+        def output(value: int, label: str) -> MyOutput:
+            return MyOutput(value=value + len(label) + offset)
+
+        output.__name__ = name
+        return output
+
+    first_output = make_output(0, 'first_output')
+    second_output = make_output(100, 'second_output')
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return next(model_responses)
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        output_type=PromptedOutput([first_output, second_output]),
+        capabilities=[_CommitRunCodeResultAsOutput()],
+    )
+
+    @agent.tool_plain
+    def run_code() -> dict[str, object]:
+        return {'value': 40, 'label': 'candidate'}
 
     result = await agent.run('hello')
 
     assert result.output == MyOutput(value=6)
-    assert model_call_count == 2
     assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
 
 
