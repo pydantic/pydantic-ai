@@ -354,10 +354,10 @@ def test_run_stream_sync_keyboard_interrupt_closes_open_stream(monkeypatch: pyte
 
     async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
         try:
-            yield 'The '  # a final-result event here lets `run_stream_sync` return with the stream still open
-            while True:  # keep the model stream (and its notional connection) open and producing
-                yield 'cat '
-                await asyncio.sleep(0.01)
+            # The final-result event lets `run_stream_sync` return here with the generator suspended at
+            # this `yield` — i.e. the model stream (and its notional connection) still open. The `finally`
+            # runs only when teardown closes it.
+            yield 'The cat sat on the mat.'
         finally:
             stream_closed.set()
 
@@ -435,6 +435,31 @@ def test_run_stream_sync_early_break_tears_down_pump():
         # `stream_text` is typed `Iterator` but is a generator at runtime; closing it abandons the stream,
         # closing the receive end the pump is sending into.
         cast(Any, stream).close()
+
+
+async def test_run_stream_early_break_during_debounce_closes_cleanly():
+    """Breaking out of a debounced `stream_text()` mid-chunk must not raise from stream teardown.
+
+    `stream_text()`/`stream_output()` debounce via `group_by_temporal`, which prefetches the next item in
+    a background task. Abandoning the stream with an early `break` while that prefetch is parked in an
+    in-flight `anext` on the model source used to make the run's `aclose()` raise
+    `RuntimeError: aclose(): asynchronous generator is already running`; `PeekableAsyncStream` now
+    serializes source access so `aclose()` waits for the prefetch to release the source first.
+    """
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        while True:  # `while True` (not a bounded loop) so teardown mid-loop leaves no uncovered exit branch
+            yield 'chunk '
+            await asyncio.sleep(0.2)  # keep a chunk in-flight (prefetched) when we break
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    # Consume one chunk (default debounce spawns the prefetch task), then abandon the still-suspended
+    # stream by leaving the `async with`. Tearing down while the prefetch is mid-`anext` must not raise.
+    # (A single `anext` rather than `async for ...: break` avoids an uncovered loop-exit branch; keeping
+    # `stream` referenced stops it being finalized early, which would cancel the prefetch and hide the bug.)
+    async with agent.run_stream('hello') as result:
+        stream = result.stream_text(delta=True)
+        assert await anext(stream)
 
 
 def test_run_stream_sync_rejects_already_entered_result():

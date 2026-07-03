@@ -458,6 +458,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         self._source_iter: AsyncIterator[T] | None = None
         self._buffer: T | Unset = UNSET
         self._exhausted = False
+        # Serialize access to the underlying source so `aclose()` waits for any in-flight `__anext__`/
+        # `peek()` to finish before closing it. A debounced consumer (`group_by_temporal`) prefetches the
+        # next item in a background task, so the source generator can be mid-`anext` when the stream is
+        # abandoned (an early `break` or an exception in the consumer body); closing it then would raise
+        # `RuntimeError: aclose(): asynchronous generator is already running`.
+        self._source_lock = anyio.Lock()
 
     async def peek(self) -> T | Unset:
         """Returns the next item that would be yielded without consuming it.
@@ -475,11 +481,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        try:
-            self._buffer = await anext(self._source_iter)
-        except StopAsyncIteration:
-            self._exhausted = True
-            return UNSET
+        async with self._source_lock:
+            try:
+                self._buffer = await anext(self._source_iter)
+            except StopAsyncIteration:
+                self._exhausted = True
+                return UNSET
 
         return self._buffer
 
@@ -509,18 +516,22 @@ class PeekableAsyncStream(Generic[T, SourceT]):
         if self._source_iter is None:
             self._source_iter = aiter(self.source)
 
-        try:
-            return await anext(self._source_iter)
-        except StopAsyncIteration:
-            self._exhausted = True
-            raise
+        async with self._source_lock:
+            try:
+                return await anext(self._source_iter)
+            except StopAsyncIteration:
+                self._exhausted = True
+                raise
 
     async def aclose(self) -> None:
         self._exhausted = True
         value = self._source_iter if self._source_iter is not None else self.source
         aclose: Callable[[], Awaitable[None]] | None = getattr(value, 'aclose', None)
         if aclose is not None:
-            await aclose()
+            # Wait for any in-flight `__anext__`/`peek()` (e.g. a `group_by_temporal` prefetch task) to
+            # release the source before closing it, so we don't close a generator that's still running.
+            async with self._source_lock:
+                await aclose()
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
