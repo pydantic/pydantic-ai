@@ -320,12 +320,16 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     yield part.content, i
 
             last_text_index: int | None = None
+            separator_pending = False
             async for event in self:
                 if (
                     isinstance(event, _messages.PartStartEvent)
                     and isinstance(event.part, _messages.TextPart)
                     and event.part.content
                 ):
+                    if separator_pending:
+                        yield '\n\n', event.index
+                        separator_pending = False
                     last_text_index = event.index
                     yield event.part.content, event.index
                 elif (
@@ -333,6 +337,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.delta, _messages.TextPartDelta)
                     and event.delta.content_delta
                 ):
+                    if separator_pending:
+                        yield '\n\n', event.index
+                        separator_pending = False
                     last_text_index = event.index
                     yield event.delta.content_delta, event.index
                 elif (
@@ -340,8 +347,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.part, _messages.NativeToolCallPart)
                     and last_text_index is not None
                 ):
-                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
-                    yield '\n\n', event.index
+                    # Text parts that are interrupted by a native tool call should not be joined together directly.
+                    # Defer the separator until the next text arrives so a native tool pair that trails all text
+                    # (e.g. Google grounding metadata) does not leave a dangling separator on the streamed output.
+                    separator_pending = True
                     last_text_index = None
 
         async def _stream_text_deltas() -> AsyncGenerator[str, None]:

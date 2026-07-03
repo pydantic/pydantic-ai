@@ -24,7 +24,10 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 
+from pydantic_ai import models
+from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import PeekableAsyncStream
+from pydantic_ai.capabilities import CombinedCapability
 from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
@@ -41,7 +44,7 @@ from pydantic_ai.native_tools import (
     WebFetchTool,
     WebSearchTool,
 )
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ...conftest import IsDatetime, IsStr, try_import
 
@@ -55,11 +58,13 @@ with try_import() as imports_successful:
         ToolType,
     )
 
+    from pydantic_ai._output import TextOutputProcessor, TextOutputSchema
     from pydantic_ai.models.google import (
         GeminiStreamedResponse,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _process_response_from_parts,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.result import AgentStream
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
@@ -432,6 +437,48 @@ async def test_gemini_streamed_response_appends_web_search_grounding_metadata_af
             )
         ]
     )
+
+
+def _text_output_agent_stream(streamed_response: GeminiStreamedResponse) -> AgentStream[None, str]:
+    return AgentStream(
+        _raw_stream_response=streamed_response,
+        _output_schema=TextOutputSchema[str](
+            text_processor=TextOutputProcessor(),
+            allows_deferred_tools=False,
+            allows_image=False,
+            allows_none=False,
+        ),
+        _model_request_parameters=ModelRequestParameters(),
+        _output_validators=[],
+        _run_ctx=RunContext(deps=None, model=models.infer_model('test'), usage=RunUsage()),
+        _usage_limits=None,
+        _tool_manager=cast(Any, None),
+        _root_capability=CombinedCapability([]),
+    )
+
+
+async def test_gemini_streamed_response_web_search_grounding_metadata_does_not_trail_text_output():
+    """`stream_text` must not append a dangling separator when the web-search pair trails all text."""
+    streamed_response = _gemini_streamed_response_from_chunks(
+        [
+            _generate_stream_response('stream-1', parts=[{'text': 'Pydantic AI '}]),
+            _generate_stream_response('stream-2', parts=[{'text': 'supports agents.'}]),
+            _generate_stream_response(
+                'stream-3',
+                grounding_metadata={
+                    'webSearchQueries': ['Pydantic AI docs'],
+                    'groundingChunks': [{'web': {'uri': 'https://ai.pydantic.dev/', 'title': 'Pydantic AI'}}],
+                },
+                finish_reason=GoogleFinishReason.STOP,
+            ),
+        ],
+    )
+
+    stream = _text_output_agent_stream(streamed_response)
+    deltas = [delta async for delta in stream.stream_text(delta=True, debounce_by=None)]
+
+    assert deltas == snapshot(['Pydantic AI ', 'supports agents.'])
+    assert ''.join(deltas) == stream.response.text
 
 
 async def test_gemini_streamed_response_web_search_sources_are_extractable():
