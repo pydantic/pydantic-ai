@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
@@ -12,7 +13,7 @@ from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
-from pydantic_core import to_json
+from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
@@ -89,6 +90,19 @@ def serialize_any(value: Any) -> str:
             return f'Unable to serialize: {e}'
 
 
+def safe_to_json(value: object) -> bytes:
+    """Serialize `value` to compact JSON bytes, tolerating lone surrogates.
+
+    `to_json` raises on unpaired surrogates (e.g. text decoded with `errors='surrogateescape'`),
+    which would crash an otherwise-successful run from within instrumentation. The stdlib fallback
+    escapes them, matching the lenient behavior callers had before adopting `to_json`.
+    """
+    try:
+        return to_json(value)
+    except PydanticSerializationError:
+        return json.dumps(value, separators=(',', ':')).encode()
+
+
 def model_attributes(model: Model) -> dict[str, AttributeValue]:
     attributes: dict[str, AttributeValue] = {
         GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
@@ -112,7 +126,7 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
-    return {'model_request_parameters': to_json(serialize_any(model_request_parameters)).decode()}
+    return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
 
 
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
@@ -204,7 +218,7 @@ def open_model_request_span(
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
-        attributes['gen_ai.tool.definitions'] = to_json(tool_definitions).decode()
+        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
 
     if prepared_settings:
         for key in MODEL_SETTING_ATTRIBUTES:

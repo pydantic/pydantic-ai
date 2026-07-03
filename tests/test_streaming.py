@@ -5105,27 +5105,69 @@ async def test_run_stream_events_break_cleanup():
     # __aexit__ closes the iterator and drains the background task; no task leak, no error.
 
 
+def make_cleanup_signal_test_model(producer_started: asyncio.Event) -> type[TestModel]:
+    class CleanupSignalTestModel(TestModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext | None = None,
+        ) -> AsyncGenerator[models.StreamedResponse]:
+            async with super().request_stream(
+                messages,
+                model_settings,
+                model_request_parameters,
+                run_context,
+            ) as stream:
+                producer_started.set()
+                yield stream
+
+    return CleanupSignalTestModel
+
+
 async def test_run_stream_events_unstarted_iterator_cleanup():
-    """Entering and exiting the CM without advancing the iterator must still drain the background task."""
-    never = asyncio.Event()
-    producer_finalized = asyncio.Event()
+    """Entering and exiting the CM without advancing the iterator must not start the background task."""
+    producer_started = asyncio.Event()
+    cleanup_signal_test_model = make_cleanup_signal_test_model(producer_started)
 
-    async def blocking_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
-        try:
-            yield 'hello'
-            await never.wait()  # pragma: no cover  # blocks until cancelled
-        finally:
-            producer_finalized.set()
+    agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
 
-    agent = Agent(FunctionModel(stream_function=blocking_stream))
-
+    # `sleep(0)` yields to the event loop while each context is open, so an eager-start regression would
+    # get a chance to schedule its background task and set `producer_started` before we assert it didn't.
     async with agent.run_stream_events(''):
-        # Let the background task start and block on send_stream.send(); we never advance the iterator.
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0)
 
-    # `aclose()` on the unstarted iterator skips its cleanup branches, so the CM body itself must
-    # drain the background task; otherwise the producer's `finally` never runs.
-    await asyncio.wait_for(producer_finalized.wait(), timeout=1.0)
+    empty_context = agent.run_stream_events('')
+    await empty_context.__aexit__(None, None, None)
+
+    context = agent.run_stream_events('')
+    await context.__aenter__()
+    await asyncio.sleep(0)
+    await context.__aexit__(None, None, None)
+    await context.__aexit__(None, None, None)
+
+    reentered_context = agent.run_stream_events('')
+    await reentered_context.__aenter__()
+    await asyncio.sleep(0)
+    with pytest.raises(RuntimeError, match='cannot be entered more than once'):
+        await reentered_context.__aenter__()
+    await reentered_context.__aexit__(None, None, None)
+
+    assert not producer_started.is_set()
+
+
+async def test_run_stream_events_first_iteration_starts_background_task():
+    producer_started = asyncio.Event()
+    cleanup_signal_test_model = make_cleanup_signal_test_model(producer_started)
+
+    agent = Agent(cleanup_signal_test_model(custom_output_text='hello'))
+
+    async with agent.run_stream_events('') as events:
+        # Time out the first iteration itself so a lazy-start regression fails fast instead of hanging here.
+        await asyncio.wait_for(anext(events), timeout=1.0)
+        assert producer_started.is_set()
 
 
 async def test_run_stream_events_break_on_final_result_retrieves_late_producer_error():

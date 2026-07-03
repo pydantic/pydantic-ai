@@ -63,6 +63,7 @@ dependencies = [
     "duckdb>=1.4.2",
     "datasets>=4.0.0",
     "pandas>=2.3.3",
+    "twelvelabs>=1.2.8",
 ]
 
 [tool.hatch.build.targets.wheel]

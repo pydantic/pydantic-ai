@@ -17,6 +17,7 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     open_model_request_span,
+    safe_to_json,
     serialize_any,
 )
 from pydantic_ai._utils import UNSET, Unset
@@ -168,7 +169,7 @@ class Instrumentation(AbstractCapability[Any]):
                         (
                             result.output
                             if isinstance(result.output, str)
-                            else to_json(serialize_any(result.output)).decode()
+                            else safe_to_json(serialize_any(result.output)).decode()
                         ),
                     )
 
@@ -199,7 +200,9 @@ class Instrumentation(AbstractCapability[Any]):
 
         last_instructions = get_instructions(message_history, self._last_model_request_parameters)
         attrs: dict[str, Any] = {
-            'pydantic_ai.all_messages': to_json(settings.messages_to_otel_messages(list(message_history))).decode(),
+            'pydantic_ai.all_messages': safe_to_json(
+                settings.messages_to_otel_messages(list(message_history))
+            ).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }
 
@@ -210,7 +213,7 @@ class Instrumentation(AbstractCapability[Any]):
             attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = to_json(serialize_any(metadata)).decode()
+            attrs['metadata'] = safe_to_json(serialize_any(metadata)).decode()
 
         usage_attrs = (
             {
@@ -441,7 +444,7 @@ class Instrumentation(AbstractCapability[Any]):
         if tool_call is not None and tool_call.tool_call_id:
             attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
         if include_content:
-            attributes[names.tool_arguments_attr] = to_json(output).decode()
+            attributes[names.tool_arguments_attr] = safe_to_json(output).decode()
 
         attributes['logfire.json_schema'] = to_json(
             {
@@ -465,5 +468,5 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
             action=lambda: handler(output),
-            serialize_result=lambda value: to_json(serialize_any(value)).decode(),
+            serialize_result=lambda value: safe_to_json(serialize_any(value)).decode(),
         )

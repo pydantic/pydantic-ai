@@ -30,7 +30,7 @@ from typing import (
     overload,
 )
 
-from anyio import BrokenResourceError, CancelScope, create_memory_object_stream, create_task_group
+from anyio import BrokenResourceError, CancelScope, ClosedResourceError, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Never, TypeAliasType, TypeVar, assert_never
@@ -307,9 +307,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             inferred_name = infer_obj_name(self, depth=2)
             if inferred_name is not None:  # pragma: no branch
                 self.name = inferred_name
-        return _utils.get_event_loop().run_until_complete(
-            self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False)
-        )
+        return _utils.run_until_complete(self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False))
 
     @asynccontextmanager
     async def iter(
@@ -706,20 +704,9 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                             elif isinstance(maybe_overridden_result, JoinItem):
                                 result = maybe_overridden_result
                                 parent_fork_id = self.graph.get_parent_fork(result.join_id).fork_id
-                                for i, x in enumerate(result.fork_stack[::-1]):
-                                    if x.fork_id == parent_fork_id:
-                                        # For non-final joins (those that are intermediate nodes of other joins),
-                                        # preserve the fork stack so downstream joins can still associate with the same fork run
-                                        if self.graph.is_final_join(result.join_id):
-                                            # Final join: remove the parent fork from the stack
-                                            downstream_fork_stack = result.fork_stack[: len(result.fork_stack) - i]
-                                        else:
-                                            # Non-final join: preserve the fork stack
-                                            downstream_fork_stack = result.fork_stack
-                                        fork_run_id = x.node_run_id
-                                        break
-                                else:  # pragma: no cover
-                                    raise RuntimeError('Parent fork run not found')
+                                fork_run_id, downstream_fork_stack = self._resolve_join_fork_run(
+                                    result.join_id, result.fork_stack
+                                )
 
                                 join_node = self.graph.nodes[result.join_id]
                                 assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
@@ -873,7 +860,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 # or ExceptionGroup). This preserves the original exception for the caller.
                 try:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
-                except BrokenResourceError:
+                except (BrokenResourceError, ClosedResourceError):
                     pass  # pragma: no cover
                 return
             try:
@@ -883,8 +870,13 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, []))
                 else:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
-            except BrokenResourceError:
-                # Can happen when an asyncio task is cancelled mid-send.
+            except (BrokenResourceError, ClosedResourceError):
+                # Can happen when an asyncio task is cancelled mid-send: the run's
+                # cleanup closes `iter_stream_sender` in another task while this
+                # task is still in-flight on `send`. Closing the sender raises
+                # `ClosedResourceError` (closing the receiver would raise
+                # `BrokenResourceError`); both are benign here — the result/error
+                # is no longer needed because the run is being torn down.
                 pass
 
     async def _run_task(
@@ -964,6 +956,22 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         else:
             assert_never(next_node)
 
+    def _resolve_join_fork_run(self, join_id: JoinID, fork_stack: ForkStack) -> tuple[NodeRunID, ForkStack]:
+        """Determine which parent fork run a join item belongs to, and the fork stack its output should run under."""
+        parent_fork_id = self.graph.get_parent_fork(join_id).fork_id
+        for i, x in enumerate(fork_stack[::-1]):
+            if x.fork_id == parent_fork_id:
+                if self.graph.is_final_join(join_id):
+                    # Final join: keep the stack up to and including the parent fork, dropping everything
+                    # below it (the fork that directly produced this item, and any deeper forks).
+                    downstream_fork_stack = fork_stack[: len(fork_stack) - i]
+                else:
+                    # Non-final join (an intermediate node of another join): preserve the fork stack so
+                    # downstream joins can still associate with the same fork run.
+                    downstream_fork_stack = fork_stack
+                return x.node_run_id, downstream_fork_stack
+        raise RuntimeError('Parent fork run not found')  # pragma: no cover
+
     def _get_completed_fork_runs(
         self,
         t: GraphTask,
@@ -1026,11 +1034,17 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         new_tasks: list[GraphTask] = []
         node_run_id = self.get_next_node_run_id()
         if node.is_map:
-            # If the map specifies a downstream join id, eagerly create a join state for it
+            # If the map specifies a downstream join id, eagerly create a join state for it so that the join
+            # still fires (with its initial value) even when the mapped iterable is empty and no items ever
+            # reach it.
             if (join_id := node.downstream_join_id) is not None:
                 join_node = self.graph.nodes[join_id]
                 assert isinstance(join_node, Join)
-                self.active_reducers[(join_id, node_run_id)] = JoinState(join_node.initial_factory(), fork_stack)
+                child_fork_stack = fork_stack + (ForkStackItem(node.id, node_run_id, 0),)
+                fork_run_id, downstream_fork_stack = self._resolve_join_fork_run(join_id, child_fork_stack)
+                self.active_reducers.setdefault(
+                    (join_id, fork_run_id), JoinState(join_node.initial_factory(), downstream_fork_stack)
+                )
 
             # Eagerly raise a clear error if the input value is not iterable as expected
             if _is_any_iterable(inputs):

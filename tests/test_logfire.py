@@ -599,7 +599,7 @@ def test_instructions_with_structured_output(
                     ]
                 )
             ),
-            'gen_ai.system_instructions': '[{"type": "text", "content": "Here are some instructions"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"Here are some instructions"}]',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -2462,7 +2462,7 @@ def test_static_function_instructions_in_agent_run_span(
                     ]
                 )
             ),
-            'gen_ai.system_instructions': '[{"type": "text", "content": "Here are some instructions"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"Here are some instructions"}]',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -2528,7 +2528,7 @@ def test_instructions_from_history_when_model_request_fails_before_instrumentati
 
     summary = get_logfire_summary()
     assert summary.attributes[0]['gen_ai.system_instructions'] == snapshot(
-        '[{"type": "text", "content": "Instructions from history"}]'
+        '[{"type":"text","content":"Instructions from history"}]'
     )
 
 
@@ -2654,7 +2654,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                     ]
                 )
             ),
-            'gen_ai.system_instructions': '[{"type": "text", "content": "This is step 2"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"This is step 2"}]',
             'pydantic_ai.variable_instructions': True,
             'logfire.json_schema': IsJson(
                 snapshot(
@@ -2796,7 +2796,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                 )
             ),
             'pydantic_ai.new_message_index': 2,
-            'gen_ai.system_instructions': '[{"type": "text", "content": "Instructions for the current agent run"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"Instructions for the current agent run"}]',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -2905,7 +2905,7 @@ async def test_run_stream(
                     ]
                 )
             ),
-            'gen_ai.system_instructions': '[{"type": "text", "content": "Instructions for the current agent run"}]',
+            'gen_ai.system_instructions': '[{"type":"text","content":"Instructions for the current agent run"}]',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -3265,6 +3265,62 @@ def test_deferral_non_serializable_metadata(capfire: CaptureLogfire) -> None:
             },
         }
     )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_model_retry_still_errors_v5(capfire: CaptureLogfire) -> None:
+    """Test that ModelRetry on v5 still records the span as an error.
+
+    The deferral fix (CallDeferred/ApprovalRequired → UNSET on v5) must not affect
+    ModelRetry, which wraps as ToolRetryError and should always be an error span.
+    """
+    agent = Agent(
+        TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=5))],
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        raise ModelRetry('please try again with different input')
+
+    with pytest.raises(UnexpectedModelBehavior):
+        agent.run_sync('Hello')
+
+    tool_span = _get_tool_span(capfire)
+
+    # ToolRetryError should still be recorded as an error on v5 — only deferrals get UNSET
+    assert tool_span['attributes'].get('logfire.level_num') == 17
+    # No deferral attributes should be set — this is a retry, not a deferral
+    assert 'pydantic_ai.tool.deferral.name' not in tool_span['attributes']
+    assert 'pydantic_ai.tool.deferral.metadata' not in tool_span['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_deferral_unexpected_exception_still_errors_v5(capfire: CaptureLogfire) -> None:
+    """Test that unexpected exceptions on v5 still record the span as an error.
+
+    The deferral fix must not affect general exception handling — only
+    CallDeferred and ApprovalRequired get UNSET status on v5.
+    """
+    agent = Agent(
+        TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(version=5))],
+    )
+
+    @agent.tool_plain
+    def my_tool(x: int) -> str:
+        raise ValueError('something went wrong')
+
+    with pytest.raises(ValueError, match='something went wrong'):
+        agent.run_sync('Hello')
+
+    tool_span = _get_tool_span(capfire)
+
+    # ValueError path should still record error regardless of instrumentation version
+    assert tool_span['attributes'].get('logfire.level_num') == 17
+    # No deferral attributes should be set
+    assert 'pydantic_ai.tool.deferral.name' not in tool_span['attributes']
+    assert 'pydantic_ai.tool.deferral.metadata' not in tool_span['attributes']
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
