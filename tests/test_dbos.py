@@ -2265,11 +2265,11 @@ async def test_dbos_durability_allows_runtime_function_toolset(dbos: DBOS) -> No
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart('runtime_tool', {}, tool_call_id='call-1')])
 
-    agent = Agent(
-        FunctionModel(call_then_answer), name='durability_runtime_fn', capabilities=[DBOSDurability()]
-    )
+    agent = Agent(FunctionModel(call_then_answer), name='durability_runtime_fn', capabilities=[DBOSDurability()])
 
-    result = await agent.run('Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')])
+    result = await agent.run(
+        'Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')]
+    )
     assert result.output == 'done'
 
 
@@ -2277,7 +2277,9 @@ async def test_dbos_durability_rejects_runtime_mcp_toolset(dbos: DBOS) -> None:
     """An `MCPToolset` added per-run is rejected: its I/O steps must be registered at construction."""
     agent = Agent(_durability_fn_model, name='durability_runtime_mcp', capabilities=[DBOSDurability()])
 
-    with pytest.raises(UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'):
+    with pytest.raises(
+        UserError, match=r'MCPToolset cannot be passed to `run\(toolsets=\.\.\.\)` at runtime with DBOS'
+    ):
         await agent.run(
             'Hello',
             toolsets=[MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='runtime_mcp')],

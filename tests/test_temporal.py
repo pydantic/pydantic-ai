@@ -6737,7 +6737,9 @@ async def test_durability_allows_runtime_toolsets_outside_workflow(allow_model_r
         name='durability_runtime_outside_workflow',
         capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
     )
-    result = await agent.run('Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')])
+    result = await agent.run(
+        'Call the runtime tool.', toolsets=[FunctionToolset(tools=[runtime_tool], id='runtime_fn')]
+    )
     assert result.output == 'done'
 
 
@@ -6771,9 +6773,7 @@ _durability_runtime_external_toolset = ExternalToolset(
 class DurabilityRuntimeExternalToolsetWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> DeferredToolRequests | str:
-        result = await _durability_runtime_external_agent.run(
-            prompt, toolsets=[_durability_runtime_external_toolset]
-        )
+        result = await _durability_runtime_external_agent.run(prompt, toolsets=[_durability_runtime_external_toolset])
         return result.output
 
 
