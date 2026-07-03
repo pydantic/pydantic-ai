@@ -12,6 +12,7 @@ from pydantic_ai._utils import is_model_like
 from pydantic_ai.settings import ModelSettings
 
 from ..otel.span_tree import SpanQuery
+from .agentic import ArgumentCorrectness, MaxModelRequests, MaxToolCalls, ToolCorrectness, TrajectoryMatch
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
 
@@ -362,6 +363,11 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     MaxDuration,
     LLMJudge,
     HasMatchingSpan,
+    ToolCorrectness,
+    TrajectoryMatch,
+    ArgumentCorrectness,
+    MaxToolCalls,
+    MaxModelRequests,
     GEval,
 )
 

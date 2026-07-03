@@ -1,3 +1,13 @@
+from .agentic import (
+    ArgumentCorrectness,
+    ArgumentMatchMode,
+    ArgumentOccurrence,
+    MaxModelRequests,
+    MaxToolCalls,
+    ToolCorrectness,
+    TrajectoryMatch,
+    TrajectoryOrder,
+)
 from .common import (
     Contains,
     Equals,
@@ -30,6 +40,15 @@ __all__ = (
     'GEval',
     'HasMatchingSpan',
     'OutputConfig',
+    # agentic
+    'ToolCorrectness',
+    'TrajectoryMatch',
+    'TrajectoryOrder',
+    'ArgumentCorrectness',
+    'ArgumentMatchMode',
+    'ArgumentOccurrence',
+    'MaxToolCalls',
+    'MaxModelRequests',
     # context
     'EvaluatorContext',
     # evaluator
