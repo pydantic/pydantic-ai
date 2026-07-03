@@ -364,7 +364,7 @@ async def test_unsupported_profile_with_forced_tool_choice_raises(
         m = OpenAIChatModel('gpt-4o-mini', provider=provider, profile=profile)
 
     params = ModelRequestParameters(function_tools=[make_tool('my_tool')], allow_text_output=True)
-    with pytest.raises(UserError, match='tool_choice=.* is not supported by model'):
+    with pytest.raises(UserError, match=r'tool_choice=.* is not supported by model'):
         await m.request([ModelRequest.user_text_prompt('test')], {'tool_choice': tool_choice}, params)
 
 
@@ -727,7 +727,7 @@ async def test_anthropic_no_forcing_model_explicit_forcing_raises(
     m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=True)
     settings: AnthropicModelSettings = {'tool_choice': tool_choice}
-    with pytest.raises(UserError, match='Anthropic does not support .* for this model'):
+    with pytest.raises(UserError, match=r'Anthropic does not support .* for this model'):
         m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
 
 

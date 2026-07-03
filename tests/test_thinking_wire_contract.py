@@ -9,7 +9,7 @@ the wire (the methodology that surfaced the OpenRouter `enabled: True` miss).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
 from vcr.cassette import Cassette
@@ -27,6 +27,10 @@ with try_import() as groq_imports:
 with try_import() as cerebras_imports:
     from pydantic_ai.models.cerebras import CerebrasModel
     from pydantic_ai.providers.cerebras import CerebrasProvider
+
+with try_import() as google_imports:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
@@ -124,14 +128,24 @@ CASES = [
         absent=('disable_reasoning', 'reasoning_effort'),
         marks=(pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),),
     ),
+    WireCase(
+        id='google-gemini-25-disable',
+        provider='google',
+        model_name='gemini-2.5-flash',
+        thinking=False,
+        present={'generationConfig.thinkingConfig.thinking_budget': 0},
+        marks=(pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),),
+    ),
 ]
 
 
-def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str) -> Model:
+def _build_model(case: WireCase, *, groq_api_key: str, cerebras_api_key: str, gemini_api_key: str) -> Model:
     if case.provider == 'groq':
         return GroqModel(case.model_name, provider=GroqProvider(api_key=groq_api_key))
     if case.provider == 'cerebras':
         return CerebrasModel(case.model_name, provider=CerebrasProvider(api_key=cerebras_api_key))
+    if case.provider == 'google':
+        return GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 
 
@@ -141,11 +155,14 @@ async def test_reasoning_wire_contract(
     allow_model_requests: None,
     groq_api_key: str,
     cerebras_api_key: str,
+    gemini_api_key: str,
     vcr: Cassette,
 ):
     """Reasoning settings produce the correct request wire body: a `thinking` disable signal where the model
     supports it, its absence where reasoning is always on, and `groq_reasoning_effort` mapped to `reasoning_effort`."""
-    model = _build_model(case, groq_api_key=groq_api_key, cerebras_api_key=cerebras_api_key)
+    model = _build_model(
+        case, groq_api_key=groq_api_key, cerebras_api_key=cerebras_api_key, gemini_api_key=gemini_api_key
+    )
     if case.groq_reasoning_effort is not None:
         settings = GroqModelSettings(groq_reasoning_effort=case.groq_reasoning_effort)
     else:
@@ -162,7 +179,12 @@ async def test_reasoning_wire_contract(
         await agent.run('What is 2+2? Reply with just the number.')
 
     body = single_request_body(vcr)
-    for key, value in case.present.items():
-        assert body.get(key) == value, f'expected {key}={value!r} on the wire, got {body.get(key)!r}'
+    for path, value in case.present.items():
+        # `path` is dotted where a provider nests the signal (Google: `generationConfig.thinkingConfig.thinking_budget`);
+        # flat keys are just a single segment.
+        node: Any = body
+        for key in path.split('.'):
+            node = node[key]
+        assert node == value, f'expected {path}={value!r} on the wire, got {node!r}'
     for key in case.absent:
         assert key not in body, f'expected {key!r} absent from the wire, got {body[key]!r}'

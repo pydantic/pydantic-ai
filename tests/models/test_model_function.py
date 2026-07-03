@@ -330,7 +330,9 @@ def test_model_arg():
     result = agent.run_sync('Hello', model=FunctionModel(return_last))
     assert result.output == snapshot("content='Hello' part_kind='user-prompt' message_count=1")
 
-    with pytest.raises(RuntimeError, match='`model` must either be set on the agent or included when calling it.'):
+    with pytest.raises(
+        RuntimeError, match=re.escape('`model` must either be set on the agent or included when calling it.')
+    ):
         agent.run_sync('Hello')
 
 
