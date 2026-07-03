@@ -29,7 +29,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ._inline_snapshot import snapshot, warns
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
@@ -192,7 +192,7 @@ async def test_multi_agent_usage_no_incr():
     run_1_usages: list[RunUsage] = []
 
     @controller_agent1.tool
-    async def delegate_to_other_agent1(ctx: RunContext[None], sentence: str) -> int:
+    async def delegate_to_other_agent1(ctx: RunContext, sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence)
         delegate_usage = delegate_result.usage
         run_1_usages.append(delegate_usage)
@@ -222,6 +222,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -243,6 +244,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -252,7 +254,7 @@ async def test_multi_agent_usage_no_incr():
     controller_agent2 = Agent(TestModel())
 
     @controller_agent2.tool
-    async def delegate_to_other_agent2(ctx: RunContext[None], sentence: str) -> int:
+    async def delegate_to_other_agent2(ctx: RunContext, sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
         delegate_usage = delegate_result.usage
         assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9))
@@ -280,6 +282,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -301,6 +304,7 @@ async def test_multi_agent_usage_no_incr():
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -325,7 +329,7 @@ async def test_multi_agent_usage_sync():
     controller_agent = Agent(TestModel())
 
     @controller_agent.tool
-    def delegate_to_other_agent(ctx: RunContext[None], sentence: str) -> int:
+    def delegate_to_other_agent(ctx: RunContext, sentence: str) -> int:
         new_usage = RunUsage(requests=5, input_tokens=2, output_tokens=3)
         ctx.usage.incr(new_usage)
         return 0
@@ -352,6 +356,7 @@ async def test_multi_agent_usage_sync():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -373,6 +378,7 @@ async def test_multi_agent_usage_sync():
                 usage=RequestUsage(input_tokens=52, output_tokens=8),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -391,6 +397,7 @@ def test_add_usages():
         requests=2,
         input_tokens=10,
         output_tokens=20,
+        output_audio_tokens=70,
         cache_read_tokens=30,
         cache_write_tokens=40,
         input_audio_tokens=50,
@@ -409,6 +416,7 @@ def test_add_usages():
             cache_write_tokens=80,
             cache_read_tokens=60,
             input_audio_tokens=100,
+            output_audio_tokens=140,
             cache_audio_read_tokens=120,
             tool_calls=6,
             details={'custom1': 20, 'custom2': 40},
@@ -416,6 +424,29 @@ def test_add_usages():
     )
     assert usage + RunUsage() == usage
     assert RunUsage() + RunUsage() == RunUsage()
+
+
+def test_output_audio_tokens_increment():
+    """Test that output_audio_tokens is correctly incremented in _incr_usage_tokens."""
+    usage1 = RequestUsage(
+        input_tokens=10,
+        output_tokens=20,
+        output_audio_tokens=15,
+    )
+    usage2 = RequestUsage(
+        input_tokens=5,
+        output_tokens=10,
+        output_audio_tokens=8,
+    )
+    result = usage1 + usage2
+    assert result.output_audio_tokens == 23
+    assert result.input_tokens == 15
+    assert result.output_tokens == 30
+
+    # Also test through RunUsage.incr with RequestUsage
+    run_usage = RunUsage(requests=1, output_audio_tokens=10)
+    run_usage.incr(RequestUsage(output_audio_tokens=5))
+    assert run_usage.output_audio_tokens == 15
 
 
 def test_add_usages_with_none_detail_value():
@@ -520,6 +551,7 @@ async def test_tool_call_limit() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -541,6 +573,7 @@ async def test_tool_call_limit() -> None:
                 usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -578,6 +611,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -599,6 +633,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=52, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -633,6 +668,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -658,6 +694,7 @@ async def test_output_tool_not_counted() -> None:
                 usage=RequestUsage(input_tokens=52, output_tokens=10),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -798,6 +835,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -819,6 +857,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                 usage=RequestUsage(input_tokens=62, output_tokens=10),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -840,23 +879,12 @@ async def test_failed_tool_calls_not_counted() -> None:
                 usage=RequestUsage(input_tokens=63, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
         ]
     )
-
-
-def test_deprecated_usage_limits():
-    with warns(
-        snapshot(['DeprecationWarning: `request_tokens_limit` is deprecated, use `input_tokens_limit` instead'])
-    ):
-        assert UsageLimits(input_tokens_limit=100).request_tokens_limit == 100  # type: ignore
-
-    with warns(
-        snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
-    ):
-        assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
 
 
 async def test_parallel_tool_calls_limit_enforced():
@@ -927,28 +955,16 @@ def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
 
 
-def test_usage_limits_preserves_explicit_zero():
-    """Test that explicit 0 token limits are preserved and not replaced by deprecated fallbacks."""
-    # When input_tokens_limit=0 and deprecated request_tokens_limit is also set,
-    # the explicit 0 should be preserved (not overwritten by the deprecated fallback).
-    # We ignore type errors below because overloads don't allow mixing current and deprecated args.
-    limits = UsageLimits(input_tokens_limit=0, request_tokens_limit=123)  # pyright: ignore[reportCallIssue]
+def test_usage_limits_explicit_zero():
+    """Explicit 0 token limits round-trip correctly (regression: zero is not coerced to None)."""
+    limits = UsageLimits(input_tokens_limit=0)
     assert limits.input_tokens_limit == 0
 
-    limits = UsageLimits(output_tokens_limit=0, response_tokens_limit=456)  # pyright: ignore[reportCallIssue]
+    limits = UsageLimits(output_tokens_limit=0)
     assert limits.output_tokens_limit == 0
 
-    # When only deprecated arg is passed, should use it as fallback
-    limits = UsageLimits(request_tokens_limit=123)  # pyright: ignore[reportDeprecated]
-    assert limits.input_tokens_limit == 123
-
-    limits = UsageLimits(response_tokens_limit=456)  # pyright: ignore[reportDeprecated]
-    assert limits.output_tokens_limit == 456
-
-    # When neither is passed, should be None
     limits = UsageLimits()
     assert limits.input_tokens_limit is None
 
-    # When only current arg is set, should use it
     limits = UsageLimits(input_tokens_limit=100)
     assert limits.input_tokens_limit == 100

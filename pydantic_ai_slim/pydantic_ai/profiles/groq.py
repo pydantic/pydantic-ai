@@ -1,19 +1,23 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
-
 from . import ModelProfile
 
 
-@dataclass(kw_only=True)
-class GroqModelProfile(ModelProfile):
+class GroqModelProfile(ModelProfile, total=False):
     """Profile for models used with GroqModel.
 
     ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    groq_always_has_web_search_builtin_tool: bool = False
-    """Whether the model always has the web search built-in tool available."""
+    groq_always_has_web_search_builtin_tool: bool
+    """Whether the model always has the web search built-in tool available. Default: `False`."""
+
+    groq_supports_reasoning_disable: bool
+    """Whether `thinking=False` truly disables reasoning via `reasoning_effort='none'`. Default: `False`.
+
+    Only the qwen3 family supports this; other Groq reasoning models can at most suppress reasoning
+    *output* via `reasoning_format='hidden'` while still reasoning internally.
+    """
 
 
 def groq_model_profile(model_name: str) -> ModelProfile:
@@ -28,9 +32,11 @@ def groq_model_profile(model_name: str) -> ModelProfile:
             'llama-4-maverick',  # legacy (deprecated)
         )
     )
+    is_qwen3 = model_name.startswith('qwen/qwen3')
     return GroqModelProfile(
         groq_always_has_web_search_builtin_tool=model_name.startswith('compound-'),
         supports_thinking=is_reasoning_model,
         # qwen3 can disable reasoning with reasoning_effort='none'; legacy models can't
-        thinking_always_enabled=is_reasoning_model and not model_name.startswith('qwen/qwen3'),
+        thinking_always_enabled=is_reasoning_model and not is_qwen3,
+        groq_supports_reasoning_disable=is_qwen3,
     )
