@@ -337,9 +337,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.delta, _messages.TextPartDelta)
                     and event.delta.content_delta
                 ):
-                    if separator_pending:
-                        yield '\n\n', event.index
-                        separator_pending = False
                     last_text_index = event.index
                     yield event.delta.content_delta, event.index
                 elif (
@@ -348,8 +345,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and last_text_index is not None
                 ):
                     # Text parts that are interrupted by a native tool call should not be joined together directly.
-                    # Defer the separator until the next text arrives so a native tool pair that trails all text
-                    # (e.g. Google grounding metadata) does not leave a dangling separator on the streamed output.
+                    # Defer the separator until the next text part starts, so a native tool pair that trails all
+                    # text (e.g. Google grounding metadata) does not leave a dangling separator on the output.
                     separator_pending = True
                     last_text_index = None
 
