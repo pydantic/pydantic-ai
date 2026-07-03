@@ -4278,7 +4278,7 @@ async def test_uploaded_file_wrong_provider(allow_model_requests: None, bedrock_
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     agent = Agent(model)
 
-    with pytest.raises(UserError, match="provider_name='openai'.*cannot be used with BedrockConverseModel"):
+    with pytest.raises(UserError, match=r"provider_name='openai'.*cannot be used with BedrockConverseModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='s3://bucket/file.pdf', provider_name='openai')])
 
 

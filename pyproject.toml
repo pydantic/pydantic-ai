@@ -13,13 +13,15 @@ bump = true
 [project]
 name = "pydantic-ai"
 dynamic = ["version", "dependencies", "optional-dependencies"]
-description = "Agent Framework / shim to use Pydantic with LLMs"
+description = "AI Agent Framework, the Pydantic way"
 authors = [
-    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
-    { name = "David Montague", email = "david@pydantic.dev" },
-    { name = "Alex Hall", email = "alex@pydantic.dev" },
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+    { name = "David Sanchez", email = "david.sanchez@pydantic.dev" },
+    { name = "Aditya Vardhan", email = "aditya@pydantic.dev" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
 ]
 license = "MIT"
 license-files = ["LICENSE"]
@@ -214,6 +216,7 @@ extend-select = [
     "Q",
     "RUF100",
     "RUF018", # https://docs.astral.sh/ruff/rules/assignment-in-assert/
+    "RUF043", # https://docs.astral.sh/ruff/rules/pytest-raises-ambiguous-pattern/
     "C90",
     "UP",
     "I",

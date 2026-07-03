@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import re
 import threading
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
@@ -3192,14 +3193,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     ToolSearchReturnPart(
-                        content={
-                            'discovered_tools': [
-                                {
-                                    'name': 'lookup_refund_policy',
-                                    'description': 'Look up the refund policy for an order.',
-                                }
-                            ]
-                        },
+                        content={'discovered_tools': [{'name': 'lookup_refund_policy'}]},
                         tool_call_id='auto_load_0f10f8b659c3c105',
                         timestamp=IsDatetime(),
                     )
@@ -3214,7 +3208,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=88, output_tokens=16),
+                usage=RequestUsage(input_tokens=79, output_tokens=16),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3241,7 +3235,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=94, output_tokens=23),
+                usage=RequestUsage(input_tokens=85, output_tokens=23),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -4104,7 +4098,7 @@ def test_infer_fmt_unknown_extension():
     """_infer_fmt raises ValueError for unknown extension without explicit fmt."""
     from pydantic_ai.agent.spec import _infer_fmt  # pyright: ignore[reportPrivateUsage]
 
-    with pytest.raises(ValueError, match="Could not infer format for filename 'agent.txt'"):
+    with pytest.raises(ValueError, match=re.escape("Could not infer format for filename 'agent.txt'")):
         _infer_fmt(Path('agent.txt'), None)
 
 
@@ -19445,11 +19439,11 @@ def test_deferred_tool_requests_build_results_validates_ids():
     )
 
     # Mis-routed ID: tool-result provided for something in the approvals list.
-    with pytest.raises(ValueError, match='calls.*not in.*DeferredToolRequests.calls'):
+    with pytest.raises(ValueError, match=r'calls.*not in.*DeferredToolRequests.calls'):
         requests.build_results(calls={'approval_1': 'oops'})
 
     # Unknown ID entirely.
-    with pytest.raises(ValueError, match='approvals.*not in.*DeferredToolRequests.approvals'):
+    with pytest.raises(ValueError, match=r'approvals.*not in.*DeferredToolRequests.approvals'):
         requests.build_results(approvals={'unknown_id': True})
 
     # Happy path still works.

@@ -66,10 +66,12 @@ class ToolSearchMatch(TypedDict):
     """A single match in a tool-search result."""
 
     name: str
-    """Name of the discovered tool, as the model will call it."""
+    """Name of the discovered tool, as the model will call it.
 
-    description: str | None
-    """Human-readable description, if the tool provided one."""
+    Each discovered tool's full [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]
+    (including its description and parameter schema) is made available to the model on the
+    next request, so only the name is carried here.
+    """
 
 
 class ToolSearchArgs(TypedDict):

@@ -1349,7 +1349,9 @@ async def test_agent_name_collision(allow_model_requests: None, client: Client):
 async def test_agent_without_name():
     with pytest.raises(
         UserError,
-        match="An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow.",
+        match=re.escape(
+            "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
+        ),
     ):
         TemporalAgent(Agent())
 
@@ -1357,7 +1359,9 @@ async def test_agent_without_name():
 async def test_agent_without_model():
     with pytest.raises(
         UserError,
-        match="The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time.",
+        match=re.escape(
+            "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
+        ),
     ):
         TemporalAgent(Agent(name='test_agent'))
 
@@ -1783,6 +1787,37 @@ async def test_model_construction_in_workflow_passes_sandbox(
             task_queue=TASK_QUEUE,
         )
     assert result == expected_model_class
+
+
+# Regression test for the `genai_prices`/`httpx2` passthrough entries in `_workflow_runner`.
+# `ModelResponse.cost()` lazily imports genai-prices on first call; inside a workflow that trips the
+# sandbox unless those modules are passed through (see #6215).
+@workflow.defn
+class CalculateCostInWorkflow:
+    @workflow.run
+    async def run(self) -> float:
+        response = ModelResponse(
+            parts=[TextPart('ok')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10),
+            model_name='claude-sonnet-4-5',
+            provider_name='anthropic',
+        )
+        return float(response.cost().total_price)
+
+
+async def test_response_cost_in_workflow_passes_sandbox(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CalculateCostInWorkflow],
+        workflow_failure_exception_types=[Exception],
+    ):
+        result = await client.execute_workflow(
+            CalculateCostInWorkflow.run,
+            id='calculate_cost_in_workflow',
+            task_queue=TASK_QUEUE,
+        )
+    assert result > 0
 
 
 async def test_temporal_agent():

@@ -1,15 +1,17 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import contextlib
 import contextvars
 import functools
 import importlib
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import distributions
+from typing import Any, cast
 
 import pytest
 
@@ -140,7 +142,7 @@ def test_check_object_json_schema():
     }
 
     array_schema = {'type': 'array', 'items': {'type': 'string'}}
-    with pytest.raises(UserError, match='^Schema must be an object$'):
+    with pytest.raises(UserError, match=r'^Schema must be an object$'):
         check_object_json_schema(array_schema)
 
 
@@ -180,6 +182,100 @@ async def test_peekable_async_stream_aclose_before_iteration():
     await peekable_async_stream.aclose()
 
     assert await peekable_async_stream.is_exhausted()
+
+
+def test_run_until_complete_cleans_up_own_task_on_interrupt():
+    """A `KeyboardInterrupt` during `run_until_complete` must drive our own coroutine's cleanup
+    (closing model streams and HTTP connections via its `async with`/`finally` blocks) and leave no
+    pending task, without cancelling other tasks on the caller-owned loop.
+
+    This is a unit test rather than a public-API/VCR test because it requires a real interrupt to
+    arrive mid-`run_until_complete` while the coroutine is suspended, which can't be triggered
+    reliably through the public API; we simulate the interrupt by patching the loop.
+    """
+    cleaned: list[str] = []
+
+    async def coro() -> None:
+        try:
+            await asyncio.Event().wait()  # suspends forever
+        finally:
+            cleaned.append('cleaned')
+
+    loop = utils_module.get_event_loop()
+
+    # An unrelated task on the (caller-owned) loop that must survive: the reporter's `all_tasks()`
+    # sledgehammer would cancel this, ours must not.
+    async def bystander() -> None:
+        await asyncio.Event().wait()
+
+    bystander_task = loop.create_task(bystander())
+    tasks_before = asyncio.all_tasks(loop)
+
+    real_run_until_complete = loop.run_until_complete
+    calls = 0
+
+    def interrupt_once(future: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Let our task (and the bystander) start and suspend, then simulate Ctrl-C reaching the
+            # caller of `run_until_complete`.
+            loop.call_soon(loop.stop)
+            loop.run_forever()
+            raise KeyboardInterrupt
+        return real_run_until_complete(future)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, 'run_until_complete', interrupt_once)
+        with pytest.raises(KeyboardInterrupt):
+            utils_module.run_until_complete(coro())
+
+    assert cleaned == ['cleaned']  # our coroutine's cleanup ran
+    assert not bystander_task.cancelled()  # the unrelated task was left alone
+    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
+
+    bystander_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        loop.run_until_complete(bystander_task)
+
+
+def test_sync_async_iterator_closes_source():
+    """`sync_async_iterator` must close the underlying async iterator so its `async with`/`finally`
+    blocks (which close model streams and connections) run both when the stream is exhausted and when
+    the consumer breaks out early, rather than leaking until garbage collection."""
+    # Full exhaustion closes the source.
+    exhausted_closed: list[str] = []
+
+    async def finite() -> AsyncIterator[int]:
+        try:
+            for i in range(3):
+                yield i
+        finally:
+            exhausted_closed.append('closed')
+
+    assert list(utils_module.sync_async_iterator(finite())) == [0, 1, 2]
+    assert exhausted_closed == ['closed']
+
+    # Breaking out early (before exhaustion) closes the source too.
+    broken_closed: list[str] = []
+
+    async def infinite() -> AsyncIterator[int]:
+        try:
+            i = 0
+            while True:
+                yield i
+                i += 1
+        finally:
+            broken_closed.append('closed')
+
+    iterator = utils_module.sync_async_iterator(infinite())
+    collected = [next(iterator), next(iterator), next(iterator)]
+    # Tearing down the consumer's frame sends `GeneratorExit` into the sync iterator; do it explicitly
+    # here so the test is deterministic instead of relying on garbage collection.
+    cast('Generator[int, None, None]', iterator).close()
+
+    assert collected == [0, 1, 2]
+    assert broken_closed == ['closed']
 
 
 def test_package_versions(capsys: pytest.CaptureFixture[str]):

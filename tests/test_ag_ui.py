@@ -1716,7 +1716,7 @@ def test_dump_load_roundtrip_native_tool_search() -> None:
                 NativeToolSearchCallPart(tool_call_id='search-1', args='{"queries": ["refund"]}'),
                 NativeToolSearchReturnPart(
                     tool_call_id='search-1',
-                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'refund_tool'}]},
                 ),
             ]
         ),
@@ -1952,7 +1952,7 @@ async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
             yield {
                 1: NativeToolSearchReturnPart(
                     tool_call_id='search-1',
-                    content={'discovered_tools': [{'name': 'refund_tool', 'description': None}]},
+                    content={'discovered_tools': [{'name': 'refund_tool'}]},
                     provider_name='function',
                 )
             }
@@ -1989,7 +1989,7 @@ async def test_run_stream_native_tool_search_tool_kind_encrypted_value(
             'timestamp': IsInt(),
             'messageId': IsStr(),
             'toolCallId': builtin_id,
-            'content': '{"discovered_tools":[{"name":"refund_tool","description":null}]}',
+            'content': '{"discovered_tools":[{"name":"refund_tool"}]}',
             'role': 'tool',
         },
     ]
@@ -4320,6 +4320,98 @@ def test_load_messages_uploaded_file_dropped_by_default() -> None:
     ]
     assert len(uploaded) == 1
     assert uploaded[0].file_id == 's3://private-bucket/payroll.pdf'
+
+
+def test_agui_adapter_allow_uploaded_files_end_to_end() -> None:
+    """End-to-end: with `preserve_file_data=True` the adapter reconstructs a client `UploadedFile`, and
+    with `allow_uploaded_files=True` it survives `sanitize_messages` into the agent-visible messages.
+
+    `preserve_file_data` controls the AG-UI wire representation (reconstructing the `UploadedFile` from a
+    `pydantic_ai_uploaded_file` activity message), while `allow_uploaded_files` is the inbound security
+    gate; both must be set for a client-submitted uploaded file to reach the agent.
+    """
+    activity = ActivityMessage(
+        id='activity_1',
+        activity_type='pydantic_ai_uploaded_file',
+        content={'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'},
+    )
+    run_input = create_input(activity)
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, preserve_file_data=True, allow_uploaded_files=True)
+
+    # `preserve_file_data=True` reconstructs the `UploadedFile` from the activity message.
+    loaded_uploaded = [
+        item
+        for msg in adapter.messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert len(loaded_uploaded) == 1
+    assert loaded_uploaded[0].file_id == 's3://private-bucket/payroll.pdf'
+
+    # `allow_uploaded_files=True` lets it survive sanitization with no warning.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    sanitized_uploaded = [
+        item
+        for msg in sanitized
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert len(sanitized_uploaded) == 1
+    assert sanitized_uploaded[0].file_id == 's3://private-bucket/payroll.pdf'
+
+
+def test_agui_preserve_file_data_and_allow_uploaded_files_independent() -> None:
+    """`preserve_file_data` (representation) and `allow_uploaded_files` (security) are independent.
+
+    With `preserve_file_data=True, allow_uploaded_files=False`, `load_messages` still reconstructs the
+    `UploadedFile` from the activity message, but `sanitize_messages` DROPS it with the uploaded-file
+    warning because the security gate is closed.
+    """
+    activity = ActivityMessage(
+        id='activity_1',
+        activity_type='pydantic_ai_uploaded_file',
+        content={'file_id': 's3://private-bucket/payroll.pdf', 'provider_name': 'bedrock'},
+    )
+    run_input = create_input(activity)
+    agent: Agent[None, str] = Agent(model=TestModel())
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input, preserve_file_data=True, allow_uploaded_files=False)
+
+    # Representation opt-in still reconstructs the `UploadedFile`.
+    loaded_uploaded = [
+        item
+        for msg in adapter.messages
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert len(loaded_uploaded) == 1
+
+    # But the closed security gate drops it during sanitization with a warning.
+    with pytest.warns(UserWarning, match=r"uploaded file\(s\) for provider\(s\) \['bedrock'\]"):
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    sanitized_uploaded = [
+        item
+        for msg in sanitized
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, UserPromptPart)
+        for item in (part.content if isinstance(part.content, list) else [part.content])
+        if isinstance(item, UploadedFile)
+    ]
+    assert sanitized_uploaded == []
 
 
 def test_dump_messages_uploaded_file_with_vendor_metadata() -> None:

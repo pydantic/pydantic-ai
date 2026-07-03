@@ -9,8 +9,10 @@ from ..conftest import BinaryContent, try_import
 with try_import() as imports_successful:
     from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
+        GEvalOutput,
         GradingOutput,
         _stringify,  # pyright: ignore[reportPrivateUsage]
+        judge_g_eval,
         judge_input_output,
         judge_input_output_expected,
         judge_output,
@@ -537,3 +539,46 @@ async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixt
     assert call_kwargs['model_settings'] == test_model_settings
     # Check if 'model' kwarg is passed, its value will be the default model or None
     assert 'model' in call_kwargs
+
+
+async def test_judge_g_eval_mock(mocker: MockerFixture):
+    """`judge_g_eval` builds a numbered-steps prompt and returns a `GEvalOutput`."""
+    mock_result = mocker.MagicMock()
+    mock_result.output = GEvalOutput(reason='good', score=4)
+    mock_run = mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+
+    result = await judge_g_eval(
+        'The cat sat on the mat.',
+        'coherence',
+        ['Step A.', 'Step B.'],
+        score_range=(1, 5),
+    )
+    assert result == GEvalOutput(reason='good', score=4)
+
+    prompt = mock_run.call_args[0][0]
+    assert 'coherence' in prompt
+    assert 'between 1 and 5' in prompt
+    assert (
+        'Evaluation steps (apply each step in order):\n1. Step A.\n2. Step B.\n\nProduce a single integer score'
+        in prompt
+    )
+
+
+async def test_judge_g_eval_validates_score_range():
+    with pytest.raises(ValueError, match='`score_range` must satisfy min < max'):
+        await judge_g_eval('out', 'c', ['s'], score_range=(5, 5))
+
+
+async def test_judge_g_eval_requires_evaluation_steps():
+    with pytest.raises(ValueError, match='`evaluation_steps` must contain at least one step'):
+        await judge_g_eval('out', 'c', [])
+
+
+async def test_judge_g_eval_rejects_out_of_range_score(mocker: MockerFixture):
+    """A judge response outside `score_range` raises instead of recording a misleading value."""
+    mock_result = mocker.MagicMock()
+    mock_result.output = GEvalOutput(reason='overenthusiastic', score=100)
+    mocker.patch('pydantic_ai.agent.AbstractAgent.run', return_value=mock_result)
+
+    with pytest.raises(ValueError, match='outside the requested `score_range`'):
+        await judge_g_eval('out', 'coherence', ['Check.'], score_range=(1, 5))
