@@ -2805,7 +2805,7 @@ def _map_tool_search_tool_result_block(
     provider_details: dict[str, Any] | None = None
     matches: list[ToolSearchMatch] = []
     if block.type == 'tool_search_tool_search_result':
-        matches = [{'name': ref.tool_name, 'description': None} for ref in block.tool_references]
+        matches = [{'name': ref.tool_name} for ref in block.tool_references]
     else:  # tool_search_tool_result_error
         provider_details = {'error_code': block.error_code, 'error_message': block.error_message}
     return NativeToolSearchReturnPart(
