@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+import re
+
 import pytest
 from pytest_mock import MockerFixture
 
@@ -7,10 +9,16 @@ from .._inline_snapshot import snapshot
 from ..conftest import BinaryContent, try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai import Agent
     from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
         GEvalOutput,
         GradingOutput,
+        _build_prompt,  # pyright: ignore[reportPrivateUsage]
+        _judge_input_output_agent,  # pyright: ignore[reportPrivateUsage]
+        _judge_input_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
+        _judge_output_agent,  # pyright: ignore[reportPrivateUsage]
+        _judge_output_expected_agent,  # pyright: ignore[reportPrivateUsage]
         _stringify,  # pyright: ignore[reportPrivateUsage]
         judge_g_eval,
         judge_input_output,
@@ -69,6 +77,52 @@ def test_stringify():
 
     obj = NonSerializable()
     assert _stringify(obj) == 'NonSerializable()'
+
+
+@pytest.mark.parametrize(
+    'variant,kwargs,expected_tags',
+    [
+        ('output', {'output': 'O', 'rubric': 'R'}, ['Output', 'Rubric']),
+        ('input_output', {'output': 'O', 'rubric': 'R', 'inputs': 'I'}, ['Input', 'Output', 'Rubric']),
+        (
+            'output_expected',
+            {'output': 'O', 'rubric': 'R', 'expected_output': 'E'},
+            ['Output', 'ExpectedOutput', 'Rubric'],
+        ),
+        (
+            'input_output_expected',
+            {'output': 'O', 'rubric': 'R', 'inputs': 'I', 'expected_output': 'E'},
+            ['Input', 'Output', 'ExpectedOutput', 'Rubric'],
+        ),
+    ],
+)
+def test_build_prompt_section_order_matches_few_shot_examples(
+    variant: str, kwargs: dict[str, str], expected_tags: list[str]
+) -> None:
+    """The runtime prompt and every few-shot example in the matching judge's system prompt must
+    share the same section order: `Input → Output → ExpectedOutput → Rubric` (matching the
+    `judge_input_output_expected` naming), with the rubric (the instruction) last, after all
+    the context it applies to. See issue #6110."""
+    # Resolve the agent inside the test body so the module-level skip applies when the optional
+    # `pydantic-evals` dependency is missing (the agents only exist on a successful import).
+    agent: Agent[None, GradingOutput] = {
+        'output': _judge_output_agent,
+        'input_output': _judge_input_output_agent,
+        'output_expected': _judge_output_expected_agent,
+        'input_output_expected': _judge_input_output_expected_agent,
+    }[variant]
+
+    prompt = _build_prompt(**kwargs)
+    assert isinstance(prompt, str)
+    assert re.findall(r'<(\w+)>', prompt) == expected_tags
+
+    system_prompt = agent._system_prompts[0]  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(system_prompt, str)
+    # Check every example block, not the deduped set, so a single drifting example is caught.
+    example_tags = re.findall(r'<(\w+)>', system_prompt)
+    assert example_tags and len(example_tags) % len(expected_tags) == 0
+    for start in range(0, len(example_tags), len(expected_tags)):
+        assert example_tags[start : start + len(expected_tags)] == expected_tags
 
 
 @pytest.mark.anyio
@@ -268,12 +322,12 @@ Hello
 <Output>
 Hello world
 </Output>
-<Rubric>
-Output contains input
-</Rubric>
 <ExpectedOutput>
 Hello
-</ExpectedOutput>\
+</ExpectedOutput>
+<Rubric>
+Output contains input
+</Rubric>\
 """,
         )
     )
@@ -294,12 +348,12 @@ Hello
                 '<Output>',
                 'Hello world',
                 '</Output>',
-                '<Rubric>',
-                'Output contains input',
-                '</Rubric>',
                 '<ExpectedOutput>',
                 'Hello',
                 '</ExpectedOutput>',
+                '<Rubric>',
+                'Output contains input',
+                '</Rubric>',
             ],
         )
     )
@@ -338,12 +392,12 @@ Hello settings
 <Output>
 Hello world with settings
 </Output>
-<Rubric>
-Output contains input with settings
-</Rubric>
 <ExpectedOutput>
 Hello
-</ExpectedOutput>\
+</ExpectedOutput>
+<Rubric>
+Output contains input with settings
+</Rubric>\
 """,
         )
     )
@@ -374,12 +428,12 @@ Hello
                 '<Output>',
                 'Hello world with settings',
                 '</Output>',
-                '<Rubric>',
-                'Output contains input with settings',
-                '</Rubric>',
                 '<ExpectedOutput>',
                 'Hello',
                 '</ExpectedOutput>',
+                '<Rubric>',
+                'Output contains input with settings',
+                '</Rubric>',
             ],
         )
     )
@@ -411,12 +465,12 @@ Hello
 <Output>
 Hello world with settings
 </Output>
-<Rubric>
-Output contains input with settings
-</Rubric>
 <ExpectedOutput>
 Hello
-</ExpectedOutput>\
+</ExpectedOutput>
+<Rubric>
+Output contains input with settings
+</Rubric>\
 """,
         )
     )
@@ -445,12 +499,12 @@ Hello
 <Output>
 Hello world with settings
 </Output>
-<Rubric>
-Output contains input with settings
-</Rubric>
 <ExpectedOutput>
 Hello
-</ExpectedOutput>\
+</ExpectedOutput>
+<Rubric>
+Output contains input with settings
+</Rubric>\
 """,
         )
     )
@@ -527,12 +581,12 @@ async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixt
                 '<Output>',
                 image_content,
                 '</Output>',
-                '<Rubric>',
-                'Output contains input with settings',
-                '</Rubric>',
                 '<ExpectedOutput>',
                 'Hello',
                 '</ExpectedOutput>',
+                '<Rubric>',
+                'Output contains input with settings',
+                '</Rubric>',
             ],
         )
     )
