@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -25,11 +25,10 @@ if TYPE_CHECKING:
     from .tools import ToolDefinition
     from .usage import RunUsage
 
-# TODO (v2): Change the default for all typevars like this from `None` to `object`
-AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
+AgentDepsT = TypeVar('AgentDepsT', default=object, contravariant=True)
 """Type variable for agent dependencies."""
 
-RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=None, covariant=True)
+RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant=True)
 """Type variable for the agent dependencies in `RunContext`."""
 
 
@@ -104,12 +103,24 @@ class RunContext(Generic[RunContextAgentDepsT]):
     and during agent construction.
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
-    """Internal: queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
+    """Queue read and mutated by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability].
 
     Set to the run's live queue during an agent run; `None` in synthetic contexts that aren't
     backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
-    Use [`enqueue`][pydantic_ai.tools.RunContext.enqueue] to add messages — don't append directly.
+    Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
+    to add messages rather than mutating it directly.
+    """
+
+    _mcp_tool_defs_cache: dict[str, dict[str, ToolDefinition]] = field(default_factory=lambda: {}, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    Per-run cache of MCP tool definitions, keyed by toolset `id`, read and written only by the
+    durable-execution MCP toolset wrappers (Temporal/DBOS) so a toolset's tool definitions are
+    fetched at most once per run rather than before every model request. It lives on the run —
+    recreated for each agent run and reconstructed identically on durable replay/recovery — not on
+    the process-shared toolset instance, so whether a wrapper schedules its `get_tools` activity/step
+    depends only on the run's own history and stays replay-deterministic.
     """
 
     tool_manager: ToolManager[RunContextAgentDepsT] | None = None
@@ -133,6 +144,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Seeded during run preparation from message history (`parse_loaded_capabilities`); the
     `load_capability` tool body adds to it for in-step loads. Use `available_capability_ids`
     for the full set of currently-active capabilities (auto/always-on plus these).
+    Managed by the framework: safe to read, but don't mutate it directly.
     """
 
     capability_loaded: bool | None = None
@@ -148,6 +160,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     `ToolSearchToolset.get_tools` reads to decide which deferred tools to make visible this
     turn. Populated during run preparation from message history. Use `available_tool_names`
     for the full set of currently-callable tools (always-visible plus these).
+    Managed by the framework: safe to read, but don't mutate it directly.
     """
 
     @property
@@ -289,7 +302,7 @@ def get_current_run_context() -> RunContext[Any] | None:
 
 
 @contextmanager
-def set_current_run_context(run_context: RunContext[Any]) -> Iterator[None]:
+def set_current_run_context(run_context: RunContext[Any]) -> Generator[None]:
     """Context manager to set the current run context.
 
     Args:

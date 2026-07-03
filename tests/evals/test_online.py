@@ -3,16 +3,17 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-import warnings
+import random
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_evals import _online
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext, EvaluatorFailure
     from pydantic_evals.evaluators.evaluator import EvaluatorOutput
@@ -195,152 +196,6 @@ async def test_callback_sink_ignores_span_reference():
     )
     assert len(collector.calls) == 1
     assert collector.result_count == 0
-
-
-@pytest.mark.anyio
-async def test_legacy_sink_without_target_kwarg_is_wrapped_with_deprecation_warning():
-    """Sinks using the four-kwarg (pre-`target`) signature still work via the back-compat shim.
-
-    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
-    """
-    calls: list[dict[str, Any]] = []
-
-    class LegacySink:
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-        ) -> None:
-            calls.append(
-                {
-                    'results': list(results),
-                    'failures': list(failures),
-                    'context': context,
-                    'span_reference': span_reference,
-                }
-            )
-
-    @dataclass
-    class LegacyEvaluator(Evaluator):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
-
-    # Cast: the point of this test is that LegacySink intentionally doesn't
-    # satisfy the current EvaluationSink protocol (uses the old kwargs shape).
-    config = OnlineEvalConfig(default_sink=cast(Any, LegacySink()), emit_otel_events=False)
-
-    @config.evaluate(LegacyEvaluator())
-    async def run(x: int) -> int:
-        return x
-
-    with pytest.warns(DeprecationWarning, match=r'deprecated kwargs signature'):
-        await run(1)
-        await wait_for_evaluations()
-
-    assert len(calls) == 1
-    # The pre-`target` legacy sink receives the original four kwargs.
-    assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
-
-
-async def test_legacy_sink_warning_fires_once_per_class():
-    """The back-compat shim warns the first time it wraps a given class, not every time.
-
-    Exercises the compat shim directly rather than the full dispatch pipeline,
-    so parallel tests touching the module-level `_warned_legacy_sink_ids` set
-    can't flake this assertion via `id()` reuse.
-
-    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
-    """
-    from pydantic_evals._online import (
-        _ensure_payload_compat,  # pyright: ignore[reportPrivateUsage]
-        _warned_legacy_sink_ids,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    class OnceLegacySink:
-        async def submit(
-            self,
-            *,
-            results: Sequence[EvaluationResult],
-            failures: Sequence[EvaluatorFailure],
-            context: EvaluatorContext[Any, Any, Any],
-            span_reference: SpanReference | None,
-        ) -> None:
-            pass
-
-    # Defensive: drop any stale id(cls) collision from an earlier GC'd class.
-    _warned_legacy_sink_ids.discard(id(OnceLegacySink))
-
-    sink = cast(Any, OnceLegacySink())
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always', DeprecationWarning)
-        _ensure_payload_compat(sink)
-        _ensure_payload_compat(sink)
-
-    legacy_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert len(legacy_warnings) == 1
-
-
-@pytest.mark.anyio
-async def test_sink_with_var_keyword_only_is_shimmed():
-    """A sink whose `submit` uses only **kwargs is treated as legacy — shim unpacks the payload.
-
-    The modern API is called positionally as `submit(payload)`, which a **kwargs-only
-    signature can't receive. The shim routes around this by forwarding the unpacked
-    kwargs; a deprecation warning nudges the user to the new signature.
-
-    TODO(v2): delete this test alongside the shim in pydantic_evals/_online.py.
-    """
-    from pydantic_evals._online import _warned_legacy_sink_ids  # pyright: ignore[reportPrivateUsage]
-
-    calls: list[dict[str, Any]] = []
-
-    class KwargsSink:
-        async def submit(self, **kwargs: Any) -> None:
-            calls.append(kwargs)
-
-    @dataclass
-    class E(Evaluator):
-        def evaluate(self, ctx: EvaluatorContext) -> bool:
-            return True
-
-    # Defensive: drop any stale `id(cls)` collision from an earlier GC'd class so the
-    # first-use-per-class warning fires deterministically under parallel test runners.
-    _warned_legacy_sink_ids.discard(id(KwargsSink))
-
-    # Cast: KwargsSink intentionally uses the pre-`SinkPayload` signature to exercise the shim.
-    config = OnlineEvalConfig(default_sink=cast(Any, KwargsSink()), emit_otel_events=False)
-
-    @config.evaluate(E(), target='my_target')
-    async def run(x: int) -> int:
-        return x
-
-    with pytest.warns(DeprecationWarning, match=r'deprecated kwargs signature'):
-        await run(1)
-        await wait_for_evaluations()
-
-    assert len(calls) == 1
-    assert set(calls[0]) == {'results', 'failures', 'context', 'span_reference'}
-
-
-def test_sink_with_keyword_only_payload_is_not_classified_as_legacy():
-    """A sink with a single keyword-only `payload` parameter routes to the modern path.
-
-    Arity is what distinguishes legacy from modern — not whether the single
-    parameter is positional-or-keyword vs keyword-only. Without this, a
-    `submit(self, *, payload)` sink would be misclassified as legacy and
-    trigger a spurious deprecation warning.
-    """
-    from pydantic_evals._online import _is_legacy_submit  # pyright: ignore[reportPrivateUsage]
-
-    class KeywordOnlyPayloadSink:
-        async def submit(self, *, payload: SinkPayload) -> None:
-            pass
-
-    assert _is_legacy_submit(cast(Any, KeywordOnlyPayloadSink())) is False
 
 
 @pytest.mark.anyio
@@ -1956,8 +1811,13 @@ async def test_sampling_context_input_based_sampling():
 
 
 @pytest.mark.anyio
-async def test_correlated_sampling_subset_property():
+async def test_correlated_sampling_subset_property(monkeypatch: pytest.MonkeyPatch):
     """In correlated mode, lower-rate evaluator calls are a subset of higher-rate ones."""
+    # Seed the sampler so the test is deterministic. Without a seed this test
+    # could fail with probability ~0.9**100 ≈ 2.7e-5 when no call fires the
+    # low-rate (0.1) evaluator. See https://github.com/pydantic/pydantic-ai/issues/5399.
+    monkeypatch.setattr(_online, 'random', random.Random(0))
+
     collector_high = Collector()
     collector_low = Collector()
     config = OnlineEvalConfig(sampling_mode='correlated')
@@ -1983,8 +1843,11 @@ async def test_correlated_sampling_subset_property():
 
 
 @pytest.mark.anyio
-async def test_correlated_sampling_max_overhead():
+async def test_correlated_sampling_max_overhead(monkeypatch: pytest.MonkeyPatch):
     """In correlated mode, total overhead probability equals max(rate_i)."""
+    # Seed the sampler so the `5 < calls < 40` window is deterministic.
+    monkeypatch.setattr(_online, 'random', random.Random(0))
+
     collector1 = Collector()
     collector2 = Collector()
     collector3 = Collector()
@@ -2010,8 +1873,11 @@ async def test_correlated_sampling_max_overhead():
 
 
 @pytest.mark.anyio
-async def test_independent_sampling_is_default():
+async def test_independent_sampling_is_default(monkeypatch: pytest.MonkeyPatch):
     """Independent mode is the default — evaluators sample independently."""
+    # Seed the sampler so `>0` for both collectors is deterministic.
+    monkeypatch.setattr(_online, 'random', random.Random(0))
+
     collector1 = Collector()
     collector2 = Collector()
     config = OnlineEvalConfig()  # default is 'independent'

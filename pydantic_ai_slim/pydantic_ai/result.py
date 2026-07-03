@@ -1,20 +1,17 @@
 from __future__ import annotations as _annotations
 
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 import anyio
 from pydantic import ValidationError
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import TypeVar
 
 from . import _utils, exceptions, messages as _messages, models
-from ._deprecated_callable import deprecated_callable_property
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -25,19 +22,18 @@ from ._output import (
     run_output_with_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
-from ._warnings import PydanticAIDeprecationWarning
-from .messages import AgentStreamEvent, ModelResponseStreamEvent
+from .messages import ModelResponseStreamEvent
 from .output import (
-    DeferredToolRequests,
     OutputDataT,
     ToolOutput,
 )
 from .tool_manager import ToolManager
+from .tools import DeferredToolRequests
 from .usage import RunUsage, UsageLimits
 
 if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
-    from .run import AgentRunResult, AgentRunResultEvent
+    from .run import AgentRunResult
 
 __all__ = (
     'OutputDataT',
@@ -123,21 +119,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         yield self.response  # final state='complete' (or 'interrupted')
 
-    @deprecated(
-        '`AgentStream.stream_responses()` is deprecated and will be removed in v2.0. '
-        'Replace `async for r in stream.stream_responses(...)` with '
-        '`async for r in stream.stream_response(...)` (singular). Both yield the same `ModelResponse` snapshots: '
-        "`state='incomplete'` while streaming and a final `state='complete'` (or `'interrupted'`) snapshot.",
-        category=PydanticAIDeprecationWarning,
-    )
-    async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
-        async for response in self.stream_response(debounce_by=debounce_by):
-            yield response
-
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
 
         !!! note
+            [`TextOutput`][pydantic_ai.output.TextOutput] functions are not applied — use
+            [`stream_output()`][pydantic_ai.result.AgentStream.stream_output] instead.
             Result validators will NOT be called on the text result if `delta=True`.
 
         Args:
@@ -199,19 +186,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return self._metadata_getter()
         return self._run_ctx.metadata
 
-    @deprecated_callable_property('`AgentStream.get` is deprecated; use the `response` property instead.')
-    def get(self) -> _messages.ModelResponse:
-        """Get the current state of the response."""
-        return self._raw_stream_response.get()
-
     @property
     def response(self) -> _messages.ModelResponse:
         """Get the current state of the response."""
         return self._raw_stream_response.get()
 
-    @deprecated_callable_property(
-        '`AgentStream.usage` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
@@ -220,9 +200,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """
         return self._initial_run_ctx_usage + self._raw_stream_response.usage
 
-    @deprecated_callable_property(
-        '`AgentStream.timestamp` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._raw_stream_response.timestamp
@@ -529,11 +507,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             self.new_messages(output_tool_return_content=output_tool_return_content)
         )
 
-    @deprecated('`StreamedRunResult.stream` is deprecated, use `stream_output` instead.')
-    async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
-        async for output in self.stream_output(debounce_by=debounce_by):
-            yield output
-
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Stream the output as an async iterable.
 
@@ -563,6 +536,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """Stream the text result as an async iterable.
 
         !!! note
+            [`TextOutput`][pydantic_ai.output.TextOutput] functions are not applied — use
+            [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] instead.
             Result validators will NOT be called on the text result if `delta=True`.
 
         Args:
@@ -586,13 +561,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed(self.response)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
-
-    @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_response` instead.')
-    async def stream_structured(
-        self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
-        async for msg in self.stream_response(debounce_by=debounce_by):
-            yield msg, msg.state != 'incomplete'
 
     async def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Stream the response as an async iterable of `ModelResponse` snapshots.
@@ -624,19 +592,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed(last_msg)
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
-
-    @deprecated(
-        '`StreamedRunResult.stream_responses()` is deprecated and will be removed in v2.0. '
-        'Replace `async for msg, is_last in result.stream_responses(...)` with '
-        "`async for msg in result.stream_response(...): is_last = msg.state != 'incomplete'`. "
-        'The new singular method yields `ModelResponse` instead of `(ModelResponse, bool)`.',
-        category=PydanticAIDeprecationWarning,
-    )
-    async def stream_responses(
-        self, *, debounce_by: float | None = 0.1
-    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
-        async for msg in self.stream_response(debounce_by=debounce_by):
-            yield msg, msg.state != 'incomplete'
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
@@ -671,9 +626,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             return None
 
-    @deprecated_callable_property(
-        '`StreamedRunResult.usage` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
@@ -687,9 +640,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    @deprecated_callable_property(
-        '`StreamedRunResult.timestamp` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         if self._run_result is not None:
@@ -718,12 +669,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return self._stream_response.conversation_id
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
-
-    @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
-    async def validate_structured_output(
-        self, message: _messages.ModelResponse, *, allow_partial: bool = False
-    ) -> OutputDataT:
-        return await self.validate_response_output(message, allow_partial=allow_partial)
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -863,6 +808,8 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         """Stream the text result as an iterable.
 
         !!! note
+            [`TextOutput`][pydantic_ai.output.TextOutput] functions are not applied — use
+            [`stream_output()`][pydantic_ai.result.StreamedRunResultSync.stream_output] instead.
             Result validators will NOT be called on the text result if `delta=True`.
 
         Args:
@@ -890,29 +837,16 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         """
         return _utils.sync_async_iterator(self._streamed_run_result.stream_response(debounce_by=debounce_by))
 
-    @deprecated(
-        '`StreamedRunResultSync.stream_responses()` is deprecated and will be removed in v2.0. '
-        'Replace `for msg, is_last in result.stream_responses(...)` with '
-        "`for msg in result.stream_response(...): is_last = msg.state != 'incomplete'`. "
-        'The new singular method yields `ModelResponse` instead of `(ModelResponse, bool)`.',
-        category=PydanticAIDeprecationWarning,
-    )
-    def stream_responses(self, *, debounce_by: float | None = 0.1) -> Iterator[tuple[_messages.ModelResponse, bool]]:
-        for msg in self.stream_response(debounce_by=debounce_by):
-            yield msg, msg.state != 'incomplete'
-
     def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
-        return _utils.get_event_loop().run_until_complete(self._streamed_run_result.get_output())
+        return _utils.run_until_complete(self._streamed_run_result.get_output())
 
     @property
     def response(self) -> _messages.ModelResponse:
         """Return the current state of the response."""
         return self._streamed_run_result.response
 
-    @deprecated_callable_property(
-        '`StreamedRunResultSync.usage` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
@@ -921,9 +855,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         """
         return self._streamed_run_result.usage
 
-    @deprecated_callable_property(
-        '`StreamedRunResultSync.timestamp` is no longer a method; access it as a property (drop the parentheses).'
-    )
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._streamed_run_result.timestamp
@@ -945,7 +877,7 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
     def validate_response_output(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
-        return _utils.get_event_loop().run_until_complete(
+        return _utils.run_until_complete(
             self._streamed_run_result.validate_response_output(message, allow_partial=allow_partial)
         )
 
@@ -960,89 +892,6 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
         [`get_output`][pydantic_ai.result.StreamedRunResultSync.get_output] completes.
         """
         return self._streamed_run_result.is_complete
-
-
-class AgentEventStream(Generic[OutputDataT]):
-    """Event stream returned by [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
-
-    Wraps the underlying async generator to support deterministic cleanup via the async context manager protocol.
-
-    Usage:
-
-    ```python {lint="skip"}
-    async def stream_events_example():
-        async with agent.run_stream_events('Hello') as stream:
-            async for event in stream:
-                ...
-    # cleanup is automatic on __aexit__
-    ```
-
-    Direct iteration with `async for event in stream:` (without `async with`)
-    is deprecated and will be removed in v2.
-    """
-
-    def __init__(self, generator: AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[Any], None]) -> None:
-        self._generator = generator
-        self._managed = False
-        self._closed = False
-
-    async def __aenter__(self) -> AgentEventStream[OutputDataT]:
-        self._managed = True
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> bool:
-        await self.aclose()
-        return False
-
-    def __aiter__(self) -> AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]:
-        # TODO(v2): remove standalone iteration support and require `async with`
-        if self._managed:
-            return self
-
-        warnings.warn(
-            'Iterating `AgentEventStream` directly with `async for event in stream:` is deprecated. '
-            'Use `async with agent.run_stream_events(...) as stream:` and '
-            '`async for event in stream:` instead '
-            'to ensure proper cleanup.',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        return self._standalone_iterator()
-
-    async def _standalone_iterator(
-        self,
-    ) -> AsyncGenerator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT], None]:
-        # `async for` only closes async generators on early exit. Wrapping the deprecated
-        # standalone path in an async generator preserves cleanup on `break`.
-        try:
-            async for event in self._generator:
-                yield event
-        finally:
-            await self.aclose()
-
-    async def __anext__(self) -> _messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]:
-        if self._closed:
-            raise StopAsyncIteration
-        try:
-            return await self._generator.__anext__()
-        except StopAsyncIteration:
-            # Not strictly necessary (aclose() on an exhausted generator is a no-op),
-            # but keeps _closed accurate after natural exhaustion so __aexit__()
-            # doesn't call aclose() unnecessarily.
-            self._closed = True
-            raise
-
-    async def aclose(self) -> None:
-        """Close the stream and trigger any pending cleanup."""
-        if not self._closed:
-            self._closed = True
-            await self._generator.aclose()
 
 
 @dataclass(repr=False)

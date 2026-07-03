@@ -127,7 +127,7 @@ _(This example is complete, it can be run "as is")_
 
 The `XSearch` capability accepts:
 
-- **`allowed_x_handles`** / **`excluded_x_handles`**: filter results to (or away from) up to 10 X handles. These are mutually exclusive.
+- **`allowed_x_handles`** / **`excluded_x_handles`**: filter results to (or away from) up to 20 X handles. These are mutually exclusive.
 - **`from_date`** / **`to_date`**: restrict results to posts created within the given datetime range (naive datetimes are interpreted as UTC).
 - **`enable_image_understanding`** (default: `False`): analyze images attached to posts.
 - **`enable_video_understanding`** (default: `False`): analyze video content attached to posts.
@@ -150,6 +150,24 @@ agent = Agent(
 ```
 
 Set `xai_reasoning_effort='none'` or `thinking=False` to disable reasoning on Grok 4.3. xAI redirects several retired text model slugs to `grok-4.3`; choose `grok-4.3` and an explicit reasoning effort when you need predictable behavior and cost. See the [xAI May 15 retirement guide](https://docs.x.ai/developers/migration/may-15-retirement) for details.
+
+## Agentic turns
+
+When a request uses xAI's server-side [native tools](../native-tools.md) (e.g. web search, code execution, X search), xAI runs its own loop — calling those tools and processing their results — before returning a final response. You can cap how many turns that server-side loop may take with [`XaiModelSettings.xai_max_turns`][pydantic_ai.models.xai.XaiModelSettings.xai_max_turns]:
+
+```py {title="xai_max_turns.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModelSettings
+
+agent = Agent(
+    'xai:grok-4.3',
+    model_settings=XaiModelSettings(xai_max_turns=5),
+)
+```
+
+`xai_max_turns` only governs xAI's server-side native-tool loop. It has no effect on ordinary client-side tools or on Pydantic AI's own agent loop — to bound those, use [`UsageLimits`][pydantic_ai.usage.UsageLimits].
+
+Note that when parallel tool calls are enabled, multiple tool calls can occur within a single turn, so `xai_max_turns` does not necessarily equal the total number of tool calls made.
 
 ## Streaming cancellation
 

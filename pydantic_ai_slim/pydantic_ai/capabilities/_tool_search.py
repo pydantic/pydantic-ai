@@ -92,7 +92,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     # Custom search function — used locally, and by provider-native "client-executed"
     # modes when supported.
     def my_search(
-        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+        ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]
     ) -> list[str]:
         return [
             t.name
@@ -242,11 +242,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
                 ModelRequest(
                     parts=[
                         ToolSearchReturnPart(
-                            content={
-                                'discovered_tools': [
-                                    {'name': td.name, 'description': td.description} for td in newly_loaded
-                                ]
-                            },
+                            content={'discovered_tools': [{'name': td.name} for td in newly_loaded]},
                             tool_call_id=call_id,
                         ),
                     ]
