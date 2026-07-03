@@ -171,6 +171,16 @@ async def event_stream_handler(
         logfire.info('event', event=event)
 
 
+@DBOS.step()
+async def runtime_event_stream_handler(
+    ctx: RunContext[object],
+    stream: AsyncIterable[AgentStreamEvent],
+):
+    logfire.info(f'{ctx.run_step=}')
+    async for event in stream:
+        logfire.info('runtime_event', event=event)
+
+
 # This doesn't need to be a step
 async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
@@ -226,6 +236,19 @@ seq_complex_dbos_agent = DBOSAgent(
     parallel_execution_mode='sequential',
     name='seq_complex_agent',
 )
+
+
+async def runtime_handler_stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    del messages, agent_info
+    yield 'Hello'
+    yield ' world'
+
+
+runtime_handler_stream_agent = Agent(
+    FunctionModel(stream_function=runtime_handler_stream_function),
+    name='runtime_handler_stream_agent',
+)
+runtime_handler_stream_dbos_agent = DBOSAgent(runtime_handler_stream_agent)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -617,6 +640,43 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             ],
         )
     )
+
+
+async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
+    allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire
+) -> None:
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        result = await runtime_handler_stream_dbos_agent.run(
+            'Say hello', event_stream_handler=runtime_event_stream_handler
+        )
+
+    assert result.output == snapshot('Hello world')
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    step_names = [step['function_name'] for step in steps]
+    assert step_names[0] == 'runtime_handler_stream_agent__model.request_stream'
+    # The per-run handler fires live, nested inside the model-request step (delivering the streamed
+    # events asserted below). It is no longer invoked a second time at the graph level against the
+    # already-consumed, empty stream, so it doesn't appear as a separate top-level workflow step.
+    assert 'runtime_event_stream_handler' not in step_names
+
+    exported_event_messages = [
+        event
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes'))
+        and attributes.get('logfire.msg') == 'runtime_event'
+        and isinstance((event := attributes.get('event')), str)
+    ]
+    assert exported_event_messages != []
+
+
+async def test_dbos_agent_event_stream_handler_property_outside_workflow(dbos: DBOS) -> None:
+    # Outside a DBOS workflow, the `event_stream_handler` property resolves to the effective handler
+    # directly, rather than the in-workflow per-event dispatcher.
+    agent = Agent(TestModel(), name='event_stream_handler_property_agent')
+    dbos_agent = DBOSAgent(agent, event_stream_handler=runtime_event_stream_handler)
+    assert dbos_agent.event_stream_handler is runtime_event_stream_handler
 
 
 async def test_mcp_tools_not_cached_when_disabled(allow_model_requests: None, dbos: DBOS) -> None:

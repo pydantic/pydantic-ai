@@ -172,6 +172,15 @@ async def event_stream_handler(
         logfire.info('event', event=event)
 
 
+async def runtime_event_stream_handler(
+    ctx: RunContext[object],
+    stream: AsyncIterable[AgentStreamEvent],
+):
+    logfire.info(f'{ctx.run_step=}')
+    async for event in stream:
+        logfire.info('runtime_event', event=event)
+
+
 async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
@@ -220,6 +229,19 @@ complex_agent = Agent(
     name='complex_agent',
 )
 complex_prefect_agent = PrefectAgent(complex_agent, event_stream_handler=event_stream_handler)
+
+
+async def runtime_handler_stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+    del messages, agent_info
+    yield 'Hello'
+    yield ' world'
+
+
+runtime_handler_stream_agent = Agent(
+    FunctionModel(stream_function=runtime_handler_stream_function),
+    name='runtime_handler_stream_agent',
+)
+runtime_handler_stream_prefect_agent = PrefectAgent(runtime_handler_stream_agent)
 
 
 async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: CaptureLogfire) -> None:
@@ -591,6 +613,26 @@ async def test_multiple_agents(allow_model_requests: None) -> None:
             ]
         )
     )
+
+
+async def test_prefect_agent_run_in_flow_with_runtime_event_stream_handler(
+    allow_model_requests: None, capfire: CaptureLogfire
+) -> None:
+    @flow(name='test_prefect_agent_run_in_flow_with_runtime_event_stream_handler')
+    async def run_agent() -> AgentRunResult[str]:
+        return await runtime_handler_stream_prefect_agent.run(
+            'Say hello', event_stream_handler=runtime_event_stream_handler
+        )
+
+    result = await run_agent()
+    assert result.output == snapshot('Hello world')
+
+    exported_messages = [
+        attributes['logfire.msg']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes')) and attributes.get('logfire.msg') == 'runtime_event'
+    ]
+    assert exported_messages != []
 
 
 async def test_agent_requires_name() -> None:
