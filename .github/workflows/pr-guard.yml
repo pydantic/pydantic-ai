@@ -61,28 +61,35 @@ jobs:
             exit 0
           fi
 
-          # Maintainer-reopen bypass. AUTHOR_ASSOCIATION above is the PR *author's*
-          # relationship to the repo, so a guard-closed contributor PR that a
-          # maintainer deliberately reopens would just be closed again on the
-          # `reopened` event. When someone other than the author reopens, confirm
-          # they have triage-or-higher access on *this* repo before respecting it:
-          # GitHub also lets a collaborator on the contributor's fork reopen the
-          # PR, so `sender != author` alone isn't proof of base-repo trust. We read
-          # `role_name` (not the legacy `permission`, which collapses triage into
-          # read) so a triager — who can legitimately reopen — still counts. If the
-          # role can't be determined, err toward respecting the reopen: this is a
-          # courtesy gate (trivially satisfied by linking any open issue), not a
-          # security boundary, and a deliberate reopen shouldn't be undone by a
-          # transient API hiccup. The author reopening their own PR still gets
-          # re-checked, so the issue-link policy can't be bypassed by reopening.
-          if [ "${GITHUB_EVENT_ACTION}" = "reopened" ] && [ "${GITHUB_EVENT_SENDER_LOGIN}" != "$PR_AUTHOR" ]; then
+          # Trusted-actor bypass. AUTHOR_ASSOCIATION above is the PR *author's*
+          # relationship to the repo, so without this the guard re-closes a
+          # contributor PR every time a maintainer acts on it: reopening it, or
+          # editing its title/body (`reopened` and `edited` both re-run this
+          # workflow, so a reopen-only bypass gets undone by the next edit). When
+          # the person who triggered this run isn't the author, confirm they have
+          # triage-or-higher access on *this* repo and, if so, treat their action
+          # as a deliberate decision to keep the PR open and skip the checks.
+          #   - We read `role_name`, not the legacy `permission` (which collapses
+          #     triage into read), so a triager — who can legitimately reopen —
+          #     still counts.
+          #   - We require `sender != author` and a base-repo role because GitHub
+          #     also lets a collaborator on the contributor's *fork* reopen the PR;
+          #     `sender != author` alone isn't proof of base-repo trust.
+          #   - If the role can't be determined, err toward respecting the action:
+          #     this is a courtesy gate (trivially satisfied by linking any open
+          #     issue), not a security boundary, and a deliberate maintainer action
+          #     shouldn't be undone by a transient API hiccup.
+          # The author acting on their own PR (e.g. the `opened` event, where the
+          # sender is always the author) still gets checked, so the issue-link
+          # policy can't be bypassed this way.
+          if [ "${GITHUB_EVENT_SENDER_LOGIN}" != "$PR_AUTHOR" ]; then
             SENDER_ROLE=$(gh api "repos/${REPO}/collaborators/${GITHUB_EVENT_SENDER_LOGIN}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
             case "$SENDER_ROLE" in
               read | none)
-                echo "PR reopened by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}, no write access); continuing checks."
+                echo "Event triggered by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}, no write access); continuing checks."
                 ;;
               *)
-                echo "PR reopened by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}); a trusted collaborator reopened it, skipping checks."
+                echo "Event triggered by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}); a trusted collaborator acted on this PR, skipping checks."
                 exit 0
                 ;;
             esac
@@ -367,7 +374,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          GITHUB_EVENT_ACTION: ${{ github.event.action }}
           GITHUB_EVENT_SENDER_LOGIN: ${{ github.event.sender.login }}
           GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_EVENT_PULL_REQUEST_USER_LOGIN: ${{ github.event.pull_request.user.login }}
