@@ -419,9 +419,7 @@ async def test_request_tool_call(allow_model_requests: None):
     # `gen_ai.usage.details.*` too would let consumers like Langfuse sum billed + actual and double-count.
     # They must be dropped from the OTel attributes (only the first-class counts remain) while staying
     # accessible on `usage.details`.
-    tool_call_usage = next(
-        m.usage for m in result.all_messages() if isinstance(m, ModelResponse) and m.usage.details
-    )
+    tool_call_usage = next(m.usage for m in result.all_messages() if isinstance(m, ModelResponse) and m.usage.details)
     assert tool_call_usage.details == {'input_tokens': 4, 'output_tokens': 2}
     assert tool_call_usage.opentelemetry_attributes() == snapshot(
         {
