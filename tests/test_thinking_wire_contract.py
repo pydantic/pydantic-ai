@@ -158,6 +158,8 @@ def _body_path(body: dict[str, object], path: str) -> object:
 
 
 def test_body_path_returns_missing_when_path_enters_scalar():
+    """Pin `_body_path`'s scalar-descent guard directly: no real case descends a dotted path into a
+    non-object, so this defensive branch is unreachable through the VCR cases above and can't be a VCR test."""
     assert _body_path({'outer': 'not-object'}, 'outer.inner') is _MISSING
 
 
